@@ -40,8 +40,19 @@ fn webdav_addresses_keep_ssl_and_only_a_custom_port() {
 }
 
 #[test]
-fn addresses_gvfs_maps_differently_are_left_to_gio() {
-    for uri in ["ftp://host/", "afp://host/x", "nfs://host/x", "smb://", "smb://nas/._hidden", "sftp://host:abc/", "sftp://host/?q=1", "sftp://host/a b", "sftp://@/", "http://host/"] {
+fn discovered_webdav_ftp_and_nfs_addresses_have_native_mount_specs() {
+    for (uri, prefix, fields) in [
+        ("dav+sd://Team%20DAV._webdav._tcp.local", "/", vec![("host", "Team DAV._webdav._tcp.local"), ("type", "dav+sd")]),
+        ("davs+sd://Work%252eDAV._webdavs._tcp.local/docs", "/docs", vec![("host", "Work%2eDAV._webdavs._tcp.local"), ("type", "davs+sd")]),
+        ("ftp://user@BOX:21/public", "/public", vec![("host", "box"), ("type", "ftp"), ("user", "user")]),
+        ("ftp://[fd00::2]:2121/", "/", vec![("host", "fd00::2"), ("port", "2121"), ("type", "ftp")]),
+        ("nfs://files:2049/srv/export/folder", "/srv/export/folder", vec![("host", "files"), ("port", "2049"), ("type", "nfs")]),
+    ] {
+        let parsed = spec(uri).expect(uri);
+        assert_eq!(parsed.prefix, prefix.as_bytes(), "{uri}");
+        assert_eq!(parsed.items, fields.into_iter().map(|(k, v)| (k, v.as_bytes().to_vec())).collect::<Vec<_>>(), "{uri}");
+    }
+    for uri in ["ftp:///no-host", "nfs://", "afp://host/x", "smb://", "smb://nas/._hidden", "sftp://host:abc/", "sftp://host/?q=1", "sftp://host/a b", "sftp://@/", "http://host/"] {
         assert_eq!(spec(uri), None, "{uri}");
     }
     assert_eq!(server("sftp://ann@files.example:2222/x"), "files.example");
@@ -273,7 +284,7 @@ fn answering(mut answer: Answerer) -> (MountPrompt, std::thread::JoinHandle<Log>
         let mut log = Log::default();
         for ev in rx {
             match ev {
-                ProviderEvent::MountAsk { tab: 9, ask, answer: a } => {
+                ProviderEvent::MountAsk { tab: 9, ask, answer: a, .. } => {
                     log.asks.push((a.id(), ask.clone()));
                     match answer(&ask) {
                         Some((delay, reply)) => {

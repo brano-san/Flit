@@ -481,3 +481,15 @@ fn privacy_settings_and_broken_lists_stop_the_recent_record() {
     assert_eq!(crate::shell::opened_documents(&flit_core::provider::Launch::Display(doc_path.clone())), std::slice::from_ref(&doc));
     assert!(crate::shell::opened_documents(&flit_core::provider::Launch::Execute(doc_path)).is_empty(), "programs run are not documents");
 }
+
+#[test]
+fn gio_mount_always_uses_the_locale_expected_by_error_matching() {
+    crate::temp::with_tools(&["gio"], || {
+        let cmd = gio_command(&["mount", "smb://nas/"]).unwrap();
+        assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["mount", "smb://nas/"]);
+        assert_eq!(cmd.get_envs().collect::<Vec<_>>(), [
+            (std::ffi::OsStr::new("LANGUAGE"), Some(std::ffi::OsStr::new(""))),
+            (std::ffi::OsStr::new("LC_ALL"), Some(std::ffi::OsStr::new("C"))),
+        ]);
+    });
+}

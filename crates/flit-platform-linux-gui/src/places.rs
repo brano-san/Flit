@@ -151,8 +151,16 @@ pub fn local_path(gio_info: &str) -> Option<PathBuf> {
 pub const CONNECT_WAIT: std::time::Duration = std::time::Duration::from_secs(45);
 const PHONES_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
 
-pub fn run_within(mut cmd: std::process::Command, wait: std::time::Duration) -> std::io::Result<std::process::Output> {
-    use std::io::Read;
+pub fn run_within(cmd: std::process::Command, wait: std::time::Duration) -> std::io::Result<std::process::Output> {
+    run_command(cmd, wait, None::<fn(&str)>)
+}
+
+pub fn run_streaming(cmd: std::process::Command, wait: std::time::Duration, each: impl FnMut(&str) + Send + 'static) -> std::io::Result<std::process::Output> {
+    run_command(cmd, wait, Some(each))
+}
+
+fn run_command(mut cmd: std::process::Command, wait: std::time::Duration, each: Option<impl FnMut(&str) + Send + 'static>) -> std::io::Result<std::process::Output> {
+    use std::io::{BufRead, BufReader, Read};
     use std::process::{Output, Stdio};
     fn drain(mut pipe: impl Read + Send + 'static) -> std::io::Result<std::thread::JoinHandle<std::io::Result<Vec<u8>>>> {
         std::thread::Builder::new().spawn(move || {
@@ -164,7 +172,19 @@ pub fn run_within(mut cmd: std::process::Command, wait: std::time::Duration) -> 
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let deadline = std::time::Instant::now() + wait;
     let result = (|| {
-        let stdout = drain(child.stdout.take().unwrap())?;
+        let stdout = child.stdout.take().unwrap();
+        let stdout = match each {
+            None => drain(stdout)?,
+            Some(mut each) => std::thread::Builder::new().spawn(move || {
+                let mut reader = BufReader::new(stdout);
+                let mut line = Vec::new();
+                while reader.read_until(b'\n', &mut line)? != 0 {
+                    each(String::from_utf8_lossy(&line).trim_end());
+                    line.clear();
+                }
+                Ok(Vec::new())
+            })?,
+        };
         let stderr = drain(child.stderr.take().unwrap())?;
         loop {
             if stdout.is_finished() && stderr.is_finished() {
@@ -193,10 +213,19 @@ pub fn needs_login(out: &std::process::Output) -> bool {
     !out.status.success() && ["Authentication Required", "Password:", "Password dialog cancelled"].iter().any(|w| text.contains(w))
 }
 
+pub(crate) fn gio_command(args: &[&str]) -> std::io::Result<std::process::Command> {
+    let program = crate::tools::require("gio").map_err(|e| std::io::Error::new(std::io::ErrorKind::NotFound, e.message))?;
+    Ok(gio_at(&program, args))
+}
+
+pub(crate) fn gio_at(program: &Path, args: &[&str]) -> std::process::Command {
+    let mut cmd = std::process::Command::new(program);
+    cmd.args(args).env("LC_ALL", "C").env("LANGUAGE", "");
+    cmd
+}
+
 fn gio(args: &[&str], wait: std::time::Duration) -> std::io::Result<std::process::Output> {
-    let mut cmd = crate::tools::command("gio")?;
-    cmd.args(args);
-    run_within(cmd, wait)
+    run_within(gio_command(args)?, wait)
 }
 
 pub fn connect(uri: &str) -> std::io::Result<PathBuf> {

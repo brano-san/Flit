@@ -733,14 +733,19 @@ impl<P: Platform> Handler<P> {
                     let _ = self.previews.send(PreviewJob::Backdrop { window: id, gen, path });
                 }
                 Effect::Host(cmd) => window.host(cmd),
-                Effect::NewWindow(routes) => {
+                effect @ (Effect::NewWindow(_) | Effect::NewNetworkWindow(_)) => {
+                    let connect = matches!(effect, Effect::NewNetworkWindow(_));
+                    let (Effect::NewWindow(routes) | Effect::NewNetworkWindow(routes)) = effect else { unreachable!() };
                     self.requested = Some(Instant::now());
                     if let Some(st) = self.windows.get(&id) {
                         self.saved.side = st.app.nav_prefs();
                         self.saved.tools = tools(&st.app);
                     }
                     let persisted = self.saved.persisted.clone();
-                    let app = self.new_app(routes, persisted);
+                    let mut app = self.new_app(routes, persisted);
+                    if connect {
+                        app.activate_network_tabs();
+                    }
                     self.pending.push_back(app);
                     window.open_window(WindowOptions { title: "Flit".into(), placement: None, dark: window.is_dark_mode() });
                 }
@@ -1011,7 +1016,7 @@ impl<P: Platform> Handler<P> {
             let target = match &ev {
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } | ProviderEvent::Denied { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);

@@ -32,6 +32,7 @@ const SMB_PORT: u16 = 445;
 const SSH_PORT: u16 = 22;
 const HTTP_PORT: u16 = 80;
 const HTTPS_PORT: u16 = 443;
+const FTP_PORT: u16 = 21;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Spec {
@@ -176,6 +177,16 @@ pub fn spec(uri: &str) -> Option<Spec> {
                 items.push(("user", user.clone()));
             }
             port(&mut items, if ssl { HTTPS_PORT } else { HTTP_PORT });
+            canonical(&p.path)
+        }
+        "dav+sd" | "davs+sd" | "ftp" | "nfs" => {
+            items.push(("type", p.scheme.as_bytes().to_vec()));
+            let ftp = p.scheme == "ftp";
+            items.push(("host", if ftp { unbracket(&p.host.to_ascii_lowercase()) } else { p.host.clone() }));
+            if let Some(user) = &p.user {
+                items.push(("user", user.clone()));
+            }
+            port(&mut items, if ftp { FTP_PORT } else { 0 });
             canonical(&p.path)
         }
         _ => return None,

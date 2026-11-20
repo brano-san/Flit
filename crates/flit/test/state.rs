@@ -618,3 +618,23 @@ fn the_files_column_shows_by_default_while_files_saved_from_now_on_keep_their_ch
     let folder = before.folders.get(key).unwrap();
     assert!(!folder.columns.shown(Column::Folders) && !folder.columns.shown(Column::Files), "a folder that hid the counts keeps them hidden");
 }
+
+#[test]
+fn saved_network_locations_use_home_on_linux_and_keep_the_shell_path_on_windows() {
+    let network = flit_core::FsPath::network();
+    let server = flit_core::FsPath::network_server(b"NAS").unwrap();
+    let home = Location::from_local(crate::P::home());
+    for path in [network, server] {
+        let path = Location::from_local(path);
+        let mut side = NavPrefs::default();
+        let local = loc("/tmp");
+        side.quick.visits = vec![(path.clone(), 1), (local.clone(), 2)];
+        let state = Saved::new(Persisted { path: path.clone(), show_hidden: true, ..Default::default() }, None).with_side(side);
+        let reopened = Saved::decode(&state.encode().unwrap()).unwrap();
+        let expected = if cfg!(target_os = "linux") { &home } else { &path };
+        assert_eq!(&reopened.persisted.path, expected);
+        assert!(reopened.persisted.show_hidden);
+        let visits = if cfg!(target_os = "linux") { vec![(local, 2)] } else { vec![(path, 1), (local, 2)] };
+        assert_eq!(reopened.side.quick.visits, visits);
+    }
+}

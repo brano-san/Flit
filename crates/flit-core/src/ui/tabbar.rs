@@ -734,7 +734,7 @@ impl App {
             return false;
         }
         let folder = t.entry_location(i);
-        self.open_in_tabs(vec![Route { folder, select: None }], now);
+        self.open_entries_in_tabs(vec![Route { folder, select: None }], now);
         true
     }
 
@@ -779,7 +779,7 @@ impl App {
         for i in files.into_iter().take(super::MAX_OPEN) {
             self.open_entry(i, now);
         }
-        self.open_in_tabs(routes, now);
+        self.open_entries_in_tabs(routes, now);
     }
 }
 

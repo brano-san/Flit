@@ -1,7 +1,7 @@
 use super::*;
 use flit_core::sort::CaseMode;
 use flit_core::Listing;
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
@@ -25,7 +25,6 @@ private\t0\t(mountable)\tstandard::display-name=private standard::target-uri=smb
 ";
 
 const NOT_MOUNTED: &str = "gio: smb://brano.local/: The specified location is not mounted\n";
-const NOT_SUPPORTED: &str = "gio: nosuch:///: The specified location is not supported\n";
 const REFUSED: &str = "gio: smb://127.0.0.1/: Failed to retrieve share list from server: Connection refused\n";
 
 const AVAHI: &str = r#"+;eth0;IPv6;\208\164\208\176\208\185\208\187\209\139\032\208\189\208\176\032\209\129\208\181\209\128\208\178\208\181\209\128\208\181;_sftp-ssh._tcp;local
@@ -50,77 +49,104 @@ fn done(code: i32, stdout: &str, stderr: &str) -> io::Result<Output> {
     Ok(Output { status: ExitStatus::from_raw(code << 8), stdout: stdout.as_bytes().to_vec(), stderr: stderr.as_bytes().to_vec() })
 }
 
+const WORKGROUPS: &str = "WORKGROUP\t0\t(shortcut)\tstandard::display-name=WORKGROUP standard::target-uri=smb://WORKGROUP/\nLAB\t0\t(shortcut)\tstandard::display-name=Lab\n";
+const COMPUTERS: &str = "BRANO-2\t0\t(shortcut)\tstandard::display-name=BRANO standard::target-uri=smb://BRANO-2/\nFLITWIN\t0\t(shortcut)\tstandard::display-name=FLITWIN standard::target-uri=smb://FLITWIN/\n";
+
 struct Fake {
     lists: RefCell<VecDeque<io::Result<Output>>>,
     asked: RefCell<Vec<(String, Duration)>>,
     mounted: RefCell<Vec<String>>,
-    lines: Option<Vec<String>>,
-    browse_error: Cell<Option<io::ErrorKind>>,
-    browsed: Cell<Option<Duration>>,
-    clock: Cell<Instant>,
-    delays: RefCell<VecDeque<Duration>>,
 }
 
 impl Fake {
     fn new(lists: Vec<io::Result<Output>>) -> Self {
-        Fake { lists: RefCell::new(lists.into()), asked: RefCell::default(), mounted: RefCell::default(), lines: None, browse_error: Cell::new(Some(io::ErrorKind::NotFound)), browsed: Cell::new(None), clock: Cell::new(Instant::now()), delays: RefCell::default() }
-    }
-
-    fn avahi(mut self, text: &str) -> Self {
-        self.lines = Some(text.lines().map(str::to_owned).collect());
-        self.browse_error.set(None);
-        self
-    }
-
-    fn calls(&self) -> usize {
-        self.asked.borrow().len()
+        Self { lists: RefCell::new(lists.into()), asked: RefCell::default(), mounted: RefCell::default() }
     }
 }
 
 impl Probe for Fake {
     fn list(&self, uri: &str, wait: Duration) -> io::Result<Output> {
         self.asked.borrow_mut().push((uri.to_owned(), wait));
-        let late = self.delays.borrow_mut().pop_front().unwrap_or_default();
-        self.clock.set(self.clock.get() + late);
-        let next = self.lists.borrow_mut().pop_front();
-        next.unwrap_or_else(|| done(0, GVFS_LATER, ""))
+        self.lists.borrow_mut().pop_front().expect("unexpected list")
     }
 
     fn mount(&self, uri: &str, _wait: Duration) -> io::Result<Output> {
         self.mounted.borrow_mut().push(uri.to_owned());
         done(0, "", "")
     }
+}
 
-    fn browse(&self, wait: Duration, each: &mut dyn FnMut(Option<&str>) -> bool) -> io::Result<()> {
-        self.browsed.set(Some(wait));
-        if let Some(kind) = self.browse_error.get() {
-            return Err(io::Error::from(kind));
-        }
-        for line in self.lines.iter().flatten() {
-            if !each(Some(line)) {
-                return Ok(());
-            }
-        }
-        Ok(())
+struct Schedule {
+    start: Instant,
+    clock: Instant,
+    asked: Vec<(Query, Duration, Duration)>,
+    network: VecDeque<(Duration, Listed)>,
+    avahi: Vec<(Duration, Reply)>,
+    groups: Vec<(&'static str, Vec<Found>)>,
+    pending: Vec<(Instant, Reply)>,
+}
+
+impl Schedule {
+    fn new(network: Vec<(Duration, Listed)>) -> Self {
+        let start = Instant::now();
+        Self { start, clock: start, asked: Vec::new(), network: network.into(), avahi: Vec::new(), groups: Vec::new(), pending: Vec::new() }
     }
 
-    fn pause(&self, d: Duration) {
-        self.clock.set(self.clock.get() + d);
+    fn quick(texts: &[&str]) -> Self {
+        Self::new(texts.iter().map(|text| (Duration::ZERO, Listed::Text((*text).into()))).collect())
     }
 
-    fn now(&self) -> Instant {
-        self.clock.get()
+    fn elapsed(&self) -> Duration {
+        self.clock - self.start
     }
 }
 
-fn run(fake: &Fake, dir: &FsPath, mut keep: impl FnMut(usize) -> bool) -> (Result<(), FsError>, Listing, Vec<usize>) {
+impl Discovery for Schedule {
+    fn now(&self) -> Instant {
+        self.clock
+    }
+
+    fn start(&mut self, query: Query, until: Instant) {
+        let wait = until.duration_since(self.clock).min(PROBE_WAIT);
+        self.asked.push((query.clone(), self.elapsed(), wait));
+        match query {
+            Query::Network => {
+                let (delay, listed) = self.network.pop_front().unwrap_or((Duration::ZERO, Listed::Text(String::new())));
+                let reply = if delay >= wait { Listed::Failed(io::ErrorKind::TimedOut.into()) } else { listed };
+                self.pending.push((self.clock + delay.min(wait), Reply::Network(reply)));
+            }
+            Query::Avahi if self.avahi.is_empty() => self.pending.push((self.clock, Reply::AvahiDone(Err(io::ErrorKind::NotFound.into())))),
+            Query::Avahi => self.pending.extend(std::mem::take(&mut self.avahi).into_iter().map(|(elapsed, reply)| (self.clock + elapsed, reply))),
+            Query::Smb(uri) => {
+                let (index, _) = self.groups.iter().enumerate().find(|(_, (u, _))| *u == uri).expect("unexpected SMB query");
+                let (_, found) = self.groups.remove(index);
+                let reply = if uri == SMB_ROOT { Reply::Groups(found) } else { Reply::Smb(found) };
+                self.pending.push((self.clock + Duration::from_millis(100), reply));
+            }
+        }
+    }
+
+    fn receive(&mut self, wait: Duration) -> Option<Reply> {
+        let next = self.pending.iter().enumerate().filter(|(_, (at, _))| *at <= self.clock + wait).min_by_key(|(_, (at, _))| *at).map(|(i, _)| i);
+        if let Some(i) = next {
+            let (at, reply) = self.pending.remove(i);
+            self.clock = at;
+            Some(reply)
+        } else {
+            self.clock += wait;
+            None
+        }
+    }
+}
+
+fn run(enumerate: impl FnOnce(&mut ListingBuilder<'_>) -> Result<(), FsError>, mut keep: impl FnMut(usize) -> bool) -> (Result<(), FsError>, Listing, Vec<usize>) {
     let mut batches = Vec::new();
     let mut go = |b: &ListingBuilder<'_>| {
         batches.push(b.listing.len());
         keep(b.listing.len())
     };
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
-    let result = read_dir_with(fake, dir, &mut b, 0);
+    let result = enumerate(&mut b);
     let listing = std::mem::take(&mut b.listing);
     drop(b);
     (result, listing, batches)
@@ -145,11 +171,13 @@ fn gvfs_network_lines_become_servers_with_their_addresses() {
             found("BRANO", "smb://brano-2.local:445/"),
             found("Team DAV", "dav+sd://Team%20DAV._webdav._tcp.local"),
             found("nfs export", "nfs://brano-2.local:2049/export"),
+            found("Windows Network", SMB_ROOT),
         ],
         "{SOURCE}"
     );
-    assert!(parse_network(GVFS_FIRST).is_empty(), "Windows Network has no host and cannot be opened as a server");
-    assert!(parse_network(GVFS_WITH_ICON).is_empty());
+    assert_eq!(parse_network(GVFS_FIRST), [found("Windows Network", SMB_ROOT)]);
+    assert_eq!(parse_network("smb-root\t0\t(shortcut)\tstandard::name=smb-root standard::display-name=Windows Network\n")[0].uri, SMB_ROOT);
+    assert_eq!(parse_network(GVFS_WITH_ICON)[0].uri, SMB_ROOT);
 }
 
 #[test]
@@ -205,35 +233,101 @@ fn smb_servers_are_told_from_shares_and_other_services() {
 }
 
 #[test]
-fn computers_appear_round_by_round_until_the_search_time_is_over() {
-    let fake = Fake::new(vec![done(0, GVFS_FIRST, ""), done(0, GVFS_LATER, "")]);
-    let (result, listing, batches) = run(&fake, &FsPath::network(), |_| true);
+fn fast_network_discovery_finishes_after_two_unchanged_rounds_and_publishes_immediately() {
+    let sample = "box\t0\t(shortcut)\tstandard::display-name=Box standard::target-uri=sftp://box/\n";
+    let mut p = Schedule::quick(&[sample, sample, sample]);
+    p.avahi.push((Duration::from_secs(5), Reply::AvahiDone(Ok(()))));
+    let (result, listing, batches) = run(|out| discover(&mut p, out), |_| true);
     assert_eq!(result, Ok(()));
-    assert_eq!(batches[..2], [0, 4], "{SOURCE}: the first answer has no servers yet, the second brings four");
-    assert!(batches[2..].iter().all(|&n| n == 4), "the same servers are not added twice: {batches:?}");
-    assert_eq!(shown(&listing).len(), 4);
-    assert_eq!(shown(&listing)[0], ("BRANO".to_owned(), "smb://brano-2.local:445/".to_owned()));
-    assert_eq!(fake.calls(), DISCOVER_FOR.as_millis().div_ceil(ROUND.as_millis()) as usize);
-    assert!(fake.asked.borrow().iter().all(|(uri, wait)| uri == NETWORK_ROOT && *wait <= Duration::from_secs(5)));
-    assert!(fake.browsed.get().is_none(), "Avahi is not asked when gvfs answers");
+    assert_eq!(batches.first(), Some(&1));
+    assert_eq!(listing.len(), 1);
+    assert_eq!(p.elapsed(), Duration::from_secs(2));
+    assert_eq!(p.asked.iter().filter(|(q, ..)| q == &Query::Network).map(|(_, time, _)| time.as_secs()).collect::<Vec<_>>(), [0, 1, 2]);
+    assert_eq!(p.asked[1], (Query::Avahi, Duration::ZERO, PROBE_WAIT));
+}
+
+#[test]
+fn new_addresses_restart_the_two_unchanged_rounds() {
+    let one = "box\t0\t(shortcut)\tstandard::display-name=Box standard::target-uri=sftp://box/\n";
+    let two = format!("{one}box2\t0\t(shortcut)\tstandard::display-name=Second standard::target-uri=ftp://box2/\n");
+    let mut p = Schedule::quick(&[one, one, &two, &two, &two]);
+    let (result, listing, _) = run(|out| discover(&mut p, out), |_| true);
+    assert_eq!(result, Ok(()));
+    assert_eq!(p.elapsed(), Duration::from_secs(4));
+    assert_eq!(shown(&listing).len(), 2);
+}
+
+#[test]
+fn hung_commands_cannot_extend_discovery_past_six_seconds() {
+    let slow = (Duration::from_secs(30), Listed::Text(String::new()));
+    let mut p = Schedule::new(vec![slow, (Duration::from_secs(30), Listed::Text(String::new()))]);
+    p.avahi.push((Duration::from_secs(30), Reply::AvahiDone(Ok(()))));
+    let (result, listing, _) = run(|out| discover(&mut p, out), |_| true);
+    assert_eq!(result, Ok(()));
+    assert!(listing.is_empty());
+    assert_eq!(p.elapsed(), Duration::from_secs(6));
+    assert_eq!(p.asked, [
+        (Query::Network, Duration::ZERO, Duration::from_secs(5)),
+        (Query::Avahi, Duration::ZERO, Duration::from_secs(5)),
+        (Query::Network, Duration::from_millis(5250), Duration::from_millis(750)),
+    ]);
+}
+
+#[test]
+fn smb_groups_and_computers_follow_gio_attributes() {
+    assert_eq!(parse_smb_browse(WORKGROUPS).collect::<Vec<_>>(), [found("WORKGROUP", "smb://WORKGROUP/"), found("Lab", "smb://LAB/")]);
+    assert_eq!(parse_smb_browse(COMPUTERS).collect::<Vec<_>>(), [found("BRANO", "smb://BRANO-2/"), found("FLITWIN", "smb://FLITWIN/")]);
+    assert!(parse_smb_browse("ignored\t0\t(mountable)\tstandard::target-uri=smb://HOST/share\n").next().is_none());
+}
+
+#[test]
+fn smb_browse_opens_workgroups_and_only_adds_unique_computers() {
+    let mut p = Schedule::quick(&[GVFS_LATER, GVFS_FIRST, GVFS_FIRST]);
+    p.groups = vec![
+        (SMB_ROOT, parse_smb_browse(WORKGROUPS).collect()),
+        ("smb://WORKGROUP/", parse_smb_browse(COMPUTERS).collect()),
+        ("smb://LAB/", vec![found("Duplicate", "smb://flitwin/")]),
+    ];
+    let (result, listing, batches) = run(|out| discover(&mut p, out), |_| true);
+    assert_eq!(result, Ok(()));
+    assert_eq!(batches[0], 4);
+    assert_eq!(listing.len(), 5);
+    let listed = shown(&listing);
+    assert!(listed.contains(&("FLITWIN".into(), "smb://FLITWIN/".into())));
+    assert!(listed.iter().all(|(_, uri)| uri != SMB_ROOT && uri != "smb://WORKGROUP/"));
+    assert!(p.asked.iter().any(|(q, ..)| q == &Query::Smb("smb://LAB/".into())));
+    assert_eq!(p.elapsed(), Duration::from_secs(3));
+}
+
+#[test]
+fn an_unavailable_windows_network_container_leaves_the_view_empty() {
+    let mut p = Schedule::quick(&[GVFS_FIRST, GVFS_FIRST, GVFS_FIRST]);
+    p.groups = vec![(SMB_ROOT, Vec::new())];
+    let (result, listing, _) = run(|out| discover(&mut p, out), |_| true);
+    assert_eq!(result, Ok(()));
+    assert!(listing.is_empty());
+    assert_eq!(p.elapsed(), Duration::from_secs(2));
+    assert_eq!(p.asked.iter().filter(|(query, ..)| query == &Query::Smb(SMB_ROOT.into())).count(), 1);
 }
 
 #[test]
 fn leaving_the_network_view_stops_the_search() {
-    let fake = Fake::new(vec![done(0, GVFS_LATER, "")]);
-    let (result, listing, batches) = run(&fake, &FsPath::network(), |_| false);
+    let mut p = Schedule::quick(&[GVFS_LATER]);
+    p.groups = vec![(SMB_ROOT, Vec::new())];
+    let (result, listing, batches) = run(|out| discover(&mut p, out), |_| false);
     assert_eq!(result, Ok(()));
-    assert_eq!(fake.calls(), 1);
+    assert_eq!(p.asked.iter().filter(|(query, ..)| query == &Query::Network).count(), 1);
     assert_eq!(batches, [4]);
     assert_eq!(listing.len(), 4);
 }
 
 #[test]
 fn the_network_order_uses_display_names_and_the_shared_sort_keys() {
-    let fake = Fake::new(vec![done(0, GVFS_LATER, "")]);
+    let mut p = Schedule::quick(&[GVFS_LATER]);
+    p.groups = vec![(SMB_ROOT, Vec::new())];
     let mut keep = |_: &ListingBuilder<'_>| false;
     let mut out = ListingBuilder::new(CaseMode::Insensitive, &mut keep);
-    read_dir_with(&fake, &FsPath::network(), &mut out, 0).unwrap();
+    discover(&mut p, &mut out).unwrap();
     let mut order = Vec::new();
     flit_core::sort::sort(&out.listing, &out.keys, flit_core::sort::ViewSpec::default(), &mut order);
     let visible: Vec<_> = order.into_iter().map(|i| std::str::from_utf8(out.listing.label(i)).unwrap()).collect();
@@ -241,61 +335,29 @@ fn the_network_order_uses_display_names_and_the_shared_sort_keys() {
 }
 
 #[test]
-fn a_hung_gvfs_uses_only_the_available_search_time() {
-    let time_out = || Err(io::Error::from(io::ErrorKind::TimedOut));
-    let fake = Fake::new(vec![time_out(), time_out(), time_out()]);
-    let last_poll = DISCOVER_FOR - 2 * (PROBE_WAIT + TICK);
-    fake.delays.borrow_mut().extend([PROBE_WAIT, PROBE_WAIT, last_poll]);
-    let started = fake.now();
-    let (result, listing, batches) = run(&fake, &FsPath::network(), |_| true);
-    assert_eq!(result, Err(FsError::not_responding()));
-    assert_eq!(batches, [0, 0, 0]);
-    assert_eq!(fake.asked.borrow()[2].1, last_poll);
-    assert!(listing.is_empty());
-    assert_eq!(fake.now() - started, DISCOVER_FOR);
-}
-
-#[test]
-fn a_cold_gvfs_can_publish_results_after_two_command_timeouts() {
-    let time_out = || Err(io::Error::from(io::ErrorKind::TimedOut));
-    let fake = Fake::new(vec![time_out(), time_out(), done(0, GVFS_LATER, "")]);
-    fake.delays.borrow_mut().extend([PROBE_WAIT, PROBE_WAIT]);
-    let (result, listing, batches) = run(&fake, &FsPath::network(), |_| true);
+fn avahi_has_results_ready_when_gio_reports_it_cannot_browse() {
+    let mut p = Schedule::new(vec![(Duration::from_secs(4), Listed::Unsupported)]);
+    p.avahi = vec![
+        (Duration::from_millis(500), Reply::AvahiItem(found("Box", "smb://box.local/"))),
+        (Duration::from_secs(1), Reply::AvahiDone(Ok(()))),
+    ];
+    let (result, listing, _) = run(|out| discover(&mut p, out), |n| n == 0);
     assert_eq!(result, Ok(()));
-    assert_eq!(batches[..3], [0, 0, 4]);
-    assert_eq!(listing.len(), 4);
+    assert_eq!(p.elapsed(), Duration::from_secs(4));
+    assert_eq!(p.asked[1], (Query::Avahi, Duration::ZERO, PROBE_WAIT));
+    assert_eq!(listing.len(), 1);
 }
 
 #[test]
-fn without_gvfs_network_avahi_finds_the_computers() {
-    for gio in [Err(io::Error::from(io::ErrorKind::NotFound)), done(2, "", NOT_SUPPORTED)] {
-        let fake = Fake::new(vec![gio]).avahi(AVAHI);
-        let (result, listing, batches) = run(&fake, &FsPath::network(), |_| true);
-        assert_eq!(result, Ok(()));
-        assert_eq!(fake.calls(), 1, "gvfs is not asked again once it is known to be missing");
-        assert_eq!(shown(&listing), [("BRANO".to_owned(), "smb://brano-2.local/".to_owned()), ("Flit проверка NFS".to_owned(), "nfs://brano-2.local/export".to_owned()), ("Team DAV".to_owned(), "dav://alice@brano-2.local:8080/dav".to_owned()), ("Файлы на сервере".to_owned(), "sftp://brano-2.local/".to_owned())]);
-        assert_eq!(batches.into_iter().collect::<std::collections::BTreeSet<_>>(), [0, 1, 2, 3, 4].into_iter().collect());
-        assert_eq!(fake.browsed.get(), Some(Duration::from_secs(5)));
-    }
-}
-
-#[test]
-fn without_gvfs_and_avahi_the_package_is_named_instead_of_waiting() {
-    for gio in [Err(io::Error::from(io::ErrorKind::NotFound)), done(2, "", NOT_SUPPORTED)] {
-        let fake = Fake::new(vec![gio]);
-        let (result, listing, _) = run(&fake, &FsPath::network(), |_| true);
-        assert_eq!(result, Err(FsError::no_network_browser(0)));
-        assert_eq!(result.unwrap_err().network_package(), Some("gvfs-backends"));
+fn a_missing_avahi_program_is_distinguished_from_a_stopped_daemon() {
+    for (avahi, expected) in [(io::ErrorKind::NotFound, Err(FsError::no_network_browser())), (io::ErrorKind::Other, Ok(()))] {
+        let mut p = Schedule::new(vec![(Duration::ZERO, Listed::Unsupported)]);
+        p.avahi.push((Duration::ZERO, Reply::AvahiDone(Err(io::Error::new(avahi, "Daemon not running")))));
+        let (result, listing, _) = run(|out| discover(&mut p, out), |_| true);
+        assert_eq!(result, expected);
         assert!(listing.is_empty());
-        assert_eq!(fake.calls(), 1, "nothing is retried when nothing can answer");
+        assert_eq!(p.elapsed(), Duration::ZERO);
     }
-}
-
-#[test]
-fn a_hung_gvfs_without_avahi_reports_not_responding() {
-    let fake = Fake::new((0..64).map(|_| Err(io::Error::from(io::ErrorKind::TimedOut))).collect());
-    let (result, ..) = run(&fake, &FsPath::network(), |_| true);
-    assert_eq!(result, Err(FsError::not_responding()));
 }
 
 #[test]
@@ -304,10 +366,19 @@ fn the_real_search_without_gio_and_avahi_browse_returns_at_once() {
     let result = crate::temp::with_tools(&[], || {
         let mut go = |_: &ListingBuilder<'_>| true;
         let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
-        read_dir_with(&System, &FsPath::network(), &mut b, 0)
+        read_dir(&FsPath::network(), &mut b)
     });
-    assert_eq!(result, Err(FsError::no_network_browser(0)));
+    assert_eq!(result, Err(FsError::no_network_browser()));
     assert!(started.elapsed() < Duration::from_secs(5), "{:?}", started.elapsed());
+}
+
+#[test]
+fn advertised_labels_strip_control_characters_and_are_capped_by_characters() {
+    let label = format!("a\\027\\009\u{202a}\u{202e}\u{2066}\u{2069}\u{200e}\u{200f}{}", "я".repeat(300));
+    let parsed = parse_avahi(&format!("=;eth0;IPv4;{label};_smb._tcp;local;box.local;10.0.0.2;445;")).unwrap();
+    assert_eq!(parsed.name, format!("a{}", "я".repeat(254)));
+    let sample = "x\t0\t(shortcut)\tstandard::display-name=a\u{202e}b standard::target-uri=sftp://box/\n";
+    assert_eq!(parse_network(sample)[0].name, "ab");
 }
 
 #[test]
@@ -320,43 +391,40 @@ fn a_large_gio_listing_is_drained_before_the_deadline() {
 }
 
 #[test]
-fn a_server_lists_its_shares_and_mounts_the_server_first_when_needed() {
-    let fake = Fake::new(vec![done(0, SHARES, "")]);
-    let (result, listing, _) = run(&fake, &server("smb://brano-2.local:445/"), |_| true);
+fn listing_server_shares_is_read_only_even_when_the_server_is_not_mounted() {
+    let uri = "smb://brano-2.local:445/";
+    let fake = Fake::new(vec![done(0, SHARES, ""), done(2, "", NOT_MOUNTED)]);
+    let (result, listing, _) = run(|out| read_server(&fake, &server(uri), out), |_| true);
     assert_eq!(result, Ok(()));
-    assert_eq!(fake.asked.borrow()[0], ("smb://brano-2.local:445/".to_owned(), PROBE_WAIT));
-    assert!(fake.mounted.borrow().is_empty());
+    assert_eq!(fake.asked.borrow()[0], (uri.to_owned(), PROBE_WAIT));
     assert_eq!(shown(&listing)[0], ("private".to_owned(), "smb://brano-2.local/private".to_owned()));
     assert!(listing.entries.iter().all(|e| e.is_dir()));
-    let fake = Fake::new(vec![done(2, "", NOT_MOUNTED), done(0, SHARES, "")]);
-    let (result, listing, _) = run(&fake, &server("smb://brano.local/"), |_| true);
-    assert_eq!(result, Ok(()));
-    assert_eq!(*fake.mounted.borrow(), ["smb://brano.local/"]);
-    assert_eq!(listing.len(), 2);
+    let (result, listing, _) = run(|out| read_server(&fake, &server(uri), out), |_| true);
+    assert_eq!(result, Err(FsError { kind: FsErrorKind::AccessDenied, code: 0 }));
+    assert!(listing.is_empty());
+    assert!(fake.mounted.borrow().is_empty());
+    assert!(mount_anonymous(&fake, uri));
+    assert_eq!(*fake.mounted.borrow(), [uri]);
 }
 
 #[test]
-fn a_server_that_refuses_or_needs_a_password_shows_an_error() {
-    let fake = Fake::new(vec![done(2, "", NOT_MOUNTED), done(2, "", NOT_MOUNTED)]);
-    let (result, ..) = run(&fake, &server("smb://nas/"), |_| true);
-    assert_eq!(result, Err(FsError { kind: FsErrorKind::AccessDenied, code: 0 }));
-    let fake = Fake::new(vec![done(2, "", REFUSED)]);
-    let (result, ..) = run(&fake, &server("smb://127.0.0.1/"), |_| true);
-    assert_eq!(result, Err(FsError { kind: FsErrorKind::Unavailable, code: 0 }));
-    assert!(fake.mounted.borrow().is_empty(), "a refused connection is not retried as a mount");
-    let fake = Fake::new(vec![Err(io::Error::from(io::ErrorKind::NotFound))]);
-    let (result, ..) = run(&fake, &server("smb://nas/"), |_| true);
-    assert_eq!(result, Err(FsError::no_network_browser(0)));
+fn refusal_and_missing_gio_stay_listing_errors_without_mounting() {
+    for error in [done(2, "", REFUSED), Err(io::ErrorKind::NotFound.into())] {
+        let fake = Fake::new(vec![error]);
+        let (result, ..) = run(|out| read_server(&fake, &server("smb://127.0.0.1/"), out), |_| true);
+        assert_eq!(result, Err(FsError { kind: FsErrorKind::Unavailable, code: 0 }));
+        assert!(fake.mounted.borrow().is_empty());
+    }
 }
 
 #[test]
 fn addresses_that_are_not_smb_servers_are_not_listed_as_folders() {
     let fake = Fake::new(Vec::new());
     for path in [server("sftp://brano-2.local:22/"), server("smb://nas/docs")] {
-        let (result, ..) = run(&fake, &path, |_| true);
+        let (result, ..) = run(|out| read_server(&fake, &path, out), |_| true);
         assert_eq!(result, Err(FsError { kind: FsErrorKind::NotADirectory, code: 0 }));
     }
-    assert_eq!(fake.calls(), 0);
+    assert!(fake.asked.borrow().is_empty());
 }
 
 #[test]
@@ -386,24 +454,24 @@ fn live_network_search_and_share_listing() {
         true
     };
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
-    let result = read_dir_with(&System, &FsPath::network(), &mut b, 0);
+    let result = read_dir(&FsPath::network(), &mut b);
     let listing = std::mem::take(&mut b.listing);
     drop(b);
     println!("live-network result={result:?} batches={batches:?}");
     println!("live-network items={:?}", shown(&listing));
     assert_eq!(result, Ok(()));
     assert!(shown(&listing).iter().any(|(label, _)| *label == name), "{name} not found");
-    assert!(started.elapsed() < DISCOVER_FOR + PROBE_WAIT + Duration::from_secs(2));
-    let mounted = System.mount(&server_uri, PROBE_WAIT).unwrap();
-    assert!(mounted.status.success(), "{}", String::from_utf8_lossy(&mounted.stderr));
+    assert!(started.elapsed() < DISCOVER_FOR + Duration::from_secs(1));
+    use flit_platform::Shell;
     let (events, _) = crossbeam_channel::unbounded();
     let prompt = flit_platform::MountPrompt::new(1, events, std::sync::Arc::new(|| {}));
-    assert!(crate::gvfs::browse(&server_uri, &prompt).unwrap());
+    let mounted = crate::shell::LinuxShell.connect_asking(&server_uri, &prompt).unwrap();
+    assert_eq!(mounted, Some(server(&server_uri)));
     let raw = System.list(&server_uri, PROBE_WAIT).unwrap();
     println!("live-raw status={:?} out={:?} err={:?}", raw.status, String::from_utf8_lossy(&raw.stdout), String::from_utf8_lossy(&raw.stderr));
     let mut go = |_: &ListingBuilder<'_>| true;
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
-    let result = read_dir_with(&System, &server(&server_uri), &mut b, 0);
+    let result = read_dir(&server(&server_uri), &mut b);
     println!("live-shares result={result:?} items={:?}", shown(&b.listing));
     assert_eq!(result, Ok(()));
     assert!(!b.listing.is_empty());
@@ -411,7 +479,7 @@ fn live_network_search_and_share_listing() {
     if let Ok(locked) = std::env::var("FLIT_NET_LIVE_LOCKED") {
         let mut go = |_: &ListingBuilder<'_>| true;
         let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
-        let result = read_dir_with(&System, &server(&locked), &mut b, 0);
+        let result = read_dir(&server(&locked), &mut b);
         println!("live-locked result={result:?}");
         assert_eq!(result, Err(FsError { kind: FsErrorKind::AccessDenied, code: 0 }));
     }

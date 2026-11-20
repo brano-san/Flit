@@ -22,10 +22,12 @@ struct Need {
     when: When,
 }
 
-const NEEDS: [Need; 19] = [
+const NEEDS: [Need; 21] = [
     Need { tools: &["xdg-open"], purpose: S::SettingsPageToolOpen, packages: ["xdg-utils", "xdg-utils", "xdg-utils", "xdg-utils"], when: When::Always },
     Need { tools: &["gdbus"], purpose: S::SettingsPageToolDesktop, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
     Need { tools: &["gio"], purpose: S::SettingsPageToolDrives, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
+    Need { tools: &["gvfsd-network"], purpose: S::PathNetwork, packages: ["gvfs-backends", "gvfs", "gvfs", "gvfs"], when: When::Always },
+    Need { tools: &["avahi-browse"], purpose: S::PathNetwork, packages: ["avahi-utils", "avahi-tools", "avahi", "avahi-utils"], when: When::Always },
     Need { tools: &["xclip"], purpose: S::SettingsPageToolClipboard, packages: ["xclip", "xclip", "xclip", "xclip"], when: When::X11 },
     Need { tools: &["wl-copy"], purpose: S::SettingsPageToolClipboard, packages: ["wl-clipboard", "wl-clipboard", "wl-clipboard", "wl-clipboard"], when: When::Wayland },
     Need { tools: &["wl-paste"], purpose: S::SettingsPageToolClipboard, packages: ["wl-clipboard", "wl-clipboard", "wl-clipboard", "wl-clipboard"], when: When::Wayland },
@@ -96,6 +98,9 @@ fn library_dirs() -> Vec<std::path::PathBuf> {
 }
 
 fn found(tool: &str, cache: &dyn Fn() -> Vec<u8>) -> bool {
+    if tool == "gvfsd-network" {
+        return ["/usr/libexec", "/usr/lib", "/usr/lib/gvfs", "/usr/lib64/gvfs", "/usr/lib/gvfs-daemons"].iter().any(|dir| std::path::Path::new(dir).join(tool).is_file());
+    }
     match LIBRARIES.iter().find(|(name, _)| *name == tool) {
         Some((_, files)) => crate::mpv::loaded() || library_present(files, &cache(), &library_dirs()),
         None => crate::shell::on_path(OsStr::new(tool)).is_some(),

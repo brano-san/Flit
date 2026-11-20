@@ -303,14 +303,8 @@ impl App {
         }
         let typed = self.addr.watch.take_if(|w| w.0 == t.id && w.1 == snap.gen).map(|w| w.2);
         let Some(kind) = snap.error.as_ref().map(|e| e.kind) else {
-            if snap.done {
-                self.network_listed(k);
-            }
             return false;
         };
-        if kind == FsErrorKind::AccessDenied && snap.done {
-            self.ask_network_login(k);
-        }
         let t = &self.tabs[k];
         let here = t.location().clone();
         match (kind, typed) {

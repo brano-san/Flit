@@ -61,7 +61,8 @@ pub struct Tab {
     pub(super) loading: Option<Loading>,
     pub(super) view: Option<DirView>,
     pub(super) view_loc: Location,
-    pub(super) network_login: bool,
+    network_listing: bool,
+    network_cache: VecDeque<Arc<DirSnapshot>>,
     pub(super) error: Option<String>,
     pub(super) live_off: Option<LiveOff>,
     pub(super) undo: Option<UndoBar>,
@@ -116,7 +117,8 @@ impl Tab {
             sizing: (0, FxHashSet::default()),
             sizes_cancel: GenToken::default(),
             view: None,
-            network_login: false,
+            network_listing: false,
+            network_cache: VecDeque::new(),
             error: None,
             live_off: None,
             undo: None,
@@ -161,11 +163,11 @@ impl Tab {
 
     pub(super) fn load(&mut self, gen: u64, select: Option<Vec<u8>>, restore: Option<crate::nav::Restore>, case: CaseMode, now: Instant, fx: &mut Vec<Effect>) {
         self.gen = gen;
+        self.network_listing = false;
         self.cancel.set(gen);
         self.stop_sizes();
         let loc = self.location().clone();
         if loc != self.view_loc {
-            self.network_login = false;
             if !self.retain_filter {
                 self.reset_filter();
             }
@@ -193,10 +195,12 @@ impl Tab {
         self.stats = LoadStats::default();
         self.keep_git_root();
         let path = loc.path().clone();
-        if loc.is_home_page() {
+        if loc.is_home_page() || super::network::network_address(&path).is_some() {
             fx.push(Effect::Provider { provider, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
             let empty = DirSnapshot { gen, path, listing: Listing::default(), keys: SortKeys::new(case), order: Vec::new(), view: self.view_spec, done: true, error: None, elapsed: Duration::ZERO };
-            return self.slot.publish(Arc::new(empty));
+            let cached = self.network_cache.iter().find(|snap| snap.path == empty.path);
+            let snap = cached.map_or(empty, |snap| DirSnapshot { gen, ..(**snap).clone() });
+            return self.slot.publish(Arc::new(snap));
         }
         if self.mode == LayoutMode::Adaptive {
             self.slot.ask_kind(gen);
@@ -206,6 +210,12 @@ impl Tab {
             provider,
             req: ProviderRequest::List { tab: self.id, gen, path, view: self.view_spec, case, out: self.slot.clone(), cancel: self.cancel.clone() },
         });
+    }
+
+    pub(super) fn list_network(&mut self, case: CaseMode, fx: &mut Vec<Effect>) {
+        self.network_listing = true;
+        let path = self.location().path().clone();
+        fx.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::List { tab: self.id, gen: self.gen, path, view: self.view_spec, case, out: self.slot.clone(), cancel: self.cancel.clone() } });
     }
 
     pub(super) fn shutdown(&mut self, fx: &mut Vec<Effect>) {
@@ -219,6 +229,11 @@ impl Tab {
     pub(super) fn on_snapshot(&mut self, snap: Arc<DirSnapshot>) -> bool {
         if snap.gen != self.gen {
             return false;
+        }
+        if self.network_listing && snap.done && snap.error.is_none() {
+            self.network_cache.retain(|old| old.path != snap.path);
+            self.network_cache.push_front(snap.clone());
+            self.network_cache.truncate(16);
         }
         if self.stats.first.is_none() {
             self.stats.first = Some(snap.elapsed);
@@ -369,6 +384,11 @@ impl Tab {
 
     pub(super) fn entry_location(&self, i: u32) -> Location {
         let l = self.view.as_ref().unwrap().listing();
+        if self.view_loc.path().is_network() {
+            if let Some(location) = super::network::network_entry(l.name(i)) {
+                return location;
+            }
+        }
         match self.view_loc.is_recycle_bin() {
             true => recycle::original(l, i).map_or_else(|| self.view_loc.clone(), Location::from_local),
             false => self.entry_dir(i).join(l.name(i)),

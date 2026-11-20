@@ -1383,7 +1383,7 @@ impl App {
         centered(g, Rect::new(list.x, y, list.w, self.cs(32.0)), G_WARNING, self.content_icons(24.0), th.error);
         for (k, (text, font, color)) in [(title, big, th.text), (detail.as_str(), small, th.text_dim)].into_iter().enumerate() {
             let y = y + self.cs(56.0 + 24.0 * k as f32);
-            if k == 1 && e.network_package().is_some() {
+            if k == 1 && e.code == crate::listing::NO_NETWORK_BROWSER_CODE {
                 self.draw_network_notice(g, Rect { y, ..list }, text, font, color);
             } else {
                 let w = g.measure(text, font).min(list.w);

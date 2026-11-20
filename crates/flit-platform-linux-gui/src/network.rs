@@ -1,16 +1,20 @@
 use flit_core::listing::{attr, Meta};
 use flit_core::{FsError, FsErrorKind, FsPath, ListingBuilder};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::fmt::Write;
 use std::io;
-use std::process::{Output, Stdio};
+use std::path::Path;
+use std::process::{Command, Output};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use flit_core::path::NETWORK_URI as NETWORK_ROOT;
-pub const DISCOVER_FOR: Duration = Duration::from_secs(13);
-pub const ROUND: Duration = Duration::from_millis(1500);
+pub const DISCOVER_FOR: Duration = Duration::from_secs(6);
+pub const ROUND: Duration = Duration::from_secs(1);
 pub const PROBE_WAIT: Duration = Duration::from_secs(5);
 const TICK: Duration = Duration::from_millis(250);
+const SMB_ROOT: &str = "smb:///";
+const SMB_GROUPS_IN_FLIGHT: usize = 4;
 const ATTRIBUTES: &str = "standard::name,standard::display-name,standard::target-uri";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -22,9 +26,6 @@ pub struct Found {
 pub trait Probe {
     fn list(&self, uri: &str, wait: Duration) -> io::Result<Output>;
     fn mount(&self, uri: &str, wait: Duration) -> io::Result<Output>;
-    fn browse(&self, wait: Duration, each: &mut dyn FnMut(Option<&str>) -> bool) -> io::Result<()>;
-    fn pause(&self, d: Duration);
-    fn now(&self) -> Instant;
 }
 
 #[derive(Debug)]
@@ -72,23 +73,45 @@ fn has_host(uri: &str) -> bool {
         && !host.is_empty() && !uri.contains('\\') && !uri.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-fn entries(listed: &str) -> impl Iterator<Item = Found> + '_ {
+fn label(value: &str) -> String {
+    value.chars().filter(|c| !c.is_control() && !matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{200e}' | '\u{200f}')).take(255).collect()
+}
+
+fn entries(listed: &str) -> impl Iterator<Item = (&str, &str, Option<&str>)> {
     listed.lines().filter_map(|line| {
         let attr_start = line.find("\tstandard::")?;
         let (name, _) = line[..attr_start].rsplit_once('\t')?.0.rsplit_once('\t')?;
         let attrs = &line[attr_start + 1..];
-        let uri = attribute(attrs, "target-uri")?.trim();
         let shown = attribute(attrs, "display-name").map(str::trim).filter(|s| !s.is_empty()).unwrap_or(name);
-        has_host(uri).then(|| Found { name: shown.to_owned(), uri: uri.to_owned() })
+        Some((attribute(attrs, "name").unwrap_or(name), shown, attribute(attrs, "target-uri").map(str::trim)))
     })
 }
 
 pub fn parse_network(listed: &str) -> Vec<Found> {
-    entries(listed).collect()
+    entries(listed).filter_map(|(name, shown, target)| {
+        let uri = target.filter(|uri| *uri == SMB_ROOT || has_host(uri)).or_else(|| {
+            (target.is_none_or(str::is_empty) && (name == "smb-root" || shown == "Windows Network")).then_some(SMB_ROOT)
+        })?;
+        Some(Found { name: label(shown), uri: uri.to_owned() })
+    }).collect()
 }
 
 pub fn parse_shares(listed: &str) -> Vec<Found> {
-    entries(listed).filter(|f| !f.name.ends_with('$')).collect()
+    entries(listed).filter_map(|(name, shown, uri)| {
+        let uri = uri.filter(|uri| has_host(uri))?;
+        (!name.ends_with('$') && !shown.ends_with('$')).then(|| Found { name: shown.to_owned(), uri: uri.to_owned() })
+    }).collect()
+}
+
+fn parse_smb_browse(listed: &str) -> impl Iterator<Item = Found> + '_ {
+    entries(listed).filter_map(|(name, shown, target)| {
+        let uri = match target {
+            Some(uri) if has_host(uri) && smb_server(uri) => format!("{}/", uri.trim_end_matches('/')),
+            None if !name.is_empty() && name != "." && name != ".." && !name.contains(['/', '\\', ':', '@']) && !name.chars().any(char::is_control) => format!("smb://{}/", encode_uri_part(name, false)),
+            _ => return None,
+        };
+        Some(Found { name: label(shown), uri })
+    })
 }
 
 fn unescape(label: &str) -> String {
@@ -140,7 +163,7 @@ pub fn parse_avahi(line: &str) -> Option<Found> {
     if f.len() < 9 || f[0] != "=" {
         return None;
     }
-    let (name, kind, host, address, port, record) = (unescape(f[3]), f[4], f[6], f[7], f[8], f.get(9..).map(|r| r.join(";")).unwrap_or_default());
+    let (name, kind, host, address, port, record) = (label(&unescape(f[3])), f[4], f[6], f[7], f[8], f.get(9..).map(|r| r.join(";")).unwrap_or_default());
     let (scheme, default_port, with_path) = match kind {
         "_smb._tcp" => ("smb", 445, false),
         "_sftp-ssh._tcp" | "_ssh._tcp" => ("sftp", 22, false),
@@ -189,69 +212,174 @@ fn failed(e: &io::Error) -> FsError {
     }
 }
 
-pub fn discover(p: &dyn Probe, out: &mut ListingBuilder<'_>, family: usize) -> Result<(), FsError> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Query {
+    Network,
+    Avahi,
+    Smb(String),
+}
+
+enum Reply {
+    Network(Listed),
+    AvahiItem(Found),
+    AvahiDone(io::Result<()>),
+    Smb(Vec<Found>),
+    Groups(Vec<Found>),
+}
+
+trait Discovery {
+    fn now(&self) -> Instant;
+    fn start(&mut self, query: Query, until: Instant);
+    fn receive(&mut self, wait: Duration) -> Option<Reply>;
+}
+
+fn discover(p: &mut dyn Discovery, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let until = p.now() + DISCOVER_FOR;
+    p.start(Query::Network, until);
+    p.start(Query::Avahi, until);
     let mut seen = HashSet::new();
-    let mut gvfs = false;
-    let why = loop {
-        let left = until.saturating_duration_since(p.now());
-        if left.is_zero() {
-            if gvfs {
-                return Ok(());
-            }
-            break Listed::Failed(io::ErrorKind::TimedOut.into());
+    let mut network = None;
+    let mut avahi = None;
+    let mut fallback = Vec::new();
+    let mut next_round = None;
+    let (mut answered, mut unchanged, mut last_count) = (false, 0, 0);
+    let (mut smb_started, mut smb_pending) = (false, 0);
+    let mut groups = VecDeque::new();
+    loop {
+        let now = p.now();
+        if now >= until || unchanged == 2 || (network.is_some() && avahi.is_some()) {
+            break;
         }
-        let pause = match classify(p.list(NETWORK_ROOT, left.min(PROBE_WAIT))) {
-            Listed::Text(text) => {
-                gvfs = true;
-                for item in parse_network(&text) {
+        if next_round.is_some_and(|next| now >= next) {
+            next_round = None;
+            p.start(Query::Network, until);
+        }
+        let wake = next_round.unwrap_or(until).min(until);
+        let wait = wake.saturating_duration_since(p.now()).min(TICK);
+        let reply = p.receive(wait);
+        if p.now() >= until {
+            break;
+        }
+        let items = match reply {
+            Some(Reply::Network(Listed::Text(text))) => {
+                let mut items = parse_network(&text);
+                items.retain(|item| {
+                    if item.uri != SMB_ROOT {
+                        return true;
+                    }
+                    if !smb_started {
+                        smb_started = true;
+                        smb_pending += 1;
+                        p.start(Query::Smb(item.uri.clone()), until);
+                    }
+                    false
+                });
+                for item in items {
                     add_once(out, &mut seen, item);
                 }
-                ROUND
+                unchanged = if answered && seen.len() == last_count { unchanged + 1 } else { 0 };
+                answered = true;
+                last_count = seen.len();
+                if unchanged < 2 {
+                    next_round = Some(p.now() + ROUND);
+                }
+                Vec::new()
             }
-            _ if gvfs => ROUND,
-            Listed::Failed(e) if e.kind() == io::ErrorKind::TimedOut => TICK,
-            other => break other,
+            Some(Reply::Network(Listed::Failed(e))) if e.kind() == io::ErrorKind::TimedOut => {
+                unchanged = 0;
+                next_round = Some(p.now() + if answered { ROUND } else { TICK });
+                Vec::new()
+            }
+            Some(Reply::Network(_)) if answered => {
+                unchanged = 0;
+                next_round = Some(p.now() + ROUND);
+                Vec::new()
+            }
+            Some(Reply::Network(why)) => {
+                network = Some(why);
+                std::mem::take(&mut fallback)
+            }
+            Some(Reply::AvahiItem(item)) if network.is_some() => vec![item],
+            Some(Reply::AvahiItem(item)) => {
+                fallback.push(item);
+                Vec::new()
+            }
+            Some(Reply::AvahiDone(result)) => {
+                avahi = Some(result);
+                Vec::new()
+            }
+            Some(Reply::Groups(items)) => {
+                smb_pending -= 1;
+                let mut queued = HashSet::new();
+                groups.extend(items.into_iter().filter(|group| queued.insert(smb_host(&group.uri))));
+                Vec::new()
+            }
+            Some(Reply::Smb(items)) => {
+                smb_pending -= 1;
+                items
+            }
+            None => Vec::new(),
         };
+        for item in items {
+            add_once(out, &mut seen, item);
+        }
+        while smb_pending < SMB_GROUPS_IN_FLIGHT {
+            let Some(group) = groups.pop_front() else { break };
+            p.start(Query::Smb(group.uri), until);
+            smb_pending += 1;
+        }
         if !out.batch_done() {
             return Ok(());
         }
-        p.pause(until.saturating_duration_since(p.now()).min(pause));
-    };
-    let browsed = p.browse(PROBE_WAIT, &mut |line| {
-        if let Some(found) = line.and_then(parse_avahi) {
-            add_once(out, &mut seen, found);
-        }
-        out.batch_done()
-    });
-    match (browsed, why) {
-        (Ok(()), _) => Ok(()),
-        (Err(_), Listed::Missing | Listed::Unsupported) => Err(FsError::no_network_browser(family)),
-        (Err(_), Listed::Failed(e)) => Err(failed(&e)),
-        (Err(e), _) => Err(failed(&e)),
     }
+    if seen.is_empty() {
+        for item in fallback {
+            add_once(out, &mut seen, item);
+        }
+        if !seen.is_empty() && !out.batch_done() {
+            return Ok(());
+        }
+    }
+    if answered || !seen.is_empty() || avahi.as_ref().is_some_and(|v| !matches!(v, Err(e) if e.kind() == io::ErrorKind::NotFound)) {
+        return Ok(());
+    }
+    match network {
+        Some(Listed::Missing | Listed::Unsupported) if matches!(avahi.as_ref(), Some(Err(e)) if e.kind() == io::ErrorKind::NotFound) => Err(FsError::no_network_browser()),
+        Some(Listed::Failed(e)) => Err(failed(&e)),
+        Some(_) => Err(FsError { kind: FsErrorKind::Unavailable, code: 0 }),
+        None => Ok(()),
+    }
+}
+
+fn smb_host(uri: &str) -> String {
+    let authority = uri.split_once("://").map_or("", |(_, rest)| rest).split('/').next().unwrap_or_default();
+    let host = authority.rsplit('@').next().unwrap_or_default();
+    let host = match host.rsplit_once(':') {
+        Some((name, port)) if port.parse::<u16>().is_ok() && (!name.contains(':') || name.ends_with(']')) => name,
+        _ => host,
+    };
+    let host = flit_platform_linux::percent_decode(host.as_bytes());
+    let lower = String::from_utf8_lossy(&host).trim_end_matches('.').to_lowercase();
+    lower.strip_suffix(".local").unwrap_or(&lower).to_owned()
 }
 
 fn add_once(out: &mut ListingBuilder<'_>, seen: &mut HashSet<String>, item: Found) {
-    if !seen.contains(&item.uri) {
+    let key = if smb_server(&item.uri) { format!("smb:{}", smb_host(&item.uri)) } else { item.uri.clone() };
+    if seen.insert(key) {
         add(out, &item);
-        seen.insert(item.uri);
     }
 }
 
-pub fn shares(p: &dyn Probe, uri: &str, out: &mut ListingBuilder<'_>, family: usize) -> Result<(), FsError> {
-    let mut listed = classify(p.list(uri, PROBE_WAIT));
-    if matches!(listed, Listed::NotMounted) {
-        if !out.batch_done() {
-            return Ok(());
-        }
-        listed = match p.mount(uri, PROBE_WAIT) {
-            Ok(o) if o.status.success() || String::from_utf8_lossy(&o.stderr).contains("already mounted") => classify(p.list(uri, PROBE_WAIT)),
-            Ok(o) if crate::places::needs_login(&o) => Listed::Denied,
-            mounted => classify(mounted),
-        };
-    }
-    match listed {
+fn mounted(o: &Output) -> bool {
+    o.status.success() || String::from_utf8_lossy(&o.stderr).contains("already mounted")
+}
+
+pub fn mount_anonymous(p: &dyn Probe, uri: &str) -> bool {
+    p.mount(uri, PROBE_WAIT).is_ok_and(|o| mounted(&o))
+}
+
+pub fn shares(p: &dyn Probe, uri: &str, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+    match classify(p.list(uri, PROBE_WAIT)) {
         Listed::Text(text) => {
             for share in parse_shares(&text) {
                 add(out, &share);
@@ -260,103 +388,140 @@ pub fn shares(p: &dyn Probe, uri: &str, out: &mut ListingBuilder<'_>, family: us
             Ok(())
         }
         Listed::NotMounted | Listed::Denied => Err(FsError { kind: FsErrorKind::AccessDenied, code: 0 }),
-        Listed::Missing | Listed::Unsupported => Err(FsError::no_network_browser(family)),
+        Listed::Missing | Listed::Unsupported => Err(FsError { kind: FsErrorKind::Unavailable, code: 0 }),
         Listed::Failed(e) => Err(failed(&e)),
     }
 }
 
-pub fn read_dir_with(p: &dyn Probe, dir: &FsPath, out: &mut ListingBuilder<'_>, family: usize) -> Result<(), FsError> {
-    let parts: Vec<&[u8]> = dir.components().collect();
-    match parts[..] {
-        [] => discover(p, out, family),
-        [server] => match std::str::from_utf8(server).ok().filter(|s| smb_server(s)) {
-            Some(uri) => shares(p, uri, out, family),
-            None => Err(FsError { kind: FsErrorKind::NotADirectory, code: 0 }),
-        },
+fn read_server(p: &dyn Probe, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+    let mut parts = dir.components();
+    let uri = parts.next().and_then(|server| std::str::from_utf8(server).ok()).filter(|s| smb_server(s));
+    match (uri, parts.next()) {
+        (Some(uri), None) => shares(p, uri, out),
+        (_, None) => Err(FsError { kind: FsErrorKind::NotADirectory, code: 0 }),
         _ => Err(FsError { kind: FsErrorKind::NotFound, code: 0 }),
     }
 }
 
 pub struct System;
 
-fn quiet(mut cmd: std::process::Command) -> std::process::Command {
-    cmd.env("LC_ALL", "C.UTF-8").env_remove("LANGUAGE");
-    cmd
+fn gio_list(mut cmd: Command, wait: Duration) -> io::Result<Output> {
+    cmd.env("LC_ALL", "C.UTF-8");
+    crate::places::run_within(cmd, wait)
+}
+
+fn list_args(uri: &str) -> [&str; 4] {
+    ["list", "-a", ATTRIBUTES, uri]
+}
+
+fn mount_args(uri: &str) -> [&str; 4] {
+    ["mount", "-a", "--", uri]
 }
 
 impl Probe for System {
     fn list(&self, uri: &str, wait: Duration) -> io::Result<Output> {
-        let mut cmd = quiet(crate::tools::command("gio")?);
-        cmd.args(["list", "-a", ATTRIBUTES, uri]);
-        crate::places::run_within(cmd, wait)
+        gio_list(crate::places::gio_command(&list_args(uri))?, wait)
     }
 
     fn mount(&self, uri: &str, wait: Duration) -> io::Result<Output> {
-        let mut cmd = quiet(crate::tools::command("gio")?);
-        cmd.args(["mount", "-a", uri]);
+        let cmd = crate::places::gio_command(&mount_args(uri))?;
         crate::places::run_within(cmd, wait)
     }
+}
 
-    fn browse(&self, wait: Duration, each: &mut dyn FnMut(Option<&str>) -> bool) -> io::Result<()> {
-        use std::io::BufRead;
-        let mut cmd = quiet(crate::tools::command("avahi-browse")?);
-        cmd.args(["-a", "-k", "-p", "-r", "-t"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = cmd.spawn()?;
-        let stdout = child.stdout.take().ok_or_else(|| io::Error::other("avahi-browse"))?;
-        let (tx, rx) = std::sync::mpsc::channel::<String>();
-        std::thread::Builder::new().name("flit-avahi".into()).spawn(move || {
-            let mut lines = std::io::BufReader::new(stdout);
-            let mut line = Vec::new();
-            while lines.read_until(b'\n', &mut line).is_ok_and(|n| n > 0) {
-                if tx.send(String::from_utf8_lossy(&line).trim_end().to_owned()).is_err() {
-                    return;
-                }
-                line.clear();
-            }
-        })?;
-        let until = Instant::now() + wait;
-        let mut heard = false;
-        let ended = loop {
-            let left = until.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                break false;
-            }
-            match rx.recv_timeout(left.min(TICK)) {
-                Ok(line) => {
-                    heard = true;
-                    if !each(Some(&line)) {
-                        break false;
-                    }
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                    if !each(None) {
-                        break false;
-                    }
-                }
-                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break true,
-            }
-        };
-        if !ended {
-            let _ = child.kill();
+fn browse_smb(program: &Path, uri: &str, until: Instant) -> Vec<Found> {
+    let budget = || PROBE_WAIT.min(until.saturating_duration_since(Instant::now()));
+    let list = || classify(gio_list(crate::places::gio_at(program, &list_args(uri)), budget()));
+    let mut listed = list();
+    if matches!(listed, Listed::NotMounted) && !budget().is_zero() {
+        let cmd = crate::places::gio_at(program, &mount_args(uri));
+        if crate::places::run_within(cmd, budget()).is_ok_and(|o| mounted(&o)) && !budget().is_zero() {
+            listed = list();
         }
-        let out = child.wait_with_output()?;
-        if ended && !out.status.success() && !heard {
-            return Err(io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()));
+    }
+    match listed {
+        Listed::Text(text) => parse_smb_browse(&text).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn browse_avahi(program: &Path, wait: Duration, tx: Sender<Reply>) -> io::Result<()> {
+    let mut cmd = Command::new(program);
+    cmd.args(["-a", "-k", "-p", "-r", "-t"]).env("LC_ALL", "C").env("LANGUAGE", "");
+    crate::places::run_streaming(cmd, wait, move |line| {
+        if let Some(item) = parse_avahi(line) {
+            let _ = tx.send(Reply::AvahiItem(item));
         }
-        Ok(())
-    }
+    }).and_then(|out| {
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()))
+        }
+    })
+}
 
-    fn pause(&self, d: Duration) {
-        std::thread::sleep(d);
-    }
+struct SystemDiscovery {
+    tx: Sender<Reply>,
+    rx: Receiver<Reply>,
+}
 
+impl SystemDiscovery {
+    fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self { tx, rx }
+    }
+}
+
+impl Discovery for SystemDiscovery {
     fn now(&self) -> Instant {
         Instant::now()
+    }
+
+    fn start(&mut self, query: Query, until: Instant) {
+        let tool = if query == Query::Avahi { "avahi-browse" } else { "gio" };
+        let tx = self.tx.clone();
+        let send_error = |error| {
+            let reply = match query {
+                Query::Network => Reply::Network(classify(Err(error))),
+                Query::Avahi => Reply::AvahiDone(Err(error)),
+                Query::Smb(_) => Reply::Smb(Vec::new()),
+            };
+            let _ = self.tx.send(reply);
+        };
+        let Ok(program) = crate::tools::require(tool) else {
+            return send_error(io::ErrorKind::NotFound.into());
+        };
+        let job = query.clone();
+        let spawned = std::thread::Builder::new().name("flit-network".into()).spawn(move || {
+            let left = until.saturating_duration_since(Instant::now()).min(PROBE_WAIT);
+            if left.is_zero() {
+                return;
+            }
+            let reply = match job {
+                Query::Network => Reply::Network(classify(gio_list(crate::places::gio_at(&program, &list_args(NETWORK_ROOT)), left))),
+                Query::Avahi => Reply::AvahiDone(browse_avahi(&program, left, tx.clone())),
+                Query::Smb(uri) if uri == SMB_ROOT => Reply::Groups(browse_smb(&program, &uri, until)),
+                Query::Smb(uri) => Reply::Smb(browse_smb(&program, &uri, until)),
+            };
+            let _ = tx.send(reply);
+        });
+        if let Err(e) = spawned {
+            send_error(e);
+        }
+    }
+
+    fn receive(&mut self, wait: Duration) -> Option<Reply> {
+        self.rx.recv_timeout(wait).ok()
     }
 }
 
 pub fn read_dir(dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
-    read_dir_with(&System, dir, out, crate::tools::family(&crate::tools::os_release()))
+    if dir.is_root() {
+        discover(&mut SystemDiscovery::new(), out)
+    } else {
+        read_server(&System, dir, out)
+    }
 }
 
 #[cfg(test)]

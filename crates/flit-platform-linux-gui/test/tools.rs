@@ -10,9 +10,9 @@ fn missing_helpers_are_listed_with_the_package_of_this_distribution() {
     let have = ["gdbus", "gio", "udisksctl", "pkexec", "setfacl", "fusermount", "umount", "curl", "recollq", "pdftoppm", "ffmpegthumbnailer", "lp", "paplay", "xclip", "libmpv"];
     let found = |t: &str| have.contains(&t);
     let missing = missing_from(found, FEDORA_RELEASE, false, true);
-    assert_eq!(missing.iter().map(|m| (m.tool, m.package)).collect::<Vec<_>>(), [("xdg-open", "xdg-utils")], "paplay plays audio when mpv is missing");
+    assert_eq!(missing.iter().map(|m| (m.tool, m.package)).collect::<Vec<_>>(), [("xdg-open", "xdg-utils"), ("gvfsd-network", "gvfs"), ("avahi-browse", "avahi-tools")], "paplay plays audio when mpv is missing");
     let wayland = missing_from(found, UBUNTU, true, false);
-    assert_eq!(wayland.iter().map(|m| m.package).collect::<Vec<_>>(), ["xdg-utils", "wl-clipboard", "wl-clipboard", "xterm"]);
+    assert_eq!(wayland.iter().map(|m| m.package).collect::<Vec<_>>(), ["xdg-utils", "gvfs-backends", "avahi-utils", "wl-clipboard", "wl-clipboard", "xterm"]);
     assert_eq!(missing_from(|_| false, MANJARO, false, true).iter().find(|m| m.tool == "pdftoppm").map(|m| m.package), Some("poppler"));
     assert_eq!(package_for("gdbus", TUMBLEWEED), Some("glib2-tools"));
     assert_eq!(package_for("gdbus", ""), Some("libglib2.0-bin"), "unknown systems get Debian names");
@@ -111,4 +111,16 @@ fn libmpv_is_found_in_the_loader_cache_or_a_library_folder() {
     dir.file("libmpv.so.2", 4);
     assert!(library_present(&crate::mpv::LIBRARIES, b"", &dirs));
     assert!(library_present(&crate::mpv::LIBRARIES, cache, &[]));
+}
+
+#[test]
+fn only_missing_network_tools_are_listed_with_their_packages() {
+    for (release, gvfs, avahi) in [(UBUNTU, "gvfs-backends", "avahi-utils"), (FEDORA_RELEASE, "gvfs", "avahi-tools"), (MANJARO, "gvfs", "avahi"), (TUMBLEWEED, "gvfs", "avahi-utils")] {
+        let missing = missing_from(|t| !matches!(t, "gvfsd-network" | "avahi-browse"), release, false, true);
+        assert_eq!(missing.iter().map(|m| (m.tool, m.purpose, m.package)).collect::<Vec<_>>(), [
+            ("gvfsd-network", S::PathNetwork, gvfs),
+            ("avahi-browse", S::PathNetwork, avahi),
+        ]);
+        assert!(missing_from(|_| true, release, false, true).is_empty());
+    }
 }

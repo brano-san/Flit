@@ -17,6 +17,7 @@ filtered = "没有与筛选条件匹配的项目。"
 bin = "回收站为空。"
 folder = "此文件夹为空。"
 network = "网络上未找到计算机或共享文件夹。按 F5 重新搜索。"
+network_connect = "按 F5 连接。"
 
 [status]
 selected = ["已选择 {n} 个"]

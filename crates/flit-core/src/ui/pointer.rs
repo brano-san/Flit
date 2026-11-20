@@ -168,7 +168,7 @@ impl App {
             (v.focus, v.anchor) = (Some(i), Some(i));
         }
         match target {
-            Some(folder) => self.dispatch(vec![Route { folder, select: None }], OpenTarget::NewWindow, now),
+            Some(folder) => self.dispatch_entries(vec![Route { folder, select: None }], OpenTarget::NewWindow, now),
             None => {
                 self.run_action("item.inspect", now);
             }

@@ -338,7 +338,7 @@ impl Saved {
     fn head(&self) -> Head {
         let (p, v) = (&self.persisted, &self.persisted.view);
         let sort = if matches!(v.sort.field, SortField::Name | SortField::Modified | SortField::Type | SortField::Size | SortField::Origin) { v.sort.field } else { SortField::Name };
-        Head { version: self.version, path: p.path.clone(), sort, descending: v.sort.descending, show_hidden: p.show_hidden, col_w: STAGE_ONE_COLUMNS.map(|c| v.columns.width(c)), placement: self.placement }
+        Head { version: self.version, path: compatible_location(&p.path), sort, descending: v.sort.descending, show_hidden: p.show_hidden, col_w: STAGE_ONE_COLUMNS.map(|c| v.columns.width(c)), placement: self.placement }
     }
 
     fn from_head(h: Head) -> Self {
@@ -507,14 +507,16 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&views).ok()?);
         bytes.extend(postcard::to_stdvec(&layouts).ok()?);
         bytes.extend(postcard::to_stdvec(&self.pane).ok()?);
-        bytes.extend(postcard::to_stdvec(&self.side).ok()?);
+        let mut side = self.side.clone();
+        side.quick.visits.retain(|(location, _)| !network_needs_home(location));
+        bytes.extend(postcard::to_stdvec(&side).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
         bytes.extend(postcard::to_stdvec(&Tools { streams: p.prefs.show_streams, ..self.tools.clone() }).ok()?);
         bytes.extend(postcard::to_stdvec(&SplitPrefs::default()).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized().compression.word).ok()?);
         bytes.extend(postcard::to_stdvec(&gits).ok()?);
         bytes.extend(postcard::to_stdvec(&p.prefs.command_descriptions).ok()?);
-        bytes.extend(postcard::to_stdvec(&QuickRecord { quick: self.side.quick.clone(), deep: p.folders.deep_keys() }).ok()?);
+        bytes.extend(postcard::to_stdvec(&QuickRecord { quick: side.quick, deep: p.folders.deep_keys() }).ok()?);
         bytes.extend(postcard::to_stdvec(&zooms).ok()?);
         bytes.extend(postcard::to_stdvec(&self.nav.files).ok()?);
         bytes.extend(postcard::to_stdvec(&wides).ok()?);
@@ -529,6 +531,18 @@ impl Saved {
 
     pub fn placement(&self) -> Option<Placement> {
         self.placement.map(|(x, y, width, height, maximized)| Placement { x, y, width, height, maximized })
+    }
+}
+
+fn network_needs_home(location: &Location) -> bool {
+    cfg!(target_os = "linux") && location.path().is_network()
+}
+
+pub(crate) fn compatible_location(location: &Location) -> Location {
+    if network_needs_home(location) {
+        Location::from_local(crate::P::home())
+    } else {
+        location.clone()
     }
 }
 

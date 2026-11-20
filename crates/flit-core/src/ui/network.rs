@@ -1,23 +1,40 @@
 use super::archive::Kind;
 use super::form::{Control, Form};
 use super::palette::{Palette, Pick};
-use super::{App, Effect};
+use super::{App, Effect, Route};
 use crate::i18n::S;
-use crate::location::ProviderId;
+use crate::location::{Location, ProviderId};
+use crate::open::OpenTarget;
+use std::time::Instant;
 use crate::open::Open;
 use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ProviderRequest, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
 use crate::render::{Color, Rect};
 use crate::text::{FontStyle, Gfx, TextBackend};
 
-const SCHEMES: [&str; 9] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "afp", "nfs"];
+const SCHEMES: [&str; 11] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "dav+sd", "davs+sd", "afp", "nfs"];
 
 pub fn server_uri(text: &str) -> Option<String> {
     let text = text.trim();
     let (scheme, rest) = text.split_once("://")?;
     let host = rest.split('/').next()?.rsplit('@').next()?;
-    let clean = !text.chars().any(|c| c.is_whitespace() || c.is_control());
+    let clean = !text.contains('\\') && !text.chars().any(|c| c.is_whitespace() || c.is_control());
     (SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !host.is_empty() && clean).then(|| text.to_owned())
+}
+
+pub(super) fn network_entry(name: &[u8]) -> Option<Location> {
+    let uri = server_uri(std::str::from_utf8(name).ok()?)?;
+    FsPath::network_server(uri.as_bytes()).map(Location::from_local)
+}
+
+pub(super) fn network_address(path: &FsPath) -> Option<String> {
+    (path.is_network() && !path.is_root()).then_some(())?;
+    let mut parts = path.components();
+    let uri = std::str::from_utf8(parts.next()?).ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    server_uri(uri)
 }
 
 pub(super) fn native_url(text: &str) -> bool {
@@ -63,31 +80,48 @@ impl App {
         }
     }
 
-    pub(super) fn open_network(&mut self, i: u32) {
-        let Some(address) = self.tab().view.as_ref().map(|v| String::from_utf8_lossy(v.listing().name(i)).into_owned()) else { return };
-        if address.contains("://") {
-            self.launch(Launch::ConnectServer(address));
+    pub(super) fn open_network(&mut self, i: u32, now: Instant) {
+        let folder = self.tab().entry_location(i);
+        if network_address(folder.path()).is_some() {
+            self.dispatch_entries(vec![Route { folder, select: None }], OpenTarget::CurrentTab, now);
         }
     }
 
-    fn network_server(&self, k: usize) -> Option<&FsPath> {
-        let here = self.tabs[k].location().path();
-        (self.caps.unix_paths && here.is_network() && here.components().count() == 1).then_some(here)
-    }
-
-    pub(super) fn network_listed(&mut self, k: usize) {
-        if self.network_server(k).is_some() {
-            self.tabs[k].network_login = false;
+    pub fn activate_network_tabs(&mut self) {
+        for k in 0..self.tabs.len() {
+            self.begin_network(k);
         }
     }
 
-    pub(super) fn ask_network_login(&mut self, k: usize) {
-        let Some(address) = self.network_server(k).and_then(|p| p.components().next()).and_then(|s| std::str::from_utf8(s).ok()).and_then(server_uri) else { return };
-        if std::mem::replace(&mut self.tabs[k].network_login, true) {
-            return;
+    pub(super) fn begin_network(&mut self, k: usize) {
+        let t = &mut self.tabs[k];
+        let Some(uri) = network_address(t.location().path()).filter(|_| self.caps.unix_paths) else { return };
+        t.slot.take();
+        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab: t.id, launch: Launch::ConnectNetwork { uri, gen: t.gen } } });
+    }
+
+    pub(super) fn network_connected(&mut self, k: usize, result: Result<Option<FsPath>, String>, now: Instant) {
+        match result {
+            Ok(Some(path)) if self.tabs[k].location().path() == &path => {
+                self.tabs[k].list_network(self.case, &mut self.effects);
+            }
+            Ok(Some(path)) => {
+                self.tabs[k].history.replace(Location::from_local(path));
+                self.tabs[k].drop_trail();
+                self.load_tab(k, None, now);
+                if k == self.cur {
+                    self.after_tab_change();
+                } else {
+                    self.strip.rev += 1;
+                }
+            }
+            result => {
+                self.load_tab(k, None, now);
+                if let Err(error) = result {
+                    self.tabs[k].error = Some(crate::i18n::localize(&error).into_owned());
+                }
+            }
         }
-        let tab = self.tabs[k].id;
-        self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch: Launch::ConnectServer(address) } });
     }
 
     pub(super) fn mount_ask(&mut self, ask: MountAsk, answer: MountAnswer) {
