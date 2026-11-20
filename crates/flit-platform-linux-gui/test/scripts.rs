@@ -83,6 +83,68 @@ fn only_trusted_user_service_menus_load_and_an_empty_match_adds_no_submenu() {
     let (entries, launches) = menu(&actions, &[item("/p/a.txt", false, "text/plain")], Path::new("/p"));
     assert!(entries.is_empty() && launches.is_empty());
     let (entries, launches) = menu(&actions, &[item("/p/a.png", false, "image/png")], Path::new("/p"));
-    assert_eq!((entries.len(), launches.len()), (2, 2));
+    assert_eq!((entries.len(), launches.len()), (1, 2), "both actions sit in their X-KDE-Submenu");
     assert!(matches!(&launches[1], Launch::Command { runs, dir: Some(_) } if runs[0].0 == ["half", "/p/a.png"]));
+}
+
+fn labels(items: &[MenuItem]) -> Vec<String> {
+    items
+        .iter()
+        .map(|i| match i {
+            MenuItem::Command { label, .. } => label.clone(),
+            MenuItem::Submenu { label, items } => format!("{label} > {}", labels(items).join(", ")),
+            MenuItem::Separator => "--".to_owned(),
+            MenuItem::Header(h) => h.clone(),
+        })
+        .collect()
+}
+
+fn script(dir: &Path, name: &str) {
+    let p = dir.join(name);
+    std::fs::write(&p, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn actions_are_grouped_by_where_they_come_from_and_kde_submenus_nest() {
+    let t = Temp::new("scripts-groups");
+    let data = t.path().join("data");
+    std::fs::create_dir_all(data.join("nautilus/scripts")).unwrap();
+    script(&data.join("nautilus/scripts"), "Backup");
+    let kde = data.join("kio/servicemenus");
+    std::fs::create_dir_all(&kde).unwrap();
+    std::fs::write(kde.join("resize.desktop"), KDE).unwrap();
+    let system = t.path().join("system");
+    std::fs::create_dir_all(system.join("kio/servicemenus")).unwrap();
+    std::fs::write(system.join("kio/servicemenus/plain.desktop"), "[Desktop Entry]\nType=Service\nMimeType=image/png;\nActions=print\n\n[Desktop Action print]\nName=Print it\nExec=lp %F\n").unwrap();
+    std::fs::set_permissions(kde.join("resize.desktop"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::create_dir_all(data.join("nemo/actions")).unwrap();
+    std::fs::write(data.join("nemo/actions/shrink.nemo_action"), "[Nemo Action]\nName=Shrink\nExec=shrink %F\nSelection=any\nExtensions=png;\n").unwrap();
+    let config = t.path().join("config");
+    std::fs::create_dir_all(config.join("Thunar")).unwrap();
+    std::fs::write(config.join("Thunar/uca.xml"), THUNAR).unwrap();
+    let actions = load(&[data, system], Some(&config), "ru_RU.UTF-8");
+    let (entries, launches) = menu(&actions, &[item("/p/a.png", false, "image/png")], Path::new("/p"));
+    assert_eq!(labels(&entries), ["Backup", "--", "Images > Изменить размер, Half", "Print it", "--", "Shrink", "--", "Edit in GIMP"]);
+    let runs: Vec<String> = launches.iter().map(|l| match l {
+        Launch::Command { runs, .. } => runs[0].0.join(" "),
+        _ => String::new(),
+    }).collect();
+    assert_eq!(runs.len(), 6, "one launch per command, in menu order");
+    assert!(runs[0].ends_with("Backup a.png"));
+    assert_eq!(runs[1..], ["convert /p/a.png -resize 50% /p/a.png", "half /p/a.png", "lp /p/a.png", "shrink /p/a.png", "sh -c gimp '/p/a.png'"]);
+}
+
+#[test]
+fn a_nemo_separator_joins_the_files_into_one_argument_and_without_it_they_stay_apart() {
+    let base = Path::new("/n");
+    let two = [PathBuf::from("/d/a.pdf"), PathBuf::from("/d/b.pdf")];
+    let joined = nemo_action(&NEMO.replace("Exec=<compress.sh %F>", "Exec=pdfunite %F\nSeparator=,"), base, "").unwrap();
+    assert_eq!(commands(&joined, &two, Path::new("/d"))[0].0, ["pdfunite", "/d/a.pdf,/d/b.pdf"]);
+    let apart = nemo_action(&NEMO.replace("Exec=<compress.sh %F>", "Exec=pdfunite %F"), base, "").unwrap();
+    assert_eq!(commands(&apart, &two, Path::new("/d"))[0].0, ["pdfunite", "/d/a.pdf", "/d/b.pdf"]);
+    assert_eq!(commands(&joined, &two[..1], Path::new("/d"))[0].0, ["pdfunite", "/d/a.pdf"]);
+    let thunar = thunar_actions(THUNAR);
+    let (entries, _) = menu(&thunar, &[item("/d/x.png", false, "image/png")], Path::new("/d"));
+    assert_eq!(labels(&entries), ["Edit in GIMP"], "one source alone gets no separators");
 }

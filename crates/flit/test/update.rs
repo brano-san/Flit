@@ -241,7 +241,7 @@ fn a_folder_flit_cannot_write_is_updated_through_an_elevated_copy_of_itself() {
     assert_eq!(fs::read(&exe).unwrap(), b"old build", "this process does not touch the folder itself");
     let archive = t.0.join("download.zip");
     fs::write(&archive, &bytes).unwrap();
-    install_elevated(&archive, &signature, &public, &exe).unwrap();
+    install_elevated(&archive, &signature, &public, &exe, &mut |p| panic!("{} could be removed", p.display())).unwrap();
     assert_eq!(fs::read(&exe).unwrap(), b"new build");
 }
 
@@ -261,7 +261,57 @@ fn a_declined_prompt_or_a_tampered_download_leaves_the_folder_alone() {
     let last = tampered.len() - 1;
     tampered[last] ^= 0xFF;
     fs::write(&archive, &tampered).unwrap();
-    assert!(install_elevated(&archive, &sign(&pair, &bytes), &public, &exe).is_err(), "the elevated copy checks the signature again");
+    assert!(install_elevated(&archive, &sign(&pair, &bytes), &public, &exe, &mut |p| panic!("{} scheduled", p.display())).is_err(), "the elevated copy checks the signature again");
     fs::remove_file(&archive).unwrap();
     assert_eq!(contents(&t.0), before);
+}
+
+#[test]
+fn an_elevated_update_removes_the_old_copies_and_leaves_the_ones_in_use_for_the_next_restart() {
+    let t = temp("elevated-old");
+    let exe = installed(&t.0);
+    let (pair, public) = keys(7);
+    let bytes = full_archive();
+    let in_use = t.0.join(format!("{}.old", BINARIES[0]));
+    fs::create_dir_all(in_use.join("held")).unwrap();
+    let archive = std::env::temp_dir().join(format!("flit-update-elevated-old-{}.zip", std::process::id()));
+    fs::write(&archive, &bytes).unwrap();
+    let mut scheduled = Vec::new();
+    let r = install_elevated(&archive, &sign(&pair, &bytes), &public, &exe, &mut |p| scheduled.push(p.to_path_buf()));
+    fs::remove_file(&archive).unwrap();
+    assert_eq!(r, Ok(()));
+    assert_eq!(scheduled, std::slice::from_ref(&in_use), "only what cannot be removed now waits for the restart");
+    for name in BINARIES {
+        assert_eq!(fs::read(t.0.join(name)).unwrap(), b"new build");
+    }
+    let left: Vec<String> = contents_or_dirs(&t.0);
+    let mut expected: Vec<String> = BINARIES.iter().map(|n| n.to_string()).chain([format!("{}.old", BINARIES[0])]).collect();
+    expected.sort();
+    assert_eq!(left, expected, "the replaced binaries are gone at once in a folder Flit could not write without rights");
+}
+
+#[test]
+fn a_rejected_elevated_update_neither_removes_nor_schedules_anything() {
+    let t = temp("elevated-rejected");
+    let exe = installed(&t.0);
+    let leftover = t.0.join(format!("{}.old", BINARIES[0]));
+    fs::write(&leftover, b"older build").unwrap();
+    let (_, public) = keys(7);
+    let (stranger, _) = keys(9);
+    let bytes = full_archive();
+    let archive = std::env::temp_dir().join(format!("flit-update-elevated-rejected-{}.zip", std::process::id()));
+    fs::write(&archive, &bytes).unwrap();
+    let mut scheduled = Vec::new();
+    let r = install_elevated(&archive, &sign(&stranger, &bytes), &public, &exe, &mut |p| scheduled.push(p.to_path_buf()));
+    fs::remove_file(&archive).unwrap();
+    assert!(r.is_err());
+    assert!(scheduled.is_empty());
+    assert_eq!(fs::read(&leftover).unwrap(), b"older build", "nothing is cleaned before the signature is trusted");
+    assert_eq!(fs::read(&exe).unwrap(), b"old build");
+}
+
+fn contents_or_dirs(dir: &Path) -> Vec<String> {
+    let mut all: Vec<String> = fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    all.sort();
+    all
 }

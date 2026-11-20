@@ -329,6 +329,7 @@
 "logs.folder" = "在新标签页中打开日志文件所在文件夹，诊断"
 "item.copy_quoted_path" = "将带双引号的完整路径复制到剪贴板"
 "app.terminal_admin" = "在此文件夹中启动提升权限的命令提示符，控制台，PowerShell"
+"app.terminal_admin_linux" = "通过 sudo 或 pkexec 在此文件夹中启动 root shell，终端，控制台，管理员"
 "file.paste_into" = "将剪贴板中的项目复制或移动到所选文件夹"
 "file.share" = "通过 Windows 共享窗口发送所选文件"
 "file.new_item" = "在此处根据模板创建文件夹、快捷方式或文件，新建"

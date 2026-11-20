@@ -1,3 +1,4 @@
+use flit_core::i18n::{Lang, S};
 use flit_core::input::Mods;
 use flit_core::ui::{drop_effect, Bitmap};
 use flit_core::FsPath;
@@ -35,6 +36,7 @@ x11rb::atom_manager! {
         XdndActionLink,
         XdndActionAsk,
         XdndActionList,
+        XdndActionDescription,
         XdndTypeList,
         TARGETS,
         UriList: b"text/uri-list",
@@ -80,6 +82,24 @@ pub fn offered_by_source(action: Suggested) -> Vec<Suggested> {
         Suggested::Any | Suggested::Ask => vec![Suggested::Copy, Suggested::Move, Suggested::Link, Suggested::Ask],
         one => vec![one],
     }
+}
+
+fn latin1(text: &str) -> Option<Vec<u8>> {
+    text.chars().map(|c| u8::try_from(u32::from(c)).ok()).collect()
+}
+
+pub fn action_description(actions: &[Suggested], l: Lang) -> Option<Vec<u8>> {
+    if !actions.contains(&Suggested::Ask) {
+        return None;
+    }
+    let label = |a: Suggested| match a {
+        Suggested::Copy | Suggested::Any => S::UiDropCopyHere,
+        Suggested::Move => S::UiDropMoveHere,
+        Suggested::Link => S::UiDropLinkHere,
+        Suggested::Ask => S::SettingsChoiceConflictAsk,
+    };
+    let texts: Vec<Vec<u8>> = actions.iter().map(|&a| latin1(label(a).in_lang(l)).or_else(|| latin1(label(a).en())).unwrap_or_default()).collect();
+    Some(texts.join(&0))
 }
 
 pub fn codes_with(keysyms: &[u32], per_code: u8, first: u8, wanted: u32) -> Vec<u8> {
@@ -254,8 +274,13 @@ impl Source {
     }
 
     fn offer(&self, action: Suggested) -> R<()> {
-        let list: Vec<Atom> = offered_by_source(action).into_iter().map(|a| self.atom_of(a)).collect();
+        let offered = offered_by_source(action);
+        let list: Vec<Atom> = offered.iter().map(|&a| self.atom_of(a)).collect();
         self.conn.change_property32(PropMode::REPLACE, self.window, self.atoms.XdndActionList, AtomEnum::ATOM, &list)?;
+        match action_description(&offered, flit_core::i18n::lang()) {
+            Some(text) => self.conn.change_property8(PropMode::REPLACE, self.window, self.atoms.XdndActionDescription, AtomEnum::STRING, &text)?,
+            None => self.conn.delete_property(self.window, self.atoms.XdndActionDescription)?,
+        };
         Ok(())
     }
 

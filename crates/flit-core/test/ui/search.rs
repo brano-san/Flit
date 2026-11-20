@@ -521,3 +521,46 @@ fn a_finger_scrolls_search_results_both_ways_and_a_flick_glides_on() {
     a.touch_tap((x, y), end + Duration::from_secs(10));
     assert_eq!(a.search.focus, Some(r), "a tap picks the row like a click");
 }
+
+fn unix_search() -> App {
+    let mut a = app();
+    a.caps = crate::caps::Caps { unix_paths: true };
+    key(&mut a, Key::Char('F'), CTRL_SHIFT);
+    a.on_event(&Event::Key { key: Key::Char('F'), mods: NO, pressed: false }, t0());
+    a.search.edit.set("alpha");
+    a.search.edit.select_all();
+    frame(&mut a);
+    a.drain_effects().for_each(drop);
+    a
+}
+
+fn middle(a: &mut App, x: f32, y: f32) -> bool {
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 }, t0());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Middle }, t0());
+    a.drain_effects().any(|e| matches!(e, Effect::PastePrimary))
+}
+
+#[test]
+fn a_middle_click_in_the_search_field_pastes_the_primary_selection_where_it_lands() {
+    let mut a = unix_search();
+    let field = a.search_layout().field;
+    assert!(middle(&mut a, field.right() - 20.0, field.y + field.h / 2.0), "the field asks for the primary selection");
+    frame(&mut a);
+    a.on_paste("X");
+    assert_eq!(a.search.edit.text, "alphaX", "inserted at the click, not over the selected query");
+    assert!(requests(&mut a).iter().any(|r| matches!(r, SearchRequest::Query { text, .. } if text == "alphaX")), "the pasted query is searched");
+}
+
+#[test]
+fn a_middle_click_outside_the_search_field_or_on_windows_pastes_nothing() {
+    let mut a = unix_search();
+    let list = a.search_layout().list;
+    assert!(!middle(&mut a, list.x + list.w / 2.0, list.y + list.h / 2.0), "the results keep the middle button for themselves");
+    assert_eq!(a.search.edit.text, "alpha");
+    let mut w = app();
+    key(&mut w, Key::Char('F'), CTRL_SHIFT);
+    frame(&mut w);
+    w.drain_effects().for_each(drop);
+    let field = w.search_layout().field;
+    assert!(!middle(&mut w, field.right() - 20.0, field.y + field.h / 2.0), "Windows has no primary selection");
+}

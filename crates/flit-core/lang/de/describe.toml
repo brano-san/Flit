@@ -329,6 +329,7 @@
 "logs.folder" = "Den Ordner mit den Protokolldateien in einer neuen Registerkarte öffnen, Diagnose"
 "item.copy_quoted_path" = "Den vollständigen Pfad in doppelten Anführungszeichen in die Zwischenablage kopieren"
 "app.terminal_admin" = "Eine Eingabeaufforderung mit erhöhten Rechten in diesem Ordner starten, Konsole, PowerShell"
+"app.terminal_admin_linux" = "Eine Root-Shell in diesem Ordner über sudo oder pkexec starten, Terminal, Konsole, Administrator"
 "file.paste_into" = "Die Elemente aus der Zwischenablage in den ausgewählten Ordner kopieren oder verschieben"
 "file.share" = "Die ausgewählten Dateien über das Windows-Teilen-Fenster senden"
 "file.new_item" = "Hier einen Ordner, eine Verknüpfung oder eine Datei aus einer Vorlage erstellen"

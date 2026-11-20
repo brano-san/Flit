@@ -638,6 +638,10 @@ impl App {
         (row_of(first), (row_of(last - 1) + 1).min(s.total))
     }
 
+    pub(super) fn search_field_at(&self, x: f32, y: f32) -> bool {
+        self.search.active && self.search_hit(x, y) == SHit::Field
+    }
+
     fn search_hit(&self, x: f32, y: f32) -> SHit {
         let sl = self.search_layout();
         if let Some(k) = self.search.recent_rects.iter().position(|r| r.contains(x, y)) {

@@ -267,7 +267,7 @@ impl App {
         use crate::input::Event;
         let Event::MouseDown { x, y, button: MouseButton::Middle, .. } = *ev else { return false };
         let field = self.text_field_hit().filter(|_| self.text_field_rect().is_some_and(|r| r.contains(x, y)));
-        if field.is_none() && !self.rename_contains(x, y) {
+        if field.is_none() && !self.rename_contains(x, y) && !self.search_field_at(x, y) {
             return false;
         }
         self.handle_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, now);

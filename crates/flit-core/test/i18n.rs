@@ -425,3 +425,23 @@ fn windows_system_errors_keep_unknown_codes_and_file_names_intact() {
     assert_eq!(os_error(13), None, "errno numbers mean nothing on Windows");
     set_lang(original);
 }
+
+#[test]
+fn the_linux_root_terminal_is_described_as_a_root_shell_not_a_command_prompt() {
+    let linux = unix_word(S::DescribeAppTerminalAdmin);
+    assert_ne!(linux, S::DescribeAppTerminalAdmin);
+    for l in Lang::ALL {
+        let text = linux.in_lang(l);
+        assert!(text.contains("sudo") && text.to_lowercase().contains("root"), "{l:?}: {text}");
+        assert!(!text.contains("PowerShell"), "{l:?}: {text}");
+    }
+    assert!(!S::DescribeAppTerminalAdminLinux.en().to_lowercase().contains("command prompt"));
+}
+
+#[test]
+fn windows_keeps_its_elevated_command_prompt_description() {
+    for l in Lang::ALL {
+        assert!(S::DescribeAppTerminalAdmin.in_lang(l).contains("PowerShell"), "{l:?}");
+    }
+    assert_eq!(unix_word(S::DescribeAppTerminal), S::DescribeAppTerminal, "the ordinary terminal keeps one description");
+}

@@ -228,11 +228,12 @@ fn modifiers_pick_the_action_offered_to_other_programs_like_gtk_does() {
 struct Seen {
     actions: Vec<Atom>,
     list: Vec<Atom>,
+    description: Vec<u8>,
     left: bool,
 }
 
 fn watch_target(conn: &XCBConnection, atoms: &Atoms, window: Window) -> Seen {
-    let mut seen = Seen { actions: Vec::new(), list: Vec::new(), left: false };
+    let mut seen = Seen { actions: Vec::new(), list: Vec::new(), description: Vec::new(), left: false };
     let mut source = NONE;
     loop {
         match conn.wait_for_event().unwrap() {
@@ -241,6 +242,7 @@ fn watch_target(conn: &XCBConnection, atoms: &Atoms, window: Window) -> Seen {
                 let action = c.data.as_data32()[4];
                 seen.actions.push(action);
                 seen.list = conn.get_property(false, source, atoms.XdndActionList, AtomEnum::ATOM, 0, 16).unwrap().reply().unwrap().value32().unwrap().collect();
+                seen.description = conn.get_property(false, source, atoms.XdndActionDescription, AtomEnum::STRING, 0, 256).unwrap().reply().unwrap().value;
                 conn.send_event(false, source, EventMask::NO_EVENT, ClientMessageEvent::new(32, source, atoms.XdndStatus, [window, 1, 0, 0, action])).unwrap();
                 conn.flush().unwrap();
             }
@@ -319,10 +321,12 @@ fn shift_moves_and_esc_cancels_a_drag_out_of_flit() {
     assert!(matches!(outcome, Outcome::Dropped(_)));
     assert!(plain.actions.iter().all(|&a| a == atoms.XdndActionCopy), "no keys suggest a copy");
     assert_eq!(plain.list, [atoms.XdndActionCopy, atoms.XdndActionMove, atoms.XdndActionLink, atoms.XdndActionAsk]);
+    assert_eq!(plain.description.split(|&b| b == 0).count(), plain.list.len(), "a target that asks finds a label for every offered action");
     let (moved, outcome, atoms) = drag_scene(&[SHIFT_L], false);
     assert!(matches!(outcome, Outcome::Dropped(_)));
     assert_eq!(moved.actions.last(), Some(&atoms.XdndActionMove), "{:?}", moved.actions);
     assert_eq!(moved.list, [atoms.XdndActionMove]);
+    assert!(moved.description.is_empty(), "without Ask there is nothing to describe");
     let (canceled, outcome, _) = drag_scene(&[], true);
     assert_eq!(outcome, Outcome::Canceled);
     assert!(canceled.left, "the target hears the drag leave");
@@ -347,4 +351,23 @@ fn incoming_file_paths_keep_their_move_and_right_drop_choices() {
     assert_eq!(incoming_choice(false, Some(SHIFT), Some(DndAction::Copy), Some(DndAction::Move)), (SHIFT, false));
     assert_eq!(incoming_choice(false, Some(ALT), None, None), (Mods::default(), true));
     assert_eq!(incoming_actions(false, MOVE, None), [DndAction::Move, DndAction::Copy, DndAction::Ask]);
+}
+
+#[test]
+fn an_offered_ask_comes_with_latin1_labels_for_the_target_menu() {
+    let all = offered_by_source(Suggested::Any);
+    let fr = action_description(&all, Lang::Fr).unwrap();
+    let parts: Vec<&[u8]> = fr.split(|&b| b == 0).collect();
+    assert_eq!(parts.len(), all.len());
+    assert_eq!(parts[0], b"Copier ici");
+    assert_eq!(parts[1], b"D\xe9placer ici", "STRING is Latin-1, not UTF-8");
+    let ru = action_description(&all, Lang::Ru).unwrap();
+    assert_eq!(ru.split(|&b| b == 0).next(), Some(&b"Copy here"[..]), "Cyrillic does not fit Latin-1, so English is sent");
+}
+
+#[test]
+fn a_single_action_drag_carries_no_description() {
+    for one in [Suggested::Copy, Suggested::Move, Suggested::Link] {
+        assert_eq!(action_description(&offered_by_source(one), Lang::En), None);
+    }
 }
