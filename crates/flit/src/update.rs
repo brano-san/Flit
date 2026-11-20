@@ -110,11 +110,13 @@ fn old_slot(live: &Path) -> PathBuf {
     old_name(live, OLD_SLOTS)
 }
 
+fn old_files(exe: &Path) -> Vec<PathBuf> {
+    BINARIES[1..].iter().map(|name| exe.with_file_name(name)).chain([exe.to_path_buf()]).flat_map(|live| (0..=OLD_SLOTS).map(move |k| old_name(&live, k))).collect()
+}
+
 pub fn remove_old(exe: &Path) {
-    for live in BINARIES[1..].iter().map(|name| exe.with_file_name(name)).chain([exe.to_path_buf()]) {
-        for k in 0..=OLD_SLOTS {
-            let _ = fs::remove_file(old_name(&live, k));
-        }
+    for old in old_files(exe) {
+        let _ = fs::remove_file(old);
     }
 }
 
@@ -217,15 +219,35 @@ pub fn install_into(release: &Release, exe: &Path, public_key: &str, download: &
     }
 }
 
-pub fn install_elevated(archive: &Path, signature: &str, public_key: &str, exe: &Path) -> Result<(), String> {
+pub fn install_elevated(archive: &Path, signature: &str, public_key: &str, exe: &Path, delete_at_reboot: &mut dyn FnMut(&Path)) -> Result<(), String> {
     let bytes = fs::read(archive).map_err(|e| format!("{}: {e}", archive.display()))?;
     verify(&bytes, signature, public_key)?;
-    unpack(&bytes, exe)
+    unpack(&bytes, exe)?;
+    for old in old_files(exe) {
+        if fs::remove_file(&old).is_err() && fs::symlink_metadata(&old).is_ok() {
+            delete_at_reboot(&old);
+        }
+    }
+    Ok(())
 }
+
+#[cfg(windows)]
+fn delete_at_reboot(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    use windows::core::PCWSTR;
+    use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT};
+    let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    if let Err(e) = unsafe { MoveFileExW(PCWSTR(wide.as_ptr()), PCWSTR::null(), MOVEFILE_DELAY_UNTIL_REBOOT) } {
+        tracing::warn!("cannot schedule {} for removal at restart: {e}", path.display());
+    }
+}
+
+#[cfg(not(windows))]
+fn delete_at_reboot(_: &Path) {}
 
 pub fn install_from_command_line(archive: Option<std::ffi::OsString>, signature: Option<std::ffi::OsString>) -> i32 {
     let (Some(archive), Some(signature)) = (archive.map(PathBuf::from), signature) else { return 2 };
-    let result = running_exe().and_then(|exe| install_elevated(&archive, &signature.to_string_lossy(), PUBLIC_KEY, &exe));
+    let result = running_exe().and_then(|exe| install_elevated(&archive, &signature.to_string_lossy(), PUBLIC_KEY, &exe, &mut delete_at_reboot));
     match result {
         Ok(()) => 0,
         Err(e) => {
