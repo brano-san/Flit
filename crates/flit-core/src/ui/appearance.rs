@@ -120,6 +120,10 @@ impl App {
         self.system_title
     }
 
+    pub fn system_title_wanted(&self) -> bool {
+        self.system_title_wanted
+    }
+
     pub(super) fn set_system_title_wanted(&mut self, on: bool) {
         self.system_title_wanted = on;
         if on && self.server_frames == Some(false) {
@@ -129,8 +133,12 @@ impl App {
     }
 
     pub(super) fn set_server_frames(&mut self, available: bool) {
+        if self.server_frames == Some(available) {
+            return;
+        }
         self.server_frames = Some(available);
         self.sync_title();
+        self.dirty = true;
     }
 
     fn sync_title(&mut self) {

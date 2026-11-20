@@ -111,6 +111,7 @@ pub struct WindowOptions {
     pub title: String,
     pub placement: Option<Placement>,
     pub dark: bool,
+    pub server_decorations: bool,
 }
 
 pub type WindowId = u64;

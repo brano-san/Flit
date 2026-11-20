@@ -450,8 +450,9 @@ impl<P: Platform> Handler<P> {
         let Some((ws, placement)) = self.queued_windows.pop_front() else { return };
         self.requested = Some(Instant::now());
         let app = self.restored_app(&ws);
+        let server_decorations = app.system_title_wanted();
         self.pending.push_back(app);
-        window.open_window(WindowOptions { title: "Flit".into(), placement, dark: window.is_dark_mode() });
+        window.open_window(WindowOptions { title: "Flit".into(), placement, dark: window.is_dark_mode(), server_decorations });
     }
 
     fn tab_over(&mut self, window: &Win<P>, at: Option<(f32, f32)>) {
@@ -497,8 +498,9 @@ impl<P: Platform> Handler<P> {
         }
         let mut app = self.new_app(vec![Route { folder: tab.location().clone(), select: None }], self.saved.persisted.clone());
         app.adopt_tab(tab, now);
+        let server_decorations = app.system_title_wanted();
         self.pending.push_back(app);
-        window.open_window(WindowOptions { title: "Flit".into(), placement, dark: window.is_dark_mode() });
+        window.open_window(WindowOptions { title: "Flit".into(), placement, dark: window.is_dark_mode(), server_decorations });
     }
 
     fn session(&self) -> Session {
@@ -742,8 +744,9 @@ impl<P: Platform> Handler<P> {
                     }
                     let persisted = self.saved.persisted.clone();
                     let app = self.new_app(routes, persisted);
+                    let server_decorations = app.system_title_wanted();
                     self.pending.push_back(app);
-                    window.open_window(WindowOptions { title: "Flit".into(), placement: None, dark: window.is_dark_mode() });
+                    window.open_window(WindowOptions { title: "Flit".into(), placement: None, dark: window.is_dark_mode(), server_decorations });
                 }
                 Effect::SetClipboardFiles { paths, cut } => window.set_clipboard_files(&paths, cut),
                 Effect::ShellMenu(menu) if !menu.shell && menu.items.is_empty() => {
@@ -1456,8 +1459,10 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
     fn destroyed(&mut self, window: &Win<P>) {
         let id = window.id();
         let mut last = None;
+        let mut server_decorations = false;
         if let Some(mut st) = self.windows.remove(&id) {
             if self.windows.is_empty() {
+                server_decorations = st.app.system_title_wanted();
                 self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
                 last = Some(Session::new(vec![(st.app.session(), Some(window.placement()))], self.typed.lock().unwrap_or_else(|e| e.into_inner()).clone()));
             }
@@ -1484,7 +1489,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
                 self.local.wait_idle(OPS_GRACE);
             } else {
                 *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = tx;
-                window.open_window(WindowOptions { title: "Flit".into(), placement: self.saved.placement(), dark: window.is_dark_mode() });
+                window.open_window(WindowOptions { title: "Flit".into(), placement: self.saved.placement(), dark: window.is_dark_mode(), server_decorations });
             }
         } else if let Some(w) = self.writer.as_ref().filter(|_| !self.ending && self.quit_session.is_none()) {
             w.send(self.session());
@@ -1664,8 +1669,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         None => {}
     }
     let dark = first.is_dark();
+    let server_decorations = first.system_title_wanted();
     h.pending.push_back(first);
-    ws.run(WindowOptions { title: "Flit".into(), placement, dark }, h)
+    ws.run(WindowOptions { title: "Flit".into(), placement, dark, server_decorations }, h)
 }
 
 #[cfg(test)]

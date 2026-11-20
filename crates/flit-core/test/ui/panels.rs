@@ -999,6 +999,26 @@ fn a_system_title_on_gnome_wayland_falls_back_to_flit_and_says_why() {
 }
 
 #[test]
+fn an_x11_window_without_a_wm_keeps_flits_controls_and_repaints_the_disabled_setting() {
+    let mut app = linux_app();
+    let i = crate::ui::settings::index(crate::ui::settings::WINDOW_TITLE).unwrap();
+    let setting = &crate::ui::settings::SETTINGS[i];
+    choose_title(&mut app, true);
+    assert!(setting.enabled(&app));
+    assert!(decorations_asked(&mut app).is_empty());
+    app.dirty = false;
+    ev(&mut app, Event::ServerDecorations(false));
+    assert!(app.dirty, "the open settings page needs to repaint after the asynchronous answer");
+    assert!(!setting.enabled(&app));
+    assert!(!app.system_title());
+    assert_eq!(setting.get(&app), crate::ui::settings::Value::Choice(1));
+    assert!(decorations_asked(&mut app).is_empty());
+    frame(&mut app);
+    let close = app.panels.caption[2];
+    assert_eq!(app.hit_test(close.x + 1.0, close.y + 1.0), HitArea::Close);
+}
+
+#[test]
 fn windows_never_offers_the_title_setting_and_ignores_it_in_a_shared_settings_file() {
     let mut app = app_at(r"C:\a");
     assert!(!app.caps.unix_paths);

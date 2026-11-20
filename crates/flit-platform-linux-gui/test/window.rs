@@ -175,15 +175,26 @@ fn a_window_closed_during_a_minimized_check_is_released_on_the_ui_thread() {
 fn focus_resize_and_occlusion_reuse_the_cached_position_without_asking_x11() {
     let ask = || -> Option<(f64, f64)> { panic!("X11 position read") };
     let inset = || -> (f64, f64) { panic!("X11 inset read") };
-    let first = next_target(None, 3, None, (800, 600), || (2.0, 30.0), || Some((100.0, 50.0))).unwrap();
+    let first = next_target(None, 3, TargetGeometry::Cached, (800, 600), || (2.0, 30.0), || Some((100.0, 50.0))).unwrap();
     assert_eq!(first.0.origin, (102.0, 80.0));
-    let resized = next_target(Some(first), 3, None, (900, 700), inset, ask).unwrap();
+    let resized = next_target(Some(first), 3, TargetGeometry::Cached, (900, 700), inset, ask).unwrap();
     assert_eq!((resized.0.origin, resized.0.size), ((102.0, 80.0), (900, 700)));
-    let moved = next_target(Some(resized), 3, Some((10.0, 20.0)), (900, 700), inset, ask).unwrap();
-    assert_eq!(moved.0.origin, (12.0, 50.0));
+    let moved = next_target(Some(resized), 3, TargetGeometry::Moved(10.0, 20.0), (900, 700), || (1.0, 20.0), ask).unwrap();
+    assert_eq!(moved.0.origin, (11.0, 40.0));
     let hidden = (TabTarget { minimized: true, ..moved.0 }, moved.1);
-    assert!(next_target(Some(hidden), 3, None, (900, 700), inset, ask).unwrap().0.minimized);
-    assert!(next_target(None, 3, None, (1, 1), || (0.0, 0.0), || None).is_none());
+    assert!(next_target(Some(hidden), 3, TargetGeometry::Cached, (900, 700), inset, ask).unwrap().0.minimized);
+    assert!(next_target(None, 3, TargetGeometry::Cached, (1, 1), || (0.0, 0.0), || None).is_none());
+}
+
+#[test]
+fn changing_decorations_refreshes_the_tab_target_before_the_next_move() {
+    let before = (TabTarget { id: 3, origin: (100.0, 50.0), size: (800, 600), minimized: false }, (0.0, 0.0));
+    let after = next_target(Some(before), 3, TargetGeometry::Refresh, (800, 600), || (3.0, 32.0), || Some((100.0, 50.0))).unwrap();
+    assert_eq!(after.0.origin, (103.0, 82.0));
+    let hidden = (TabTarget { minimized: true, ..after.0 }, after.1);
+    let undecorated = next_target(Some(hidden), 3, TargetGeometry::Refresh, (800, 600), || (0.0, 0.0), || Some((90.0, 40.0))).unwrap();
+    assert_eq!(undecorated.0.origin, (90.0, 40.0));
+    assert!(undecorated.0.minimized);
 }
 
 #[test]
@@ -234,9 +245,20 @@ fn releasing_the_button_moving_or_regaining_focus_keeps_the_menu_that_is_still_b
 }
 
 #[test]
-fn x11_window_managers_draw_frames_and_wayland_needs_the_decoration_manager() {
-    assert!(server_frames(false, None), "on X11 the window manager frames any window that asks for decorations");
-    assert!(server_frames(true, Some(true)), "KDE Plasma and wlroots advertise zxdg_decoration_manager_v1");
-    assert!(!server_frames(true, Some(false)), "GNOME on Wayland has no xdg-decoration, Flit keeps its own title bar");
-    assert!(!server_frames(true, None), "without a side Wayland connection nothing confirms server decorations");
+fn x11_waits_for_the_wm_probe_and_wayland_needs_the_decoration_manager() {
+    assert_eq!(server_frames(false, None, None), None);
+    assert_eq!(server_frames(false, None, Some(false)), Some(false));
+    assert_eq!(server_frames(false, None, Some(true)), Some(true));
+    assert_eq!(server_frames(true, Some(true), None), Some(true));
+    assert_eq!(server_frames(true, Some(false), None), Some(false));
+    assert_eq!(server_frames(true, None, None), Some(false));
+}
+
+#[test]
+fn a_new_x11_window_starts_with_native_frames_when_the_probe_already_confirmed_them() {
+    assert!(initial_decorations(false, true, Some(true)));
+    assert!(!initial_decorations(false, true, None));
+    assert!(!initial_decorations(false, true, Some(false)));
+    assert!(!initial_decorations(false, false, Some(true)));
+    assert!(!initial_decorations(true, true, Some(true)));
 }
