@@ -481,3 +481,167 @@ fn privacy_settings_and_broken_lists_stop_the_recent_record() {
     assert_eq!(crate::shell::opened_documents(&flit_core::provider::Launch::Display(doc_path.clone())), std::slice::from_ref(&doc));
     assert!(crate::shell::opened_documents(&flit_core::provider::Launch::Execute(doc_path)).is_empty(), "programs run are not documents");
 }
+
+const KDE_PLACES: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>
+<!DOCTYPE xbel>
+<xbel xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\" xmlns:kdepriv=\"http://www.kde.org/kdepriv\" xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\">
+ <bookmark href=\"file:///home/u\">
+  <title>Home</title>
+  <info>
+   <metadata owner=\"http://freedesktop.org\">
+    <bookmark:icon name=\"user-home\"/>
+   </metadata>
+   <metadata owner=\"http://www.kde.org\">
+    <ID>1800000000/0</ID>
+    <isSystemItem>true</isSystemItem>
+   </metadata>
+  </info>
+ </bookmark>
+ <bookmark href=\"file:///home/u/Work\">
+  <title>Work stuff</title>
+  <info>
+   <metadata owner=\"http://freedesktop.org\">
+    <bookmark:icon name=\"folder-orange\"/>
+   </metadata>
+   <metadata owner=\"http://www.kde.org\">
+    <ID>1700000000/5</ID>
+    <OnlyInApp>dolphin</OnlyInApp>
+   </metadata>
+  </info>
+ </bookmark>
+ <bookmark href=\"file:///home/u/Old/\">
+  <title>Old</title>
+ </bookmark>
+ <bookmark href=\"remote:/\">
+  <title>Network</title>
+ </bookmark>
+</xbel>
+";
+
+fn bookmark_files(t: &Temp) -> (PathBuf, PathBuf) {
+    let gtk = t.path().join("config/gtk-3.0/bookmarks");
+    let kde = t.path().join("share/user-places.xbel");
+    std::fs::create_dir_all(gtk.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(kde.parent().unwrap()).unwrap();
+    std::fs::write(&gtk, "file:///home/u/Old\nfile:///home/u/Music Songs\nsftp://host/share\n").unwrap();
+    std::fs::write(&kde, KDE_PLACES).unwrap();
+    (gtk, kde)
+}
+
+#[test]
+fn bookmark_sync_recognizes_quoted_kde_paths_with_xml_character_references() {
+    let path = b"/home/u/Work&Home".to_vec();
+    for href in ["'file:///home/u/Work&amp;Home'", "\"file:///home/u/Work&#38;Home\"", "'file:///home/u/Work&#x26;Home'"] {
+        let xbel = format!("<xbel>\n <bookmark href={href}><title>Work and Home</title></bookmark>\n</xbel>\n");
+        assert_eq!(kde_places_edit(&xbel, std::slice::from_ref(&path), &[], 1), None, "{href} should not be duplicated");
+        assert_eq!(kde_places_edit(&xbel, &[], std::slice::from_ref(&path), 1).as_deref(), Some("<xbel>\n</xbel>\n"), "{href} should be removed");
+    }
+}
+
+#[test]
+fn bookmark_sync_preserves_crlf_in_gtk_and_kde() {
+    let t = Temp::new("bookmarks-crlf");
+    let (gtk, kde) = bookmark_files(&t);
+    let gtk_before = "file:///home/u/Old\r\nfile:///home/u/Music Songs\r\n";
+    let kde_before = "<xbel>\r\n <bookmark href=\"file:///home/u/Old\">\r\n  <title>Old</title>\r\n </bookmark>\r\n <bookmark href=\"remote:/\"/>\r\n</xbel>\r\n";
+    std::fs::write(&gtk, gtk_before).unwrap();
+    std::fs::write(&kde, kde_before).unwrap();
+    let added = [b"/home/u/New".to_vec()];
+    let removed = [b"/home/u/Old".to_vec()];
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &added, &removed, 1).unwrap(), (true, true));
+    assert_eq!(std::fs::read_to_string(&gtk).unwrap(), "file:///home/u/Music Songs\r\nfile:///home/u/New\r\n");
+    let xbel = std::fs::read_to_string(&kde).unwrap();
+    assert!(xbel.starts_with("<xbel>\r\n <bookmark href=\"remote:/\"/>\r\n <bookmark href=\"file:///home/u/New\">\r\n"), "{xbel:?}");
+    assert!(xbel.ends_with(" </bookmark>\r\n</xbel>\r\n"), "{xbel:?}");
+    assert!(!xbel.replace("\r\n", "").contains('\n'), "{xbel:?}");
+    let imported = bookmarks_from(&std::fs::read(&gtk).unwrap(), b"", &[], |_| true);
+    assert_eq!(imported[1].path().as_bytes(), b"/home/u/New");
+}
+
+#[test]
+fn pinning_and_unpinning_in_flit_shows_in_the_gtk_and_kde_sidebars_and_keeps_their_own_entries() {
+    let t = Temp::new("bookmarks");
+    let (gtk, kde) = bookmark_files(&t);
+    let added = [b"/home/u/My Docs & more".to_vec(), b"/srv/data".to_vec()];
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &added, &[], 1_800_000_000).unwrap(), (true, true));
+    assert_eq!(std::fs::read_to_string(&gtk).unwrap(), "file:///home/u/Old\nfile:///home/u/Music Songs\nsftp://host/share\nfile:///home/u/My%20Docs%20%26%20more\nfile:///srv/data\n");
+    let xbel = std::fs::read_to_string(&kde).unwrap();
+    assert!(xbel.starts_with(&KDE_PLACES[..KDE_PLACES.rfind("</xbel>").unwrap()]), "KDE's own entries and metadata stay as they were");
+    assert!(xbel.contains(" <bookmark href=\"file:///home/u/My%20Docs%20%26%20more\">\n  <title>My Docs &amp; more</title>"), "{xbel}");
+    assert!(xbel.contains("<ID>1800000000/1</ID>") && xbel.contains("<ID>1800000000/2</ID>"), "new places never reuse an ID KDE already has: {xbel}");
+    assert!(xbel.ends_with(" </bookmark>\n</xbel>\n"));
+    let mut from_kde: Vec<String> = bookmarks_from(b"", xbel.as_bytes(), &[], |_| true).iter().map(|l| String::from_utf8_lossy(l.path().as_bytes()).into_owned()).collect();
+    from_kde.sort();
+    assert_eq!(from_kde, ["/home/u", "/home/u/My Docs & more", "/home/u/Old", "/home/u/Work", "/srv/data"]);
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &added, &[], 1_800_000_001).unwrap(), (false, false), "pinning twice adds nothing");
+
+    let removed = [b"/home/u/Old".to_vec(), b"/home/u/Music".to_vec(), b"/home/u/Work".to_vec()];
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &[], &removed, 1_800_000_002).unwrap(), (true, true));
+    assert_eq!(std::fs::read_to_string(&gtk).unwrap(), "sftp://host/share\nfile:///home/u/My%20Docs%20%26%20more\nfile:///srv/data\n");
+    let xbel = std::fs::read_to_string(&kde).unwrap();
+    assert!(!xbel.contains("/home/u/Old") && !xbel.contains("/home/u/Work") && !xbel.contains("folder-orange"), "{xbel}");
+    assert!(xbel.contains(" <bookmark href=\"file:///home/u\">\n  <title>Home</title>") && xbel.contains("<isSystemItem>true</isSystemItem>"));
+    assert!(xbel.contains("\n </bookmark>\n <bookmark href=\"remote:/\">\n  <title>Network</title>\n </bookmark>\n <bookmark href=\"file:///home/u/My%20Docs"), "no blank lines are left behind: {xbel}");
+    assert_eq!(std::fs::read_dir(t.path().join("share")).unwrap().count(), 1, "no temporary file is left");
+}
+
+#[test]
+fn bookmark_sync_creates_no_files_and_keeps_system_places_and_damaged_lists() {
+    let t = Temp::new("bookmarks-safe");
+    let gtk = t.path().join("config/gtk-3.0/bookmarks");
+    let kde = t.path().join("share/user-places.xbel");
+    let some = [b"/home/u/Work".to_vec()];
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &some, &[], 1).unwrap(), (false, false));
+    assert!(!t.path().join("config").exists() && !t.path().join("share").exists(), "a desktop without these lists gets none");
+
+    let (gtk, kde) = bookmark_files(&t);
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &[], &[b"/home/u".to_vec()], 1).unwrap(), (false, false), "KDE's own Home place is never removed");
+    assert_eq!(std::fs::read_to_string(&kde).unwrap(), KDE_PLACES);
+    assert_eq!(kde_places_edit(KDE_PLACES, &[b"/home/u/Old".to_vec()], &[], 1), None, "a place KDE already has is not added again");
+    assert_eq!(gtk_bookmarks_edit("file:///home/u/Work/ Work\n", &some, &[b"/home/u/Other".to_vec()]), None);
+
+    let damaged = [
+        "<xbel>\n <bookmark href=\"file:///home/u/Work\">\n</xbel>\n",
+        "<xbel>\n <bookmark href=\"file:///home/u/Work\"/>\n",
+        "<xbel>\n <bookmark href=\"file:///home/u/Work\"\n <title>x</title></bookmark>\n</xbel>\n",
+        "<xbel>\n </bookmark>\n</xbel>\n",
+    ];
+    for text in damaged {
+        std::fs::write(&kde, text).unwrap();
+        let (_, kde_written) = sync_bookmarks_in(&gtk, &kde, &[b"/srv/new".to_vec()], &some, 1).unwrap();
+        assert!(!kde_written, "{text}");
+        assert_eq!(std::fs::read_to_string(&kde).unwrap(), text, "a damaged list is left alone");
+    }
+}
+
+#[test]
+fn bookmark_sync_writes_through_links_keeps_permissions_and_ignores_reordering() {
+    use std::os::unix::fs::PermissionsExt;
+    let t = Temp::new("bookmarks-link");
+    let gtk = t.path().join("config/gtk-3.0/bookmarks");
+    let kde = t.path().join("share/user-places.xbel");
+    std::fs::create_dir_all(t.path().join("dotfiles")).unwrap();
+    std::fs::create_dir_all(gtk.parent().unwrap()).unwrap();
+    let real = t.path().join("dotfiles/bookmarks");
+    std::fs::write(&real, "file:///home/u/Work\nfile:///home/u/Music\n").unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o640)).unwrap();
+    std::os::unix::fs::symlink(&real, &gtk).unwrap();
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &[], &[b"/home/u/Work".to_vec()], 1).unwrap(), (true, false));
+    assert!(std::fs::symlink_metadata(&gtk).unwrap().file_type().is_symlink(), "a linked list stays a link");
+    assert_eq!(std::fs::read_to_string(&real).unwrap(), "file:///home/u/Music\n");
+    assert_eq!(std::fs::metadata(&real).unwrap().permissions().mode() & 0o777, 0o640);
+    assert_eq!(std::fs::read_dir(t.path().join("dotfiles")).unwrap().count(), 1);
+
+    let a = flit_core::Location::from_local(fs(Path::new("/home/u/A")));
+    let b = flit_core::Location::from_local(fs(Path::new("/home/u/B")));
+    let diff = flit_core::quick_sync::pins_diff(&[a.clone(), b.clone()], &[b.clone(), a.clone()]);
+    assert!(diff.is_empty(), "moving a pin changes nothing outside Flit");
+    let before = std::fs::metadata(&real).unwrap().modified().unwrap();
+    assert_eq!(sync_bookmarks_in(&gtk, &kde, &bookmark_paths(&diff.added, &[]), &bookmark_paths(&diff.removed, &[]), 1).unwrap(), (false, false));
+    assert_eq!(std::fs::metadata(&real).unwrap().modified().unwrap(), before);
+
+    let admin = flit_core::Location::Admin(fs(Path::new("/etc")));
+    let home = flit_core::Location::from_local(fs(Path::new("/home/u")));
+    let root = flit_core::Location::from_local(fs(Path::new("/")));
+    assert_eq!(bookmark_paths(&[a, admin, home, root], &[b"/home/u/", b"/"]), [b"/home/u/A".to_vec()], "root tabs, home and / are not desktop bookmarks");
+}

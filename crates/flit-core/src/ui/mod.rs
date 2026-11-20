@@ -424,6 +424,7 @@ pub enum Effect {
     StartDrag(Vec<FsPath>),
     ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
     Pinned(Vec<Location>),
+    PinnedCleared,
     PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
     CheckPlaces(Vec<FsPath>),
@@ -1459,6 +1460,7 @@ impl App {
             }
             ProviderEvent::Access { id, items, accounts, .. } => self.properties_access(id, items, accounts),
             ProviderEvent::NotExecutable { tab, path } => self.ask_allow_run(tab, path),
+            ProviderEvent::WrongPassphrase { tab, device } => self.unlock_again(tab, device),
             ProviderEvent::OpenAsk { tab, path, ask } => self.open_ask(tab, path, ask),
             ProviderEvent::MountAsk { ask, answer, .. } => self.mount_ask(ask, answer),
             ProviderEvent::MountAskDone { id, .. } => self.mount_ask_done(id),

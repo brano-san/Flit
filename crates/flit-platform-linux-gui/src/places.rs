@@ -385,11 +385,39 @@ pub fn empty(trash: &Trash, tops: &[PathBuf]) -> OpOutcome {
     OpOutcome { items, error: error.map(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsOpsTrashPartial, error = flit_core::fmt::io_reason(&e)))) }
 }
 
+fn attribute_range(tag: &[u8], name: &[u8]) -> Option<std::ops::Range<usize>> {
+    let mut rest = &tag[tag.iter().position(u8::is_ascii_whitespace)?..];
+    loop {
+        rest = rest.trim_ascii_start();
+        let key_end = rest.iter().position(|b| b.is_ascii_whitespace() || *b == b'=')?;
+        let value = rest[key_end..].trim_ascii_start().strip_prefix(b"=")?.trim_ascii_start();
+        let (&quote, value) = value.split_first()?;
+        if !matches!(quote, b'\'' | b'"') {
+            return None;
+        }
+        let end = value.iter().position(|&b| b == quote)?;
+        if &rest[..key_end] == name {
+            let start = tag.len() - value.len();
+            return Some(start..start + end);
+        }
+        rest = &value[end + 1..];
+    }
+}
+
 fn attribute<'a>(tag: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
-    let key = [b" ", name, b"=\""].concat();
-    let at = tag.windows(key.len()).position(|w| w == key.as_slice())? + key.len();
-    let len = tag[at..].iter().position(|&b| b == b'"')?;
-    Some(&tag[at..at + len])
+    Some(&tag[attribute_range(tag, name)?])
+}
+
+fn numeric_xml_reference(s: &[u8]) -> Option<(usize, char)> {
+    let number = s.strip_prefix(b"&#")?;
+    let (digits, radix) = number.strip_prefix(b"x").map_or((number, 10), |hex| (hex, 16));
+    let end = digits.iter().position(|b| !b.is_ascii_hexdigit())?;
+    if digits[end] != b';' {
+        return None;
+    }
+    let code = u32::from_str_radix(std::str::from_utf8(&digits[..end]).ok()?, radix).ok()?;
+    let c = char::from_u32(code)?;
+    Some((s.len() - digits.len() + end + 1, c))
 }
 
 fn unescape_xml(s: &[u8]) -> Vec<u8> {
@@ -397,15 +425,15 @@ fn unescape_xml(s: &[u8]) -> Vec<u8> {
     let mut i = 0;
     while i < s.len() {
         let entity = [(&b"&amp;"[..], b'&'), (b"&lt;", b'<'), (b"&gt;", b'>'), (b"&quot;", b'"'), (b"&apos;", b'\'')].into_iter().find(|(e, _)| s[i..].starts_with(e));
-        match entity {
-            Some((e, c)) => {
-                out.push(c);
-                i += e.len();
-            }
-            None => {
-                out.push(s[i]);
-                i += 1;
-            }
+        if let Some((e, c)) = entity {
+            out.push(c);
+            i += e.len();
+        } else if let Some((len, c)) = numeric_xml_reference(&s[i..]) {
+            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
+            i += len;
+        } else {
+            out.push(s[i]);
+            i += 1;
         }
     }
     out
@@ -426,7 +454,7 @@ fn utc_ticks(s: &[u8]) -> Option<i64> {
 }
 
 pub fn bookmarks_from(gtk: &[u8], kde: &[u8], skip: &[&[u8]], is_dir: impl Fn(&Path) -> bool) -> Vec<flit_core::Location> {
-    let gtk = gtk.split(|&b| b == b'\n').filter_map(|l| l.split(|&b| b == b' ').next());
+    let gtk = gtk.split(|&b| b == b'\n').filter_map(|l| l.strip_suffix(b"\r").unwrap_or(l).split(|&b| b == b' ').next());
     let kde = kde.split(|&b| b == b'<').filter(|t| t.starts_with(b"bookmark ")).filter_map(|t| attribute(t, b"href")).map(unescape_xml);
     let mut out: Vec<flit_core::Location> = Vec::new();
     for uri in gtk.map(<[u8]>::to_vec).chain(kde) {
@@ -469,11 +497,9 @@ pub fn xbel_stamp(t: std::time::SystemTime) -> String {
 }
 
 fn set_attr(tag: &str, name: &str, value: &str) -> String {
-    let key = format!(" {name}=\"");
-    let found = tag.find(&key).and_then(|at| Some((at + key.len(), at + key.len() + tag[at + key.len()..].find('"')?)));
-    match found {
-        Some((start, end)) => format!("{}{value}{}", &tag[..start], &tag[end..]),
-        None => format!("{}{key}{value}\">", tag.trim_end_matches('>')),
+    match attribute_range(tag.as_bytes(), name.as_bytes()) {
+        Some(range) => format!("{}{value}{}", &tag[..range.start], &tag[range.end..]),
+        None => format!("{} {name}=\"{value}\">", tag.trim_end_matches('>')),
     }
 }
 
@@ -605,6 +631,245 @@ pub fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
     let file = crate::xdg::data_home().map(|d| d.join("recently-used.xbel"));
     let bytes = file.and_then(|f| std::fs::read(f).ok()).unwrap_or_default();
     (recent_from(&bytes, limit, |p| std::fs::metadata(p).ok().map(|m| m.is_dir())), false)
+}
+
+fn escape_xml(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;").replace('\'', "&apos;")
+}
+
+fn folder_key(p: &[u8]) -> &[u8] {
+    let mut p = p;
+    while p.len() > 1 && p.ends_with(b"/") {
+        p = &p[..p.len() - 1];
+    }
+    p
+}
+
+fn names(list: &[Vec<u8>], path: &[u8]) -> bool {
+    list.iter().any(|x| folder_key(x) == folder_key(path))
+}
+
+fn gtk_line_path(line: &str) -> Option<Vec<u8>> {
+    crate::instance::decode_uri(line.split(' ').next()?.as_bytes()).filter(|p| p.starts_with(b"/"))
+}
+
+fn line_ending(text: &str) -> &'static str {
+    if text.split_once('\n').is_some_and(|(line, _)| line.ends_with('\r')) {
+        "\r\n"
+    } else {
+        "\n"
+    }
+}
+
+pub fn gtk_bookmarks_edit(text: &str, add: &[Vec<u8>], remove: &[Vec<u8>]) -> Option<String> {
+    let all = text.lines().count();
+    let kept: Vec<&str> = text.lines().filter(|l| !gtk_line_path(l).is_some_and(|p| names(remove, &p))).collect();
+    let mut fresh: Vec<Vec<u8>> = Vec::new();
+    for p in add {
+        if !kept.iter().any(|l| gtk_line_path(l).is_some_and(|q| folder_key(&q) == folder_key(p))) && !names(&fresh, p) {
+            fresh.push(p.clone());
+        }
+    }
+    if kept.len() == all && fresh.is_empty() {
+        return None;
+    }
+    let newline = line_ending(text);
+    let mut out = String::with_capacity(text.len());
+    for line in kept {
+        out.push_str(line);
+        out.push_str(newline);
+    }
+    for p in &fresh {
+        out.push_str(&recent_href(p));
+        out.push_str(newline);
+    }
+    Some(out)
+}
+
+struct KdePlace {
+    start: usize,
+    end: usize,
+    path: Option<Vec<u8>>,
+    system: bool,
+}
+
+fn kde_places(xbel: &str) -> Option<Vec<KdePlace>> {
+    if !xbel.trim_end().ends_with(XBEL_TAIL) || !xbel.contains("<xbel") {
+        return None;
+    }
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(at) = xbel[from..].find("<bookmark ") {
+        let start = from + at;
+        let open_end = start + xbel[start..].find('>')? + 1;
+        let tag = &xbel[start..open_end];
+        if tag[1..].contains('<') {
+            return None;
+        }
+        let (end, body) = if tag.ends_with("/>") {
+            (open_end, "")
+        } else {
+            let close = open_end + xbel[open_end..].find("</bookmark>")?;
+            let body = &xbel[open_end..close];
+            if body.contains("<bookmark ") {
+                return None;
+            }
+            (close + "</bookmark>".len(), body)
+        };
+        let path = attribute(tag.as_bytes(), b"href").and_then(|h| crate::instance::decode_uri(&unescape_xml(h))).filter(|p| p.starts_with(b"/"));
+        out.push(KdePlace { start, end, path, system: body.contains("<isSystemItem>true</isSystemItem>") });
+        from = end;
+    }
+    let closed = out.iter().filter(|p| xbel[..p.end].ends_with("</bookmark>")).count();
+    (xbel.matches("</bookmark>").count() == closed).then_some(out)
+}
+
+fn kde_block(path: &[u8], id: &str) -> String {
+    let href = recent_href(path);
+    let name = path.rsplit(|&b| b == b'/').find(|c| !c.is_empty()).map(String::from_utf8_lossy).unwrap_or_default();
+    let title = escape_xml(&name);
+    format!(" <bookmark href=\"{href}\">\n  <title>{title}</title>\n  <info>\n   <metadata owner=\"http://freedesktop.org\">\n    <bookmark:icon name=\"folder\"/>\n   </metadata>\n   <metadata owner=\"http://www.kde.org\">\n    <ID>{id}</ID>\n   </metadata>\n  </info>\n </bookmark>\n")
+}
+
+fn line_start(text: &str, at: usize) -> usize {
+    let line = text[..at].rfind('\n').map_or(0, |n| n + 1);
+    if text[line..at].trim().is_empty() {
+        line
+    } else {
+        at
+    }
+}
+
+pub fn kde_places_edit(xbel: &str, add: &[Vec<u8>], remove: &[Vec<u8>], now_secs: u64) -> Option<String> {
+    let places = kde_places(xbel)?;
+    let mut out = xbel.to_owned();
+    let mut changed = false;
+    for place in places.iter().rev() {
+        if place.system || !place.path.as_ref().is_some_and(|p| names(remove, p)) {
+            continue;
+        }
+        let tail = out[place.end..].trim_start_matches([' ', '\t']);
+        let end = match tail.as_bytes() {
+            [b'\r', b'\n', ..] => out.len() - tail.len() + 2,
+            [b'\n', ..] => out.len() - tail.len() + 1,
+            _ => place.end,
+        };
+        out.replace_range(line_start(&out, place.start)..end, "");
+        changed = true;
+    }
+    let mut fresh: Vec<Vec<u8>> = Vec::new();
+    for p in add {
+        let known = places.iter().filter_map(|k| k.path.as_deref()).any(|k| folder_key(k) == folder_key(p));
+        if !known && !names(&fresh, p) {
+            fresh.push(p.clone());
+        }
+    }
+    if !fresh.is_empty() {
+        let mut n = 0u64;
+        let mut blocks = String::new();
+        for p in &fresh {
+            while out.contains(&format!("<ID>{now_secs}/{n}</ID>")) {
+                n += 1;
+            }
+            blocks.push_str(&kde_block(p, &format!("{now_secs}/{n}")));
+            n += 1;
+        }
+        let newline = line_ending(xbel);
+        if newline == "\r\n" {
+            blocks = blocks.replace('\n', newline);
+        }
+        let at = line_start(&out, out.rfind(XBEL_TAIL)?);
+        if at > 0 && !out[..at].ends_with('\n') {
+            blocks.insert_str(0, newline);
+        }
+        out.insert_str(at, &blocks);
+        changed = true;
+    }
+    changed.then_some(out)
+}
+
+fn write_over(file: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let target = std::fs::canonicalize(file)?;
+    let perms = std::fs::metadata(&target)?.permissions();
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let temp = target.with_file_name(format!(".{name}.flit-{}", std::process::id()));
+    let _ = std::fs::remove_file(&temp);
+    let mut out = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&temp)?;
+    let written = out.write_all(text.as_bytes()).and_then(|_| out.sync_all()).and_then(|_| std::fs::set_permissions(&temp, perms));
+    drop(out);
+    if let Err(e) = written.and_then(|_| std::fs::rename(&temp, &target)) {
+        let _ = std::fs::remove_file(&temp);
+        return Err(e);
+    }
+    Ok(())
+}
+
+fn edit_existing(file: &Path, edit: impl FnOnce(&str) -> Option<String>) -> std::io::Result<bool> {
+    let old = match std::fs::read(file) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e),
+    };
+    let Ok(old) = String::from_utf8(old) else { return Ok(false) };
+    let Some(new) = edit(&old) else { return Ok(false) };
+    write_over(file, &new)?;
+    Ok(true)
+}
+
+pub fn sync_bookmarks_in(gtk: &Path, kde: &Path, add: &[Vec<u8>], remove: &[Vec<u8>], now_secs: u64) -> std::io::Result<(bool, bool)> {
+    static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _one_at_a_time = WRITING.lock().unwrap_or_else(|e| e.into_inner());
+    let gtk = edit_existing(gtk, |t| gtk_bookmarks_edit(t, add, remove));
+    let kde = edit_existing(kde, |t| kde_places_edit(t, add, remove, now_secs));
+    Ok((gtk?, kde?))
+}
+
+pub fn bookmark_paths(locs: &[flit_core::Location], skip: &[&[u8]]) -> Vec<Vec<u8>> {
+    locs.iter()
+        .filter_map(|l| match l {
+            flit_core::Location::Local(p) => Some(p.as_bytes()),
+            _ => None,
+        })
+        .filter(|p| p.starts_with(b"/") && !skip.iter().any(|s| folder_key(s) == folder_key(p)))
+        .map(<[u8]>::to_vec)
+        .collect()
+}
+
+type BookmarkJob = (Vec<Vec<u8>>, Vec<Vec<u8>>);
+
+fn bookmark_worker(jobs: crossbeam_channel::Receiver<BookmarkJob>) {
+    let is_dir = |p: &Vec<u8>| Path::new(std::ffi::OsStr::from_bytes(p)).is_dir();
+    for (add, remove) in jobs {
+        let add: Vec<Vec<u8>> = add.into_iter().filter(is_dir).collect();
+        let remove: Vec<Vec<u8>> = remove.into_iter().filter(is_dir).collect();
+        if add.is_empty() && remove.is_empty() {
+            continue;
+        }
+        let (Some(gtk), Some(kde)) = (crate::xdg::config_home().map(|c| c.join("gtk-3.0/bookmarks")), crate::xdg::data_home().map(|d| d.join("user-places.xbel"))) else { continue };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
+        if let Err(e) = sync_bookmarks_in(&gtk, &kde, &add, &remove, now) {
+            tracing::debug!("GTK/KDE bookmarks not updated: {e}");
+        }
+    }
+}
+
+pub fn sync_bookmarks(added: &[flit_core::Location], removed: &[flit_core::Location]) {
+    static JOBS: std::sync::OnceLock<Option<crossbeam_channel::Sender<BookmarkJob>>> = std::sync::OnceLock::new();
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    let skip: [&[u8]; 2] = [home.as_bytes(), b"/"];
+    let (add, remove) = (bookmark_paths(added, &skip), bookmark_paths(removed, &skip));
+    if add.is_empty() && remove.is_empty() {
+        return;
+    }
+    let jobs = JOBS.get_or_init(|| {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        std::thread::Builder::new().name("flit-bookmarks".into()).spawn(move || bookmark_worker(rx)).ok().map(|_| tx)
+    });
+    if let Some(jobs) = jobs {
+        let _ = jobs.send((add, remove));
+    }
 }
 
 #[cfg(test)]

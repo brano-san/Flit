@@ -449,6 +449,13 @@ impl Shell for LinkShell {
     fn needs_exec_bit(&mut self, path: &FsPath) -> bool {
         path.as_bytes().ends_with(b"untrusted.desktop")
     }
+    fn unlock(&mut self, device: &FsPath, passphrase: &str) -> Result<FsPath, PlatformError> {
+        match passphrase {
+            "right" => Ok(p("/media/u/vault")),
+            "wrong" => Err(PlatformError::new(-1, format!("Cannot unlock {}: The passphrase is wrong", device.display())).wrong_passphrase()),
+            _ => Err(PlatformError::new(16, format!("Cannot unlock {}: The drive is in use", device.display()))),
+        }
+    }
     fn open_ask(&mut self, path: &FsPath) -> Option<flit_core::provider::OpenAsk> {
         path.as_bytes().ends_with(b".sh").then_some(flit_core::provider::OpenAsk::Script)
     }
@@ -480,6 +487,20 @@ fn shortcuts_to_folders_navigate_and_launches_reach_the_shell() {
     assert!(error(next()).starts_with(r"opened C:\r\lnk"));
     provider.submit(ProviderRequest::Launch { tab: 3, launch: Launch::Terminal { dirs: vec![p(r"C:\r")], admin: false } });
     assert!(error(next()).starts_with("Terminal"));
+}
+
+#[test]
+fn a_wrong_passphrase_comes_back_as_its_own_event_and_other_unlock_errors_as_failures() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, LinkShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    let unlock = |pass: &str| ProviderRequest::Launch { tab: 4, launch: Launch::Unlock { device: p("/dev/sdd2"), passphrase: flit_core::archive::Secret(pass.into()) } };
+    provider.submit(unlock("wrong"));
+    assert_eq!(next(), ProviderEvent::WrongPassphrase { tab: 4, device: p("/dev/sdd2") });
+    provider.submit(unlock("busy"));
+    assert!(matches!(next(), ProviderEvent::OpDone { tab: 4, id: 0, error: Some(e), report: None } if e.contains("in use")));
+    provider.submit(unlock("right"));
+    assert_eq!(next(), ProviderEvent::Navigate { tab: 4, path: p("/media/u/vault") });
 }
 
 struct SlowServerShell;
