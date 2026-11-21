@@ -193,6 +193,8 @@ pub struct Places {
     pub recent: Vec<Recent>,
     pub recent_off: bool,
     pub never_shown: Vec<String>,
+    #[serde(skip)]
+    pub business_onedrive: Vec<(String, Location)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -519,6 +521,17 @@ impl Sidebar {
                     if let Some(l) = self.known(k) {
                         let label = if k == KnownFolder::Home { pinned_label(l) } else { k.label().to_owned() };
                         out.push(item(label, k.glyph(), l.clone(), None));
+                    }
+                    if k == KnownFolder::OneDrive {
+                        for (name, loc) in &p.business_onedrive {
+                            let brand = S::SidebarFolderOneDrive.en();
+                            let label = if name.get(..brand.len()).is_some_and(|s| s.eq_ignore_ascii_case(brand)) {
+                                name.clone()
+                            } else {
+                                crate::tr!(S::WindowsOneDriveBusiness, name = name)
+                            };
+                            out.push(item(label, G_CLOUD, loc.clone(), None));
+                        }
                     }
                 }
                 if p.recycle_bin {
@@ -1906,6 +1919,11 @@ fn item_icon(r: Rect, scale: f32, drive: bool) -> Rect {
 
 pub(super) fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<SystemIcon> {
     match (&it.loc, it.section) {
+        #[cfg(windows)]
+        (_, Section::Places) if it.glyph == G_CLOUD => {
+            let (_, personal) = places.folders.iter().find(|(k, _)| *k == KnownFolder::OneDrive)?;
+            location_icon(personal, places, px)
+        }
         (_, Section::Tags) | (Location::Wsl { .. }, Section::Recents) => None,
         (Location::Local(path), Section::Recents) => places.recent.iter().find(|r| r.target == *path).and_then(|r| recent_icon(r, places, px)),
         (Location::Local(path), Section::Bookmarks) if it.glyph == G_FILE => Some((hash::hash(&("place", path.as_bytes(), px)), IconKind::File, path.clone())),

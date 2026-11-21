@@ -51,6 +51,33 @@ fn one_drive_is_a_place_right_after_home_with_a_cloud() {
 }
 
 #[test]
+fn business_onedrive_places_follow_personal_and_keep_preferences_when_renamed() {
+    let personal = loc(r"C:\Users\u\OneDrive");
+    let work = loc(r"D:\Sync\Work");
+    let other = loc(r"D:\Sync\Lab");
+    let mut sb = Sidebar { places: Arc::new(Places {
+        folders: vec![(KnownFolder::OneDrive, personal.clone()), (KnownFolder::Music, loc(r"C:\Music"))],
+        business_onedrive: vec![("Компания".into(), work.clone()), ("OneDrive - Lab".into(), other.clone())],
+        ..Default::default()
+    }), ..Default::default() };
+    let items = sb.section_items(Section::Places);
+    let rows: Vec<_> = items.iter().skip(1).take(3).map(|it| (it.label.as_str(), &it.loc, it.glyph)).collect();
+    assert_eq!(rows, [("OneDrive", &personal, G_CLOUD), ("OneDrive - Компания", &work, G_CLOUD), ("OneDrive - Lab", &other, G_CLOUD)]);
+    assert_eq!(items[4].label, "Music");
+    #[cfg(windows)]
+    assert_eq!(place_icon_request(&items[2], &sb.places, 20), place_icon_request(&items[1], &sb.places, 20));
+    sb.prefs.quick.places_hidden.push(work.clone());
+    sb.prefs.quick.places.push(other.clone());
+    Arc::make_mut(&mut sb.places).business_onedrive[0].0 = "Renamed".into();
+    let items = sb.section_items(Section::Places);
+    assert_eq!(items[0].loc, other);
+    assert!(!items.iter().any(|it| it.loc == work));
+    assert!(items.iter().any(|it| it.loc == personal));
+    Arc::make_mut(&mut sb.places).folders.clear();
+    assert_eq!(sb.section_items(Section::Places)[0].loc, other);
+}
+
+#[test]
 fn known_folders_map_to_shell_names() {
     let names: Vec<&str> = KnownFolder::ALL.iter().map(|k| k.shell_name()).collect();
     assert_eq!(names, ["shell:Profile", "shell:Desktop", "shell:Downloads", "shell:Personal", "shell:My Pictures", "shell:My Music", "shell:My Video", "shell:Favorites", "shell:OneDrive"]);

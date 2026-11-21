@@ -188,6 +188,10 @@ impl Platform for Windows {
         }
     }
 
+    fn business_onedrive() -> Vec<(String, Location)> {
+        places::business_onedrive()
+    }
+
     fn fatal_error(message: &str) {
         let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
         unsafe {

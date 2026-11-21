@@ -530,7 +530,7 @@ fn integration_and_places_roundtrip_without_changing_older_records() {
     let mut saved = Saved::new(Persisted { path: loc(r"D:\x"), ..Default::default() }, None);
     saved.persisted.prefs.git_integration = true;
     saved.side.quick.places = vec![loc(r"C:\Users\u\Downloads"), loc(r"C:\Users\u")];
-    saved.side.quick.places_hidden = vec![Location::computer()];
+    saved.side.quick.places_hidden = vec![Location::computer(), loc(r"D:\Sync\OneDrive - Компания")];
     saved.side.quick.show_paths = true;
     let bytes = saved.encode().unwrap();
     let restored = Saved::decode(&bytes).unwrap();
