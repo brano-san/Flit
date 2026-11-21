@@ -42,11 +42,21 @@ impl Drop for TestEngine {
 
 struct TestWindow(HWND);
 
+fn test_window_x() -> i32 {
+    unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) - WIDTH as i32 - 1 }
+}
+
+#[test]
+fn capture_window_lies_outside_the_virtual_desktop() {
+    let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+    assert!(test_window_x() + WIDTH as i32 <= left);
+}
+
 impl TestWindow {
     unsafe fn new() -> Self {
         let class = w!("FlitPreviewVideoTest");
         register(class, Some(host_proc));
-        Self(CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, class, class, WS_POPUP | WS_VISIBLE, 40, 40, WIDTH as i32, HEIGHT as i32, None, None, Some(hinst()), None).unwrap())
+        Self(CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, class, class, WS_POPUP | WS_VISIBLE, test_window_x(), 0, WIDTH as i32, HEIGHT as i32, None, None, Some(hinst()), None).unwrap())
     }
 }
 
