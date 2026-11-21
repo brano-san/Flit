@@ -20,6 +20,7 @@ const EVENT_NONE: c_int = 0;
 const EVENT_SHUTDOWN: c_int = 1;
 const EVENT_END_FILE: c_int = 7;
 const EVENT_VIDEO_RECONFIG: c_int = 17;
+const EVENT_PLAYBACK_RESTART: c_int = 21;
 const EVENT_PROPERTY_CHANGE: c_int = 22;
 const END_EOF: c_int = 0;
 const END_ERROR: c_int = 4;
@@ -68,6 +69,8 @@ struct Api {
     command: unsafe extern "C" fn(*mut c_void, *mut *const c_char) -> c_int,
     set_property: unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int,
     get_property: unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int,
+    get_property_string: unsafe extern "C" fn(*mut c_void, *const c_char) -> *mut c_char,
+    free: unsafe extern "C" fn(*mut c_void),
     observe_property: unsafe extern "C" fn(*mut c_void, u64, *const c_char, c_int) -> c_int,
     wait_event: unsafe extern "C" fn(*mut c_void, f64) -> *mut Event,
     set_wakeup_callback: unsafe extern "C" fn(*mut c_void, Option<Callback>, *mut c_void),
@@ -99,6 +102,8 @@ fn table(lib: *mut c_void) -> Option<Api> {
             command: cast(sym(c"mpv_command")?),
             set_property: cast(sym(c"mpv_set_property")?),
             get_property: cast(sym(c"mpv_get_property")?),
+            get_property_string: cast(sym(c"mpv_get_property_string")?),
+            free: cast(sym(c"mpv_free")?),
             observe_property: cast(sym(c"mpv_observe_property")?),
             wait_event: cast(sym(c"mpv_wait_event")?),
             set_wakeup_callback: cast(sym(c"mpv_set_wakeup_callback")?),
@@ -182,6 +187,7 @@ pub(crate) trait Surface {
 
 #[derive(Default)]
 struct Easel {
+    held: bool,
     due: bool,
     resized: bool,
     stop: bool,
@@ -217,16 +223,25 @@ impl Canvas {
         self.cv.notify_all();
     }
 
+    fn hold(&self, held: bool) {
+        let mut e = lock(&self.easel);
+        if e.held != held {
+            e.held = held;
+            e.resized = true;
+            self.cv.notify_all();
+        }
+    }
+
     fn size(&self) -> (u32, u32) {
         lock(&self.easel).size
     }
 
-    fn next(&self) -> Option<(bool, bool)> {
+    fn next(&self) -> Option<(bool, bool, bool)> {
         let mut e = lock(&self.easel);
         while !(e.due || e.resized || e.stop) {
             e = self.cv.wait(e).unwrap_or_else(|e| e.into_inner());
         }
-        (!e.stop).then(|| (std::mem::take(&mut e.due), std::mem::take(&mut e.resized)))
+        (!e.stop).then(|| (std::mem::take(&mut e.due), std::mem::take(&mut e.resized), e.held))
     }
 
     fn rest(&self, until: Instant) -> bool {
@@ -264,7 +279,7 @@ impl Scratch {
 pub(crate) fn paint(canvas: &Canvas, surface: &mut dyn Surface, gen: u64, frames: &Frames, every: Duration, report: &dyn Fn(HostEvent)) {
     let mut scratch = Scratch::default();
     let mut drawn: Option<Instant> = None;
-    while let Some((due, resized)) = canvas.next() {
+    while let Some((due, resized, held)) = canvas.next() {
         let fresh = due && surface.wants_frame();
         if !fresh && !(resized && drawn.is_some()) {
             continue;
@@ -274,7 +289,7 @@ pub(crate) fn paint(canvas: &Canvas, surface: &mut dyn Surface, gen: u64, frames
         }
         let Some(frame) = scratch.draw(surface, canvas.size()) else { continue };
         drawn = Some(Instant::now());
-        if frames.put(gen, frame) {
+        if !held && frames.put(gen, frame) {
             report(HostEvent::Frame(frames.clone()));
         }
     }
@@ -283,6 +298,23 @@ pub(crate) fn paint(canvas: &Canvas, surface: &mut dyn Surface, gen: u64, frames
 struct Core {
     api: &'static Api,
     handle: *mut c_void,
+}
+
+fn hdr_transfer(gamma: &CStr) -> bool {
+    matches!(gamma.to_bytes(), b"hlg" | b"pq")
+}
+
+fn color_filter(hdr: bool) -> Option<&'static CStr> {
+    hdr.then_some(c"@flit-hdr:lavfi=[\
+        zscale=w='if(gte(iw,ih),min(iw,1280),-2)':h='if(gte(iw,ih),-2,min(ih,1280))':t=linear:npl=100,\
+        format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,\
+        zscale=t=bt709:m=bt709:r=tv,format=yuv444p]:o=[threads=2]")
+}
+
+#[derive(Default)]
+struct ToneMap {
+    requested: bool,
+    active: bool,
 }
 
 impl Drop for Core {
@@ -336,6 +368,33 @@ impl Core {
         }
     }
 
+    fn hdr(&self, property: &CStr) -> Option<bool> {
+        let value = unsafe { (self.api.get_property_string)(self.handle, property.as_ptr()) };
+        if value.is_null() {
+            return None;
+        }
+        let hdr = hdr_transfer(unsafe { CStr::from_ptr(value) });
+        unsafe { (self.api.free)(value.cast()) };
+        Some(hdr)
+    }
+
+    fn configure_color(&self, mode: &mut ToneMap) {
+        let Some(hdr) = self.hdr(c"video-params/gamma") else { return };
+        if hdr == mode.requested {
+            return;
+        }
+        mode.requested = hdr;
+        if let Some(filter) = color_filter(hdr) {
+            mode.active = self.command(&[c"vf", c"add", filter]);
+            if !mode.active {
+                tracing::warn!("libmpv could not enable HDR tone mapping, using its standard video output");
+            }
+        } else if mode.active {
+            self.command(&[c"vf", c"remove", c"@flit-hdr"]);
+            mode.active = false;
+        }
+    }
+
     fn sw_render(&self) -> Option<Render> {
         let mut ctx = std::ptr::null_mut();
         let mut params = [Param { kind: PARAM_API_TYPE, data: c"sw".as_ptr().cast_mut().cast() }, Param { kind: PARAM_END, data: std::ptr::null_mut() }];
@@ -343,7 +402,7 @@ impl Core {
         (ok && !ctx.is_null()).then_some(Render { api: self.api, ctx })
     }
 
-    fn drain(&self, progress: &mut Progress, video: &mut Option<(u32, u32)>) -> Drained {
+    fn drain(&self, progress: &mut Progress, video: &mut Option<(u32, u32)>, color: &mut ToneMap) -> Drained {
         let mut out = Drained::default();
         loop {
             let ev = unsafe { (self.api.wait_event)(self.handle, 0.0) };
@@ -356,9 +415,14 @@ impl Core {
                 }
                 EVENT_PROPERTY_CHANGE => out.changed |= unsafe { property(ev.data.cast::<Property>().as_ref(), progress) },
                 EVENT_VIDEO_RECONFIG => {
+                    self.configure_color(color);
                     let size = self.int(c"dwidth").zip(self.int(c"dheight"));
                     out.resized |= size != std::mem::replace(video, size);
+                    if progress.playing && color.active && self.hdr(c"video-out-params/gamma") == Some(false) {
+                        out.ready = true;
+                    }
                 }
+                EVENT_PLAYBACK_RESTART => out.ready |= !color.active || self.hdr(c"video-out-params/gamma") == Some(false),
                 EVENT_END_FILE => {
                     let reason = unsafe { ev.data.cast::<EndFile>().as_ref() }.map(|e| e.reason);
                     if matches!(reason, Some(END_EOF | END_ERROR)) {
@@ -385,6 +449,7 @@ unsafe fn property(p: Option<&Property>, progress: &mut Progress) -> bool {
 
 #[derive(Default)]
 struct Drained {
+    ready: bool,
     changed: bool,
     resized: bool,
     ended: bool,
@@ -579,6 +644,7 @@ fn run(s: &Start, shared: &Arc<Shared>, report: &Report) {
         unsafe { (core.api.observe_property)(core.handle, k, name.as_ptr(), format) };
     }
     let canvas = Arc::new(Canvas::new(frame_size(None, s.area)));
+    canvas.hold(s.video);
     let painter = render.and_then(|mut r| {
         unsafe { (core.api.render_set_update_callback)(r.ctx, Some(repaint), Arc::as_ptr(&canvas).cast_mut().cast()) };
         let (canvas, report, gen, every) = (canvas.clone(), report.clone(), s.gen, s.every);
@@ -590,6 +656,7 @@ fn run(s: &Start, shared: &Arc<Shared>, report: &Report) {
     });
     let loaded = CString::new(s.path.as_os_str().as_bytes()).is_ok_and(|path| core.command(&[c"loadfile", &path]));
     let mut progress = Progress { playing: true, ..Progress::default() };
+    let mut color = ToneMap::default();
     let (mut sent, mut video, mut area) = ((Instant::now(), progress), None, s.area);
     if !loaded {
         progress.finish();
@@ -610,10 +677,13 @@ fn run(s: &Start, shared: &Arc<Shared>, report: &Report) {
         for o in orders {
             core.apply(o);
         }
-        let drained = core.drain(&mut progress, &mut video);
+        let drained = core.drain(&mut progress, &mut video, &mut color);
         if placed.is_some() || drained.resized {
             area = placed.or(area);
             canvas.resize(frame_size(video, area));
+        }
+        if drained.ready {
+            canvas.hold(false);
         }
         if drained.ended {
             progress.finish();
@@ -634,3 +704,7 @@ fn run(s: &Start, shared: &Arc<Shared>, report: &Report) {
 #[cfg(test)]
 #[path = "../test/mpv.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test/hdr.rs"]
+mod hdr_tests;
