@@ -15,6 +15,8 @@ mod engine;
 mod extensions;
 mod fileops;
 mod fs;
+mod hdr_effect;
+mod hdr_gpu;
 mod update;
 mod install;
 mod integration;

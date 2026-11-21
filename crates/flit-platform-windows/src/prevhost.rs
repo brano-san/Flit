@@ -1,3 +1,4 @@
+use crate::hdr_effect::HdrColor;
 use flit_core::preview::{HostCmd, HostEvent, Hosted, MediaCmd};
 use flit_core::render::Rect;
 use flit_core::provider::FileOp;
@@ -9,6 +10,11 @@ use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, BSTR, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D10::ID3D10Multithread;
+use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, HDC, HGDIOBJ};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{CLSIDFromString, CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, STGM_READ, STGM_SHARE_DENY_NONE};
@@ -294,27 +300,101 @@ pub(crate) unsafe fn open_handler(clsid: &str, path: &FsPath, host: HWND, bg: u3
     Ok(handler)
 }
 
-pub(crate) unsafe fn open_media(path: &FsPath, host: HWND, video: bool, volume: f32) -> windows::core::Result<IMFMediaEngine> {
+unsafe fn video_device() -> windows::core::Result<VideoDevice> {
+    let mut device = None;
+    D3D11CreateDevice(
+        None,
+        D3D_DRIVER_TYPE_HARDWARE,
+        HMODULE::default(),
+        D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        None,
+        D3D11_SDK_VERSION,
+        Some(&mut device),
+        None,
+        None,
+    )?;
+    let device = device.ok_or_else(windows::core::Error::empty)?;
+    let _ = device.cast::<ID3D10Multithread>()?.SetMultithreadProtected(true);
+    let (mut token, mut manager) = (0, None);
+    MFCreateDXGIDeviceManager(&mut token, &mut manager)?;
+    let manager = manager.ok_or_else(windows::core::Error::empty)?;
+    manager.ResetDevice(&device, token)?;
+    Ok((device, manager))
+}
+
+type VideoDevice = (ID3D11Device, IMFDXGIDeviceManager);
+
+fn video_or_legacy<G, T>(device: windows::core::Result<G>, mut create: impl FnMut(Option<&G>) -> windows::core::Result<T>) -> windows::core::Result<T> {
+    match device.and_then(|gpu| create(Some(&gpu))) {
+        Ok(engine) => Ok(engine),
+        Err(e) => {
+            tracing::debug!("preview video device: {e}");
+            create(None)
+        }
+    }
+}
+
+unsafe fn start_mf() -> windows::core::Result<()> {
     if !MF.get() {
         MFStartup(MF_VERSION, MFSTARTUP_FULL)?;
         MF.set(true);
     }
+    Ok(())
+}
+
+fn hdr_color(path: &FsPath) -> Option<HdrColor> {
+    unsafe {
+        let file = path.to_wide(false);
+        let reader = MFCreateSourceReaderFromURL(PCWSTR(file.as_ptr()), None).ok()?;
+        let kind = reader.GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32, 0).ok()?;
+        HdrColor::from_type(&kind, None)
+    }
+}
+
+unsafe fn open_media(path: &FsPath, host: HWND, video: bool, volume: f32) -> windows::core::Result<IMFMediaEngine> {
+    start_mf()?;
+    let host = video.then_some(host);
+    let engine = if let Some(color) = host.and_then(|_| hdr_color(path)) {
+        video_or_legacy(video_device(), |gpu| create_engine(host, true, gpu, Some(color)))?
+    } else {
+        create_engine(host, video, None, None)?
+    };
+    load_media(&engine, path, volume)?;
+    Ok(engine)
+}
+
+unsafe fn create_engine(host: Option<HWND>, video: bool, gpu: Option<&VideoDevice>, color: Option<HdrColor>) -> windows::core::Result<IMFMediaEngine> {
     let factory: IMFMediaEngineClassFactory = CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)?;
     let mut attrs = None;
-    MFCreateAttributes(&mut attrs, 2)?;
+    MFCreateAttributes(&mut attrs, 4)?;
     let attrs = attrs.ok_or_else(windows::core::Error::empty)?;
     let notify: IMFMediaEngineNotify = Notify.into();
     attrs.SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, &notify)?;
-    let flags = if video {
-        attrs.SetUINT64(&MF_MEDIA_ENGINE_PLAYBACK_HWND, host.0 as u64)?;
-        0
-    } else {
-        MF_MEDIA_ENGINE_AUDIOONLY.0 as u32
-    };
+    if let Some(hwnd) = host {
+        attrs.SetUINT64(&MF_MEDIA_ENGINE_PLAYBACK_HWND, hwnd.0 as u64)?;
+    }
+    if let Some((_, manager)) = gpu {
+        attrs.SetUnknown(&MF_MEDIA_ENGINE_DXGI_MANAGER, manager)?;
+        attrs.SetUINT32(&MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM.0 as u32)?;
+    }
+    let flags = if video { 0 } else { MF_MEDIA_ENGINE_AUDIOONLY.0 as u32 };
     let engine = factory.CreateInstance(flags, &attrs)?;
-    engine.SetVolume(volume as f64)?;
-    engine.SetSource(&BSTR::from(path.display().as_ref()))?;
+    if let (Some((device, _)), Some(color)) = (gpu, color) {
+        let insert = crate::hdr_effect::create(device, color).and_then(|effect| engine.cast::<IMFMediaEngineEx>()?.InsertVideoEffect(&effect, true));
+        if let Err(error) = insert {
+            let _ = engine.Shutdown();
+            return Err(error);
+        }
+    }
     Ok(engine)
+}
+
+unsafe fn load_media(engine: &IMFMediaEngine, path: &FsPath, volume: f32) -> windows::core::Result<()> {
+    let result = engine.SetVolume(volume as f64).and_then(|()| engine.SetSource(&BSTR::from(path.display().as_ref())));
+    if result.is_err() {
+        let _ = engine.Shutdown();
+    }
+    result
 }
 
 fn close(s: Session) {
@@ -463,3 +543,7 @@ unsafe extern "system" fn worker_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
 #[cfg(test)]
 #[path = "../test/prevhost.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test/preview_video.rs"]
+mod preview_video;
