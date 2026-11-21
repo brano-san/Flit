@@ -30,6 +30,7 @@ mod marquee;
 mod menu;
 mod menu_editor;
 mod nav;
+pub use nav::PrimaryPaste;
 mod network;
 mod volumes;
 pub mod palette;
@@ -407,7 +408,7 @@ pub enum Effect {
     TypeName(Vec<u8>),
     SetClipboard(String),
     SetPrimary(String),
-    PastePrimary,
+    PastePrimary(PrimaryPaste),
     SetClipboardImage(Bitmap),
     Paste,
     Window(WindowCmd),
@@ -780,7 +781,7 @@ pub struct App {
     strip: tabbar::Strip,
     addr: address::Address,
     primary: String,
-    paste_after_layout: bool,
+    paste_after_layout: Option<PrimaryPaste>,
     ghosts: widgets::Ghosts,
     bar_arrivals: widgets::Arrivals,
     rolls: [bottom::Roll; 2],
@@ -919,7 +920,7 @@ impl App {
             strip: Default::default(),
             addr: Default::default(),
             primary: String::new(),
-            paste_after_layout: false,
+            paste_after_layout: None,
             ghosts: Default::default(),
             bar_arrivals: Default::default(),
             rolls: Default::default(),
@@ -1874,14 +1875,14 @@ impl App {
             }
             return;
         }
-        if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Focus(false) | Event::ShowMenu { .. }) {
-            self.paste_after_layout = false;
+        if matches!(ev, Event::MouseDown { button: MouseButton::Middle | MouseButton::Left, .. } | Event::Key { pressed: true, .. } | Event::Focus(false)) {
+            self.paste_after_layout = None;
         }
         if self.caps.unix_paths && self.middle_paste(ev, now) {
             return;
         }
         self.handle_event(ev, now);
-        if self.caps.unix_paths && !self.paste_after_layout {
+        if self.caps.unix_paths && self.paste_after_layout.is_none() {
             self.offer_primary();
         }
     }
@@ -1978,6 +1979,7 @@ impl App {
             }
             Event::Char(c) => self.char_input(*c, now),
             Event::Pasted(text) => self.on_paste(text),
+            Event::PrimaryPasted(paste, text) => self.on_primary_paste(*paste, text),
             Event::Preedit(text) => {
                 self.preedit.clone_from(text);
                 self.dirty = true;
@@ -2635,9 +2637,7 @@ impl App {
             self.strip.drop_ghosts();
         }
         self.arena = arena;
-        if std::mem::take(&mut self.paste_after_layout) {
-            self.effects.push(Effect::PastePrimary);
-        }
+        self.request_primary_after_layout();
         self.prefetch_shell();
         self.flush_shell_overlays();
 

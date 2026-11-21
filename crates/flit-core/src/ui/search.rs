@@ -354,6 +354,7 @@ impl App {
         if self.search.active {
             self.remember_query();
             self.search.active = false;
+            self.search.edit.primary_id = 0;
             self.search.drag = SDrag::None;
             self.effects.push(Effect::Title(self.window_title()));
             self.set_cursor(CursorIcon::Default);

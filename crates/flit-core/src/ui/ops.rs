@@ -1513,6 +1513,10 @@ impl App {
         edit.text.get(edit.selection())
     }
 
+    pub(super) fn rename_edit(&mut self) -> Option<&mut LineEdit> {
+        self.ops.rename.as_mut().map(|r| &mut r.edit)
+    }
+
     pub(super) fn rename_contains(&self, x: f32, y: f32) -> bool {
         self.ops.rename.as_ref().is_some_and(|r| r.rect.contains(x, y))
     }

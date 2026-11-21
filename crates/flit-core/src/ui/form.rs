@@ -338,12 +338,16 @@ impl App {
             return true;
         }
         let k = f.focus;
-        if let Some(Control::Text { field, .. }) = f.controls.get_mut(k) {
-            field.insert(s.lines().next().unwrap_or(""));
+        self.form_insert_at(k, s.lines().next().unwrap_or(""));
+        true
+    }
+
+    pub(super) fn form_insert_at(&mut self, k: usize, s: &str) {
+        if let Some(field) = self.form_text_mut(k) {
+            field.insert(s);
             self.form_changed(k);
             self.dirty = true;
         }
-        true
     }
 
     pub(super) fn form_text(&self, k: usize) -> Option<&Field> {

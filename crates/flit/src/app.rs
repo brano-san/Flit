@@ -696,9 +696,9 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Effect::SetPrimary(text) => window.set_primary_text(&text),
-                Effect::PastePrimary => {
-                    if let (Some(text), Some(st)) = (window.primary_text(), self.windows.get_mut(&id)) {
-                        st.app.on_paste(&text);
+                Effect::PastePrimary(paste) => {
+                    if let (Some(text), Some(st)) = (window.primary_text(paste), self.windows.get_mut(&id)) {
+                        st.app.on_primary_paste(paste, &text);
                     }
                 }
                 Effect::Window(WindowCmd::Minimize) => window.minimize(),

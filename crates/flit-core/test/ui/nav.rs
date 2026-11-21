@@ -923,13 +923,13 @@ fn a_middle_click_in_the_focused_field_pastes_the_primary_selection_where_it_lan
     app.drain_effects().for_each(drop);
     app.on_event(&Event::MouseDown { x: start.0 + 20.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
     redraw(&mut app);
-    assert!(app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)));
-    app.on_paste("X");
+    let paste = primary_request(&mut app).unwrap();
+    app.on_event(&Event::PrimaryPasted(paste, "X".into()), t0());
     let text = app.tab().filter.as_ref().unwrap().text().to_owned();
     assert_eq!(text, "alXpha", "inserted where the button went down instead of over the selected text");
     let row = (app.layout.cols[0].x + 100.0, app.layout.list.y + app.layout.row_h / 2.0);
     app.on_event(&Event::MouseDown { x: row.0, y: row.1, button: MouseButton::Middle, clicks: 1 }, t0());
-    assert!(!app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)), "outside a field the middle button keeps its own job");
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::PastePrimary(_))), "outside a field the middle button keeps its own job");
 }
 
 #[test]
@@ -941,16 +941,92 @@ fn middle_paste_focuses_an_unfocused_filter_only_on_linux() {
         let (start, _) = filter_with(&mut app, "alpha");
         app.focus = Focus::List;
         app.on_event(&Event::MouseDown { x: start.0 + 20.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
-        assert!(!app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)));
+        assert!(!app.drain_effects().any(|e| matches!(e, Effect::PastePrimary(_))));
         redraw(&mut app);
-        assert_eq!(app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)), linux);
+        let paste = primary_request(&mut app);
+        assert_eq!(paste.is_some(), linux);
         if linux {
             assert_eq!(app.focus, Focus::Filter);
-            app.on_paste("X");
+            app.on_event(&Event::PrimaryPasted(paste.unwrap(), "X".into()), t0());
             assert_eq!(app.tab().filter.as_ref().unwrap().text(), "alXpha");
         } else {
             assert_eq!(app.focus, Focus::List);
             assert_eq!(app.tab().filter.as_ref().unwrap().text(), "alpha");
         }
     }
+}
+
+fn primary_request(app: &mut App) -> Option<PrimaryPaste> {
+    app.drain_effects().find_map(|e| if let Effect::PastePrimary(paste) = e { Some(paste) } else { None })
+}
+
+fn middle_at(app: &mut App, x: f32, y: f32) -> PrimaryPaste {
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 }, t0());
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Middle }, t0());
+    redraw(app);
+    primary_request(app).expect("middle click requests PRIMARY")
+}
+
+#[test]
+fn primary_reply_keeps_the_filter_when_a_file_menu_opens_and_skips_a_replaced_filter() {
+    let mut app = app_at("/home/u");
+    app.caps.unix_paths = true;
+    files(&mut app, &["alpha"]);
+    let (start, _) = filter_with(&mut app, "alpha");
+    let paste = middle_at(&mut app, start.0 + 20.0, start.1);
+    app.on_event(&Event::ShowMenu { items: vec![crate::ui::MenuItem::command("Open", String::new())], x: 120.0, y: 140.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: false }, t0());
+    redraw(&mut app);
+    app.on_event(&Event::Pasted("menu".into()), t0());
+    app.on_event(&Event::PrimaryPasted(paste, "X".into()), t0());
+    assert_eq!(app.tab().filter.as_ref().unwrap().text(), "alXpha");
+    assert_eq!(app.context_menu_open().unwrap().query.text(), "menu");
+    key(&mut app, Key::Escape, NO);
+    if app.own_menu_open() { key(&mut app, Key::Escape, NO); }
+    app.on_event(&Event::MouseDown { x: start.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
+    let stale = middle_at(&mut app, start.0 + 20.0, start.1);
+    app.close_filter();
+    app.open_filter();
+    app.on_event(&Event::PrimaryPasted(stale, "late".into()), t0());
+    assert_eq!(app.tab().filter.as_ref().unwrap().text(), "");
+    app.on_event(&Event::MouseDown { x: start.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
+    app.close_filter();
+    redraw(&mut app);
+    assert!(primary_request(&mut app).is_none());
+}
+
+#[test]
+fn primary_reply_in_a_form_keeps_the_clicked_control_after_focus_moves() {
+    use crate::ui::archive::Kind;
+    use crate::ui::form::{Control, Form};
+    let mut app = app_at("/home/u");
+    app.caps.unix_paths = true;
+    app.open_form(Form::new(Kind::GitClone, "Clone", vec![Control::text("Address", "first", ""), Control::text("Directory", "alpha", "")], vec!["OK", "Cancel"]));
+    redraw(&mut app);
+    let row = app.form_text_rect(1).unwrap();
+    let x = row.x + 170.0_f32.min(row.w * 0.42) + 8.0 + 20.0;
+    let paste = middle_at(&mut app, x, row.y + row.h * 0.5);
+    assert_eq!(app.form_text_focus(), Some(1));
+    let other = app.form_text_rect(0).unwrap();
+    press(&mut app, other, MouseButton::Left);
+    assert_eq!(app.form_text_focus(), Some(0));
+    app.on_event(&Event::PrimaryPasted(paste, "X".into()), t0());
+    assert_eq!(app.form_text(1).unwrap().text(), "alXpha");
+    assert_eq!(app.form_text(0).unwrap().text(), "first");
+}
+
+#[test]
+fn primary_reply_in_the_sidebar_keeps_the_clicked_position_after_focus_moves() {
+    let mut app = app_at("/home/u");
+    app.caps.unix_paths = true;
+    app.focus_quick_filter();
+    typed(&mut app, "alpha");
+    app.focus = Focus::List;
+    redraw(&mut app);
+    let field = app.nav.sidebar.field;
+    let paste = middle_at(&mut app, field.x + field.h + 20.0, field.y + field.h * 0.5);
+    assert_eq!(app.focus, Focus::Sidebar);
+    app.open_filter();
+    app.on_event(&Event::PrimaryPasted(paste, "X".into()), t0());
+    assert_eq!(app.nav.sidebar.filter.text(), "alXpha");
+    assert_eq!(app.tab().filter.as_ref().unwrap().text(), "");
 }

@@ -534,20 +534,20 @@ fn unix_search() -> App {
     a
 }
 
-fn middle(a: &mut App, x: f32, y: f32) -> bool {
+fn middle(a: &mut App, x: f32, y: f32) -> Option<crate::ui::PrimaryPaste> {
     a.on_event(&Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 }, t0());
     a.on_event(&Event::MouseUp { x, y, button: MouseButton::Middle }, t0());
     frame(a);
-    a.drain_effects().any(|e| matches!(e, Effect::PastePrimary))
+    a.drain_effects().find_map(|e| if let Effect::PastePrimary(paste) = e { Some(paste) } else { None })
 }
 
 #[test]
 fn a_middle_click_in_the_search_field_pastes_the_primary_selection_where_it_lands() {
     let mut a = unix_search();
     let field = a.search_layout().field;
-    assert!(middle(&mut a, field.right() - 20.0, field.y + field.h / 2.0), "the field asks for the primary selection");
+    let paste = middle(&mut a, field.right() - 20.0, field.y + field.h / 2.0).expect("the field asks for the primary selection");
     frame(&mut a);
-    a.on_paste("X");
+    a.on_event(&Event::PrimaryPasted(paste, "X".into()), t0());
     assert_eq!(a.search.edit.text, "alphaX", "inserted at the click, not over the selected query");
     assert!(requests(&mut a).iter().any(|r| matches!(r, SearchRequest::Query { text, .. } if text == "alphaX")), "the pasted query is searched");
 }
@@ -556,12 +556,32 @@ fn a_middle_click_in_the_search_field_pastes_the_primary_selection_where_it_land
 fn a_middle_click_outside_the_search_field_or_on_windows_pastes_nothing() {
     let mut a = unix_search();
     let list = a.search_layout().list;
-    assert!(!middle(&mut a, list.x + list.w / 2.0, list.y + list.h / 2.0), "the results keep the middle button for themselves");
+    assert!(middle(&mut a, list.x + list.w / 2.0, list.y + list.h / 2.0).is_none(), "the results keep the middle button for themselves");
     assert_eq!(a.search.edit.text, "alpha");
     let mut w = app();
     key(&mut w, Key::Char('F'), CTRL_SHIFT);
     frame(&mut w);
     w.drain_effects().for_each(drop);
     let field = w.search_layout().field;
-    assert!(!middle(&mut w, field.right() - 20.0, field.y + field.h / 2.0), "Windows has no primary selection");
+    assert!(middle(&mut w, field.right() - 20.0, field.y + field.h / 2.0).is_none(), "Windows has no primary selection");
+}
+
+#[test]
+fn primary_reply_in_search_keeps_the_click_and_skips_a_reopened_search() {
+    let mut a = unix_search();
+    let list = a.search_layout().list;
+    let field = a.search_layout().field;
+    a.on_event(&Event::MouseDown { x: list.x + list.w * 0.5, y: list.y + list.h * 0.5, button: MouseButton::Left, clicks: 1 }, t0());
+    a.on_event(&Event::MouseUp { x: list.x + list.w * 0.5, y: list.y + list.h * 0.5, button: MouseButton::Left }, t0());
+    let start = if a.search.chip.w > 0.0 { a.search.chip.right() + 8.0 } else { field.x + 32.0 };
+    let paste = middle(&mut a, start + 20.0, field.y + field.h * 0.5).unwrap();
+    assert!(a.search.recent_open);
+    key(&mut a, Key::End, NO);
+    a.on_event(&Event::PrimaryPasted(paste, "X".into()), t0());
+    assert_eq!(a.search_text(), "alXpha");
+    let stale = middle(&mut a, start + 20.0, field.y + field.h * 0.5).unwrap();
+    a.close_search();
+    a.open_search();
+    a.on_event(&Event::PrimaryPasted(stale, "late".into()), t0());
+    assert_eq!(a.search_text(), "alXpha");
 }
