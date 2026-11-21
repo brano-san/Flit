@@ -2,6 +2,7 @@ mod inline;
 
 use super::syntax::{self, SYNTAXES};
 use super::{expand_tabs, Alignment, Block, Doc, Table, Tone};
+use crate::hash::FxHashMap;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 #[derive(Default)]
@@ -14,6 +15,7 @@ struct Markdown {
     table: Option<Table>,
     cell_start: u32,
     table_head: bool,
+    footnote: bool,
 }
 
 impl Markdown {
@@ -31,12 +33,19 @@ impl Markdown {
             Block::Heading(level)
         } else if !self.lists.is_empty() {
             Block::Item { depth: self.lists.len().saturating_sub(1).min(6) as u8 }
+        } else if self.footnote {
+            Block::Footnote
         } else if self.quotes > 0 {
             Block::Quote
         } else {
             Block::Body
         };
+        self.para(block);
+    }
+
+    fn para(&mut self, block: Block) {
         self.doc.para(block);
+        self.doc.paras.last_mut().unwrap().quote_depth = self.quotes.min(6) as u8;
     }
 
     fn code(&mut self, text: &str, lang: Option<u8>) {
@@ -49,7 +58,7 @@ impl Markdown {
             } else {
                 self.doc.run(&line, Tone::Plain, false, true);
             }
-            self.doc.para(Block::Code);
+            self.para(Block::Code);
         }
     }
 }
@@ -61,11 +70,59 @@ fn options() -> Options {
 pub fn markdown(src: &str) -> Doc {
     let mut md = Markdown::default();
     md.doc.wrap = true;
+    let mut notes = Notes::default();
+    render(&mut md, Parser::new_ext(src, options()), &mut notes);
+    if !notes.definitions.is_empty() {
+        md.para(Block::Rule);
+        md.footnote = true;
+        while !notes.definitions.is_empty() {
+            let mut definitions = std::mem::take(&mut notes.definitions);
+            definitions.sort_by_cached_key(|(label, _)| notes.number(label));
+            for (label, body) in definitions {
+                md.doc.run(&format!("[{}] ", notes.number(&label)), Tone::Dim, false, false);
+                render(&mut md, body.into_iter(), &mut notes);
+            }
+        }
+    }
+    md.doc
+}
+
+#[derive(Default)]
+struct Notes<'a> {
+    numbers: FxHashMap<String, usize>,
+    definitions: Vec<(String, Vec<Event<'a>>)>,
+}
+
+impl Notes<'_> {
+    fn number(&mut self, label: &str) -> usize {
+        let next = self.numbers.len() + 1;
+        *self.numbers.entry(label.to_lowercase()).or_insert(next)
+    }
+}
+
+fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, notes: &mut Notes<'a>) {
     let mut inline = inline::Inline::default();
-    let mut events = Parser::new_ext(src, options());
     while let Some(event) = events.next() {
         match event {
+            Event::Start(Tag::FootnoteDefinition(label)) => {
+                md.finish();
+                let mut depth = 1;
+                let body = events.by_ref().take_while(|event| {
+                    match event {
+                        Event::Start(Tag::FootnoteDefinition(_)) => depth += 1,
+                        Event::End(TagEnd::FootnoteDefinition) => depth -= 1,
+                        _ => {}
+                    }
+                    depth > 0
+                }).collect();
+                notes.definitions.push((label.into_string(), body));
+            }
+            Event::FootnoteReference(label) => {
+                md.marker();
+                md.doc.run(&format!("[{}]", notes.number(&label)), Tone::Dim, md.table_head, false);
+            }
             Event::Start(Tag::CodeBlock(kind)) => {
+                md.marker();
                 md.finish();
                 let lang = match kind {
                     CodeBlockKind::Fenced(info) => info.split_whitespace().next().and_then(syntax::by_name),
@@ -96,6 +153,7 @@ pub fn markdown(src: &str) -> Doc {
                 md.quotes -= 1;
             }
             Event::Start(Tag::List(start)) => {
+                md.marker();
                 md.finish();
                 md.lists.push(start);
             }
@@ -117,6 +175,7 @@ pub fn markdown(src: &str) -> Doc {
                 md.marker();
                 md.finish();
                 md.markers.pop();
+                inline.end_block();
             }
             Event::TaskListMarker(done) => {
                 if let Some(mark) = md.markers.last_mut() {
@@ -128,8 +187,9 @@ pub fn markdown(src: &str) -> Doc {
                 inline.end_block();
             }
             Event::Rule => {
+                md.marker();
                 md.finish();
-                md.doc.para(Block::Rule);
+                md.para(Block::Rule);
             }
             Event::Start(Tag::Table(align)) => {
                 md.marker();
@@ -164,7 +224,7 @@ pub fn markdown(src: &str) -> Doc {
             Event::End(TagEnd::Table) => {
                 let index = md.doc.tables.len();
                 md.doc.tables.push(md.table.take().unwrap());
-                md.doc.para(Block::Table(index));
+                md.para(Block::Table(index));
                 md.table_head = false;
             }
             _ => {
@@ -176,7 +236,6 @@ pub fn markdown(src: &str) -> Doc {
         }
     }
     md.finish();
-    md.doc
 }
 
 #[cfg(test)]

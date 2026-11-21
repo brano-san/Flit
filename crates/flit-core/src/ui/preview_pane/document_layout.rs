@@ -17,6 +17,7 @@ struct Column {
 }
 
 pub(super) struct Grid {
+    left: f32,
     top: f32,
     header_bottom: f32,
     bottom: f32,
@@ -30,7 +31,7 @@ impl Grid {
 
     pub(super) fn cell_clip(&self, body: Rect, x: f32) -> Rect {
         let index = self.edges.partition_point(|&right| right <= x);
-        let left = index.checked_sub(1).map_or(0.0, |i| self.edges[i]);
+        let left = index.checked_sub(1).map_or(self.left, |i| self.edges[i]);
         let right = self.edges.get(index).copied().unwrap_or(left);
         Rect::new(body.x + left, body.y, right - left, body.h)
     }
@@ -40,9 +41,9 @@ impl Grid {
         for grid in grids[first..].iter().take_while(|grid| grid.top <= scroll + body.h) {
             let top = body.y + grid.top - scroll;
             let header = body.y + grid.header_bottom - scroll;
-            let width = grid.edges.last().copied().unwrap_or(0.0);
-            g.dl.rect(Rect::new(body.x, top, width, header - top), theme.hover);
-            g.dl.rect(Rect::new(body.x, header - 1.0, width, 1.0), theme.separator);
+            let width = grid.edges.last().copied().unwrap_or(grid.left) - grid.left;
+            g.dl.rect(Rect::new(body.x + grid.left, top, width, header - top), theme.hover);
+            g.dl.rect(Rect::new(body.x + grid.left, header - 1.0, width, 1.0), theme.separator);
             for &edge in &grid.edges[..grid.edges.len().saturating_sub(1)] {
                 g.dl.rect(Rect::new(body.x + edge - 1.0, top, 1.0, grid.bottom - grid.top), theme.separator);
             }
@@ -143,7 +144,8 @@ impl<B: TextBackend> TextFlow<'_, B> {
         cols
     }
 
-    pub(super) fn table(&mut self, index: usize, para: u32, width: f32, (lh, base): (f32, f32), y: &mut f32, out: &mut DocLayout) {
+    pub(super) fn table(&mut self, index: usize, para: u32, area: Range<f32>, (lh, base): (f32, f32), y: &mut f32, out: &mut DocLayout) {
+        let width = area.end - area.start;
         let table = &self.doc.tables[index];
         let columns = self.columns(table);
         let mut first_col = 0;
@@ -166,13 +168,13 @@ impl<B: TextBackend> TextFlow<'_, B> {
             let edges: Vec<_> = cols.iter().map(|c| {
                 let min = c.widest_glyph.max(1.0);
                 x += min + (c.natural - min).max(0.0) * ratio + 2.0 * pad;
-                x.min(width)
+                area.start + x.min(width)
             }).collect();
-            let mut grid = Grid { top: *y, bottom: *y, header_bottom: *y, edges };
+            let mut grid = Grid { left: area.start, top: *y, bottom: *y, header_bottom: *y, edges };
             for (row_no, row) in table.rows.iter().enumerate() {
                 let mut cell_pieces = Vec::new();
                 let mut visual: Vec<Vec<Piece>> = Vec::new();
-                let mut left = 0.0;
+                let mut left = area.start;
                 for (offset, &right) in grid.edges.iter().enumerate() {
                     let col = first_col + offset;
                     let cell_width = (right - left - 2.0 * pad).max(0.0);

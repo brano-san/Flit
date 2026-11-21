@@ -335,6 +335,8 @@ fn ui(px: f32, sc: f32, bold: bool) -> FontStyle {
 
 fn run_font(r: &Run, block: Block, sc: f32, mono: f32) -> FontStyle {
     match block {
+        Block::Footnote if r.mono => FontStyle::new(FontFamily::Mono, mono * 0.85 * sc, r.bold),
+        Block::Footnote => ui(11.0, sc, r.bold),
         _ if r.mono => FontStyle::new(FontFamily::Mono, mono * sc, r.bold),
         Block::Heading(1) => ui(20.0, sc, true),
         Block::Heading(2) => ui(17.0, sc, true),
@@ -534,13 +536,13 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (
             continue;
         }
         let mut flow = TextFlow { gfx: g, doc: d, widths, scale: sc, mono, block };
+        let quote_indent = (14.0 * sc * f32::from(para.quote_depth)).round().min(width * 0.5);
         if let Block::Table(index) = block {
-            flow.table(index, k as u32, width, (lh, base), &mut y, &mut out);
+            flow.table(index, k as u32, quote_indent..width, (lh, base), &mut y, &mut out);
             continue;
         }
-        let indent = match block {
+        let indent = quote_indent + match block {
             Block::Item { depth } => ((depth as f32 * 18.0 + 4.0) * sc).round(),
-            Block::Quote => (14.0 * sc).round(),
             Block::Code if !d.mono => (8.0 * sc).round(),
             _ => 0.0,
         };
@@ -2258,9 +2260,15 @@ impl App {
             let top = b.y + line.y - scroll;
             match line.block {
                 Block::Code if !d.mono => g.dl.rect(Rect::new(x0, top, width, line.h), t.input_bg),
-                Block::Quote => g.dl.rect(Rect::new(x0 + (2.0 * sc).round(), top, (3.0 * sc).round(), line.h), t.separator),
                 Block::Rule => g.dl.rect(Rect::new(x0, top + (line.h / 2.0).round(), width, 1.0), t.separator),
                 _ => {}
+            }
+            let depth = d.paras[line.para as usize].quote_depth;
+            if depth > 0 {
+                let step = (14.0 * sc).min(width * 0.5 / f32::from(depth));
+                for level in 0..depth {
+                    g.dl.rect(Rect::new(x0 + step * f32::from(level) + (2.0 * sc).min(step * 0.2), top, (3.0 * sc).min(step * 0.4), line.h), t.separator);
+                }
             }
             if numbers && line.num > 0 {
                 let n = line.num.to_string();

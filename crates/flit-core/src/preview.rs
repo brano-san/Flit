@@ -101,6 +101,7 @@ pub enum Block {
     Item { depth: u8 },
     Rule,
     Table(usize),
+    Footnote,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -119,6 +120,7 @@ pub struct Table {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Para {
     pub block: Block,
+    pub quote_depth: u8,
     pub runs: Range<u32>,
 }
 
@@ -159,7 +161,7 @@ impl Doc {
 
     pub fn para(&mut self, block: Block) {
         let start = self.open_start();
-        self.paras.push(Para { block, runs: start..self.runs.len() as u32 });
+        self.paras.push(Para { block, quote_depth: u8::from(block == Block::Quote), runs: start..self.runs.len() as u32 });
     }
 
     pub fn run_text(&self, r: &Run) -> &str {
