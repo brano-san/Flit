@@ -89,6 +89,7 @@ pub struct Run {
     pub tone: Tone,
     pub bold: bool,
     pub mono: bool,
+    pub strike: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -99,11 +100,27 @@ pub enum Block {
     Quote,
     Item { depth: u8 },
     Rule,
+    Table(usize),
+    Footnote,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Alignment {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Table {
+    pub align: Vec<Alignment>,
+    pub rows: Vec<Vec<Range<u32>>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct Para {
     pub block: Block,
+    pub quote_depth: u8,
     pub runs: Range<u32>,
 }
 
@@ -112,6 +129,7 @@ pub struct Doc {
     pub text: String,
     pub runs: Vec<Run>,
     pub paras: Vec<Para>,
+    pub tables: Vec<Table>,
     pub mono: bool,
     pub wrap: bool,
     pub truncated: bool,
@@ -124,6 +142,10 @@ impl Doc {
     }
 
     pub fn run(&mut self, s: &str, tone: Tone, bold: bool, mono: bool) {
+        self.styled_run(s, tone, bold, mono, false);
+    }
+
+    fn styled_run(&mut self, s: &str, tone: Tone, bold: bool, mono: bool, strike: bool) {
         if s.is_empty() {
             return;
         }
@@ -132,14 +154,14 @@ impl Doc {
         let end = self.text.len() as u32;
         let open = self.runs.len() > self.open_start() as usize;
         match self.runs.last_mut() {
-            Some(r) if open && r.end == start && r.tone == tone && r.bold == bold && r.mono == mono => r.end = end,
-            _ => self.runs.push(Run { start, end, tone, bold, mono }),
+            Some(r) if open && r.end == start && r.tone == tone && r.bold == bold && r.mono == mono && r.strike == strike => r.end = end,
+            _ => self.runs.push(Run { start, end, tone, bold, mono, strike }),
         }
     }
 
     pub fn para(&mut self, block: Block) {
         let start = self.open_start();
-        self.paras.push(Para { block, runs: start..self.runs.len() as u32 });
+        self.paras.push(Para { block, quote_depth: u8::from(block == Block::Quote), runs: start..self.runs.len() as u32 });
     }
 
     pub fn run_text(&self, r: &Run) -> &str {

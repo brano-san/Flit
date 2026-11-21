@@ -1,224 +1,248 @@
+mod inline;
+
 use super::syntax::{self, SYNTAXES};
-use super::{expand_tabs, Block, Doc, Tone};
+use super::{expand_tabs, Alignment, Block, Doc, Table, Tone};
+use crate::hash::FxHashMap;
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use std::borrow::Cow;
 
-#[derive(Clone, Copy, PartialEq)]
-enum Open {
-    Body,
-    Quote,
-    Item(u8),
-}
-
-struct Md {
+#[derive(Default)]
+struct Markdown {
     doc: Doc,
-    open: Option<(Open, String)>,
-    mark: String,
+    heading: Option<u8>,
+    lists: Vec<Option<u64>>,
+    markers: Vec<Option<Cow<'static, str>>>,
+    quotes: usize,
+    table: Option<Table>,
+    cell_start: u32,
+    table_head: bool,
+    footnote: bool,
 }
 
-fn heading(t: &str) -> Option<(u8, &str)> {
-    let n = t.bytes().take_while(|&c| c == b'#').count();
-    let rest = &t[n..];
-    ((1..=6).contains(&n) && (rest.is_empty() || rest.starts_with(' '))).then(|| (n as u8, rest.trim().trim_end_matches('#').trim_end()))
-}
-
-fn rule(t: &str) -> bool {
-    let c = t.as_bytes()[0];
-    matches!(c, b'-' | b'*' | b'_') && t.bytes().filter(|&b| b == c).count() >= 3 && t.bytes().all(|b| b == c || b == b' ')
-}
-
-fn item(t: &str) -> Option<(String, &str)> {
-    let b = t.as_bytes();
-    if matches!(b[0], b'-' | b'*' | b'+') && b.get(1) == Some(&b' ') {
-        let rest = t[2..].trim_start();
-        return Some(match rest.get(..3) {
-            Some("[ ]") => ("\u{2610}".into(), rest[3..].trim_start()),
-            Some("[x]" | "[X]") => ("\u{2611}".into(), rest[3..].trim_start()),
-            _ => ("\u{2022}".into(), rest),
-        });
-    }
-    let digits = b.iter().take_while(|c| c.is_ascii_digit()).count();
-    if (1..=9).contains(&digits) && matches!(b.get(digits), Some(b'.' | b')')) && b.get(digits + 1) == Some(&b' ') {
-        return Some((format!("{}.", &t[..digits]), t[digits + 2..].trim_start()));
-    }
-    None
-}
-
-fn table_separator(t: &str) -> bool {
-    t.bytes().all(|c| matches!(c, b'|' | b'-' | b':' | b' '))
-}
-
-impl Md {
-    fn flush(&mut self) {
-        let Some((kind, text)) = self.open.take() else { return };
-        let block = match kind {
-            Open::Body => Block::Body,
-            Open::Quote => Block::Quote,
-            Open::Item(depth) => {
-                self.doc.run(&format!("{} ", self.mark), Tone::Dim, false, false);
-                Block::Item { depth }
-            }
-        };
-        inline(&mut self.doc, &text, false);
-        self.doc.para(block);
-    }
-
-    fn append(&mut self, kind: Open, text: &str) {
-        match &mut self.open {
-            Some((k, s)) if *k == kind || (kind == Open::Body && matches!(k, Open::Item(_) | Open::Quote)) => {
-                s.push(' ');
-                s.push_str(text);
-            }
-            _ => {
-                self.flush();
-                self.open = Some((kind, text.to_owned()));
-            }
+impl Markdown {
+    fn marker(&mut self) {
+        if let Some(mark) = self.markers.last_mut().and_then(Option::take) {
+            self.doc.run(&mark, Tone::Dim, false, false);
         }
     }
+
+    fn finish(&mut self) {
+        if self.doc.open_start() as usize == self.doc.runs.len() {
+            return;
+        }
+        let block = if let Some(level) = self.heading {
+            Block::Heading(level)
+        } else if !self.lists.is_empty() {
+            Block::Item { depth: self.lists.len().saturating_sub(1).min(6) as u8 }
+        } else if self.footnote {
+            Block::Footnote
+        } else if self.quotes > 0 {
+            Block::Quote
+        } else {
+            Block::Body
+        };
+        self.para(block);
+    }
+
+    fn para(&mut self, block: Block) {
+        self.doc.para(block);
+        self.doc.paras.last_mut().unwrap().quote_depth = self.quotes.min(6) as u8;
+    }
+
+    fn code(&mut self, text: &str, lang: Option<u8>) {
+        let (mut expanded, mut state) = (String::new(), None);
+        for raw in text.lines() {
+            let line = if raw.contains(['\t', '\r']) {
+                expanded.clear();
+                expand_tabs(raw, &mut expanded);
+                &expanded
+            } else {
+                raw
+            };
+            if let Some(k) = lang {
+                self.doc.highlighted(line, &SYNTAXES[k as usize], &mut state);
+            } else {
+                self.doc.run(line, Tone::Plain, false, true);
+            }
+            self.para(Block::Code);
+        }
+    }
+}
+
+fn options() -> Options {
+    Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS | Options::ENABLE_FOOTNOTES | Options::ENABLE_GFM
 }
 
 pub fn markdown(src: &str) -> Doc {
-    let mut md = Md { doc: Doc { wrap: true, ..Default::default() }, open: None, mark: String::new() };
-    let mut fence: Option<(&str, Option<u8>, Option<u8>)> = None;
-    let mut tab = String::new();
-    for raw in src.lines() {
-        if let Some((marker, syn, state)) = &mut fence {
-            if raw.trim_start().starts_with(*marker) {
-                fence = None;
-                continue;
+    let mut md = Markdown::default();
+    md.doc.wrap = true;
+    let mut notes = Notes::default();
+    render(&mut md, Parser::new_ext(src, options()), &mut notes);
+    if !notes.definitions.is_empty() {
+        md.para(Block::Rule);
+        md.footnote = true;
+        while !notes.definitions.is_empty() {
+            let mut definitions = std::mem::take(&mut notes.definitions);
+            definitions.sort_by_cached_key(|(label, _)| notes.number(label));
+            for (label, body) in definitions {
+                md.doc.run(&format!("[{}] ", notes.number(&label)), Tone::Dim, false, false);
+                render(&mut md, body.into_iter(), &mut notes);
             }
-            tab.clear();
-            expand_tabs(raw, &mut tab);
-            match syn {
-                Some(k) => md.doc.highlighted(&tab, &SYNTAXES[*k as usize], state),
-                None => md.doc.run(&tab, Tone::Plain, false, true),
-            }
-            md.doc.para(Block::Code);
-            continue;
         }
-        let line = raw.trim_end();
-        let t = line.trim_start();
-        let indent = line.len() - t.len();
-        if t.is_empty() {
-            md.flush();
-            continue;
-        }
-        if t.starts_with("```") || t.starts_with("~~~") {
-            md.flush();
-            fence = Some((&t[..3], syntax::by_name(t[3..].trim()), None));
-            continue;
-        }
-        if let Some((level, text)) = heading(t) {
-            md.flush();
-            inline(&mut md.doc, text, true);
-            md.doc.para(Block::Heading(level));
-            continue;
-        }
-        if matches!(md.open, Some((Open::Body, _))) && (t.bytes().all(|c| c == b'=') || t.bytes().all(|c| c == b'-')) {
-            let (_, text) = md.open.take().unwrap_or((Open::Body, String::new()));
-            inline(&mut md.doc, &text, true);
-            md.doc.para(Block::Heading(if t.starts_with('=') { 1 } else { 2 }));
-            continue;
-        }
-        if rule(t) {
-            md.flush();
-            md.doc.para(Block::Rule);
-            continue;
-        }
-        if let Some(q) = t.strip_prefix('>') {
-            md.append(Open::Quote, q.trim_start());
-            continue;
-        }
-        if let Some((mark, rest)) = item(t) {
-            md.flush();
-            md.mark = mark;
-            md.open = Some((Open::Item((indent / 2).min(6) as u8), rest.to_owned()));
-            continue;
-        }
-        if t.starts_with('|') {
-            md.flush();
-            if !table_separator(t) {
-                let cells: Vec<&str> = t.trim_matches('|').split('|').map(str::trim).collect();
-                inline(&mut md.doc, &cells.join("  \u{2502}  "), false);
-                md.doc.para(Block::Body);
-            }
-            continue;
-        }
-        md.append(Open::Body, t);
     }
-    md.flush();
     md.doc
 }
 
-fn closing(s: &str, from: usize, pat: &str) -> Option<usize> {
-    s.get(from..)?.find(pat).map(|p| p + from).filter(|&p| p > from)
+#[derive(Default)]
+struct Notes<'a> {
+    numbers: FxHashMap<String, usize>,
+    definitions: Vec<(String, Vec<Event<'a>>)>,
 }
 
-pub(super) fn inline(d: &mut Doc, s: &str, heading: bool) {
-    let (mut bold, mut em) = (heading, None);
-    let mut buf = String::new();
-    let mut i = 0;
-    let b = s.as_bytes();
-    let flush = |d: &mut Doc, buf: &mut String, bold: bool| {
-        d.run(buf, Tone::Plain, bold, false);
-        buf.clear();
-    };
-    while i < b.len() {
-        let c = b[i];
-        if c == b'\\' && b.get(i + 1).is_some_and(u8::is_ascii_punctuation) {
-            buf.push(b[i + 1] as char);
-            i += 2;
-            continue;
-        }
-        if c == b'`' {
-            let ticks = b[i..].iter().take_while(|&&x| x == b'`').count();
-            if let Some(end) = closing(s, i + ticks, &s[i..i + ticks]) {
-                flush(d, &mut buf, bold);
-                d.run(s[i + ticks..end].trim(), Tone::String, bold, true);
-                i = end + ticks;
-                continue;
-            }
-        }
-        if s[i..].starts_with("**") || s[i..].starts_with("__") {
-            flush(d, &mut buf, bold);
-            bold = heading || !bold;
-            i += 2;
-            continue;
-        }
-        let snake = c == b'_' && i > 0 && b[i - 1].is_ascii_alphanumeric() && b.get(i + 1).is_some_and(u8::is_ascii_alphanumeric);
-        if matches!(c, b'*' | b'_') && !snake {
-            if em == Some(c) && i > 0 && !b[i - 1].is_ascii_whitespace() {
-                em = None;
-                i += 1;
-                continue;
-            }
-            if em.is_none() && b.get(i + 1).is_some_and(|n| !n.is_ascii_whitespace()) && closing(s, i + 1, &s[i..i + 1]).is_some() {
-                em = Some(c);
-                i += 1;
-                continue;
-            }
-        }
-        let image = c == b'!' && b.get(i + 1) == Some(&b'[');
-        if c == b'[' || image {
-            let open = i + image as usize;
-            if let Some(end) = closing(s, open + 1, "](").and_then(|close| closing(s, close + 2, ")").map(|end| (close, end))) {
-                flush(d, &mut buf, bold);
-                d.run(&s[open + 1..end.0], if image { Tone::Dim } else { Tone::Link }, bold, false);
-                i = end.1 + 1;
-                continue;
-            }
-        }
-        if c == b'<' && (s[i..].starts_with("<http://") || s[i..].starts_with("<https://")) {
-            if let Some(end) = closing(s, i + 1, ">") {
-                flush(d, &mut buf, bold);
-                d.run(&s[i + 1..end], Tone::Link, bold, false);
-                i = end + 1;
-                continue;
-            }
-        }
-        let n = s[i..].chars().next().map_or(1, char::len_utf8);
-        buf.push_str(&s[i..i + n]);
-        i += n;
+impl Notes<'_> {
+    fn number(&mut self, label: &str) -> usize {
+        let next = self.numbers.len() + 1;
+        *self.numbers.entry(label.to_lowercase()).or_insert(next)
     }
-    flush(d, &mut buf, bold);
+}
+
+fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, notes: &mut Notes<'a>) {
+    let mut inline = inline::Inline::default();
+    while let Some(event) = events.next() {
+        match event {
+            Event::Start(Tag::FootnoteDefinition(label)) => {
+                md.finish();
+                let mut depth = 1;
+                let body = events.by_ref().take_while(|event| {
+                    match event {
+                        Event::Start(Tag::FootnoteDefinition(_)) => depth += 1,
+                        Event::End(TagEnd::FootnoteDefinition) => depth -= 1,
+                        _ => {}
+                    }
+                    depth > 0
+                }).collect();
+                notes.definitions.push((label.into_string(), body));
+            }
+            Event::FootnoteReference(label) => {
+                md.marker();
+                md.doc.run(&format!("[{}]", notes.number(&label)), Tone::Dim, md.table_head, false);
+            }
+            Event::Start(Tag::CodeBlock(kind)) => {
+                md.marker();
+                md.finish();
+                let lang = match kind {
+                    CodeBlockKind::Fenced(info) => info.split_whitespace().next().and_then(syntax::by_name),
+                    CodeBlockKind::Indented => None,
+                };
+                let mut code = Cow::Borrowed("");
+                for part in events.by_ref() {
+                    match part {
+                        Event::Text(text) if code.is_empty() => code = text.into(),
+                        Event::Text(text) => code.to_mut().push_str(&text),
+                        Event::End(TagEnd::CodeBlock) => break,
+                        _ => {}
+                    }
+                }
+                md.code(&code, lang);
+            }
+            Event::Start(Tag::Heading { level, .. }) => md.heading = Some(level as u8),
+            Event::End(TagEnd::Heading(_)) => {
+                md.finish();
+                md.heading = None;
+                inline.end_block();
+            }
+            Event::Start(Tag::BlockQuote(_)) => {
+                md.finish();
+                md.quotes += 1;
+            }
+            Event::End(TagEnd::BlockQuote(_)) => {
+                md.finish();
+                md.quotes -= 1;
+            }
+            Event::Start(Tag::List(start)) => {
+                md.marker();
+                md.finish();
+                md.lists.push(start);
+            }
+            Event::End(TagEnd::List(_)) => {
+                md.lists.pop();
+            }
+            Event::Start(Tag::Item) => {
+                let marker = match md.lists.last_mut() {
+                    Some(Some(n)) => {
+                        let label = format!("{n}. ");
+                        *n += 1;
+                        Cow::Owned(label)
+                    }
+                    _ => Cow::Borrowed("• "),
+                };
+                md.markers.push(Some(marker));
+            }
+            Event::End(TagEnd::Item) => {
+                md.marker();
+                md.finish();
+                md.markers.pop();
+                inline.end_block();
+            }
+            Event::TaskListMarker(done) => {
+                if let Some(mark) = md.markers.last_mut() {
+                    *mark = Some(if done { "☑ " } else { "☐ " }.into());
+                }
+            }
+            Event::End(TagEnd::Paragraph | TagEnd::HtmlBlock) => {
+                md.finish();
+                inline.end_block();
+            }
+            Event::Rule => {
+                md.marker();
+                md.finish();
+                md.para(Block::Rule);
+            }
+            Event::Start(Tag::Table(align)) => {
+                md.marker();
+                md.finish();
+                let align = align.into_iter().map(|a| match a {
+                    pulldown_cmark::Alignment::Center => Alignment::Center,
+                    pulldown_cmark::Alignment::Right => Alignment::Right,
+                    _ => Alignment::Left,
+                }).collect();
+                md.table = Some(Table { align, rows: Vec::new() });
+            }
+            Event::Start(Tag::TableRow | Tag::TableHead) => {
+                let table = md.table.as_mut().unwrap();
+                md.table_head = table.rows.is_empty();
+                if !md.table_head {
+                    md.doc.text.push('\n');
+                }
+                table.rows.push(Vec::with_capacity(table.align.len()));
+            }
+            Event::Start(Tag::TableCell) => {
+                let row = md.table.as_ref().unwrap().rows.last().unwrap();
+                if !row.is_empty() {
+                    md.doc.text.push('\t');
+                }
+                md.cell_start = md.doc.runs.len() as u32;
+            }
+            Event::End(TagEnd::TableCell) => {
+                let row = md.table.as_mut().unwrap().rows.last_mut().unwrap();
+                row.push(md.cell_start..md.doc.runs.len() as u32);
+                inline.end_block();
+            }
+            Event::End(TagEnd::Table) => {
+                let index = md.doc.tables.len();
+                md.doc.tables.push(md.table.take().unwrap());
+                md.para(Block::Table(index));
+                md.table_head = false;
+            }
+            _ => {
+                if matches!(event, Event::Text(_) | Event::Code(_) | Event::Html(_) | Event::InlineHtml(_) | Event::Start(Tag::Image { .. })) {
+                    md.marker();
+                }
+                inline.event(&mut md.doc, &event, md.heading.is_some() || md.table_head);
+            }
+        }
+    }
+    md.finish();
 }
 
 #[cfg(test)]
