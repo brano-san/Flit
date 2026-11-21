@@ -1921,8 +1921,8 @@ pub(super) fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<
     match (&it.loc, it.section) {
         #[cfg(windows)]
         (_, Section::Places) if it.glyph == G_CLOUD => {
-            let (_, personal) = places.folders.iter().find(|(k, _)| *k == KnownFolder::OneDrive)?;
-            location_icon(personal, places, px)
+            let loc = places.folders.iter().find(|(k, _)| *k == KnownFolder::OneDrive).map_or(&it.loc, |(_, personal)| personal);
+            location_icon(loc, places, px)
         }
         (_, Section::Tags) | (Location::Wsl { .. }, Section::Recents) => None,
         (Location::Local(path), Section::Recents) => places.recent.iter().find(|r| r.target == *path).and_then(|r| recent_icon(r, places, px)),

@@ -47,7 +47,8 @@ fn one_drive_is_a_place_right_after_home_with_a_cloud() {
     assert_eq!(got[..4], [("This PC", G_DRIVE), ("u", G_HOME), ("OneDrive", G_CLOUD), ("Music", G_MUSIC)]);
     sb.places = Arc::new(Places { folders: vec![(KnownFolder::Music, loc(r"C:\Users\u\Music"))], ..Default::default() });
     sb.rebuild();
-    assert!(sb.items.iter().all(|it| it.label != "OneDrive"), "a computer without OneDrive shows no OneDrive place");
+    let labels: Vec<_> = sb.items.iter().filter(|it| it.section == Section::Places).map(|it| it.label.as_str()).collect();
+    assert_eq!(labels, ["This PC", "Music", "Home"]);
 }
 
 #[test]
@@ -75,6 +76,33 @@ fn business_onedrive_places_follow_personal_and_keep_preferences_when_renamed() 
     assert!(items.iter().any(|it| it.loc == personal));
     Arc::make_mut(&mut sb.places).folders.clear();
     assert_eq!(sb.section_items(Section::Places)[0].loc, other);
+}
+
+#[test]
+fn business_onedrive_without_personal_uses_the_onedrive_position_and_its_own_icon() {
+    let work = loc(r"D:\Sync\Work");
+    let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (900, 400), Instant::now());
+    app.set_places(Arc::new(Places {
+        folders: vec![(KnownFolder::Desktop, loc(r"C:\Users\u\Desktop")), (KnownFolder::Home, loc(r"C:\Users\u"))],
+        business_onedrive: vec![("Example".into(), work.clone())],
+        ..Default::default()
+    }));
+    let sb = &app.nav.sidebar;
+    let items = sb.section_items(Section::Places);
+    let labels: Vec<_> = items.iter().map(|it| it.label.as_str()).collect();
+    assert_eq!(labels, ["This PC", "u", "OneDrive - Example", "Desktop", "Home"]);
+    assert_eq!(items[2].loc, work);
+    assert_eq!(items[2].glyph, G_CLOUD);
+    let (_, kind, path) = place_icon_request(&items[2], &sb.places, 20).expect("the business folder should request its own system icon");
+    assert_eq!(kind, IconKind::Place);
+    assert_eq!(&path, work.path());
+
+    app.drop_place(2, 0);
+    assert_eq!(app.nav.sidebar.section_items(Section::Places)[0].loc, work);
+    app.place_command(PlaceCmd::HidePlace(work), Instant::now());
+    let items = app.nav.sidebar.section_items(Section::Places);
+    let labels: Vec<_> = items.iter().map(|it| it.label.as_str()).collect();
+    assert_eq!(labels, ["This PC", "u", "Desktop", "Home"]);
 }
 
 #[test]

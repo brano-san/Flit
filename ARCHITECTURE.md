@@ -547,6 +547,7 @@ Enter (`typed_address`) запоминает текст в истории вве
 
 - известные папки — `Platform::known_folder("shell:Profile")`, `shell:Desktop`, `shell:Downloads`, `shell:Personal`, `shell:My Pictures`, `shell:My Music`, `shell:My Video`, `shell:Favorites`; если `shell:Profile` не разрешился, Home берётся из `Platform::home`;
 - при каждом сборе мест в Windows поток один раз перечисляет подключи `BusinessN` в `HKCU\Software\Microsoft\OneDrive\Accounts` и добавляет существующие папки организаций сразу после личного OneDrive. Идентификатором для скрытия и порядка служит путь `UserFolder` в прежнем формате `Location`, поэтому переименование организации сохраняет настройки;
+- без личного OneDrive папки организаций занимают его место в порядке известных папок. Панель запрашивает системный значок по пути каждой такой папки и показывает глиф облака, если значок недоступен;
 - диски — новая функция трейта `Platform::drives` (`GetLogicalDrives`, `GetDriveTypeW`, `GetVolumeInformationW`, `GetDiskFreeSpaceExW`); подпись «Метка (C:)» или тип диска, если метки нет; у сетевых дисков том и место не запрашиваются, чтобы недоступный сервер не держал панель;
 - дистрибутивы — новая функция `Platform::wsl_distros`: перечисление `HKCU\Software\Microsoft\Windows\CurrentVersion\Lxss\*` и значение `DistributionName`, только чтение; элемент открывает `wsl://<имя>/`.
 
