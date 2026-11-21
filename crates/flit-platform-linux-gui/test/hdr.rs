@@ -74,7 +74,7 @@ fn luminance(rgb: &[u8]) -> (f64, f64) {
 fn preview_frames_match_the_reference_at_the_start_of_hdr_and_sdr_videos() {
     let Some(dir) = std::env::var_os("FLIT_HDR_FIXTURES") else { return };
     let mut failures = Vec::new();
-    for (name, hdr, size) in [("user-hlg", true, (360, 720)), ("hlg", true, (640, 360)), ("hdr10", true, (640, 360)), ("sdr", false, (640, 360))] {
+    for (name, hdr, size) in [("user-hlg", true, (360, 720)), ("hlg", true, (640, 360)), ("hdr10", true, (640, 360)), ("sdr", false, (640, 360)), ("gray", true, (640, 360))] {
         let path = Path::new(&dir).join(format!("{name}.mp4"));
         let frame = first_frame(&path, size, true);
         let rgb: Vec<_> = frame.rgba.chunks_exact(4).flat_map(|p| &p[..3]).copied().collect();
