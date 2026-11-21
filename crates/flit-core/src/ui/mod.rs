@@ -780,6 +780,7 @@ pub struct App {
     strip: tabbar::Strip,
     addr: address::Address,
     primary: String,
+    paste_after_layout: bool,
     ghosts: widgets::Ghosts,
     bar_arrivals: widgets::Arrivals,
     rolls: [bottom::Roll; 2],
@@ -918,6 +919,7 @@ impl App {
             strip: Default::default(),
             addr: Default::default(),
             primary: String::new(),
+            paste_after_layout: false,
             ghosts: Default::default(),
             bar_arrivals: Default::default(),
             rolls: Default::default(),
@@ -1599,6 +1601,13 @@ impl App {
     }
 
     pub fn on_paste(&mut self, text: &str) {
+        if self.caps.unix_paths {
+            if let Some(menu) = self.context_menu_mut() {
+                menu.insert(text.lines().next().unwrap_or(""));
+                self.dirty = true;
+                return;
+            }
+        }
         if self.form_insert(text) || self.jobs.modal() || self.settings_insert(text.lines().next().unwrap_or("")) {
             return;
         }
@@ -1865,11 +1874,14 @@ impl App {
             }
             return;
         }
+        if matches!(ev, Event::MouseDown { .. } | Event::Key { pressed: true, .. } | Event::Focus(false) | Event::ShowMenu { .. }) {
+            self.paste_after_layout = false;
+        }
         if self.caps.unix_paths && self.middle_paste(ev, now) {
             return;
         }
         self.handle_event(ev, now);
-        if self.caps.unix_paths {
+        if self.caps.unix_paths && !self.paste_after_layout {
             self.offer_primary();
         }
     }
@@ -2623,6 +2635,9 @@ impl App {
             self.strip.drop_ghosts();
         }
         self.arena = arena;
+        if std::mem::take(&mut self.paste_after_layout) {
+            self.effects.push(Effect::PastePrimary);
+        }
         self.prefetch_shell();
         self.flush_shell_overlays();
 

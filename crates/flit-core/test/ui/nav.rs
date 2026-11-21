@@ -922,12 +922,35 @@ fn a_middle_click_in_the_focused_field_pastes_the_primary_selection_where_it_lan
     key(&mut app, Key::Char('A'), CTRL);
     app.drain_effects().for_each(drop);
     app.on_event(&Event::MouseDown { x: start.0 + 20.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
-    assert!(app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)));
     redraw(&mut app);
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)));
     app.on_paste("X");
     let text = app.tab().filter.as_ref().unwrap().text().to_owned();
     assert_eq!(text, "alXpha", "inserted where the button went down instead of over the selected text");
     let row = (app.layout.cols[0].x + 100.0, app.layout.list.y + app.layout.row_h / 2.0);
     app.on_event(&Event::MouseDown { x: row.0, y: row.1, button: MouseButton::Middle, clicks: 1 }, t0());
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)), "outside a field the middle button keeps its own job");
+}
+
+#[test]
+fn middle_paste_focuses_an_unfocused_filter_only_on_linux() {
+    for linux in [true, false] {
+        let mut app = app_at(if linux { "/home/u" } else { r"C:\x" });
+        app.caps.unix_paths = linux;
+        files(&mut app, &["alpha"]);
+        let (start, _) = filter_with(&mut app, "alpha");
+        app.focus = Focus::List;
+        app.on_event(&Event::MouseDown { x: start.0 + 20.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
+        assert!(!app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)));
+        redraw(&mut app);
+        assert_eq!(app.drain_effects().any(|e| matches!(e, Effect::PastePrimary)), linux);
+        if linux {
+            assert_eq!(app.focus, Focus::Filter);
+            app.on_paste("X");
+            assert_eq!(app.tab().filter.as_ref().unwrap().text(), "alXpha");
+        } else {
+            assert_eq!(app.focus, Focus::List);
+            assert_eq!(app.tab().filter.as_ref().unwrap().text(), "alpha");
+        }
+    }
 }

@@ -266,16 +266,30 @@ impl App {
     pub(super) fn middle_paste(&mut self, ev: &crate::input::Event, now: Instant) -> bool {
         use crate::input::Event;
         let Event::MouseDown { x, y, button: MouseButton::Middle, .. } = *ev else { return false };
-        let field = self.text_field_hit().filter(|_| self.text_field_rect().is_some_and(|r| r.contains(x, y)));
-        if field.is_none() && !self.rename_contains(x, y) && !self.search_field_at(x, y) {
+        if self.confirm.is_some() || self.own_menu_open() {
             return false;
         }
+        let hit = self.hit(x, y);
+        let over_search = self.search.active && !self.jobs.modal();
+        let field = match hit {
+            Hit::QuickField if over_search => true,
+            _ if over_search => self.search_field_at(x, y),
+            Hit::Form(k) => self.form_text(k).is_some(),
+            Hit::PaletteField => self.text_field_hit() == Some(hit),
+            _ => is_field(hit) || self.rename_contains(x, y),
+        };
+        if !field {
+            return false;
+        }
+        self.nav.streak = None;
+        let shift = std::mem::take(&mut self.mods.shift);
         self.handle_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, now);
         self.handle_event(&Event::MouseUp { x, y, button: MouseButton::Left }, now);
-        if let Some(f) = field.and_then(|h| self.text_field_mut(h)) {
+        self.mods.shift = shift;
+        if let Some(f) = self.text_field_mut(hit) {
             f.edit.anchor = f.edit.caret;
         }
-        self.effects.push(super::Effect::PastePrimary);
+        self.paste_after_layout = true;
         true
     }
 

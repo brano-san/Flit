@@ -537,6 +537,7 @@ fn unix_search() -> App {
 fn middle(a: &mut App, x: f32, y: f32) -> bool {
     a.on_event(&Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 }, t0());
     a.on_event(&Event::MouseUp { x, y, button: MouseButton::Middle }, t0());
+    frame(a);
     a.drain_effects().any(|e| matches!(e, Effect::PastePrimary))
 }
 
