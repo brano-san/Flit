@@ -246,6 +246,7 @@
 "drive.map" = "Einer Netzwerkfreigabe einen Laufwerksbuchstaben zuweisen, net use"
 "drive.disconnect" = "Ein verbundenes Netzlaufwerk entfernen, net use /delete"
 "drive.connect_server" = "Netzwerkfreigabe über eine Adresse einhängen, smb, sftp, ftp, gio mount"
+"drive.add_server" = "Eine Verbindung herstellen und den Server unter Netzwerk speichern"
 "tab.move_to_window" = "Die aktuelle Registerkarte in ein eigenes Fenster lösen, abtrennen"
 "window.compact" = "Das Fenster zu einem kleinen Fenster verkleinern, das über anderen Fenstern bleibt, immer im Vordergrund"
 "window.compact_on" = "Zum kleinen Fenster wechseln, das immer im Vordergrund bleibt"

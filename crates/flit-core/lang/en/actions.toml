@@ -246,6 +246,7 @@
 "drive.map" = "Map network drive"
 "drive.disconnect" = "Disconnect network drive"
 "drive.connect_server" = "Connect to server"
+"drive.add_server" = "Add server…"
 "tab.move_to_window" = "Move tab to a new window"
 "window.compact" = "Mini window on top of other windows"
 "window.compact_on" = "Enter the mini window"

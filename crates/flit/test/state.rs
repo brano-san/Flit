@@ -127,6 +127,7 @@ fn sidebar_and_home_preferences_ride_sixth_after_the_pane_so_older_files_still_l
         recent_hidden: vec![(flit_core::FsPath::parse(r"C:\a.txt").unwrap(), 42)],
         recent_cleared: 7,
         quick: QuickPrefs::default(),
+        saved_servers: Vec::new(),
     };
     let pane = PaneState { visible: true, details: true, right_w: 410.0, bottom_h: 300.0, volume: 0.25 };
     let s = Saved::new(Persisted::default(), None).with_pane(pane).with_side(side.clone());
@@ -339,12 +340,13 @@ fn attributes_len(s: &Saved) -> usize {
 }
 
 fn newer_len(s: &Saved) -> usize {
-    shells_len(s) + hash_record_len(s)
+    shells_len(s) + hash_and_servers_len(s)
 }
 
-fn hash_record_len(s: &Saved) -> usize {
+fn hash_and_servers_len(s: &Saved) -> usize {
     let p = &s.persisted;
     postcard::to_stdvec(&GitHashRecord { view: hash_width(&p.view), defaults: hash_width(&p.prefs.defaults), folders: p.folders.entries().iter().map(|(k, v)| (*k, hash_width(v))).collect() }).unwrap().len()
+        + postcard::to_stdvec(&s.side.saved_servers).unwrap().len()
 }
 
 fn shells_len(s: &Saved) -> usize {
@@ -439,7 +441,7 @@ fn a_cut_or_unknown_shell_record_keeps_every_older_setting() {
     s.persisted.view.sort.field = SortField::Duration;
     s.persisted.view.columns.toggle(Column::Title);
     let bytes = s.encode().unwrap();
-    let cut = Saved::decode(&bytes[..bytes.len() - hash_record_len(&s) - 3]).unwrap().sanitized().persisted;
+    let cut = Saved::decode(&bytes[..bytes.len() - hash_and_servers_len(&s) - 3]).unwrap().sanitized().persisted;
     assert!(cut.view.columns.shown(Column::Attributes) && cut.view.columns.shown(Column::ImageSize));
     assert_eq!(cut.view.columns.width(Column::Version), 123.0);
     assert_eq!((cut.view.sort.field, cut.view.group.field), (SortField::Name, GroupField::Type));
@@ -479,7 +481,7 @@ fn commit_hash_columns_keep_their_visibility_width_and_sort_without_changing_old
     assert_eq!(back.persisted.folders.get(key).unwrap().columns.width(Column::GitHash), 170.0);
     let old = Saved::new(Persisted::default(), None);
     let old_bytes = old.encode().unwrap();
-    let old_back = Saved::decode(&old_bytes[..old_bytes.len() - hash_record_len(&old)]).unwrap();
+    let old_back = Saved::decode(&old_bytes[..old_bytes.len() - hash_and_servers_len(&old)]).unwrap();
     assert!(!old_back.persisted.view.columns.shown(Column::GitHash));
     assert_eq!(old_back.persisted.view.columns.width(Column::GitHash), 130.0);
     let older = Saved::decode(&bytes[..bytes.len() - newer_len(&saved)]).unwrap();
@@ -617,6 +619,37 @@ fn the_files_column_shows_by_default_while_files_saved_from_now_on_keep_their_ch
     assert!(before.view.columns.shown(Column::Files) && before.prefs.defaults.columns.shown(Column::Files), "a layout from before the split shows Files with Folders");
     let folder = before.folders.get(key).unwrap();
     assert!(!folder.columns.shown(Column::Folders) && !folder.columns.shown(Column::Files), "a folder that hid the counts keeps them hidden");
+}
+
+#[test]
+fn saved_servers_round_trip_without_passwords_and_older_state_keeps_every_other_setting() {
+    let directory = crate::schema::tests::Dir::new("saved_servers");
+    let file = directory.0.join("state.bin");
+    let mut state = classic();
+    state.side.compact = true;
+    state.side.quick.show_paths = true;
+    state.persisted.view.columns.set_width(Column::GitHash, 184.0);
+    let legacy_side = state.side.clone();
+    state.side.saved_servers = vec![
+        SavedServer { address: "sftp://guest:private@192.168.1.8:2222/docs/".into(), name: Some("Архив".into()) },
+        SavedServer { address: "smb://nas/share".into(), name: None },
+    ];
+    let mut servers = state.side.saved_servers.clone();
+    servers[0].address = "sftp://guest@192.168.1.8:2222/docs".into();
+    let bytes = state.encode().unwrap();
+    assert!(!bytes.windows(b"private".len()).any(|w| w == b"private"));
+    std::fs::write(&file, &bytes).unwrap();
+    let restored = load_from(&file).unwrap();
+    assert_eq!(restored.side.saved_servers, servers);
+    assert_eq!(restored.persisted, state.persisted);
+    assert!(restored.side.compact && restored.side.quick.show_paths);
+    let record = postcard::to_stdvec(&servers).unwrap();
+    let prefix = bytes.strip_suffix(record.as_slice()).unwrap();
+    state.side.saved_servers.clear();
+    assert_eq!(prefix, state.encode().unwrap().strip_suffix(&[0][..]).unwrap());
+    std::fs::write(&file, prefix).unwrap();
+    let old = load_from(&file).unwrap();
+    assert_eq!((old.side, old.persisted), (legacy_side, state.persisted));
 }
 
 #[test]

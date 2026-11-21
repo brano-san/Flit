@@ -246,6 +246,7 @@
 "drive.map" = "Conectar a unidad de red"
 "drive.disconnect" = "Desconectar unidad de red"
 "drive.connect_server" = "Conectar al servidor"
+"drive.add_server" = "Añadir servidor…"
 "tab.move_to_window" = "Mover la pestaña a una nueva ventana"
 "window.compact" = "Miniventana encima de las demás ventanas"
 "window.compact_on" = "Entrar en la miniventana"

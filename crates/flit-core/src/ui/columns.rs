@@ -217,7 +217,7 @@ impl App {
                 let ir = Rect::new(cell.x + s10, cell.y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
                 let (key, kind) = icon_key(name, listing.ext(idx), &e, icon_px as u32, dir.as_ref().map_or(&b""[..], |d| d.as_bytes()), self.icon_epoch);
                 self.file_icons.see(key, kind);
-                if !g.image(key, ir) {
+                if !super::network_listing::draw_server_icon(g, listing, idx, ir, th.accent) && !g.image(key, ir) {
                     if !self.folder_stand_in(g, kind, icon_px as u32, ir, 255, &mut requests) {
                         icon_glyph(g, th, &e, ir);
                     }

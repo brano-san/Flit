@@ -213,18 +213,21 @@ impl LocalProvider {
             let mut sh = S::new();
             for (tab, job) in shell_rx {
                 let connect = match &job {
-                    ShellJob::Launch(Launch::ConnectServer(uri)) => Some((uri.clone(), None)),
+                    ShellJob::Launch(Launch::ConnectServer(uri) | Launch::ConnectAndSaveServer(uri)) => Some((uri.clone(), None)),
                     ShellJob::Launch(Launch::ConnectNetwork { uri, gen }) => Some((uri.clone(), Some(*gen))),
                     _ => None,
                 };
                 if let Some((uri, gen)) = connect {
+                    let save = matches!(job, ShellJob::Launch(Launch::ConnectAndSaveServer(_)));
                     let (events, wake) = (open_events.clone(), open_wake.clone());
                     let started = spawn("flit-connect".into(), move || {
                         let prompt = MountPrompt::new(tab, events.clone(), wake.clone()).at_generation(gen);
                         let done = S::new().and_then(|mut sh| sh.connect_asking(&uri, &prompt));
                         let event = match gen {
                             Some(gen) => Some(ProviderEvent::NetworkConnected { tab, gen, result: done.map_err(|e| e.to_string()) }),
-                            None => shell_event(tab, done.map(|p| p.map(|path| ProviderEvent::Navigate { tab, path }))),
+                            None => shell_event(tab, done.map(|p| p.map(|path| {
+                                if save { ProviderEvent::SavedServerConnected { tab, address: uri, path } } else { ProviderEvent::Navigate { tab, path } }
+                            }))),
                         };
                         if let Some(event) = event {
                             let _ = events.send(event);

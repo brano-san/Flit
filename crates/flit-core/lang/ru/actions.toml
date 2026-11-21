@@ -246,6 +246,7 @@
 "drive.map" = "Подключить сетевой диск"
 "drive.disconnect" = "Отключить сетевой диск"
 "drive.connect_server" = "Подключиться к серверу"
+"drive.add_server" = "Добавить сервер…"
 "tab.move_to_window" = "Переместить вкладку в новое окно"
 "window.compact" = "Мини-окно поверх других окон"
 "window.compact_on" = "Перейти в мини-окно"

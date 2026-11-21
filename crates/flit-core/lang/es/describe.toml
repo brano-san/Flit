@@ -246,6 +246,7 @@
 "drive.map" = "Asignar una letra de unidad a un recurso de red, net use"
 "drive.disconnect" = "Quitar una unidad de red conectada, net use /delete"
 "drive.connect_server" = "Montar un recurso de red por su dirección, smb, sftp, ftp, gio mount"
+"drive.add_server" = "Conectar con un servidor y guardarlo en Red"
 "tab.move_to_window" = "Separar la pestaña actual en su propia ventana, desacoplar"
 "window.compact" = "Reducir la ventana a una pequeña que queda encima de las demás, siempre visible"
 "window.compact_on" = "Cambiar a la ventana pequeña siempre visible"

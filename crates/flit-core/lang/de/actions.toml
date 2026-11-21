@@ -246,6 +246,7 @@
 "drive.map" = "Netzlaufwerk verbinden"
 "drive.disconnect" = "Netzlaufwerk trennen"
 "drive.connect_server" = "Mit Server verbinden"
+"drive.add_server" = "Server hinzufügen…"
 "tab.move_to_window" = "Registerkarte in neues Fenster verschieben"
 "window.compact" = "Minifenster über anderen Fenstern"
 "window.compact_on" = "Minifenster aktivieren"

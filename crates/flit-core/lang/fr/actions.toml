@@ -246,6 +246,7 @@
 "drive.map" = "Connecter un lecteur réseau"
 "drive.disconnect" = "Déconnecter un lecteur réseau"
 "drive.connect_server" = "Se connecter à un serveur"
+"drive.add_server" = "Ajouter un serveur…"
 "tab.move_to_window" = "Déplacer l’onglet vers une nouvelle fenêtre"
 "window.compact" = "Mini-fenêtre au premier plan"
 "window.compact_on" = "Passer en mini-fenêtre"

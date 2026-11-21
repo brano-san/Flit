@@ -237,6 +237,14 @@ pub struct NavPrefs {
     pub recent_cleared: i64,
     #[serde(skip)]
     pub quick: QuickPrefs,
+    #[serde(skip)]
+    pub saved_servers: Vec<SavedServer>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedServer {
+    pub address: String,
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -251,12 +259,22 @@ pub struct QuickPrefs {
 }
 
 impl NavPrefs {
+    pub fn sanitize_servers(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        self.saved_servers.retain_mut(|server| {
+            let Some(address) = super::saved_address(&server.address) else { return false };
+            server.address = address;
+            seen.insert(server.address.clone())
+        });
+    }
+
     pub fn sanitized(mut self) -> Self {
         for v in [&mut self.collapsed, &mut self.hidden, &mut self.widgets_off, &mut self.quick.order] {
             v.truncate(MAX_LIST);
         }
         self.quick.places.truncate(MAX_LIST);
         self.quick.places_hidden.truncate(MAX_LIST);
+        self.sanitize_servers();
         let n = self.recent_hidden.len();
         self.recent_hidden.drain(..n.saturating_sub(MAX_LIST));
         self.quick.visits.truncate(MAX_VISITS);
@@ -781,7 +799,12 @@ impl App {
     }
 
     pub fn set_nav_prefs(&mut self, prefs: NavPrefs) {
-        self.nav.sidebar.prefs = prefs.sanitized();
+        let prefs = prefs.sanitized();
+        let servers_changed = self.nav.sidebar.prefs.saved_servers != prefs.saved_servers;
+        self.nav.sidebar.prefs = prefs;
+        if servers_changed {
+            self.refresh_saved_servers();
+        }
         self.nav_prefs_changed();
     }
 

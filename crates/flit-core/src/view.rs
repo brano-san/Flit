@@ -330,7 +330,7 @@ impl DirView {
         self.reshape();
         let view = self.snap.view;
         let field = view.group.field;
-        if field == GroupField::None {
+        if field == GroupField::None && self.snap.listing.saved_servers == 0 {
             return;
         }
         let l = &self.snap.listing;
