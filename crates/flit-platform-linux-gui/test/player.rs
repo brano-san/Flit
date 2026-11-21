@@ -98,3 +98,38 @@ fn the_video_area_is_taken_from_the_placed_rectangle() {
     assert_eq!(area(r(f32::NAN, 300.0)), None);
     assert_eq!(area(r(-5.0, 300.0)), None);
 }
+
+#[test]
+#[ignore = "plays user-hlg.mp4 with libmpv when FLIT_HDR_FIXTURES is set"]
+fn user_hlg_playback_honours_the_preview_controls_and_releases_the_file() {
+    let Some(directory) = std::env::var_os("FLIT_HDR_FIXTURES") else { return };
+    let path = Path::new(&directory).join("user-hlg.mp4").canonicalize().unwrap();
+    let (tx, events) = std::sync::mpsc::channel();
+    let start = Start { path: path.clone(), video: true, gen: 8, volume: Some(0.0), area: Some((360, 720)), every: frame_interval(None) };
+    let player = crate::mpv::Embedded::start(start, Arc::new(move |e| {
+        let _ = tx.send(e);
+    }));
+    let wait_for = |expected: &dyn Fn(f64, f64, bool) -> bool| {
+        let deadline = Instant::now() + Duration::from_secs(12);
+        loop {
+            match events.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("preview playback timed out") {
+                HostEvent::Frame(slot) => { slot.take(); }
+                HostEvent::Media { position, duration, playing, .. } if duration > 0.0 && expected(position, duration, playing) => break duration,
+                HostEvent::Failed { message, .. } => panic!("{message}"),
+                _ => {}
+            }
+        }
+    };
+    let duration = wait_for(&|position, _, playing| playing && position > 0.5);
+    assert!(player.order(Order::Pause(true)));
+    wait_for(&|position, duration, playing| !playing && position < duration);
+    assert!(player.order(Order::Volume(30.0)));
+    assert!(player.order(Order::Seek(duration - 3.0)));
+    assert!(player.order(Order::Pause(false)));
+    wait_for(&|position, duration, playing| playing && position >= duration - 4.0);
+    wait_for(&|position, duration, playing| !playing && position == duration);
+    assert!(!player.order(Order::Pause(false)), "EOF ends the session");
+    player.stop().unwrap().join().unwrap();
+    let mut descriptors = std::fs::read_dir("/proc/self/fd").unwrap().flatten();
+    assert!(!descriptors.any(|fd| fd.path().read_link().is_ok_and(|target| target == path)), "closing the preview releases the video");
+}
