@@ -137,7 +137,9 @@ impl App {
 
     fn server_form(&mut self, save: bool) {
         let controls = vec![Control::text(S::A11yRegionAddress.t(), "", S::SidebarDriveServerExample.t()), Control::check(S::SidebarDriveSaveServer.t(), save)];
-        self.open_form(Form::new(Kind::ConnectServer, S::SidebarDriveConnectServer.t(), controls, vec![S::SidebarDriveLoginConnect.t(), S::WidgetsCancel.t()]));
+        let mut form = Form::new(Kind::ConnectServer, S::SidebarDriveConnectServer.t(), controls, vec![S::SidebarDriveLoginConnect.t(), S::WidgetsCancel.t()]);
+        form.say(S::SidebarDriveServerPrompt.t(), false);
+        self.open_form(form);
     }
 
     pub(super) fn submit_server(&mut self, mut form: Form) -> Option<Form> {

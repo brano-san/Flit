@@ -20,6 +20,23 @@ fn connect_dialog_offers_an_unchecked_network_checkbox_only_on_linux() {
 }
 
 #[test]
+fn the_connect_dialog_shows_the_address_example_from_the_start_and_turns_it_red_only_for_a_bad_address() {
+    let mut a = linux();
+    a.run_action("drive.connect_server", Instant::now());
+    let f = a.jobs.form.as_ref().unwrap();
+    assert_eq!((f.note.as_str(), f.error), (S::SidebarDriveServerPrompt.t(), false), "the example is a hint before anything is typed");
+    a.jobs.form.as_mut().unwrap().set_text(0, "192.168.1.35");
+    a.form_submit(0);
+    let f = a.jobs.form.as_ref().expect("a bare address keeps the dialog open");
+    assert_eq!((f.note.as_str(), f.error), (S::SidebarDriveServerPrompt.t(), true));
+    let mut a = linux();
+    a.run_action("drive.connect_server", Instant::now());
+    a.jobs.form.as_mut().unwrap().set_text(0, "sftp://ann@192.168.1.35");
+    a.form_submit(0);
+    assert!(a.jobs.form.is_none(), "a full address still connects at once");
+}
+
+#[test]
 fn saved_addresses_preserve_user_port_and_path_without_credentials() {
     for scheme in SCHEMES {
         assert_eq!(saved_address(&format!("{scheme}://Ann:secret@NAS:2222/Shared/")), Some(format!("{scheme}://Ann@nas:2222/Shared")));
