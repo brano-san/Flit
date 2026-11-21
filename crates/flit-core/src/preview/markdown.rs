@@ -4,13 +4,14 @@ use super::syntax::{self, SYNTAXES};
 use super::{expand_tabs, Alignment, Block, Doc, Table, Tone};
 use crate::hash::FxHashMap;
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
+use std::borrow::Cow;
 
 #[derive(Default)]
 struct Markdown {
     doc: Doc,
     heading: Option<u8>,
     lists: Vec<Option<u64>>,
-    markers: Vec<Option<String>>,
+    markers: Vec<Option<Cow<'static, str>>>,
     quotes: usize,
     table: Option<Table>,
     cell_start: u32,
@@ -49,14 +50,19 @@ impl Markdown {
     }
 
     fn code(&mut self, text: &str, lang: Option<u8>) {
-        let (mut line, mut state) = (String::new(), None);
+        let (mut expanded, mut state) = (String::new(), None);
         for raw in text.lines() {
-            line.clear();
-            expand_tabs(raw, &mut line);
-            if let Some(k) = lang {
-                self.doc.highlighted(&line, &SYNTAXES[k as usize], &mut state);
+            let line = if raw.contains(['\t', '\r']) {
+                expanded.clear();
+                expand_tabs(raw, &mut expanded);
+                &expanded
             } else {
-                self.doc.run(&line, Tone::Plain, false, true);
+                raw
+            };
+            if let Some(k) = lang {
+                self.doc.highlighted(line, &SYNTAXES[k as usize], &mut state);
+            } else {
+                self.doc.run(line, Tone::Plain, false, true);
             }
             self.para(Block::Code);
         }
@@ -128,10 +134,11 @@ fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, no
                     CodeBlockKind::Fenced(info) => info.split_whitespace().next().and_then(syntax::by_name),
                     CodeBlockKind::Indented => None,
                 };
-                let mut code = String::new();
+                let mut code = Cow::Borrowed("");
                 for part in events.by_ref() {
                     match part {
-                        Event::Text(text) => code.push_str(&text),
+                        Event::Text(text) if code.is_empty() => code = text.into(),
+                        Event::Text(text) => code.to_mut().push_str(&text),
                         Event::End(TagEnd::CodeBlock) => break,
                         _ => {}
                     }
@@ -165,9 +172,9 @@ fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, no
                     Some(Some(n)) => {
                         let label = format!("{n}. ");
                         *n += 1;
-                        label
+                        Cow::Owned(label)
                     }
-                    _ => "• ".to_owned(),
+                    _ => Cow::Borrowed("• "),
                 };
                 md.markers.push(Some(marker));
             }

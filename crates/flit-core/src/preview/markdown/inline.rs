@@ -23,7 +23,7 @@ impl<'a> Inline<'a> {
         self.incomplete_tag.clear();
     }
 
-    pub(super) fn event(&mut self, doc: &mut Doc, event: &Event<'a>, bold: bool) -> bool {
+    pub(super) fn event(&mut self, doc: &mut Doc, event: &Event<'a>, bold: bool) {
         match event {
             Event::Start(Tag::Strong) => self.strong += 1,
             Event::End(TagEnd::Strong) => self.strong -= 1,
@@ -49,10 +49,8 @@ impl<'a> Inline<'a> {
             Event::InlineHtml(html) => self.html(doc, html, bold, false),
             Event::HardBreak => self.run(doc, "\n", Tone::Plain, bold, false),
             Event::SoftBreak => self.run(doc, " ", Tone::Plain, bold, false),
-            Event::Start(Tag::Emphasis) | Event::End(TagEnd::Emphasis) => {}
-            _ => return false,
+            _ => {}
         }
-        true
     }
 
     fn run(&self, doc: &mut Doc, text: &str, tone: Tone, bold: bool, mono: bool) {
@@ -67,7 +65,7 @@ impl<'a> Inline<'a> {
     }
 
     fn text(&self, doc: &mut Doc, mut text: &str, bold: bool) {
-        if self.links == 0 && self.images.is_empty() && self.keyboard == 0 {
+        if self.links == 0 && self.images.is_empty() && self.keyboard == 0 && text.as_bytes().contains(&b':') {
             while let Some((start, end)) = bare_url(text) {
                 self.run(doc, &text[..start], Tone::Plain, bold, false);
                 self.run(doc, &text[start..end], Tone::Link, bold, false);
