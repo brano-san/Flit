@@ -39,7 +39,7 @@ pub fn saved_address(text: &str) -> Option<String> {
         address.push_str(user);
         address.push('@');
     }
-    address.push_str(&host.to_ascii_lowercase());
+    address.push_str(&host.to_lowercase());
     address.push_str(path.trim_end_matches('/'));
     Some(address)
 }

@@ -27,6 +27,7 @@ fn saved_addresses_preserve_user_port_and_path_without_credentials() {
     let ipv6 = saved_address("SFTP://ann%40work@[FD00::A]:2222/docs/").unwrap();
     assert_eq!(ipv6, "sftp://ann%40work@[fd00::a]:2222/docs");
     assert_eq!(server_label(&ipv6), "ann%40work@[fd00::a]");
+    assert_eq!(saved_address("SFTP://Анна@СЕРВЕР.рф/Файлы/").as_deref(), Some("sftp://Анна@сервер.рф/Файлы"));
 }
 
 #[test]
