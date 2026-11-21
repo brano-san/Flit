@@ -8,16 +8,16 @@ use windows::Win32::Media::MediaFoundation::*;
 use windows_core::{implement, Error, IUnknown, Interface, Ref, Result, GUID};
 
 #[derive(Clone, Copy)]
-pub(crate) struct HdrColor {
+struct HdrColor {
     hlg: bool,
     peak_nits: f32,
     full_range: bool,
 }
 
 impl HdrColor {
-    pub(crate) unsafe fn from_type(kind: &IMFMediaType, source: Option<Self>) -> Option<Self> {
+    unsafe fn from_type(kind: &IMFMediaType) -> Option<Self> {
         let primaries = kind.GetUINT32(&MF_MT_VIDEO_PRIMARIES).unwrap_or_default();
-        if primaries != MFVideoPrimaries_BT2020.0 as u32 && (primaries != 0 || source.is_none()) {
+        if primaries != MFVideoPrimaries_BT2020.0 as u32 || kind.GetGUID(&MF_MT_SUBTYPE).ok()? != MFVideoFormat_P010 {
             return None;
         }
         let matrix = kind.GetUINT32(&MF_MT_YUV_MATRIX).unwrap_or_default();
@@ -27,34 +27,29 @@ impl HdrColor {
         let hlg = match kind.GetUINT32(&MF_MT_TRANSFER_FUNCTION).unwrap_or_default() {
             v if v == MFVideoTransFunc_2084.0 as u32 => false,
             v if v == MFVideoTransFunc_HLG.0 as u32 => true,
-            0 => source?.hlg,
             _ => return None,
         };
         let peak_nits = [MF_MT_MAX_LUMINANCE_LEVEL, MF_MT_MAX_MASTERING_LUMINANCE]
             .into_iter()
             .filter_map(|key| kind.GetUINT32(&key).ok())
             .find(|value| (100..=10000).contains(value))
-            .map_or_else(|| source.map_or(1000.0, |color| color.peak_nits), |n| n as f32);
-        let full_range = match kind.GetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE).unwrap_or_default() {
-            0 => source.is_some_and(|color| color.full_range),
-            value => value == MFNominalRange_0_255.0 as u32,
-        };
+            .unwrap_or(1000) as f32;
+        let full_range = kind.GetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE).ok() == Some(MFNominalRange_0_255.0 as u32);
         Some(Self { hlg, peak_nits, full_range })
     }
 }
 
-pub(crate) fn create(device: &ID3D11Device, color: HdrColor) -> Result<IMFTransform> {
+pub(crate) fn create(device: &ID3D11Device) -> Result<IMFTransform> {
     ToneMapper::check_support(device)?;
     unsafe {
         let attributes = attributes()?;
         attributes.SetUINT32(&MF_SA_D3D11_AWARE, 1)?;
-        Ok(Effect { attributes, state: Mutex::new(State::default()), device: device.clone(), color }.into())
+        Ok(Effect { attributes, state: Mutex::new(State::default()), device: device.clone() }.into())
     }
 }
 
 #[implement(IMFTransform)]
 struct Effect {
-    color: HdrColor,
     attributes: IMFAttributes,
     state: Mutex<State>,
     device: ID3D11Device,
@@ -64,6 +59,7 @@ struct Effect {
 struct State {
     input: Option<Input>,
     output: Option<IMFMediaType>,
+    output_changed: bool,
     pending: Option<IMFSample>,
     managed_device: Option<ID3D11Device>,
     gpu: Option<Gpu>,
@@ -71,7 +67,7 @@ struct State {
 
 struct Input {
     kind: IMFMediaType,
-    color: HdrColor,
+    color: Option<HdrColor>,
 }
 
 struct Gpu {
@@ -126,13 +122,38 @@ unsafe fn output_type(input: &IMFMediaType, subtype: &GUID) -> Result<IMFMediaTy
     Ok(output)
 }
 
-unsafe fn decoded_input(kind: &IMFMediaType, source: HdrColor) -> Result<Input> {
-    if kind.GetGUID(&MF_MT_MAJOR_TYPE)? != MFMediaType_Video || kind.GetGUID(&MF_MT_SUBTYPE)? != MFVideoFormat_P010 {
-        return Err(MF_E_INVALIDMEDIATYPE.into());
+impl Input {
+    unsafe fn decoded(kind: &IMFMediaType) -> Result<Self> {
+        let (width, height) = dimensions(kind)?;
+        if kind.GetGUID(&MF_MT_MAJOR_TYPE)? != MFMediaType_Video || MFCalculateImageSize(&kind.GetGUID(&MF_MT_SUBTYPE)?, width, height).unwrap_or(0) == 0 {
+            return Err(MF_E_INVALIDMEDIATYPE.into());
+        }
+        Ok(Self { kind: kind.clone(), color: HdrColor::from_type(kind) })
     }
-    dimensions(kind)?;
-    let color = HdrColor::from_type(kind, Some(source)).ok_or(MF_E_INVALIDMEDIATYPE)?;
-    Ok(Input { kind: kind.clone(), color })
+
+    unsafe fn output_type(&self, index: u32) -> Result<IMFMediaType> {
+        if self.color.is_some() {
+            let formats = [MFVideoFormat_ARGB32, MFVideoFormat_RGB32];
+            return output_type(&self.kind, formats.get(index as usize).ok_or(MF_E_NO_MORE_TYPES)?);
+        }
+        if index != 0 {
+            return Err(MF_E_NO_MORE_TYPES.into());
+        }
+        let output = MFCreateMediaType()?;
+        self.kind.CopyAllItems(&output)?;
+        Ok(output)
+    }
+
+    unsafe fn accepts_output(&self, ty: &IMFMediaType) -> Result<bool> {
+        if self.color.is_none() {
+            return Ok(self.kind.Compare(ty, MF_ATTRIBUTES_MATCH_ALL_ITEMS)?.as_bool());
+        }
+        let subtype = ty.GetGUID(&MF_MT_SUBTYPE)?;
+        if ![MFVideoFormat_ARGB32, MFVideoFormat_RGB32].contains(&subtype) {
+            return Ok(false);
+        }
+        Ok(output_type(&self.kind, &subtype)?.Compare(ty, MF_ATTRIBUTES_MATCH_OUR_ITEMS)?.as_bool())
+    }
 }
 
 unsafe fn manager_device(unknown: &IUnknown) -> Result<ID3D11Device> {
@@ -192,7 +213,14 @@ unsafe fn upload(buffer: &IMFMediaBuffer, input: &IMFMediaType, device: &ID3D11D
 }
 
 impl State {
+    fn take_passthrough(&mut self) -> Option<IMFSample> {
+        if self.input.as_ref()?.color.is_none() { self.pending.take() } else { None }
+    }
+
     unsafe fn convert(&mut self, fallback_device: &ID3D11Device) -> Result<IMFSample> {
+        if let Some(sample) = self.take_passthrough() {
+            return Ok(sample);
+        }
         let input = self.input.as_ref().ok_or(MF_E_TRANSFORM_TYPE_NOT_SET)?;
         let output = self.output.as_ref().ok_or(MF_E_TRANSFORM_TYPE_NOT_SET)?;
         let sample = self.pending.as_ref().ok_or(MF_E_TRANSFORM_NEED_MORE_INPUT)?;
@@ -209,7 +237,7 @@ impl State {
         let gpu = self.gpu.as_mut().ok_or_else(Error::empty)?;
         let result = gpu.allocator.AllocateSample()?;
         let (target, _) = texture(&result.GetBufferByIndex(0)?.cast()?)?;
-        let color = input.color;
+        let color = input.color.ok_or(MF_E_INVALIDMEDIATYPE)?;
         gpu.mapper.render(&source, subresource, &target, color.hlg, color.peak_nits, color.full_range)?;
         for attr in [
             MFSampleExtension_Discontinuity,
@@ -319,22 +347,19 @@ impl IMFTransform_Impl for Effect_Impl {
 
     fn GetInputAvailableType(&self, id: u32, index: u32) -> Result<IMFMediaType> {
         stream(id)?;
-        if index != 0 {
-            return Err(MF_E_NO_MORE_TYPES.into());
-        }
+        let formats = [MFVideoFormat_P010, MFVideoFormat_NV12];
+        let format = formats.get(index as usize).ok_or(MF_E_NO_MORE_TYPES)?;
         unsafe {
             let ty = MFCreateMediaType()?;
             ty.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
-            ty.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_P010)?;
+            ty.SetGUID(&MF_MT_SUBTYPE, format)?;
             Ok(ty)
         }
     }
 
     fn GetOutputAvailableType(&self, id: u32, index: u32) -> Result<IMFMediaType> {
         stream(id)?;
-        let sub = [MFVideoFormat_ARGB32, MFVideoFormat_RGB32];
-        let sub = sub.get(index as usize).ok_or(MF_E_NO_MORE_TYPES)?;
-        unsafe { output_type(&self.lock().input.as_ref().ok_or(MF_E_TRANSFORM_TYPE_NOT_SET)?.kind, sub) }
+        unsafe { self.lock().input.as_ref().ok_or(MF_E_TRANSFORM_TYPE_NOT_SET)?.output_type(index) }
     }
 
     fn SetInputType(&self, id: u32, ty: Ref<IMFMediaType>, flags: u32) -> Result<()> {
@@ -343,11 +368,20 @@ impl IMFTransform_Impl for Effect_Impl {
         if state.pending.is_some() {
             return Err(MF_E_TRANSFORM_CANNOT_CHANGE_MEDIATYPE_WHILE_PROCESSING.into());
         }
-        let input = ty.as_ref().map(|kind| unsafe { decoded_input(kind, self.color) }).transpose()?;
+        let input = ty.as_ref().map(|kind| unsafe { Input::decoded(kind) }).transpose()?;
         if flags & MFT_SET_TYPE_TEST_ONLY.0 as u32 == 0 {
+            if let (Some(input), Some(output)) = (&input, &state.output) {
+                if !unsafe { input.accepts_output(output)? } {
+                    state.output = None;
+                    state.output_changed = true;
+                    state.gpu = None;
+                }
+            } else if input.is_none() {
+                state.output = None;
+                state.output_changed = false;
+                state.gpu = None;
+            }
             state.input = input;
-            state.output = None;
-            state.gpu = None;
         }
         Ok(())
     }
@@ -355,24 +389,18 @@ impl IMFTransform_Impl for Effect_Impl {
     fn SetOutputType(&self, id: u32, ty: Ref<IMFMediaType>, flags: u32) -> Result<()> {
         stream(id)?;
         let mut state = self.lock();
-        if state.pending.is_some() {
+        if state.pending.is_some() && !state.output_changed {
             return Err(MF_E_TRANSFORM_CANNOT_CHANGE_MEDIATYPE_WHILE_PROCESSING.into());
         }
         if let Some(ty) = ty.as_ref() {
             let input = state.input.as_ref().ok_or(MF_E_TRANSFORM_TYPE_NOT_SET)?;
-            unsafe {
-                if ty.GetGUID(&MF_MT_MAJOR_TYPE)? != MFMediaType_Video
-                    || ![MFVideoFormat_ARGB32, MFVideoFormat_RGB32].contains(&ty.GetGUID(&MF_MT_SUBTYPE)?)
-                    || dimensions(ty)? != dimensions(&input.kind)?
-                    || ty.GetUINT32(&MF_MT_VIDEO_PRIMARIES).ok() != Some(MFVideoPrimaries_BT709.0 as u32)
-                    || ty.GetUINT32(&MF_MT_TRANSFER_FUNCTION).ok() != Some(MFVideoTransFunc_709.0 as u32)
-                {
-                    return Err(MF_E_INVALIDMEDIATYPE.into());
-                }
+            if !unsafe { input.accepts_output(ty)? } {
+                return Err(MF_E_INVALIDMEDIATYPE.into());
             }
         }
         if flags & MFT_SET_TYPE_TEST_ONLY.0 as u32 == 0 {
             state.output = ty.cloned();
+            state.output_changed = false;
             state.gpu = None;
         }
         Ok(())
@@ -423,7 +451,7 @@ impl IMFTransform_Impl for Effect_Impl {
             return Err(E_INVALIDARG.into());
         }
         let mut state = self.lock();
-        if state.output.is_none() {
+        if state.output.is_none() && !state.output_changed {
             return Err(MF_E_TRANSFORM_TYPE_NOT_SET.into());
         }
         if state.pending.is_some() {
@@ -441,13 +469,22 @@ impl IMFTransform_Impl for Effect_Impl {
             *status.as_mut().ok_or(E_POINTER)? = 0;
             let buffer = buffers.as_mut().ok_or(E_POINTER)?;
             stream(buffer.dwStreamID)?;
+            let mut state = self.lock();
+            if state.output_changed {
+                buffer.dwStatus = MFT_OUTPUT_DATA_BUFFER_FORMAT_CHANGE.0 as u32;
+                return Err(MF_E_TRANSFORM_STREAM_CHANGE.into());
+            }
             if buffer.pSample.is_some() {
                 return Err(E_INVALIDARG.into());
             }
             buffer.dwStatus = 0;
             buffer.pEvents = ManuallyDrop::new(None);
-            buffer.pSample = ManuallyDrop::new(Some(self.lock().convert(&self.device)?));
+            buffer.pSample = ManuallyDrop::new(Some(state.convert(&self.device)?));
         }
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "../test/hdr_effect.rs"]
+mod tests;

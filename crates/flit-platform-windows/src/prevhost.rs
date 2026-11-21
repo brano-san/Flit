@@ -1,4 +1,3 @@
-use crate::hdr_effect::HdrColor;
 use flit_core::preview::{HostCmd, HostEvent, Hosted, MediaCmd};
 use flit_core::render::Rect;
 use flit_core::provider::FileOp;
@@ -342,28 +341,19 @@ unsafe fn start_mf() -> windows::core::Result<()> {
     Ok(())
 }
 
-fn hdr_color(path: &FsPath) -> Option<HdrColor> {
-    unsafe {
-        let file = path.to_wide(false);
-        let reader = MFCreateSourceReaderFromURL(PCWSTR(file.as_ptr()), None).ok()?;
-        let kind = reader.GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM.0 as u32, 0).ok()?;
-        HdrColor::from_type(&kind, None)
-    }
-}
-
 unsafe fn open_media(path: &FsPath, host: HWND, video: bool, volume: f32) -> windows::core::Result<IMFMediaEngine> {
     start_mf()?;
     let host = video.then_some(host);
-    let engine = if let Some(color) = host.and_then(|_| hdr_color(path)) {
-        video_or_legacy(video_device(), |gpu| create_engine(host, true, gpu, Some(color)))?
+    let engine = if video {
+        video_or_legacy(video_device(), |gpu| create_engine(host, true, gpu))?
     } else {
-        create_engine(host, video, None, None)?
+        create_engine(None, false, None)?
     };
     load_media(&engine, path, volume)?;
     Ok(engine)
 }
 
-unsafe fn create_engine(host: Option<HWND>, video: bool, gpu: Option<&VideoDevice>, color: Option<HdrColor>) -> windows::core::Result<IMFMediaEngine> {
+unsafe fn create_engine(host: Option<HWND>, video: bool, gpu: Option<&VideoDevice>) -> windows::core::Result<IMFMediaEngine> {
     let factory: IMFMediaEngineClassFactory = CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)?;
     let mut attrs = None;
     MFCreateAttributes(&mut attrs, 4)?;
@@ -379,8 +369,8 @@ unsafe fn create_engine(host: Option<HWND>, video: bool, gpu: Option<&VideoDevic
     }
     let flags = if video { 0 } else { MF_MEDIA_ENGINE_AUDIOONLY.0 as u32 };
     let engine = factory.CreateInstance(flags, &attrs)?;
-    if let (Some((device, _)), Some(color)) = (gpu, color) {
-        let insert = crate::hdr_effect::create(device, color).and_then(|effect| engine.cast::<IMFMediaEngineEx>()?.InsertVideoEffect(&effect, true));
+    if let Some((device, _)) = gpu {
+        let insert = crate::hdr_effect::create(device).and_then(|effect| engine.cast::<IMFMediaEngineEx>()?.InsertVideoEffect(&effect, true));
         if let Err(error) = insert {
             let _ = engine.Shutdown();
             return Err(error);

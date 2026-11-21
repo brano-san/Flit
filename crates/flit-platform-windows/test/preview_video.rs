@@ -8,6 +8,7 @@ use windows::Win32::System::Com::CoUninitialize;
 
 const WIDTH: usize = 640;
 const HEIGHT: usize = 360;
+const CLIPS: [&str; 5] = ["hdr10", "hdr10-vui", "hlg", "sdr", "main10-unknown"];
 const TONEMAP: &str = "zscale=t=linear:npl=100,format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=bgra";
 
 struct MediaThread;
@@ -84,15 +85,17 @@ unsafe fn wait_for<T>(description: &str, mut probe: impl FnMut() -> Option<T>) -
 }
 
 fn fixture(clip: &str) -> PathBuf {
-    let dir = std::env::var_os("FLIT_HDR_FIXTURES").expect("set FLIT_HDR_FIXTURES to the directory containing hdr10.mp4, hlg.mp4 and sdr.mp4");
+    let dir = std::env::var_os("FLIT_HDR_FIXTURES").expect("set FLIT_HDR_FIXTURES to the directory containing the HDR, VUI-only, SDR and untagged Main10 clips");
     PathBuf::from(dir).join(format!("{clip}.mp4"))
 }
 
 fn reference(clip: &str) -> Vec<u8> {
     let mut ffmpeg = Command::new("ffmpeg");
     ffmpeg.args(["-v", "error", "-threads", "2", "-filter_threads", "2", "-i"]).arg(fixture(clip));
-    if clip != "sdr" {
+    if matches!(clip, "hdr10" | "hdr10-vui" | "hlg") {
         ffmpeg.args(["-vf", TONEMAP]);
+    } else if clip == "main10-unknown" {
+        ffmpeg.args(["-vf", "scale=in_color_matrix=bt709"]);
     }
     let output = ffmpeg.args(["-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "bgra", "pipe:1"]).output().unwrap();
     assert!(output.status.success(), "ffmpeg: {}", String::from_utf8_lossy(&output.stderr));
@@ -110,6 +113,13 @@ fn brightness(bytes: &[u8]) -> (f64, f64) {
     }
     let count = (WIDTH * HEIGHT) as f64;
     (sum / count, white as f64 / count)
+}
+
+fn compare_bytes(clip: &str, frame: &[u8], baseline: &[u8]) {
+    assert_eq!(frame.len(), baseline.len());
+    let different = frame.iter().zip(baseline).filter(|(a, b)| a != b).count();
+    eprintln!("{clip}: {different} bytes differ from the legacy HWND");
+    assert_eq!(different, 0);
 }
 
 fn compare(clip: &str, frame: &[u8], expected: &[u8]) {
@@ -158,10 +168,10 @@ fn transferred_preview_matches_reference() {
     unsafe {
         let _thread = MediaThread::start();
         let gpu = video_device().unwrap();
-        for clip in ["hdr10", "hlg", "sdr"] {
+        for clip in CLIPS {
             let path = FsPath::parse(&fixture(clip).to_string_lossy()).unwrap();
             let expected = reference(clip);
-            let player = TestEngine(create_engine(None, true, Some(&gpu), hdr_color(&path)).unwrap());
+            let player = TestEngine(create_engine(None, true, Some(&gpu)).unwrap());
             let engine = &player.0;
             load_media(engine, &path, 0.25).unwrap();
             assert!((engine.GetVolume() - 0.25).abs() < 0.0001);
@@ -204,6 +214,30 @@ unsafe fn window_frame(hwnd: HWND) -> Vec<u8> {
     pixels
 }
 
+unsafe fn first_window_frame(hwnd: HWND) -> Vec<u8> {
+    wait_for("first video frame", || {
+        let pixels = window_frame(hwnd);
+        pixels.chunks_exact(4).step_by(100).any(|p| p[0].abs_diff(p[1]) > 30).then_some(pixels)
+    })
+}
+
+unsafe fn legacy_window_frame(path: &FsPath, rect: Option<Rect>) -> Vec<u8> {
+    let window = TestWindow::new();
+    let child = host_window(window.0, 0).unwrap();
+    place(child, rect);
+    let player = TestEngine(create_engine(Some(child), true, None).unwrap());
+    load_media(&player.0, path, 0.0).unwrap();
+    player.0.Load().unwrap();
+    wait_for("legacy video preroll", || {
+        if let Ok(error) = player.0.GetError() {
+            panic!("legacy playback error {}", error.GetErrorCode());
+        }
+        (player.0.GetReadyState() >= 2).then_some(())
+    });
+    player.0.cast::<IMFMediaEngineEx>().unwrap().UpdateVideoStream(None, Some(&client(child)), None).unwrap();
+    first_window_frame(child)
+}
+
 unsafe fn wait_event(hwnd: HWND, description: &str, mut condition: impl FnMut(HostEvent) -> bool) {
     wait_for(description, || {
         take(hwnd).into_iter().any(|event| {
@@ -237,7 +271,7 @@ impl Drop for ClipCopy {
 fn hosted_preview_matches_reference_and_releases_the_playing_file() {
     unsafe {
         let _thread = MediaThread::start();
-        for clip in ["hdr10", "hlg", "sdr"] {
+        for clip in CLIPS {
             let expected = reference(clip);
             let file = fixture(clip);
             let copy = (clip == "hdr10").then(|| ClipCopy::new(&file));
@@ -249,10 +283,10 @@ fn hosted_preview_matches_reference_and_releases_the_playing_file() {
             wait_event(hwnd, clip, |ev| matches!(ev, HostEvent::Media { duration, .. } if duration > 0.0));
             command(hwnd, HostCmd::Place(rect));
             let child = existing(hwnd).unwrap();
-            let frame = wait_for("first visible video frame", || {
-                let pixels = window_frame(child);
-                pixels.chunks_exact(4).step_by(100).any(|p| p[0].abs_diff(p[1]) > 30).then_some(pixels)
-            });
+            let frame = first_window_frame(child);
+            if clip == "sdr" {
+                compare_bytes(clip, &frame, &legacy_window_frame(&path, rect));
+            }
             if let Some(dir) = std::env::var_os("FLIT_HDR_CAPTURE_DIR") {
                 std::fs::write(PathBuf::from(dir).join(format!("{clip}-window.bgra")), &frame).unwrap();
             }
