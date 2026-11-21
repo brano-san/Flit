@@ -794,8 +794,11 @@ impl App {
         let mut slide = sb.slide.unwrap_or(super::widgets::Tween::at(if sb.state.sidebar { 1.0 } else { 0.0 }));
         let moving = slide.aim(if sb.state.sidebar { 0.0 } else { 1.0 }, self.animations, now, FOLD);
         sb.slide = moving.then_some(slide);
-        let st = &mut self.nav.sidebar.state;
+        let st = &mut sb.state;
         st.sidebar = !st.sidebar;
+        if !st.sidebar {
+            sb.filter.edit.primary_id = 0;
+        }
         if !st.sidebar && self.focus == Focus::Sidebar {
             self.focus = Focus::List;
         }
@@ -806,6 +809,9 @@ impl App {
     pub(super) fn toggle_compact(&mut self) {
         let p = &mut self.nav.sidebar.prefs;
         p.compact = !p.compact;
+        if p.compact {
+            self.nav.sidebar.filter.edit.primary_id = 0;
+        }
         self.nav_prefs_changed();
     }
 
@@ -884,7 +890,7 @@ impl App {
 
     pub(super) fn quick_insert(&mut self, s: &str) -> bool {
         let sb = &mut self.nav.sidebar;
-        if self.focus != Focus::Sidebar || !sb.typing {
+        if !sb.typing {
             return false;
         }
         sb.filter.insert(s);
@@ -895,6 +901,7 @@ impl App {
     pub(super) fn clear_quick_filter(&mut self) {
         let sb = &mut self.nav.sidebar;
         sb.filter.edit.set("");
+        sb.filter.edit.primary_id = 0;
         sb.typing = false;
         if self.focus == Focus::Sidebar {
             self.focus = Focus::List;
@@ -1551,6 +1558,7 @@ impl App {
             }
             Key::Escape => {
                 self.nav.sidebar.typing = false;
+                self.nav.sidebar.filter.edit.primary_id = 0;
                 self.focus = Focus::List;
                 return true;
             }

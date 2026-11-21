@@ -253,17 +253,17 @@ pub fn run_in_terminal(program: &Path) -> Result<(), PlatformError> {
 
 const ROOT_SHELL: &str = "cd \"$1\" && exec \"${SHELL:-/bin/sh}\"";
 
-pub fn root_shell(dir: &Path, sudo: bool) -> Vec<OsString> {
-    if sudo {
-        return ["sudo", "-s"].map(OsString::from).to_vec();
+pub fn root_shell(dir: &Path, sudo: Option<&Path>) -> Vec<OsString> {
+    if let Some(sudo) = sudo {
+        return vec![sudo.into(), OsString::from("-s")];
     }
     ["pkexec", "/bin/sh", "-c", ROOT_SHELL, "flit"].into_iter().map(OsString::from).chain([dir.into()]).collect()
 }
 
 pub fn open_root_terminal(dir: &Path) -> Result<(), PlatformError> {
-    let sudo = on_path(OsStr::new("sudo")).is_some();
-    let mut argv = root_shell(dir, sudo);
-    if !sudo {
+    let sudo = crate::elevated::sudo();
+    let mut argv = root_shell(dir, sudo.as_deref());
+    if sudo.is_none() {
         argv[0] = crate::elevated::pkexec()?.into_os_string();
     }
     spawn_terminal(Some(dir), Some(argv))

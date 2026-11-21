@@ -15,7 +15,7 @@ use flit_core::desktop_ini::DesktopIni;
 use flit_core::input::{CursorIcon, Event, HitArea};
 use flit_core::preview::{HostCmd, PropGroup};
 use flit_core::render::{DrawList, Rect};
-use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, ShellMenu};
+use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, PrimaryPaste, ShellMenu};
 use flit_core::digest::HashKind;
 use flit_core::provider::{Access, Accounts, Conflict, Failure, FileOp, Launch, MountAnswer, MountAsk, MountReply, OpCtl, OpProgress, Recover, Resolve, Stage};
 use flit_core::listing::DirStats;
@@ -155,7 +155,7 @@ pub trait Window {
     fn set_clipboard_text(&self, text: &str);
     fn set_clipboard_image(&self, _image: &Bitmap) {}
     fn set_primary_text(&self, _text: &str) {}
-    fn primary_text(&self) -> Option<String> {
+    fn primary_text(&self, _paste: PrimaryPaste) -> Option<String> {
         None
     }
     fn set_ime_area(&self, area: Rect);

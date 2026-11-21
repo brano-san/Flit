@@ -455,12 +455,28 @@ impl LinuxText {
         glyph.draw(DrawSettings::hinted(&self.hinters[at].2, false), &mut PathPen(&mut self.path)).is_ok()
     }
 
-    fn swash_path(&mut self, key: GlyphKey, px: f32) -> bool {
+    fn swash_path(&mut self, key: GlyphKey, px: f32, hinted: bool) -> bool {
         let face = &self.faces[key.font as usize];
         let mut scaler = self.scale.builder(face.sw).size(px).hint(self.hinting == Hinting::Full).variations(face.vars.iter().copied()).build();
         self.outline.clear();
         if !scaler.scale_outline_into(key.id, &mut self.outline) {
             return false;
+        }
+        if hinted && self.outline.path().commands().map(|c| std::mem::discriminant(&c)).eq(self.path.iter().map(std::mem::discriminant)) {
+            let mut points = self.outline.points_mut().iter_mut();
+            let mut copy = |coords: &[Vector]| {
+                for (coord, point) in coords.iter().zip(points.by_ref()) {
+                    *point = *coord;
+                }
+            };
+            for &command in &self.path {
+                match command {
+                    Command::MoveTo(p) | Command::LineTo(p) => copy(&[p]),
+                    Command::QuadTo(c, p) => copy(&[c, p]),
+                    Command::CurveTo(c, d, p) => copy(&[c, d, p]),
+                    Command::Close => {}
+                }
+            }
         }
         if face.embolden {
             self.outline.embolden(px * EMBOLDEN_PER_PX, px * EMBOLDEN_PER_PX);
@@ -518,9 +534,11 @@ impl TextBackend for LinuxText {
     fn rasterize(&mut self, key: GlyphKey, out: &mut GlyphBitmap) -> bool {
         let Some(face) = self.faces.get(key.font as usize) else { return false };
         let px = key.size_q as f32 / 4.0;
-        let light = self.hinting == Hinting::Slight && !face.embolden;
+        let light = self.hinting == Hinting::Slight;
         if !face.color && (key.subpixel != Subpixel::None || light) {
-            if !(light && self.light_path(key, px)) && !self.swash_path(key, px) {
+            let bold = face.embolden;
+            let hinted = light && self.light_path(key, px);
+            if (!hinted || bold) && !self.swash_path(key, px, hinted) {
                 return false;
             }
             render_mask(&self.path, key.subpixel, Vector::new(key.subpx as f32 / 4.0, 0.0), out);

@@ -431,3 +431,49 @@ fn slight_hinting_snaps_glyphs_vertically_and_leaves_their_horizontal_shape() {
     }
     assert!(differs >= 3, "light hinting changes the vertical profile of most letters ({differs})");
 }
+
+#[test]
+fn slight_hinting_changes_synthetic_bold_ink_and_preserves_advances() {
+    let mut t = ready();
+    let regular = t.load(fonts::SANS, 0, false).unwrap();
+    let bold = t.load(fonts::SANS, 0, true).unwrap();
+    assert!(t.faces[bold as usize].embolden);
+    t.ui = [regular, bold];
+    let style = FontStyle::new(FontFamily::Ui, 13.0, true);
+    t.set_hinting(Hinting::None);
+    let before = shaped(&mut t, "Hex", style);
+    t.set_hinting(Hinting::Slight);
+    let after = shaped(&mut t, "Hex", style);
+    assert_eq!(before.width, after.width);
+    assert!(before.glyphs.iter().zip(&after.glyphs).all(|(a, b)| a.x == b.x));
+    let coverage = |mask: &GlyphBitmap| mask.data.iter().map(|&alpha| u32::from(alpha)).sum::<u32>();
+    for (&glyph, letter) in before.glyphs.iter().zip(['H', 'e']) {
+        t.set_hinting(Hinting::None);
+        let plain = raster(&mut t, glyph, style, 0);
+        t.set_hinting(Hinting::Slight);
+        let hinted = raster(&mut t, glyph, style, 0);
+        assert_ne!(plain.data, hinted.data, "{letter}");
+        let regular_ink = rasterized(&mut t, GlyphKey { font: regular, id: glyph.id, size_q: style.size_q, subpx: 0, subpixel: Subpixel::None });
+        assert!(coverage(&hinted) > coverage(&regular_ink), "{letter}");
+        t.set_hinting(Hinting::None);
+        assert_eq!(plain.data, raster(&mut t, glyph, style, 0).data, "{letter}");
+    }
+}
+
+#[test]
+fn synthetic_bold_keeps_the_unhinted_outline_when_a_curve_command_differs() {
+    let mut t = ready();
+    let font = t.load(fonts::SANS, 0, true).unwrap();
+    let key = GlyphKey { font, id: t.faces[font as usize].charmap.map('e' as u32), size_q: 13 * 4, subpx: 0, subpixel: Subpixel::None };
+    t.set_hinting(Hinting::Slight);
+    assert!(t.swash_path(key, 13.0, false));
+    let unhinted = t.path.clone();
+    assert!(t.light_path(key, 13.0));
+    let curve = t.path.iter_mut().find(|c| matches!(c, Command::QuadTo(..) | Command::CurveTo(..))).unwrap();
+    *curve = Command::LineTo(Vector::ZERO);
+    assert!(t.swash_path(key, 13.0, true));
+    assert_eq!(t.path, unhinted);
+    let mut mask = GlyphBitmap::default();
+    render_mask(&t.path, Subpixel::None, Vector::ZERO, &mut mask);
+    assert!(mask.data.iter().any(|&alpha| alpha > 0));
+}

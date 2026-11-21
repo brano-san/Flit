@@ -662,3 +662,31 @@ fn a_mouse_drag_over_a_long_menu_does_not_scroll_it() {
     app.on_event(&Event::MouseUp { x, y: y - 100.0, button: MouseButton::Left }, t);
     assert_eq!(first_row_y(&app), top);
 }
+
+#[test]
+fn primary_reply_in_menu_search_keeps_the_click_and_skips_a_replaced_menu() {
+    let mut a = app();
+    a.caps.unix_paths = true;
+    let show = Event::ShowMenu { items: vec![cmd("Open")], x: 120.0, y: 140.0, launches: Vec::new(), kind: MenuKind::File, shell: Vec::new(), pending: false };
+    let mut gfx = Gfx::new(Mono, 512);
+    a.on_event(&show, Instant::now());
+    a.frame(&mut gfx, Instant::now());
+    a.on_event(&Event::Pasted("alpha".into()), Instant::now());
+    let field = a.context_menu_open().unwrap().ime_area();
+    let (x, y) = (field.x + 20.0, field.y + field.h * 0.5);
+    let mut middle = |a: &mut App| {
+        a.on_event(&Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 }, Instant::now());
+        a.on_event(&Event::MouseUp { x, y, button: MouseButton::Middle }, Instant::now());
+        a.frame(&mut gfx, Instant::now());
+        a.drain_effects().find_map(|e| if let Effect::PastePrimary(paste) = e { Some(paste) } else { None }).unwrap()
+    };
+    let paste = middle(&mut a);
+    key(&mut a, Key::End);
+    a.on_event(&Event::PrimaryPasted(paste, "X".into()), Instant::now());
+    assert_eq!(a.context_menu_open().unwrap().query.text(), "alXpha");
+    let stale = middle(&mut a);
+    a.on_event(&show, Instant::now());
+    a.frame(&mut gfx, Instant::now());
+    a.on_event(&Event::PrimaryPasted(stale, "late".into()), Instant::now());
+    assert!(a.context_menu_open().unwrap().query.text().is_empty());
+}

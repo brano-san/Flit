@@ -6,6 +6,7 @@ pub struct LineEdit {
     pub text: String,
     pub caret: usize,
     pub anchor: usize,
+    pub(super) primary_id: u64,
     undo: Vec<Snapshot>,
     redo: Vec<Snapshot>,
     run: Run,

@@ -232,6 +232,10 @@ impl App {
                         outcome
                     }
                     Some(None) => MenuOutcome::Open,
+                    None if self.caps.unix_paths && *button == MouseButton::Middle && c.hit(*x, *y) == Some(CtxHit::Field) => {
+                        self.paste_after_layout = Some(super::PrimaryPaste::menu(&mut c.query.edit));
+                        c.mouse_down(*x, *y, 1, false)
+                    }
                     None if *button == MouseButton::Right && c.hit(*x, *y) == Some(CtxHit::Field) => {
                         c.open_field_menu(*x, *y);
                         MenuOutcome::Open

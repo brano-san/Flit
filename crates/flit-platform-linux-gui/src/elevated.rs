@@ -367,7 +367,23 @@ pub fn root_only(path: &Path, stat: &dyn Fn(&Path) -> io::Result<Owned>) -> bool
 }
 
 pub fn setuid_root(path: &Path, stat: &dyn Fn(&Path) -> io::Result<Owned>) -> bool {
-    root_only(path, stat) && stat(path).is_ok_and(|o| o.mode & 0o4000 != 0)
+    root_only(path, stat) && stat(path).is_ok_and(|o| o.mode & libc::S_IFMT == libc::S_IFREG && o.mode & 0o4000 != 0 && o.mode & 0o111 != 0)
+}
+
+fn trusted_elevator(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok().filter(|real| setuid_root(real, &owned))
+}
+
+fn sudo_in(path: &OsStr, checked: impl Fn(&Path) -> Option<PathBuf>) -> Option<PathBuf> {
+    std::env::split_paths(path).map(|dir| dir.join("sudo")).find_map(|candidate| checked(&candidate))
+}
+
+pub(crate) fn sudo() -> Option<PathBuf> {
+    #[cfg(test)]
+    if let Some(path) = crate::temp::tool_path() {
+        return sudo_in(&path, trusted_elevator);
+    }
+    sudo_in(OsStr::new("/usr/bin:/bin:/usr/local/bin"), trusted_elevator)
 }
 
 pub(crate) fn pkexec() -> Result<PathBuf, PlatformError> {
@@ -376,7 +392,7 @@ pub(crate) fn pkexec() -> Result<PathBuf, PlatformError> {
     if crate::temp::trusted_fake(&found) {
         return Ok(found);
     }
-    std::fs::canonicalize(&found).ok().filter(|real| setuid_root(real, &owned)).ok_or_else(|| unelevated(flit_core::tr_en!(S::ErrorsEngineAdminTool, tool = "pkexec")))
+    trusted_elevator(&found).ok_or_else(|| unelevated(flit_core::tr_en!(S::ErrorsEngineAdminTool, tool = "pkexec")))
 }
 
 fn system_tool(tool: &Path) -> io::Result<PathBuf> {

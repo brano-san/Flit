@@ -5,7 +5,7 @@ use crate::tiling::{self, Sides};
 use flit_core::input::{CursorIcon, Event, HitArea, Mods, MouseButton, WindowButtons};
 use flit_core::preview::{HostCmd, Hosted, MediaCmd};
 use flit_core::render::Rect;
-use flit_core::ui::{drop_effect, Bitmap, DragEvent, ShellMenu};
+use flit_core::ui::{drop_effect, Bitmap, DragEvent, PrimaryPaste, ShellMenu};
 use flit_core::i18n::S;
 use flit_core::FsPath;
 use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
@@ -304,7 +304,7 @@ enum Command {
     CopyFiles(Vec<FsPath>, bool),
     CopyImage(Bitmap),
     SetPrimary(String),
-    PastePrimary,
+    PastePrimary(WindowId, PrimaryPaste),
     Drag(winit::window::WindowId, Vec<FsPath>, f32),
     Activate(WindowId, String),
 }
@@ -804,8 +804,8 @@ impl Window for LinuxWindow {
         self.push(Command::SetPrimary(text.to_owned()));
     }
 
-    fn primary_text(&self) -> Option<String> {
-        self.push(Command::PastePrimary);
+    fn primary_text(&self, paste: PrimaryPaste) -> Option<String> {
+        self.push(Command::PastePrimary(self.id, paste));
         None
     }
 
@@ -862,7 +862,10 @@ impl Window for LinuxWindow {
     }
 
     fn shell_warm(&self, _menus: Vec<ShellMenu>) {
-        background("flit-menu-warm", || drop(crate::apps::catalog()));
+        background("flit-menu-warm", || {
+            crate::scripts::warm();
+            drop(crate::apps::catalog());
+        });
     }
 
     fn properties(&self, _paths: Vec<FsPath>) {}
@@ -993,7 +996,7 @@ impl WindowSystem for LinuxWindows {
 
     fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
         let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None, x11: None, x11_frames: None };
+        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, pastes: HashMap::new(), clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None, x11: None, x11_frames: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -1034,6 +1037,7 @@ struct Loop<H> {
     wl: Option<crate::wl::Wl>,
     verify: Option<(Instant, Unverified)>,
     reading: Option<Reading>,
+    pastes: HashMap<AsyncRequestSerial, (WindowId, Option<PrimaryPaste>)>,
     clip_text: Option<bool>,
     wayland_selection: Option<DataTransferId>,
     watching: bool,
@@ -1136,12 +1140,10 @@ fn background(name: &str, work: impl FnOnce() + Send + 'static) {
     }
 }
 
-fn paste(el: &dyn ActiveEventLoop, window: WindowId) {
+fn paste(el: &dyn ActiveEventLoop, window: WindowId) -> Option<AsyncRequestSerial> {
     match el.clipboard() {
         Ok(Some(id)) => {
-            if let Err(e) = el.fetch_data_transfer(id, &TypeHint::Plaintext) {
-                tracing::debug!("clipboard has no text: {e}");
-            }
+            return el.fetch_data_transfer(id, &TypeHint::Plaintext).inspect_err(|e| tracing::debug!("clipboard has no text: {e}")).ok();
         }
         Ok(None) => {}
         Err(e) => {
@@ -1154,6 +1156,7 @@ fn paste(el: &dyn ActiveEventLoop, window: WindowId) {
             });
         }
     }
+    None
 }
 
 fn set_primary(el: &dyn ActiveEventLoop, text: String) {
@@ -1164,17 +1167,16 @@ fn set_primary(el: &dyn ActiveEventLoop, text: String) {
     }
 }
 
-fn paste_primary(el: &dyn ActiveEventLoop) {
-    let Some(ext) = el.primary_selection_ext() else { return };
+fn paste_primary(el: &dyn ActiveEventLoop) -> Option<AsyncRequestSerial> {
+    let ext = el.primary_selection_ext()?;
     match ext.primary_selection() {
         Ok(Some(id)) => {
-            if let Err(e) = el.fetch_data_transfer(id, &TypeHint::Plaintext) {
-                tracing::debug!("the primary selection has no text: {e}");
-            }
+            return el.fetch_data_transfer(id, &TypeHint::Plaintext).inspect_err(|e| tracing::debug!("the primary selection has no text: {e}")).ok();
         }
         Ok(None) => {}
         Err(e) => tracing::debug!("cannot read the primary selection: {e}"),
     }
+    None
 }
 
 fn copy(el: &dyn ActiveEventLoop, text: String) {
@@ -1289,12 +1291,20 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                         self.open(el, opts);
                     }
                     Command::Close(id) => self.close(id),
-                    Command::Paste(id) => paste(el, id),
+                    Command::Paste(id) => {
+                        if let Some(serial) = paste(el, id) {
+                            self.pastes.insert(serial, (id, None));
+                        }
+                    }
                     Command::Copy(text) => copy(el, text),
                     Command::CopyFiles(paths, cut) => self.copy_files(el, paths, cut),
                     Command::CopyImage(image) => self.copy_image(el, image),
                     Command::SetPrimary(text) => set_primary(el, text),
-                    Command::PastePrimary => paste_primary(el),
+                    Command::PastePrimary(id, target) => {
+                        if let Some(serial) = paste_primary(el) {
+                            self.pastes.insert(serial, (id, Some(target)));
+                        }
+                    }
                     Command::Drag(source, paths, scale) => self.outgoing = drag_out(el, source, paths, scale),
                     Command::Activate(id, token) => self.activate(id, token),
                 }
@@ -1542,6 +1552,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     fn close(&mut self, id: WindowId) {
         let Some(i) = self.nodes.iter().position(|n| n.window.id == id) else { return };
         let node = self.nodes.remove(i);
+        self.pastes.retain(|_, (window, _)| *window != id);
         if let (Some(x11), Some(xid)) = (&self.x11, x11_window(&*node.window.raw)) {
             x11.send(tiling::Command::Forget(xid));
         }
@@ -1897,10 +1908,6 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             }
             WindowEvent::PinchGesture { delta, .. } if delta.is_finite() && delta != 0.0 => handler.event(w, Event::Pinch(delta as f32)),
             WindowEvent::ThemeChanged(theme) => handler.event(w, Event::ThemeChanged { dark: theme == Theme::Dark }),
-            WindowEvent::DataTransferReceived { value, .. } => match value.try_as_string() {
-                Ok(text) => handler.event(w, Event::Pasted(text)),
-                Err(e) => tracing::debug!("clipboard text is unreadable: {e}"),
-            },
             _ => {}
         }
     }
@@ -2008,6 +2015,20 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
     }
 
     fn window_event(&mut self, el: &dyn ActiveEventLoop, id: winit::window::WindowId, event: WindowEvent) {
+        if let WindowEvent::DataTransferReceived { serial, value, .. } = &event {
+            if let Some((window, paste)) = self.pastes.remove(serial) {
+                if let Some(node) = self.nodes.iter().find(|n| n.window.id == window) {
+                    match value.try_as_string() {
+                        Ok(text) => {
+                            let event = if let Some(paste) = paste { Event::PrimaryPasted(paste, text) } else { Event::Pasted(text) };
+                            self.handler.event(&node.window, event);
+                        }
+                        Err(e) => tracing::debug!("clipboard text is unreadable: {e}"),
+                    }
+                }
+                return self.settle(el);
+            }
+        }
         if self.read_arrived(&event) {
             return self.settle(el);
         }

@@ -13,6 +13,36 @@ use std::time::Instant;
 
 const CLICK_SLOP: f32 = 4.0;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PasteField {
+    Field(Hit),
+    Search,
+    Rename,
+    Menu,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PrimaryPaste {
+    field: PasteField,
+    id: u64,
+    caret: usize,
+}
+
+impl PrimaryPaste {
+    fn new(field: PasteField, edit: &mut super::edit::LineEdit) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        if edit.primary_id == 0 {
+            edit.primary_id = NEXT.fetch_add(1, Ordering::Relaxed);
+        }
+        Self { field, id: edit.primary_id, caret: edit.caret }
+    }
+
+    pub(super) fn menu(edit: &mut super::edit::LineEdit) -> Self {
+        Self::new(PasteField::Menu, edit)
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Nav {
     pub sidebar: Sidebar,
@@ -266,17 +296,68 @@ impl App {
     pub(super) fn middle_paste(&mut self, ev: &crate::input::Event, now: Instant) -> bool {
         use crate::input::Event;
         let Event::MouseDown { x, y, button: MouseButton::Middle, .. } = *ev else { return false };
-        let field = self.text_field_hit().filter(|_| self.text_field_rect().is_some_and(|r| r.contains(x, y)));
-        if field.is_none() && !self.rename_contains(x, y) && !self.search_field_at(x, y) {
+        if self.confirm.is_some() || self.own_menu_open() {
             return false;
         }
+        let hit = self.hit(x, y);
+        let over_search = self.search.active && !self.jobs.modal();
+        let field = match hit {
+            Hit::QuickField if over_search => PasteField::Field(hit),
+            _ if over_search && self.search_field_at(x, y) => PasteField::Search,
+            _ if over_search => return false,
+            _ if self.rename_contains(x, y) => PasteField::Rename,
+            Hit::Form(k) if self.form_text(k).is_none() => return false,
+            Hit::PaletteField if self.text_field_hit() != Some(hit) => return false,
+            _ if is_field(hit) => PasteField::Field(hit),
+            _ => return false,
+        };
+        self.nav.streak = None;
+        let shift = std::mem::take(&mut self.mods.shift);
         self.handle_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, now);
         self.handle_event(&Event::MouseUp { x, y, button: MouseButton::Left }, now);
-        if let Some(f) = field.and_then(|h| self.text_field_mut(h)) {
-            f.edit.anchor = f.edit.caret;
+        self.mods.shift = shift;
+        if let Some(edit) = self.primary_edit(field) {
+            edit.anchor = edit.caret;
+            self.paste_after_layout = Some(PrimaryPaste::new(field, edit));
         }
-        self.effects.push(super::Effect::PastePrimary);
         true
+    }
+
+    fn primary_edit(&mut self, field: PasteField) -> Option<&mut super::edit::LineEdit> {
+        match field {
+            PasteField::Menu => self.context_menu_mut().map(|c| &mut c.query.edit),
+            PasteField::Search => self.search.active.then_some(&mut self.search.edit),
+            PasteField::Rename => self.rename_edit(),
+            PasteField::Field(Hit::QuickField) if self.nav.sidebar.field.w == 0.0 => None,
+            PasteField::Field(hit) => self.text_field_mut(hit).map(|f| &mut f.edit),
+        }
+    }
+
+    pub(super) fn request_primary_after_layout(&mut self) {
+        let Some(mut paste) = self.paste_after_layout.take() else { return };
+        if let Some(edit) = self.primary_edit(paste.field).filter(|e| e.primary_id == paste.id) {
+            paste.caret = edit.caret;
+            self.effects.push(super::Effect::PastePrimary(paste));
+        }
+    }
+
+    pub fn on_primary_paste(&mut self, paste: PrimaryPaste, text: &str) {
+        let Some(edit) = self.primary_edit(paste.field).filter(|e| e.primary_id == paste.id) else { return };
+        edit.move_to(paste.caret, false);
+        let line = text.lines().next().unwrap_or("");
+        match paste.field {
+            PasteField::Menu => self.context_menu_mut().unwrap().insert(line),
+            PasteField::Search => self.search_paste(line),
+            PasteField::Rename => { self.ops_paste(line); }
+            PasteField::Field(Hit::Form(k)) => self.form_insert_at(k, line),
+            PasteField::Field(Hit::QuickField) => { self.quick_insert(line); }
+            PasteField::Field(Hit::FilterField) => { self.filter_insert(line); }
+            PasteField::Field(Hit::PaletteField) => { self.palette_insert(line); }
+            PasteField::Field(Hit::Settings(_)) => { self.settings_insert(line); }
+            PasteField::Field(Hit::Preview(_)) => { self.inspector_insert(line); }
+            PasteField::Field(_) => return,
+        }
+        self.dirty = true;
     }
 
     fn text_field_rect(&self) -> Option<Rect> {
