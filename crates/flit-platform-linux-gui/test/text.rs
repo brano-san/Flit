@@ -431,3 +431,28 @@ fn slight_hinting_snaps_glyphs_vertically_and_leaves_their_horizontal_shape() {
     }
     assert!(differs >= 3, "light hinting changes the vertical profile of most letters ({differs})");
 }
+
+#[test]
+fn slight_hinting_changes_synthetic_bold_ink_and_preserves_advances() {
+    let mut t = ready();
+    let regular = t.load(fonts::SANS, 0, false).unwrap();
+    let bold = t.load(fonts::SANS, 0, true).unwrap();
+    assert!(t.faces[bold as usize].embolden);
+    t.ui = [regular, bold];
+    let style = FontStyle::new(FontFamily::Ui, 13.0, true);
+    t.set_hinting(Hinting::None);
+    let before = shaped(&mut t, "Hex", style);
+    let glyph = before.glyphs[0];
+    let plain = raster(&mut t, glyph, style, 0);
+    t.set_hinting(Hinting::Slight);
+    let after = shaped(&mut t, "Hex", style);
+    assert_eq!(before.width, after.width);
+    assert!(before.glyphs.iter().zip(&after.glyphs).all(|(a, b)| a.x == b.x));
+    let hinted = raster(&mut t, glyph, style, 0);
+    assert_ne!(plain.data, hinted.data);
+    let regular_ink = rasterized(&mut t, GlyphKey { font: regular, id: glyph.id, size_q: style.size_q, subpx: 0, subpixel: Subpixel::None });
+    let coverage = |mask: &GlyphBitmap| mask.data.iter().map(|&alpha| u32::from(alpha)).sum::<u32>();
+    assert!(coverage(&hinted) > coverage(&regular_ink));
+    t.set_hinting(Hinting::None);
+    assert_eq!(plain.data, raster(&mut t, glyph, style, 0).data);
+}
