@@ -246,6 +246,7 @@
 "drive.map" = "为网络共享分配驱动器号，net use"
 "drive.disconnect" = "移除已映射的网络驱动器，net use /delete"
 "drive.connect_server" = "按地址挂载网络共享，smb、sftp、ftp、gio mount"
+"drive.add_server" = "连接到服务器并将其保存到“网络”中"
 "tab.move_to_window" = "将当前标签页分离到单独的窗口，拖出"
 "window.compact" = "将窗口缩小为始终位于其他窗口之上的小窗口，置顶"
 "window.compact_on" = "切换到始终置顶的小窗口"

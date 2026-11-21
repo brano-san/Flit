@@ -246,6 +246,7 @@
 "drive.map" = "Attribuer une lettre de lecteur à un partage réseau, net use"
 "drive.disconnect" = "Retirer un lecteur réseau connecté, net use /delete"
 "drive.connect_server" = "Monter un partage réseau par son adresse, smb, sftp, ftp, gio mount"
+"drive.add_server" = "Se connecter à un serveur et l’enregistrer dans Réseau"
 "tab.move_to_window" = "Détacher l’onglet actuel dans sa propre fenêtre"
 "window.compact" = "Réduire la fenêtre en une petite fenêtre qui reste au-dessus des autres, toujours au premier plan"
 "window.compact_on" = "Passer à la petite fenêtre toujours au premier plan"
