@@ -1,9 +1,8 @@
-use crate::hdr_gpu::ToneMapper;
+use crate::hdr_gpu::{ToneMapper, OUTPUT_POOL_LIMIT};
 use std::mem::ManuallyDrop;
 use std::sync::{Mutex, MutexGuard};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER};
 use windows::Win32::Graphics::Direct3D11::*;
-use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Media::MediaFoundation::*;
 use windows_core::{implement, Error, IUnknown, Interface, Ref, Result, GUID};
 
@@ -61,7 +60,7 @@ struct State {
     output: Option<IMFMediaType>,
     output_changed: bool,
     pending: Option<IMFSample>,
-    managed_device: Option<ID3D11Device>,
+    managed_device: Option<ManagedDevice>,
     gpu: Option<Gpu>,
 }
 
@@ -156,7 +155,12 @@ impl Input {
     }
 }
 
-unsafe fn manager_device(unknown: &IUnknown) -> Result<ID3D11Device> {
+struct ManagedDevice {
+    manager: IMFDXGIDeviceManager,
+    device: ID3D11Device,
+}
+
+unsafe fn manager_device(unknown: &IUnknown) -> Result<ManagedDevice> {
     let manager: IMFDXGIDeviceManager = unknown.cast()?;
     let handle = manager.OpenDeviceHandle()?;
     let mut raw = std::ptr::null_mut();
@@ -165,51 +169,44 @@ unsafe fn manager_device(unknown: &IUnknown) -> Result<ID3D11Device> {
     service?;
     let device = ID3D11Device::from_raw(raw);
     closed?;
-    Ok(device)
+    Ok(ManagedDevice { device, manager })
 }
 
 impl Gpu {
-    unsafe fn new(device: &ID3D11Device, output: &IMFMediaType) -> Result<Self> {
-        let (mut token, mut manager) = (0, None);
-        MFCreateDXGIDeviceManager(&mut token, &mut manager)?;
-        let manager = manager.ok_or_else(Error::empty)?;
-        manager.ResetDevice(device, token)?;
+    unsafe fn new(device: &ID3D11Device, output: &IMFMediaType, managed: Option<&ManagedDevice>) -> Result<Self> {
+        let manager = if let Some(shared) = managed.filter(|shared| shared.device == *device) {
+            shared.manager.clone()
+        } else {
+            let (mut token, mut manager) = (0, None);
+            MFCreateDXGIDeviceManager(&mut token, &mut manager)?;
+            let manager = manager.ok_or_else(Error::empty)?;
+            manager.ResetDevice(device, token)?;
+            manager
+        };
         let mut raw = std::ptr::null_mut();
         MFCreateVideoSampleAllocatorEx(&IMFVideoSampleAllocatorEx::IID, &mut raw)?;
         let allocator = IMFVideoSampleAllocatorEx::from_raw(raw);
         allocator.SetDirectXManager(&manager)?;
         let attrs = attributes()?;
         attrs.SetUINT32(&MF_SA_D3D11_BINDFLAGS, D3D11_BIND_RENDER_TARGET.0 as u32)?;
-        allocator.InitializeSampleAllocatorEx(2, 32, &attrs, output)?;
+        allocator.InitializeSampleAllocatorEx(2, OUTPUT_POOL_LIMIT, &attrs, output)?;
         Ok(Self { device: device.clone(), mapper: ToneMapper::new(device)?, allocator })
     }
 }
 
-unsafe fn upload(buffer: &IMFMediaBuffer, input: &IMFMediaType, device: &ID3D11Device) -> Result<ID3D11Texture2D> {
+unsafe fn upload(buffer: &IMFMediaBuffer, input: &IMFMediaType, mapper: &mut ToneMapper) -> Result<ID3D11Texture2D> {
     let (width, height) = dimensions(input)?;
     let stride = if buffer.cast::<IMF2DBuffer>().is_ok() { width * 2 } else { input.GetUINT32(&MF_MT_DEFAULT_STRIDE).unwrap_or(width * 2) };
     let mut data = std::ptr::null_mut();
     let mut len = 0;
     buffer.Lock(&mut data, None, Some(&mut len))?;
-    let desc = D3D11_TEXTURE2D_DESC {
-        Width: width,
-        Height: height,
-        MipLevels: 1,
-        ArraySize: 1,
-        Format: DXGI_FORMAT_P010,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-        ..Default::default()
-    };
-    let mut surface = None;
     let result = if stride < width * 2 || u64::from(stride) * u64::from(height + height.div_ceil(2)) > u64::from(len) {
         Err(MF_E_BUFFERTOOSMALL.into())
     } else {
-        let initial = D3D11_SUBRESOURCE_DATA { pSysMem: data.cast(), SysMemPitch: stride, SysMemSlicePitch: 0 };
-        device.CreateTexture2D(&desc, Some(&initial), Some(&mut surface))
+        mapper.upload(width, height, data.cast(), stride)
     };
     buffer.Unlock()?;
-    result?;
-    surface.ok_or_else(Error::empty)
+    result
 }
 
 impl State {
@@ -225,20 +222,23 @@ impl State {
         let output = self.output.as_ref().ok_or(MF_E_TRANSFORM_TYPE_NOT_SET)?;
         let sample = self.pending.as_ref().ok_or(MF_E_TRANSFORM_NEED_MORE_INPUT)?;
         let buffer = sample.GetBufferByIndex(0)?;
-        let (source, subresource) = if let Ok(dxgi) = buffer.cast::<IMFDXGIBuffer>() {
-            texture(&dxgi)?
-        } else {
-            (upload(&buffer, &input.kind, self.managed_device.as_ref().unwrap_or(fallback_device))?, 0)
+        let decoded = buffer.cast::<IMFDXGIBuffer>().ok().map(|dxgi| texture(&dxgi)).transpose()?;
+        let device = match &decoded {
+            Some((source, _)) => source.GetDevice()?,
+            None => self.managed_device.as_ref().map_or(fallback_device, |managed| &managed.device).clone(),
         };
-        let device = source.GetDevice()?;
         if self.gpu.as_ref().is_none_or(|gpu| gpu.device != device) {
-            self.gpu = Some(Gpu::new(&device, output)?);
+            self.gpu = Some(Gpu::new(&device, output, self.managed_device.as_ref())?);
         }
         let gpu = self.gpu.as_mut().ok_or_else(Error::empty)?;
         let result = gpu.allocator.AllocateSample()?;
-        let (target, _) = texture(&result.GetBufferByIndex(0)?.cast()?)?;
+        let (target, slice) = texture(&result.GetBufferByIndex(0)?.cast()?)?;
+        let (source, subresource) = match decoded {
+            Some(surface) => surface,
+            None => (upload(&buffer, &input.kind, &mut gpu.mapper)?, 0),
+        };
         let color = input.color.ok_or(MF_E_INVALIDMEDIATYPE)?;
-        gpu.mapper.render(&source, subresource, &target, color.hlg, color.peak_nits, color.full_range)?;
+        gpu.mapper.render(&source, subresource, (&target, slice), color.hlg, color.peak_nits, color.full_range)?;
         for attr in [
             MFSampleExtension_Discontinuity,
             MFSampleExtension_CleanPoint,
