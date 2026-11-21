@@ -7,9 +7,9 @@ fn language_test_child(test: &str) -> bool {
     if std::env::var(CHILD).as_deref() == Ok(test) {
         return true;
     }
-    // flit-core is a dependency here, so its cfg(test) thread-local language
-    // is unavailable. Keep language changes out of the parallel test process.
+    use std::os::windows::process::CommandExt;
     let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .creation_flags(0x0800_0000)
         .args(["--exact", test, "--nocapture", "--test-threads=1"])
         .env(CHILD, test)
         .output().unwrap();
