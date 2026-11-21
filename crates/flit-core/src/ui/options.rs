@@ -476,8 +476,17 @@ impl App {
         self.dirty = true;
     }
 
+    pub(super) fn network_place(&self, loc: &Location) -> bool {
+        let path = loc.path();
+        remote(loc) || self.nav.sidebar.places.drives.iter().any(|d| d.remote.is_some() && (path.same(&d.path) || path.is_inside(&d.path)))
+    }
+
     pub(super) fn sizes_allowed(&self, loc: &Location) -> bool {
-        if remote(loc) { self.opts.sizes_network } else { self.opts.sizes_ssd || self.opts.sizes_hdd || self.opts.sizes_network }
+        if self.network_place(loc) { self.opts.sizes_network } else { self.opts.sizes_ssd || self.opts.sizes_hdd || self.opts.sizes_network }
+    }
+
+    pub(super) fn measure_allowed(&self, loc: &Location) -> bool {
+        if self.network_place(loc) { self.opts.sizes_network } else { self.opts.sizes_ssd || self.opts.sizes_hdd }
     }
 
     pub(super) fn set_sizes_allowed(&mut self, kind: usize, on: bool) {
