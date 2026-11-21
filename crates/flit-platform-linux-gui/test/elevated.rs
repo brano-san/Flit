@@ -370,3 +370,18 @@ fn only_a_setuid_pkexec_of_root_is_trusted() {
         assert!(setuid_root(&real, &owned), "the installed pkexec passes");
     }
 }
+
+#[test]
+fn the_root_terminal_uses_the_verified_absolute_sudo() {
+    let fake = Temp::new("untrusted-sudo");
+    let decoy = fake.path().join("sudo");
+    std::fs::write(&decoy, b"unused").unwrap();
+    std::fs::set_permissions(&decoy, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let dirs = std::env::join_paths([fake.path(), Path::new("/usr/bin")]).unwrap();
+    let system = Path::new("/usr/bin/sudo");
+    let stat = tree(&[("/", 0, 0o40755, true), ("/usr", 0, 0o40755, true), ("/usr/bin", 0, 0o40755, true), ("/usr/bin/sudo", 0, 0o104755, false)]);
+    let found = sudo_in(&dirs, |p| if p == system { setuid_root(p, &stat).then(|| p.into()) } else { trusted_elevator(p) });
+    let argv = crate::shell::root_shell(Path::new("/work"), found.as_deref());
+    assert_eq!(argv, [OsString::from(system), OsString::from("-s")]);
+    assert!(sudo_in(fake.path().as_os_str(), trusted_elevator).is_none());
+}

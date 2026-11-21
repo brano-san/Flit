@@ -46,7 +46,7 @@ fn installed_print_mount_and_terminal_helpers_do_not_report_missing_packages() {
         assert!(xdg_open_command(OsStr::new("/tmp/a")).is_ok());
     });
     crate::temp::with_tools(&["xterm", "sudo"], || {
-        open_root_terminal(Path::new("/")).unwrap();
+        assert_missing(&open_root_terminal(Path::new("/")).unwrap_err(), "pkexec");
     });
 }
 
@@ -467,15 +467,15 @@ fn launcher_progress_moves_in_steps_of_five_percent() {
 #[test]
 fn root_terminals_keep_the_folder_through_sudo_or_pkexec() {
     let dir = Path::new("/srv/my site");
-    assert_eq!(root_shell(dir, true), ["sudo", "-s"].map(OsString::from));
-    let pk = root_shell(dir, false);
+    assert_eq!(root_shell(dir, Some(Path::new("/usr/bin/sudo"))), ["/usr/bin/sudo", "-s"].map(OsString::from));
+    let pk = root_shell(dir, None);
     assert_eq!(pk[0], "pkexec");
     assert_eq!(pk.last().unwrap(), "/srv/my site", "the folder is an argument, never part of the script");
     assert!(!pk[3].to_string_lossy().contains("my site"));
     let out = Command::new("/bin/sh").args(&pk[2..]).env("SHELL", "/bin/pwd").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "", "a missing folder stops the script before a shell starts");
     let t = Temp::new("root-shell");
-    let here = root_shell(t.path(), false);
+    let here = root_shell(t.path(), None);
     let out = Command::new("/bin/sh").args(&here[2..]).env("SHELL", "/bin/pwd").output().unwrap();
     assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), t.path().to_str().unwrap());
 }
