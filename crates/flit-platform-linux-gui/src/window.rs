@@ -862,7 +862,10 @@ impl Window for LinuxWindow {
     }
 
     fn shell_warm(&self, _menus: Vec<ShellMenu>) {
-        background("flit-menu-warm", || drop(crate::apps::catalog()));
+        background("flit-menu-warm", || {
+            crate::scripts::warm();
+            drop(crate::apps::catalog());
+        });
     }
 
     fn properties(&self, _paths: Vec<FsPath>) {}
