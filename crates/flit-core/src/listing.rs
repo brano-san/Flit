@@ -106,6 +106,7 @@ impl DirStats {
 pub struct Listing {
     pub names: Vec<u8>,
     pub entries: Vec<Entry>,
+    pub saved_servers: u32,
     pub items: Vec<u64>,
     pub volume: u64,
     pub total: u64,

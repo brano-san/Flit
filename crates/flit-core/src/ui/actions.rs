@@ -446,6 +446,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("drive.map", G::Flit, S::ActionsDriveMap, S::DescribeDriveMap, &[], |a, _| a.map_drive()),
     Action::new("drive.disconnect", G::Flit, S::ActionsDriveDisconnect, S::DescribeDriveDisconnect, &[], |a, _| a.launch(crate::provider::Launch::Disconnect(None))),
     Action::new("drive.connect_server", G::Flit, S::ActionsDriveConnectServer, S::DescribeDriveConnectServer, &[], |a, _| a.ask_server()),
+    Action::new("drive.add_server", G::Flit, S::ActionsDriveAddServer, S::DescribeDriveAddServer, &[], |a, _| a.ask_saved_server()),
     Action::new("tab.move_to_window", G::Flit, S::ActionsTabMoveToWindow, S::DescribeTabMoveToWindow, &[], |a, _| a.move_tab_to_window()),
     Action::new("window.compact", G::Flit, S::ActionsWindowCompact, S::DescribeWindowCompact, &[key(Key::F(12))], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(None)))),
     Action::new("window.compact_on", G::Flit, S::ActionsWindowCompactOn, S::DescribeWindowCompactOn, &[ctrl_alt(Key::Up)], |a, _| a.effects.push(Effect::Window(WindowCmd::Compact(Some(true))))),
@@ -689,6 +690,10 @@ impl App {
     }
 
     pub fn supports(&self, id: &str) -> bool {
+        if id == "drive.add_server" {
+            let path = self.current_location().path();
+            return self.caps.supports(id) && path.is_network() && path.is_root();
+        }
         self.caps.supports(id) && (self.builtin_archives || !crate::caps::is_builtin_archive_action(id))
     }
 

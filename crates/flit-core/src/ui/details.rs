@@ -792,6 +792,9 @@ impl App {
         self.tabs[k].retain_filter = self.prefs.retain_filter;
         let case = self.case;
         self.tabs[k].load(gen, select, restore, case, now, &mut self.effects);
+        if !self.nav.sidebar.prefs.saved_servers.is_empty() {
+            self.show_saved_servers(k);
+        }
         self.git_refresh(k, false);
         self.place_loaded(k);
     }
@@ -1286,6 +1289,9 @@ impl App {
 
     fn group_label<'a>(&self, arena: &'a Bump, v: &DirView, gr: &Group) -> &'a str {
         let (l, spec, i) = (v.listing(), v.snap().view, gr.first);
+        if l.saved_servers != 0 {
+            return if i < l.saved_servers { S::SidebarDriveSavedServers.t() } else { S::SidebarDriveDiscoveredServers.t() };
+        }
         let e = &l.entries[i as usize];
         let mut s = bumpalo::collections::String::new_in(arena);
         let key = sort::group_key(l, i, &spec).0;
@@ -1329,7 +1335,7 @@ impl App {
         if let Some(color) = self.group_color(v, &gr) {
             centered(g, Rect::new(tx, y, self.cs(16.0), rh), super::tags::G_TAG, self.content_icons(12.0), color);
             tx += self.cs(22.0);
-        } else if v.snap().view.group.field.is_date() {
+        } else if v.listing().saved_servers == 0 && v.snap().view.group.field.is_date() {
             centered(g, Rect::new(tx, y, self.cs(16.0), rh), G_CALENDAR, self.content_icons(12.0), th.text_dim);
             tx += self.cs(22.0);
         }

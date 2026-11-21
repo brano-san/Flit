@@ -139,6 +139,8 @@ pub(super) enum Cmd {
     Text(super::field::TextCmd),
     CopyAddress(crate::location::Location),
     EditAddress(Option<usize>),
+    RenameServer(String),
+    RemoveServer(String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -582,6 +584,15 @@ impl App {
                 }
             });
         }
+        if count == 1 && self.caps.unix_paths && v.listing().saved_servers > 0 {
+            let saved = v.selected().next().filter(|&i| i < v.listing().saved_servers);
+            if let Some(address) = saved.and_then(|i| std::str::from_utf8(v.listing().name(i)).ok()) {
+                m.separator();
+                m.custom(S::MenuRename.t(), "\u{E8AC}", Cmd::RenameServer(address.to_owned()));
+                m.custom(S::SidebarDriveRemoveServer.t(), "\u{E74D}", Cmd::RemoveServer(address.to_owned()));
+                return;
+            }
+        }
         if inside || !files {
             m.separator();
         }
@@ -698,6 +709,10 @@ impl App {
     fn folder_menu(&self, m: &mut Menu) {
         let t = self.tab();
         let files = t.view_loc.path().kind() != PathKind::Computer;
+        if self.supports("drive.add_server") {
+            m.action("drive.add_server", S::ActionsDriveAddServer.t());
+            m.separator();
+        }
         self.view_menus(m);
         m.action("nav.refresh", S::MenuRefresh.t());
         m.separator();
@@ -780,6 +795,8 @@ impl App {
             Some(Cmd::DropAs(kind)) => self.drop_as(kind),
             Some(Cmd::Text(c)) => self.text_command(c, now),
             Some(Cmd::CopyAddress(loc)) => self.effects.push(super::Effect::SetClipboard(self.as_path_text(&loc))),
+            Some(Cmd::RenameServer(address)) => self.ask_rename_server(address),
+            Some(Cmd::RemoveServer(address)) => self.remove_saved_server(&address),
             Some(Cmd::EditAddress(crumb)) => match crumb {
                 Some(i) => self.open_crumb(i),
                 None => self.open_address(),

@@ -689,7 +689,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::Unmount(drive) => crate::udisks::unmount(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsUnmountFailed, Path::new(os(drive)), &e)),
         Launch::Mount(_) | Launch::Unlock { .. } => Err(PlatformError::unsupported("mounting outside the shell thread")),
         Launch::Disconnect(Some(drive)) => crate::places::disconnect(Path::new(os(drive))).map_err(|e| crate::places::drive_error(S::ErrorsFsDisconnectFailed, Path::new(os(drive)), &e)),
-        Launch::MapDrive(_) | Launch::Disconnect(None) | Launch::ConnectServer(_) | Launch::ConnectNetwork { .. } => Err(PlatformError::unsupported("mapping network drives")),
+        Launch::MapDrive(_) | Launch::Disconnect(None) | Launch::ConnectServer(_) | Launch::ConnectAndSaveServer(_) | Launch::ConnectNetwork { .. } => Err(PlatformError::unsupported("mapping network drives")),
         Launch::Reveal { .. } => Err(PlatformError::unsupported("revealing outside the shell thread")),
         Launch::Wallpaper(image) => crate::wallpaper::set(Path::new(os(image))),
     }

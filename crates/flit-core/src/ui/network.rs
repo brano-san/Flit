@@ -1,7 +1,7 @@
 use super::archive::Kind;
 use super::form::{Control, Form};
 use super::palette::{Palette, Pick};
-use super::{App, Effect, Route};
+use super::{App, Effect, Route, SavedServer};
 use crate::i18n::S;
 use crate::location::{Location, ProviderId};
 use crate::open::OpenTarget;
@@ -20,6 +20,61 @@ pub fn server_uri(text: &str) -> Option<String> {
     let host = rest.split('/').next()?.rsplit('@').next()?;
     let clean = !text.contains('\\') && !text.chars().any(|c| c.is_whitespace() || c.is_control());
     (SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !host.is_empty() && clean).then(|| text.to_owned())
+}
+
+pub fn saved_address(text: &str) -> Option<String> {
+    let uri = server_uri(text)?;
+    let (scheme, rest) = uri.split_once("://")?;
+    let (authority, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+    if rest.contains(['?', '#']) {
+        return None;
+    }
+    let (login, host) = authority.rsplit_once('@').unwrap_or(("", authority));
+    let user = login.split(':').next().unwrap_or_default();
+    if user.contains('@') || host.is_empty() {
+        return None;
+    }
+    let mut address = format!("{}://", scheme.to_ascii_lowercase());
+    if !user.is_empty() {
+        address.push_str(user);
+        address.push('@');
+    }
+    address.push_str(&host.to_ascii_lowercase());
+    address.push_str(path.trim_end_matches('/'));
+    Some(address)
+}
+
+pub(super) fn server_label(uri: &str) -> &str {
+    let rest = uri.split_once("://").map_or(uri, |(_, rest)| rest);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    authority.rsplit_once(':').filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())).map_or(authority, |(label, _)| label)
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum ServerChange {
+    Add(String),
+    Rename(String, Option<String>),
+    Remove(String),
+}
+
+impl ServerChange {
+    pub fn apply(&self, servers: &mut Vec<SavedServer>) -> bool {
+        match self {
+            Self::Add(address) if !servers.iter().any(|s| &s.address == address) => {
+                servers.push(SavedServer { address: address.clone(), name: None });
+            }
+            Self::Rename(address, name) => {
+                let Some(server) = servers.iter_mut().find(|s| &s.address == address && &s.name != name) else { return false };
+                server.name.clone_from(name);
+            }
+            Self::Remove(address) => {
+                let Some(i) = servers.iter().position(|s| &s.address == address) else { return false };
+                servers.remove(i);
+            }
+            Self::Add(_) => return false,
+        }
+        true
+    }
 }
 
 pub(super) fn network_entry(name: &[u8]) -> Option<Location> {
@@ -69,7 +124,68 @@ impl App {
     }
 
     pub(super) fn ask_server(&mut self) {
-        self.open_pick(Palette::new(Pick::Server, Vec::new(), ""));
+        if self.caps.unix_paths {
+            self.server_form(false);
+        } else {
+            self.open_pick(Palette::new(Pick::Server, Vec::new(), ""));
+        }
+    }
+
+    pub(super) fn ask_saved_server(&mut self) {
+        self.server_form(true);
+    }
+
+    fn server_form(&mut self, save: bool) {
+        let controls = vec![Control::text(S::A11yRegionAddress.t(), "", S::SidebarDriveServerExample.t()), Control::check(S::SidebarDriveSaveServer.t(), save)];
+        self.open_form(Form::new(Kind::ConnectServer, S::SidebarDriveConnectServer.t(), controls, vec![S::SidebarDriveLoginConnect.t(), S::WidgetsCancel.t()]));
+    }
+
+    pub(super) fn submit_server(&mut self, mut form: Form) -> Option<Form> {
+        let launch = if form.checked(1) {
+            saved_address(form.text(0)).map(Launch::ConnectAndSaveServer)
+        } else {
+            server_uri(form.text(0)).map(Launch::ConnectServer)
+        };
+        let Some(launch) = launch else {
+            form.say(S::SidebarDriveServerPrompt.t(), true);
+            return Some(form);
+        };
+        self.launch(launch);
+        None
+    }
+
+    pub(super) fn ask_rename_server(&mut self, address: String) {
+        let Some(server) = self.nav.sidebar.prefs.saved_servers.iter().find(|s| s.address == address) else { return };
+        let name = server.name.as_deref().unwrap_or_else(|| server_label(&address));
+        let controls = vec![Control::text(S::DetailsColumnName.t(), name, "")];
+        self.open_form(Form::new(Kind::RenameServer(address), S::MenuRename.t(), controls, vec![S::MenuRename.t(), S::WidgetsCancel.t()]));
+    }
+
+    pub(super) fn submit_server_name(&mut self, form: Form) -> Option<Form> {
+        let text = form.text(0).trim();
+        let name = (!text.is_empty()).then(|| text.to_owned());
+        if let Kind::RenameServer(address) = form.kind {
+            self.change_server(ServerChange::Rename(address, name));
+        }
+        None
+    }
+
+    pub(super) fn remove_saved_server(&mut self, address: &str) {
+        self.change_server(ServerChange::Remove(address.to_owned()));
+    }
+
+    pub fn apply_server_change(&mut self, change: &ServerChange) -> bool {
+        if self.caps.unix_paths && change.apply(&mut self.nav.sidebar.prefs.saved_servers) {
+            self.refresh_saved_servers();
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn change_server(&mut self, change: ServerChange) {
+        if self.apply_server_change(&change) {
+            self.effects.push(Effect::SavedServer(change));
+        }
     }
 
     pub(super) fn connect_server(&mut self, text: &str) {

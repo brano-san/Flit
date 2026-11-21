@@ -624,6 +624,22 @@ fn a_shell_without_login_questions_connects_as_before() {
 }
 
 #[test]
+fn only_a_successful_requested_login_returns_an_address_to_save() {
+    let (tx, rx) = unbounded();
+    let provider = LocalProvider::new::<_, NoWatch, LoginShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+    let uri = "sftp://ann@192.168.1.8";
+    let connect = || provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectAndSaveServer(uri.into()) });
+    connect();
+    asked(&rx).send(MountReply::Cancel);
+    connect();
+    drop(asked(&rx));
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(e), .. } if e.contains("login refused")));
+    connect();
+    asked(&rx).send(MountReply::Login { user: "ann".into(), domain: String::new(), password: flit_core::provider::Password::new("s3cret".into()), anonymous: false, remember: false });
+    assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::SavedServerConnected { tab: 7, address: uri.into(), path: p(r"C:\mnt\share") });
+}
+
+#[test]
 fn launchers_to_folders_navigate_and_scripts_ask_before_opening() {
     let (tx, rx) = unbounded();
     let provider = LocalProvider::new::<_, NoWatch, LinkShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();

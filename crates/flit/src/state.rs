@@ -1,6 +1,6 @@
 use flit_core::archive::Defaults;
 use flit_core::sort::{GroupField, GroupSpec, SortField, SortSpec};
-use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, Sizes, ViewPrefs, EXTRA, MAX_HISTORY, ORDERED};
+use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, SavedServer, Sizes, ViewPrefs, EXTRA, MAX_HISTORY, ORDERED};
 use flit_core::Location;
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
@@ -411,7 +411,7 @@ impl Saved {
                                                                 attributes = Some(a);
                                                                 if let Ok((s, tail)) = postcard::take_from_bytes::<ShellRecord>(tail) {
                                                                     shells = Some(s);
-                                                                    hashes = postcard::take_from_bytes::<GitHashRecord>(tail).ok().map(|(h, _)| h);
+                                                                    hashes = postcard::take_from_bytes::<GitHashRecord>(tail).ok();
                                                                 }
                                                             }
                                                         }
@@ -465,7 +465,7 @@ impl Saved {
                                 let folders = p.folders.entries().into_iter().map(|(k, v)| (k, files_like_folders(v))).collect();
                                 p.folders = FolderViews::from_entries(folders);
                             }
-                            if let Some(h) = hashes.take() {
+                            if let Some((h, tail)) = hashes.take() {
                                 p.view.columns.set_width(Column::GitHash, h.view);
                                 p.prefs.defaults.columns.set_width(Column::GitHash, h.defaults);
                                 for (key, width) in h.folders {
@@ -473,6 +473,9 @@ impl Saved {
                                         v.columns.set_width(Column::GitHash, width);
                                         p.folders.put(key, v);
                                     }
+                                }
+                                if let Ok((servers, _)) = postcard::take_from_bytes::<Vec<SavedServer>>(tail) {
+                                    saved.side.saved_servers = servers;
                                 }
                             }
                             p.folders.set_deep(std::mem::take(&mut deep));
@@ -508,6 +511,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&layouts).ok()?);
         bytes.extend(postcard::to_stdvec(&self.pane).ok()?);
         let mut side = self.side.clone();
+        side.sanitize_servers();
         side.quick.visits.retain(|(location, _)| !network_needs_home(location));
         bytes.extend(postcard::to_stdvec(&side).ok()?);
         bytes.extend(postcard::to_stdvec(&p.archive.clone().sanitized()).ok()?);
@@ -526,6 +530,7 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&attributes).ok()?);
         bytes.extend(postcard::to_stdvec(&shells).ok()?);
         bytes.extend(postcard::to_stdvec(&hashes).ok()?);
+        bytes.extend(postcard::to_stdvec(&side.saved_servers).ok()?);
         Some(bytes)
     }
 

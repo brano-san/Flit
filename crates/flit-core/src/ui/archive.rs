@@ -74,6 +74,8 @@ pub(super) enum Kind {
     GitAuth { dir: FsPath },
     BatchRename(super::batch_rename::Batch),
     Login(super::network::Login),
+    ConnectServer,
+    RenameServer(String),
     MountQuestion(super::network::Question),
 }
 
@@ -97,6 +99,8 @@ impl Kind {
             Kind::UserMenu { .. } => "user_menu",
             Kind::Update(_) => "update",
             Kind::Login(_) => "login",
+            Kind::ConnectServer => "connect_server",
+            Kind::RenameServer(_) => "rename_server",
             Kind::MountQuestion(_) => "mount_question",
         }
     }
@@ -764,6 +768,8 @@ impl App {
             Kind::Update(_) => self.submit_update(f, b),
             Kind::BatchRename(_) => self.submit_batch_rename(f),
             Kind::Login(_) => self.submit_login(f),
+            Kind::ConnectServer => self.submit_server(f),
+            Kind::RenameServer(_) => self.submit_server_name(f),
             Kind::MountQuestion(_) => self.submit_mount_question(f),
         };
         if self.jobs.form.is_none() {

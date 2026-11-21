@@ -569,6 +569,9 @@ fn absent(l: &Listing, field: SortField, i: u32) -> bool {
 }
 
 pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
+    if l.saved_servers != 0 {
+        return (u64::from(i >= l.saved_servers), true);
+    }
     let e = &l.entries[i as usize];
     match v.group.field {
         GroupField::None => (0, true),
@@ -601,6 +604,9 @@ pub fn group_key(l: &Listing, i: u32, v: &ViewSpec) -> (u64, bool) {
 }
 
 pub fn group_bytes(l: &Listing, i: u32, f: GroupField) -> &[u8] {
+    if l.saved_servers != 0 {
+        return &[];
+    }
     match f {
         GroupField::Type => l.ext(i),
         GroupField::Origin => recycle::origin(l, i),
@@ -611,7 +617,7 @@ pub fn group_bytes(l: &Listing, i: u32, f: GroupField) -> &[u8] {
 }
 
 pub fn group_cmp(l: &Listing, v: &ViewSpec, a: u32, b: u32) -> Ordering {
-    if v.group.field == GroupField::None {
+    if v.group.field == GroupField::None && l.saved_servers == 0 {
         return Ordering::Equal;
     }
     group_key(l, a, v).0.cmp(&group_key(l, b, v).0).then_with(|| group_tail_cmp(l, v, a, b))

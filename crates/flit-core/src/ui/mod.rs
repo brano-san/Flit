@@ -32,6 +32,7 @@ mod menu_editor;
 mod nav;
 pub use nav::PrimaryPaste;
 mod network;
+mod network_listing;
 mod volumes;
 pub mod palette;
 mod preview_pane;
@@ -72,9 +73,9 @@ mod touch;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, TemplateNames, SHELL_VERBS};
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
-pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, QuickPrefs, Section};
+pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, QuickPrefs, SavedServer, Section};
 pub use home::{Recent, Widget};
-pub use network::server_uri;
+pub use network::{saved_address, server_uri, ServerChange};
 pub const UI_SCALE: (u32, u32) = (70, 200);
 pub const SPRING_DELAY_MAX_MS: u32 = 3000;
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewMode, ViewPrefs, EXTRA, ORDERED, THUMB_CACHE_MB};
@@ -428,6 +429,7 @@ pub enum Effect {
     ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
     Pinned(Vec<Location>),
     PinnedCleared,
+    SavedServer(ServerChange),
     PinnedFiles(Vec<Location>),
     PinFolders(Vec<FsPath>),
     CheckPlaces(Vec<FsPath>),
@@ -1406,6 +1408,10 @@ impl App {
 
     fn poll_tab(&mut self, k: usize) -> bool {
         let Some(snap) = self.tabs[k].slot.take() else { return false };
+        self.apply_snapshot(k, snap)
+    }
+
+    fn apply_snapshot(&mut self, k: usize, snap: Arc<crate::listing::DirSnapshot>) -> bool {
         if self.redirect(k, &snap) {
             return false;
         }
@@ -1415,6 +1421,7 @@ impl App {
         if fresh && self.tabs[k].look == LayoutMode::Columns {
             self.keep_as_pane(k);
         }
+        let snap = self.with_saved_servers(k, snap);
         let resort = self.tabs[k].on_snapshot(snap);
         if std::mem::take(&mut self.tabs[k].properties_due) && k == self.cur {
             self.properties_dialog();
@@ -1478,6 +1485,10 @@ impl App {
                 }
             }
             ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error.map(|e| crate::i18n::localize(&e).into_owned()), report, now),
+            ProviderEvent::SavedServerConnected { tab, address, path } => {
+                self.change_server(ServerChange::Add(address));
+                self.on_provider_event(ProviderEvent::Navigate { tab, path }, now);
+            }
             ProviderEvent::OpProgress { id, progress, .. } => self.job_progress(id, progress, now),
             ProviderEvent::OpConflict { id, conflict, .. } => self.job_conflict(id, conflict),
             ProviderEvent::OpFailure { id, failure, .. } => self.job_failure(id, failure),
@@ -1546,6 +1557,9 @@ impl App {
         }
         if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen && t.view_spec == view) {
             if let Some(v) = &mut self.tabs[k].view {
+                if base_len > v.listing().len() {
+                    return self.resort(k);
+                }
                 v.merge_order(order, view, base_len);
                 self.dirty |= k == self.cur;
             }
@@ -3223,7 +3237,7 @@ impl App {
                     let d = (ir.h * 0.42).max(self.cs(9.0)).round();
                     (Rect::new(ir.right() - d * 0.8, ir.bottom() - d * 0.8, d, d), st)
                 });
-                if !replaces && !thumbed && !g.image_alpha(key, ir, alpha) {
+                if !replaces && !thumbed && !network_listing::draw_server_icon(g, listing, i, ir, t.accent.alpha(alpha)) && !g.image_alpha(key, ir, alpha) {
                     if !self.folder_stand_in(g, kind, icon_px as u32, ir, alpha, &mut requests) {
                         icon_glyph(g, t, &e, ir);
                     }

@@ -222,6 +222,7 @@ pub enum Launch {
     MapDrive(Option<FsPath>),
     Disconnect(Option<FsPath>),
     ConnectServer(String),
+    ConnectAndSaveServer(String),
     ConnectNetwork { uri: String, gen: u64 },
     Reveal { item: FsPath, new_tab: bool },
     ChooseApp { files: Vec<FsPath>, mime: String, apps: Vec<AppChoice> },
@@ -260,7 +261,7 @@ impl Launch {
             Launch::Eject(drive) => Launch::Eject(f(drive)?),
             Launch::Unmount(drive) => Launch::Unmount(f(drive)?),
             Launch::Mount(_) | Launch::Unlock { .. } => self.clone(),
-            Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::ConnectNetwork { .. } => self.clone(),
+            Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::ConnectAndSaveServer(_) | Launch::ConnectNetwork { .. } => self.clone(),
             Launch::Reveal { item, new_tab } => Launch::Reveal { item: f(item)?, new_tab: *new_tab },
             Launch::ChooseApp { files, mime, apps } => {
                 let apps = apps.iter().map(|a| Some(AppChoice { name: a.name.clone(), program: f(&a.program)? })).collect::<Option<Vec<_>>>()?;
@@ -671,6 +672,7 @@ pub enum ProviderEvent {
     Untrashable { tab: TabId, id: OpId, items: Vec<FsPath> },
     Navigate { tab: TabId, path: FsPath },
     NetworkConnected { tab: TabId, gen: u64, result: Result<Option<FsPath>, String> },
+    SavedServerConnected { tab: TabId, address: String, path: FsPath },
     Reveal { tab: TabId, path: FsPath, new_tab: bool },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
     Measured { tab: TabId, id: OpId, totals: Totals, file_system: Option<String>, done: bool },

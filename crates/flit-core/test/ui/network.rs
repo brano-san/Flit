@@ -7,6 +7,65 @@ use crate::FsPath;
 use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 
+#[test]
+fn connect_dialog_offers_an_unchecked_network_checkbox_only_on_linux() {
+    let mut a = linux();
+    a.run_action("drive.connect_server", Instant::now());
+    let f = a.jobs.form.as_ref().expect("Linux opens the connection form");
+    assert!(matches!(f.controls.get(1), Some(Control::Check { on: false, .. })));
+    let mut a = app();
+    a.run_action("drive.connect_server", Instant::now());
+    assert!(a.jobs.form.is_none());
+    assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Server)));
+}
+
+#[test]
+fn saved_addresses_preserve_user_port_and_path_without_credentials() {
+    for scheme in SCHEMES {
+        assert_eq!(saved_address(&format!("{scheme}://Ann:secret@NAS:2222/Shared/")), Some(format!("{scheme}://Ann@nas:2222/Shared")));
+    }
+    let ipv6 = saved_address("SFTP://ann%40work@[FD00::A]:2222/docs/").unwrap();
+    assert_eq!(ipv6, "sftp://ann%40work@[fd00::a]:2222/docs");
+    assert_eq!(server_label(&ipv6), "ann%40work@[fd00::a]");
+}
+
+#[test]
+fn checking_the_box_saves_only_a_successfully_connected_address_and_only_once() {
+    let mut a = linux();
+    let tab = a.tab().id;
+    let path = FsPath::parse("/run/user/1000/gvfs/sftp:host=nas,user=Ann").unwrap();
+    let address = "sftp://Ann@nas/docs";
+    for (input, save, success) in [(address, false, true), (address, true, false), ("SFTP://Ann:secret@NAS/docs/", true, true), (address, true, true)] {
+        a.run_action("drive.connect_server", Instant::now());
+        let form = a.jobs.form.as_mut().unwrap();
+        form.set_text(0, input);
+        let Control::Check { on, .. } = &mut form.controls[1] else { panic!("missing checkbox") };
+        *on = save;
+        a.form_submit(0);
+        let request = launches(&mut a);
+        assert_eq!(request.len(), 1);
+        let event = match &request[0] {
+            Launch::ConnectServer(uri) if !save && success && uri == address => ProviderEvent::Navigate { tab, path: path.clone() },
+            Launch::ConnectAndSaveServer(uri) if save && uri == address && success => ProviderEvent::SavedServerConnected { tab, address: uri.clone(), path: path.clone() },
+            Launch::ConnectAndSaveServer(uri) if save && uri == address => ProviderEvent::OpDone { tab, id: 0, error: Some("offline".into()), report: None },
+            unexpected => panic!("{unexpected:?}"),
+        };
+        a.on_provider_event(event, Instant::now());
+        if save && success {
+            assert_eq!(a.nav_prefs().saved_servers, [SavedServer { address: address.into(), name: None }]);
+        } else {
+            assert!(a.nav_prefs().saved_servers.is_empty());
+        }
+    }
+    a.drain_effects().for_each(drop);
+    in_network(&mut a);
+    publish(&mut a, true, &SERVERS, None);
+    assert_eq!(rows(&a)[0], "Ann@nas");
+}
+
+#[path = "network_menu.rs"]
+mod menu;
+
 fn login_ask(flags: u32) -> MountAsk {
     MountAsk::Login(LoginAsk { server: "nas".into(), message: "Password required for share docs on nas".into(), user: "ann".into(), domain: "WORK".into(), flags })
 }
@@ -609,3 +668,6 @@ fn the_linux_network_address_uses_a_native_location() {
     a.open_address();
     assert_eq!(a.nav.palette.as_ref().unwrap().field.text(), crate::path::NETWORK_URI);
 }
+
+#[path = "network_saved_listing.rs"]
+mod saved_listing;

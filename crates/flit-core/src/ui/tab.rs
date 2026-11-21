@@ -63,6 +63,7 @@ pub struct Tab {
     pub(super) view_loc: Location,
     network_listing: bool,
     network_cache: VecDeque<Arc<DirSnapshot>>,
+    pub(super) discovered_servers: Option<Arc<DirSnapshot>>,
     pub(super) error: Option<String>,
     pub(super) live_off: Option<LiveOff>,
     pub(super) undo: Option<UndoBar>,
@@ -119,6 +120,7 @@ impl Tab {
             view: None,
             network_listing: false,
             network_cache: VecDeque::new(),
+            discovered_servers: None,
             error: None,
             live_off: None,
             undo: None,
@@ -164,6 +166,7 @@ impl Tab {
     pub(super) fn load(&mut self, gen: u64, select: Option<Vec<u8>>, restore: Option<crate::nav::Restore>, case: CaseMode, now: Instant, fx: &mut Vec<Effect>) {
         self.gen = gen;
         self.network_listing = false;
+        self.discovered_servers = None;
         self.cancel.set(gen);
         self.stop_sizes();
         let loc = self.location().clone();
