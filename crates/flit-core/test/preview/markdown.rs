@@ -1,6 +1,9 @@
 use super::*;
 use crate::preview::Run;
 
+#[path = "markdown_inline.rs"]
+mod inline_cases;
+
 fn paras(d: &Doc) -> Vec<(Block, String)> {
     d.paras.iter().map(|p| (p.block, d.runs[p.runs.start as usize..p.runs.end as usize].iter().map(|r| d.run_text(r)).collect())).collect()
 }
@@ -45,7 +48,7 @@ fn inline_styles() {
 #[test]
 fn escapes_images_and_autolinks() {
     let d = markdown(r"\*not em\* ![alt](a.png) <https://flit.dev>");
-    assert_eq!(paras(&d)[0].1, "*not em* alt https://flit.dev");
+    assert_eq!(paras(&d)[0].1, "*not em* 🖼 alt https://flit.dev");
 }
 
 #[test]

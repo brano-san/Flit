@@ -89,6 +89,7 @@ pub struct Run {
     pub tone: Tone,
     pub bold: bool,
     pub mono: bool,
+    pub strike: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -139,6 +140,10 @@ impl Doc {
     }
 
     pub fn run(&mut self, s: &str, tone: Tone, bold: bool, mono: bool) {
+        self.styled_run(s, tone, bold, mono, false);
+    }
+
+    fn styled_run(&mut self, s: &str, tone: Tone, bold: bool, mono: bool, strike: bool) {
         if s.is_empty() {
             return;
         }
@@ -147,8 +152,8 @@ impl Doc {
         let end = self.text.len() as u32;
         let open = self.runs.len() > self.open_start() as usize;
         match self.runs.last_mut() {
-            Some(r) if open && r.end == start && r.tone == tone && r.bold == bold && r.mono == mono => r.end = end,
-            _ => self.runs.push(Run { start, end, tone, bold, mono }),
+            Some(r) if open && r.end == start && r.tone == tone && r.bold == bold && r.mono == mono && r.strike == strike => r.end = end,
+            _ => self.runs.push(Run { start, end, tone, bold, mono, strike }),
         }
     }
 

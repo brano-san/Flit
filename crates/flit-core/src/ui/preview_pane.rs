@@ -344,7 +344,7 @@ fn run_font(r: &Run, block: Block, sc: f32, mono: f32) -> FontStyle {
 }
 
 fn para_font(block: Block, mono: bool, sc: f32, mono_px: f32) -> FontStyle {
-    let r = Run { start: 0, end: 0, tone: Tone::Plain, bold: false, mono: mono || block == Block::Code };
+    let r = Run { start: 0, end: 0, tone: Tone::Plain, bold: false, mono: mono || block == Block::Code, strike: false };
     run_font(&r, block, sc, mono_px)
 }
 
@@ -2294,7 +2294,13 @@ impl App {
                 let font = run_font(run, line.block, sc, mono);
                 let s = &d.text[piece.start as usize..piece.end as usize];
                 let px = x0 + piece.x - shift;
-                g.text(px, top + line.base, s, font, tone_color(t, dark, run.tone), f32::INFINITY);
+                let color = tone_color(t, dark, run.tone);
+                g.text(px, top + line.base, s, font, color, f32::INFINITY);
+                if run.strike {
+                    let w = g.measure(s, font);
+                    let y = top + line.base - (g.metrics(font).ascent * 0.35).round();
+                    g.dl.rect(Rect::new(px, y, w, sc.max(1.0)), color);
+                }
                 if look.spaces && s.contains(' ') {
                     let mut x = px;
                     for c in s.chars() {

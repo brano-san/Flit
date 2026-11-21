@@ -1,3 +1,5 @@
+mod inline;
+
 use super::syntax::{self, SYNTAXES};
 use super::{expand_tabs, Alignment, Block, Doc, Table, Tone};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
@@ -9,9 +11,6 @@ struct Markdown {
     lists: Vec<Option<u64>>,
     markers: Vec<Option<String>>,
     quotes: usize,
-    strong: usize,
-    links: usize,
-    images: usize,
     table: Option<Table>,
     cell_start: u32,
     table_head: bool,
@@ -62,6 +61,7 @@ fn options() -> Options {
 pub fn markdown(src: &str) -> Doc {
     let mut md = Markdown::default();
     md.doc.wrap = true;
+    let mut inline = inline::Inline::default();
     let mut events = Parser::new_ext(src, options());
     while let Some(event) = events.next() {
         match event {
@@ -85,6 +85,7 @@ pub fn markdown(src: &str) -> Doc {
             Event::End(TagEnd::Heading(_)) => {
                 md.finish();
                 md.heading = None;
+                inline.end_block();
             }
             Event::Start(Tag::BlockQuote(_)) => {
                 md.finish();
@@ -122,7 +123,10 @@ pub fn markdown(src: &str) -> Doc {
                     *mark = Some(if done { "☑ " } else { "☐ " }.into());
                 }
             }
-            Event::End(TagEnd::Paragraph) => md.finish(),
+            Event::End(TagEnd::Paragraph | TagEnd::HtmlBlock) => {
+                md.finish();
+                inline.end_block();
+            }
             Event::Rule => {
                 md.finish();
                 md.doc.para(Block::Rule);
@@ -155,6 +159,7 @@ pub fn markdown(src: &str) -> Doc {
             Event::End(TagEnd::TableCell) => {
                 let row = md.table.as_mut().unwrap().rows.last_mut().unwrap();
                 row.push(md.cell_start..md.doc.runs.len() as u32);
+                inline.end_block();
             }
             Event::End(TagEnd::Table) => {
                 let index = md.doc.tables.len();
@@ -162,24 +167,12 @@ pub fn markdown(src: &str) -> Doc {
                 md.doc.para(Block::Table(index));
                 md.table_head = false;
             }
-            Event::Start(Tag::Strong) => md.strong += 1,
-            Event::End(TagEnd::Strong) => md.strong -= 1,
-            Event::Start(Tag::Link { .. }) => md.links += 1,
-            Event::End(TagEnd::Link) => md.links -= 1,
-            Event::Start(Tag::Image { .. }) => md.images += 1,
-            Event::End(TagEnd::Image) => md.images -= 1,
-            Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => {
-                md.marker();
-                let tone = if md.images > 0 { Tone::Dim } else if md.links > 0 { Tone::Link } else { Tone::Plain };
-                md.doc.run(&text, tone, md.strong > 0 || md.heading.is_some() || md.table_head, false);
+            _ => {
+                if matches!(event, Event::Text(_) | Event::Code(_) | Event::Html(_) | Event::InlineHtml(_) | Event::Start(Tag::Image { .. })) {
+                    md.marker();
+                }
+                inline.event(&mut md.doc, &event, md.heading.is_some() || md.table_head);
             }
-            Event::Code(text) => {
-                md.marker();
-                md.doc.run(&text, Tone::String, md.strong > 0 || md.heading.is_some() || md.table_head, true);
-            }
-            Event::SoftBreak => md.doc.run(" ", Tone::Plain, false, false),
-            Event::HardBreak => md.doc.run("\n", Tone::Plain, false, false),
-            _ => {}
         }
     }
     md.finish();
