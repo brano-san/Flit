@@ -13,6 +13,7 @@ pub(super) struct TextFlow<'a, B: TextBackend> {
 #[derive(Default)]
 struct Column {
     widest_glyph: f32,
+    widest_word: f32,
     natural: f32,
 }
 
@@ -125,15 +126,19 @@ impl<B: TextBackend> TextFlow<'_, B> {
         for row in &table.rows {
             for (col, cell) in cols.iter_mut().zip(row) {
                 let mut x = 0.0;
+                let mut word = 0.0;
                 for i in cell.clone() {
                     let r = self.doc.runs[i as usize];
                     let font = run_font(&r, self.block, self.scale, self.mono);
                     for c in self.doc.run_text(&r).chars() {
                         if c == '\n' {
                             x = 0.0;
+                            word = 0.0;
                         } else {
                             let cw = self.advance(c, font);
                             x += cw;
+                            word = if c == ' ' { 0.0 } else { word + cw };
+                            col.widest_word = col.widest_word.max(word);
                             col.widest_glyph = col.widest_glyph.max(cw);
                             col.natural = col.natural.max(x);
                         }
@@ -161,12 +166,17 @@ impl<B: TextBackend> TextFlow<'_, B> {
                 end += 1;
             }
             let cols = &columns[first_col..end];
+            let words: f32 = cols.iter().map(|c| c.widest_word.max(c.widest_glyph).max(1.0)).sum();
+            let minimum = |c: &Column| {
+                if words <= width { c.widest_word.max(c.widest_glyph).max(1.0) } else { c.widest_glyph.max(1.0) }
+            };
+            let min = cols.iter().map(minimum).sum::<f32>();
             let pad = (4.0 * self.scale).round().min(((width - min) / (2 * cols.len()) as f32).max(0.0));
-            let extra: f32 = cols.iter().map(|c| (c.natural - c.widest_glyph.max(1.0)).max(0.0)).sum();
+            let extra: f32 = cols.iter().map(|c| (c.natural - minimum(c)).max(0.0)).sum();
             let ratio = if extra > 0.0 { ((width - min - 2.0 * pad * cols.len() as f32) / extra).clamp(0.0, 1.0) } else { 0.0 };
             let mut x = 0.0;
             let edges: Vec<_> = cols.iter().map(|c| {
-                let min = c.widest_glyph.max(1.0);
+                let min = minimum(c);
                 x += min + (c.natural - min).max(0.0) * ratio + 2.0 * pad;
                 area.start + x.min(width)
             }).collect();

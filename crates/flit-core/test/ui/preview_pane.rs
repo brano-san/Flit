@@ -389,6 +389,16 @@ fn markdown_tables_wrap_cells_inside_the_pane_and_paint_the_header() {
 }
 
 #[test]
+fn markdown_table_headers_stay_whole_when_each_word_can_fit() {
+    let d = preview::markdown_doc("Name | Progress | Score\n--- | :---: | ---:\nParser | Wrapped content with words that span multiple lines | 123");
+    let lay = layout_doc(&mut Gfx::new(Mono, 1024), &d, 320.0, (1.0, 12.5), &mut FxHashMap::default(), true, "");
+    let header: Vec<_> = lay.pieces[lay.lines[0].pieces.start as usize..lay.lines[0].pieces.end as usize]
+        .iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect();
+    assert_eq!(header, ["Name", "Progress", "Score"]);
+    assert!(lay.lines.len() > 2);
+}
+
+#[test]
 fn markdown_tables_keep_every_column_visible_when_only_one_glyph_fits() {
     let mut g = Gfx::new(Mono, 1024);
     let d = preview::markdown_doc("A|B|C\n---|---|---\nx|y|z");
