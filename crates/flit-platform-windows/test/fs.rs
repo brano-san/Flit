@@ -69,7 +69,8 @@ fn fs_path(p: &Path) -> FsPath {
 }
 
 fn junction(link: &Path, target: &Path) -> bool {
-    std::process::Command::new("cmd").arg("/c").arg("mklink").arg("/J").arg(link).arg(target).output().is_ok_and(|o| o.status.success())
+    use std::os::windows::process::CommandExt;
+    std::process::Command::new("cmd").arg("/c").arg("mklink").arg("/J").arg(link).arg(target).creation_flags(0x0800_0000).output().is_ok_and(|o| o.status.success())
 }
 
 struct Listed;

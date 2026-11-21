@@ -31,6 +31,7 @@ fn crash_child() {
 fn crash_in_child(tag: &str, foreign_filter: bool) -> PathBuf {
     let dir = temp(tag);
     let mut cmd = Command::new(std::env::current_exe().unwrap());
+    std::os::windows::process::CommandExt::creation_flags(&mut cmd, 0x0800_0000);
     cmd.args(["--exact", "crash::tests::crash_child", "--nocapture", "--test-threads=1"]).env(CHILD_ENV, &dir);
     if foreign_filter {
         cmd.env("FLIT_TEST_CRASH_FOREIGN", "1");

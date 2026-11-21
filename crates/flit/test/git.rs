@@ -156,7 +156,7 @@ fn sh(dir: &Path, args: &[&str]) {
 }
 
 fn have_git() -> bool {
-    Command::new("git").arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+    command(&std::env::temp_dir()).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
 #[test]
