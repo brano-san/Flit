@@ -105,10 +105,26 @@ fn user_hlg_playback_honours_the_preview_controls_and_releases_the_file() {
     let Some(directory) = std::env::var_os("FLIT_HDR_FIXTURES") else { return };
     let path = Path::new(&directory).join("user-hlg.mp4").canonicalize().unwrap();
     let (tx, events) = std::sync::mpsc::channel();
-    let start = Start { path: path.clone(), video: true, gen: 8, volume: Some(0.0), area: Some((360, 720)), every: frame_interval(None) };
+    let start = Start { path: path.clone(), video: true, gen: 8, volume: Some(0.0), area: Some((1280, 720)), every: frame_interval(None) };
     let player = crate::mpv::Embedded::start(start, Arc::new(move |e| {
         let _ = tx.send(e);
     }));
+    let mut first = None;
+    let mut frames = 0;
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let event = events.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("no preview frames");
+        if let HostEvent::Frame(slot) = event {
+            let Some((_, frame)) = slot.take() else { continue };
+            let elapsed = first.get_or_insert_with(Instant::now).elapsed();
+            frames += 1;
+            if elapsed >= Duration::from_secs(8) {
+                assert!(frame.rgba.chunks_exact(4).any(|pixel| pixel[1] > 16));
+                println!("user-hlg: {frames} preview frames in {elapsed:?}, {:.2} fps", f64::from(frames - 1) / elapsed.as_secs_f64());
+                break;
+            }
+        }
+    }
     let wait_for = |expected: &dyn Fn(f64, f64, bool) -> bool| {
         let deadline = Instant::now() + Duration::from_secs(12);
         loop {
