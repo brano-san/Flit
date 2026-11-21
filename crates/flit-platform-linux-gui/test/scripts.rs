@@ -6,7 +6,7 @@ const NEMO: &str = "[Nemo Action]\nActive=true\nName=Compress _PDF\nExec=<compre
 const THUNAR: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<actions>\n<action>\n\t<icon>gimp</icon>\n\t<name>Edit in GIMP</name>\n\t<unique-id>1</unique-id>\n\t<command>gimp %F</command>\n\t<patterns>*.jpg;*.png</patterns>\n\t<image-files/>\n</action>\n<action>\n\t<icon>utilities-terminal</icon>\n\t<name>Count &amp; list</name>\n\t<command>ls -l %f | wc -l</command>\n\t<patterns>*</patterns>\n\t<directories/>\n</action>\n</actions>\n";
 
 fn item(path: &str, dir: bool, mime: &str) -> Item {
-    Item { path: PathBuf::from(path), dir, mime: mime.to_owned() }
+    Item { path: PathBuf::from(path), dir, removable: false, mime: mime.to_owned() }
 }
 
 fn names(actions: &[Action], items: &[Item]) -> Vec<String> {
@@ -147,4 +147,24 @@ fn a_nemo_separator_joins_the_files_into_one_argument_and_without_it_they_stay_a
     let thunar = thunar_actions(THUNAR);
     let (entries, _) = menu(&thunar, &[item("/d/x.png", false, "image/png")], Path::new("/d"));
     assert_eq!(labels(&entries), ["Edit in GIMP"], "one source alone gets no separators");
+}
+
+#[test]
+fn unknown_nemo_conditions_hide_the_action() {
+    let text = "[Nemo Action]\nName=Open\nExec=open\nExtensions=any;\n";
+    assert!(nemo_action(text, Path::new("/actions"), "en").is_some());
+    assert!(nemo_action(&format!("{text}Conditions=unknown;"), Path::new("/actions"), "en").is_none());
+}
+
+#[test]
+fn nemo_menu_requires_every_dependency_and_condition() {
+    let load = |more: &str| nemo_with(&format!("{NEMO}{more}"), Path::new("/actions"), "", |p| matches!(p, "tool" | "/opt/app"), |cmd| cmd == "probe --ready", |name| name == "org.example.App", |s, k| (s == "org.example" && k == "theme").then(|| "'dark'".into()));
+    let action = load("Dependencies=tool;/opt/app;!missing;\nConditions=exec probe --ready;dbus org.example.App;gsettings org.example theme s dark;removable;").unwrap();
+    let mut selected = item("/media/d/a.pdf", false, "application/pdf");
+    assert!(!applies(&action, std::slice::from_ref(&selected)));
+    selected.removable = true;
+    assert!(applies(&action, &[selected]));
+    for reject in ["Dependencies=missing;", "Dependencies=!tool;", "Conditions=desktop;", "Conditions=exec failed;", "Conditions=dbus absent;", "Conditions=gsettings org.example theme s light;", "Conditions=gsettings org.example theme;"] {
+        assert!(load(reject).is_none(), "{reject}");
+    }
 }

@@ -50,11 +50,12 @@ pub struct Action {
     pub count: Count,
     pub files: bool,
     pub dirs: bool,
+    pub removable: bool,
 }
 
 impl Action {
     fn new(source: Source, name: String, icon: String, run: Run) -> Self {
-        Self { source, submenu: String::new(), separator: None, name, icon, run, mimes: Vec::new(), exts: Vec::new(), count: Count::NotEmpty, files: true, dirs: true }
+        Self { source, submenu: String::new(), separator: None, name, icon, run, mimes: Vec::new(), exts: Vec::new(), count: Count::NotEmpty, files: true, dirs: true, removable: false }
     }
 }
 
@@ -62,6 +63,7 @@ pub struct Item {
     pub path: PathBuf,
     pub dir: bool,
     pub mime: String,
+    pub removable: bool,
 }
 
 fn groups(text: &str) -> HashMap<String, HashMap<String, String>> {
@@ -146,7 +148,39 @@ pub fn service_menu(text: &str, lang: &str) -> Vec<Action> {
         .collect()
 }
 
+fn has_bus_name(name: &str) -> bool {
+    let Some(bus) = crate::dbus::session_address().and_then(|addr| crate::udisks::Bus::open(&addr).ok()) else { return false };
+    let service = "org.freedesktop.DBus";
+    let reply = bus.call(service, "/org/freedesktop/DBus", service, "NameHasOwner", &[crate::atspi::V::S(name.to_owned())], 1000);
+    matches!(reply.as_deref(), Ok([crate::atspi::Arg::I(1)]))
+}
+
+fn exec_condition(command: &str, base: &Path) -> bool {
+    use std::process::{Command, Stdio};
+    let relative = command.strip_prefix('<').and_then(|s| s.strip_suffix('>'));
+    let argv = crate::shell::split_args(relative.unwrap_or(command));
+    let Some((program, args)) = argv.split_first() else { return false };
+    let program = if relative.is_some() { base.join(program) } else { PathBuf::from(program) };
+    Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+}
+
+fn setting_equal(actual: &str, kind: &str, value: &str) -> bool {
+    let actual = actual.trim();
+    match kind {
+        "s" | "string" => crate::shell::gsettings_string(actual).as_deref() == Some(value),
+        "b" | "boolean" => matches!(value, "true" | "false") && actual == value,
+        "i" | "int32" => actual.parse::<i32>().is_ok_and(|v| value.parse() == Ok(v)),
+        "u" | "uint32" => actual.strip_prefix("uint32 ").and_then(|s| s.parse::<u32>().ok()).is_some_and(|v| value.parse() == Ok(v)),
+        "d" | "double" => actual.contains(['.', 'e', 'E']) && actual.parse::<f64>().is_ok_and(|v| value.parse() == Ok(v)),
+        _ => false,
+    }
+}
+
 pub fn nemo_action(text: &str, base: &Path, lang: &str) -> Option<Action> {
+    nemo_with(text, base, lang, |p| crate::shell::on_path(p.as_ref()).is_some(), |s| exec_condition(s, base), has_bus_name, |s, k| crate::shell::gsettings(&[s, k]))
+}
+
+fn nemo_with(text: &str, base: &Path, lang: &str, program: impl Fn(&str) -> bool, exec_ok: impl Fn(&str) -> bool, bus: impl Fn(&str) -> bool, setting: impl Fn(&str, &str) -> Option<String>) -> Option<Action> {
     let g = groups(text);
     let a = g.get("Nemo Action")?;
     if a.get("Active").is_some_and(|v| v.eq_ignore_ascii_case("false")) {
@@ -155,6 +189,25 @@ pub fn nemo_action(text: &str, base: &Path, lang: &str) -> Option<Action> {
     let exec = a.get("Exec")?.clone();
     let name = localized(a, "Name", lang)?.replace('_', "");
     let mut action = Action::new(Source::Nemo, name, a.get("Icon-Name").cloned().unwrap_or_default(), Run::Exec { line: exec, base: base.to_path_buf() });
+    for dep in list(a.get("Dependencies")) {
+        let name = dep.strip_prefix('!').unwrap_or(&dep);
+        if name.is_empty() || (name.contains('/') && !Path::new(name).is_absolute()) || program(name) == dep.starts_with('!') {
+            return None;
+        }
+    }
+    for cond in list(a.get("Conditions")) {
+        let pass = match cond.split_once(char::is_whitespace) {
+            None if cond == "removable" => { action.removable = true; true }
+            Some(("exec", cmd)) => exec_ok(cmd.trim()),
+            Some(("dbus", name)) if name.split_whitespace().count() == 1 => bus(name.trim()),
+            Some(("gsettings", args)) => {
+                let words = crate::shell::split_args(args);
+                matches!(words.as_slice(), [s, k, t, v] if setting(s, k).is_some_and(|a| setting_equal(&a, t, v)))
+            }
+            _ => false,
+        };
+        if !pass { return None; }
+    }
     action.separator = a.get("Separator").cloned();
     action.count = match a.get("Selection").map(|s| s.to_ascii_lowercase()).as_deref() {
         Some("m") => Count::Many,
@@ -222,7 +275,7 @@ pub fn applies(a: &Action, items: &[Item]) -> bool {
         Count::NotEmpty => !items.is_empty(),
         Count::Nothing => items.is_empty(),
     };
-    count_ok
+    count_ok && (!a.removable || matches!(items, [i] if i.removable))
         && items.iter().all(|i| {
             if i.dir {
                 return a.dirs;
@@ -312,11 +365,29 @@ pub fn commands(a: &Action, files: &[PathBuf], current: &Path) -> Vec<CommandRun
         .collect()
 }
 
+#[derive(Default)]
+struct NemoList {
+    files: Vec<(PathBuf, String)>,
+    lang: String,
+    actions: Vec<Action>,
+}
+
+fn cached_nemo(files: Vec<(PathBuf, String)>, lang: &str) -> Vec<Action> {
+    static LIST: std::sync::LazyLock<std::sync::Mutex<NemoList>> = std::sync::LazyLock::new(Default::default);
+    let mut list = LIST.lock().unwrap_or_else(|e| e.into_inner());
+    if list.files != files || list.lang != lang {
+        let actions = files.iter().filter_map(|(path, text)| nemo_action(text, path.parent()?, lang)).collect();
+        *list = NemoList { files, lang: lang.to_owned(), actions };
+    }
+    list.actions.clone()
+}
+
 pub fn load(data: &[PathBuf], config: Option<&Path>, lang: &str) -> Vec<Action> {
     let mut out = Vec::new();
     if let Some(home) = data.first() {
         out.extend(nautilus_scripts(&home.join("nautilus/scripts")));
     }
+    let mut nemo = Vec::new();
     for (k, d) in data.iter().enumerate() {
         for sub in ["kio/servicemenus", "kservices5/ServiceMenus"] {
             let Ok(list) = std::fs::read_dir(d.join(sub)) else { continue };
@@ -330,23 +401,28 @@ pub fn load(data: &[PathBuf], config: Option<&Path>, lang: &str) -> Vec<Action> 
         let dir = d.join("nemo/actions");
         let Ok(list) = std::fs::read_dir(&dir) else { continue };
         for e in list.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "nemo_action")) {
-            out.extend(std::fs::read_to_string(e.path()).ok().and_then(|t| nemo_action(&t, &dir, lang)));
+            if let Ok(text) = std::fs::read_to_string(e.path()) {
+                nemo.push((e.path(), text));
+            }
         }
     }
+    nemo.sort_by(|a, b| a.0.cmp(&b.0));
+    out.extend(cached_nemo(nemo, lang));
     if let Some(c) = config {
         out.extend(std::fs::read_to_string(c.join("Thunar/uca.xml")).map(|t| thunar_actions(&t)).unwrap_or_default());
     }
     out
 }
 
-fn items_of(files: &[FsPath]) -> Vec<Item> {
+fn items_of(files: &[FsPath], mounts: &[flit_platform_linux::mounts::Mount]) -> Vec<Item> {
     files
         .iter()
         .filter_map(|f| {
             let path = flit_platform_linux::host(f)?.to_path_buf();
             let dir = path.is_dir();
             let mime = if dir { flit_core::mimeapps::FOLDER.to_owned() } else { crate::mime::mime_of_file(&path) };
-            Some(Item { path, dir, mime })
+            let removable = mounts.iter().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len()).is_some_and(|m| m.removable());
+            Some(Item { path, dir, mime, removable })
         })
         .collect()
 }
@@ -396,7 +472,8 @@ pub fn with_scripts((mut items, mut launches): (Vec<MenuItem>, Vec<Launch>), cur
     let Some(here) = flit_platform_linux::host(current) else { return (items, launches) };
     let lang = std::env::var("LC_MESSAGES").or_else(|_| std::env::var("LANG")).unwrap_or_default();
     let actions = load(&crate::apps::data_dirs(), crate::xdg::config_home().as_deref(), &lang);
-    let (entries, more) = menu(&actions, &items_of(files), here);
+    let mounts = if actions.iter().any(|a| a.removable) { flit_platform_linux::mounts::read().unwrap_or_default() } else { Vec::new() };
+    let (entries, more) = menu(&actions, &items_of(files, &mounts), here);
     if entries.is_empty() {
         return (items, launches);
     }
