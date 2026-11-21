@@ -1,7 +1,7 @@
 use flit_core::provider::Template;
 use flit_core::ui::{Drive, NewTemplate, Recent};
 use flit_core::location::valid_distro;
-use flit_core::FsPath;
+use flit_core::{FsPath, Location};
 use flit_core::i18n::S;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -84,6 +84,44 @@ fn network_drive(letter: char, remote: String, online: bool) -> Option<Drive> {
     let path = FsPath::parse(&format!("{letter}:\\"))?;
     let label = flit_core::tr_en!(S::SidebarDriveLabel, name = share_name(&remote), letter = letter);
     Some(Drive { path, label, total: 0, free: 0, file_system: String::new(), removable: false, unmounted: !online, kind: None, remote: Some(remote) })
+}
+
+fn business_account(key: &str, value: impl Fn(&str) -> Option<String>) -> Option<(u32, (String, Location))> {
+    let prefix = "Business";
+    let (kind, number) = key.split_at_checked(prefix.len())?;
+    if !kind.eq_ignore_ascii_case(prefix) || !number.bytes().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let index = number.parse().ok()?;
+    let folder = value("UserFolder")?;
+    if !Path::new(&folder).is_absolute() || !Path::new(&folder).is_dir() {
+        return None;
+    }
+    let path = FsPath::parse(&folder)?;
+    let name = value("DisplayName");
+    let name = name.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned)
+        .or_else(|| Some(Path::new(&folder).file_name()?.to_str()?.to_owned()))?;
+    Some((index, (name, Location::from_local(path))))
+}
+
+pub fn business_onedrive() -> Vec<(String, Location)> {
+    let Some(key) = open_key(HKEY_CURRENT_USER, r"Software\Microsoft\OneDrive\Accounts") else { return Vec::new() };
+    let mut accounts = Vec::new();
+    for index in 0.. {
+        let mut buf = [0u16; 256];
+        let mut len = buf.len() as u32;
+        let status = unsafe { RegEnumKeyExW(key.0, index, Some(PWSTR(buf.as_mut_ptr())), &mut len, None, None, None, None) };
+        if status.is_err() {
+            if status != ERROR_NO_MORE_ITEMS {
+                tracing::debug!(?status, "cannot enumerate OneDrive accounts");
+            }
+            break;
+        }
+        let sub = String::from_utf16_lossy(&buf[..len as usize]);
+        accounts.extend(business_account(&sub, |name| string(key.0, Some(&sub), Some(name))));
+    }
+    accounts.sort_by_key(|(index, _)| *index);
+    accounts.into_iter().map(|(_, place)| place).collect()
 }
 
 fn dword(sub: &str, name: &str) -> Option<u32> {
@@ -257,9 +295,9 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
 
-fn open_class(sub: &str) -> Option<Key> {
+fn open_key(root: HKEY, sub: &str) -> Option<Key> {
     let mut key = HKEY::default();
-    unsafe { RegOpenKeyExW(HKEY_CLASSES_ROOT, PCWSTR(wide(sub).as_ptr()), None, KEY_READ, &mut key) }.ok().ok()?;
+    unsafe { RegOpenKeyExW(root, PCWSTR(wide(sub).as_ptr()), None, KEY_READ, &mut key) }.ok().ok()?;
     Some(Key(key))
 }
 
@@ -271,8 +309,9 @@ fn query(key: HKEY, sub: Option<&str>, name: Option<&str>, kind: REG_ROUTINE_FLA
 }
 
 fn string(key: HKEY, sub: Option<&str>, name: Option<&str>) -> Option<String> {
-    let mut buf = [0u16; 1024];
-    query(key, sub, name, RRF_RT_REG_SZ, Some(buf.as_mut_ptr().cast()), (buf.len() * 2) as u32)?;
+    let size = query(key, sub, name, RRF_RT_REG_SZ, None, 0)?;
+    let mut buf = vec![0u16; size.div_ceil(2)];
+    query(key, sub, name, RRF_RT_REG_SZ, Some(buf.as_mut_ptr().cast()), size as u32)?;
     Some(wide_str(&buf)).filter(|s| !s.is_empty())
 }
 
@@ -326,7 +365,7 @@ fn shell_new(key: HKEY, ext: &str, dirs: &[PathBuf]) -> Option<NewTemplate> {
 }
 
 fn class_template(ext: &str, dirs: &[PathBuf]) -> Option<NewTemplate> {
-    let key = open_class(&format!(r"{ext}\ShellNew")).or_else(|| open_class(&format!(r"{ext}\{}\ShellNew", string(HKEY_CLASSES_ROOT, Some(ext), None)?)))?;
+    let key = open_key(HKEY_CLASSES_ROOT, &format!(r"{ext}\ShellNew")).or_else(|| open_key(HKEY_CLASSES_ROOT, &format!(r"{ext}\{}\ShellNew", string(HKEY_CLASSES_ROOT, Some(ext), None)?)))?;
     shell_new(key.0, ext, dirs)
 }
 

@@ -44,9 +44,14 @@ fn the_sidebar_comes_back_from_the_last_run_before_anything_is_collected() {
     let d = temp("snapshot");
     let file = d.0.join(PLACES_FILE);
     store(&file, &encode(&places()).unwrap());
-    assert_eq!(load::<Places>(&file), Some(places()));
+    assert_eq!(load_places(&file), Some(places()));
+    let mut with_business = places();
+    with_business.business_onedrive.push(("Example".into(), Location::from_local(path(r"D:\OneDrive - Example"))));
+    store(&file, &encode_places(&with_business).unwrap());
+    assert_eq!(load_places(&file), Some(with_business));
+    assert_eq!(load::<Places>(&file), Some(places()), "the old reader still sees the original places");
     std::fs::write(&file, b"\x02garbage").unwrap();
-    assert_eq!(load::<Places>(&file), None, "a snapshot from another version is ignored");
+    assert_eq!(load_places(&file), None, "a snapshot from another version is ignored");
 }
 
 #[test]

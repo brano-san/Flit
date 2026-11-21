@@ -623,6 +623,9 @@ pub trait Platform: 'static {
     }
     fn home() -> FsPath;
     fn known_folder(name: &str) -> Option<Location>;
+    fn business_onedrive() -> Vec<(String, Location)> {
+        Vec::new()
+    }
     fn fatal_error(message: &str);
     fn refresh_period() -> Option<std::time::Duration>;
     fn drives() -> Vec<flit_core::ui::Drive>;

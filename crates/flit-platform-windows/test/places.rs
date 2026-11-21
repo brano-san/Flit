@@ -63,6 +63,30 @@ fn a_recent_this_pc_link_is_the_computer_folder_and_other_namespace_links_are_sk
 }
 
 #[test]
+fn business_onedrive_accounts_require_an_existing_folder_and_use_its_name_as_fallback() {
+    let root = crate::test_temp().join(format!("flit-business-onedrive-{}", std::process::id()));
+    let folder = root.join("OneDrive - Завод");
+    std::fs::create_dir_all(&folder).unwrap();
+    let file = root.join("file");
+    std::fs::write(&file, "").unwrap();
+    let account = |key: &str, path: Option<&Path>, name: Option<&str>| business_account(key, |field| match field {
+        "UserFolder" => path.map(|p| p.to_str().unwrap().to_owned()),
+        "DisplayName" => name.map(str::to_owned),
+        _ => panic!("unexpected field {field}"),
+    });
+    let location = Location::from_local(FsPath::parse(folder.to_str().unwrap()).unwrap());
+    assert_eq!(account("Business12", Some(&folder), Some(" Example ")), Some((12, ("Example".into(), location.clone()))));
+    assert_eq!(account("business2", Some(&folder), None), Some((2, ("OneDrive - Завод".into(), location))));
+    for key in ["Personal", "Business", "BusinessOld", "Business+1"] {
+        assert!(account(key, Some(&folder), None).is_none());
+    }
+    for path in [None, Some(root.join("absent").as_path()), Some(file.as_path())] {
+        assert!(account("Business1", path, None).is_none());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn maps_windows_ui_languages_to_flit_codes() {
     assert_eq!([0x0419, 0x0409, 0x0809, 0x0407, 0x040C, 0x0C0A, 0x0422, 0x0804, 0x1004].map(language_code), ["ru", "en", "en", "de", "fr", "es", "uk", "zh-CN", "zh-CN"]);
     assert_eq!([0x0404, 0x0C04, 0x0411].map(language_code), ["", "", ""]);

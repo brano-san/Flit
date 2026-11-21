@@ -7,6 +7,11 @@ use flit_platform_linux::mounts::parse;
 use std::os::unix::ffi::OsStrExt;
 
 #[test]
+fn linux_has_no_business_onedrive_places() {
+    assert!(<crate::Linux as flit_platform::Platform>::business_onedrive().is_empty());
+}
+
+#[test]
 fn missing_network_connector_names_the_distribution_package_and_present_gio_runs() {
     crate::temp::with_tools(&[], || {
         let error = connect("sftp://invalid.example/unused").unwrap_err();

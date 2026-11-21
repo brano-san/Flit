@@ -41,7 +41,7 @@ pub struct PlacesWorker {
 
 impl PlacesWorker {
     pub fn new<P: Platform>(wake: Wake, snapshot: Option<PathBuf>) -> Self {
-        let current: Arc<Places> = Arc::new(snapshot.as_deref().and_then(load).unwrap_or_default());
+        let current: Arc<Places> = Arc::new(snapshot.as_deref().and_then(load_places).unwrap_or_default());
         let start = current.clone();
         let (requests, jobs) = unbounded::<Job>();
         let (done, results) = unbounded();
@@ -122,7 +122,7 @@ impl PlacesWorker {
                 }
                 tracing::info!(?basic, ?libraries, ?recent, templates = ?t.elapsed(), "places collected");
                 if let Some(path) = snapshot.as_deref().filter(|_| cached != stored) {
-                    if let Some(bytes) = encode(&cached) {
+                    if let Some(bytes) = encode_places(&cached) {
                         store(path, &bytes);
                     }
                     stored = cached.clone();
@@ -199,13 +199,35 @@ fn collect<P: Platform>() -> Places {
             shown(k, &found).then_some((k, found))
         })
         .collect();
-    Places { folders, drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: P::recycle_bin(), never_shown: P::never_shown_extensions(), ..Default::default() }
+    Places { folders, business_onedrive: P::business_onedrive(), drives: P::drives(), wsl: P::wsl_distros(), recycle_bin: P::recycle_bin(), never_shown: P::never_shown_extensions(), ..Default::default() }
+}
+
+fn load_places(path: &Path) -> Option<Places> {
+    read_snapshot(path, |bytes| {
+        let (mut places, tail) = postcard::take_from_bytes::<Places>(bytes).ok()?;
+        if !tail.is_empty() {
+            places.business_onedrive = postcard::from_bytes(tail).ok()?;
+        }
+        Some(places)
+    })
+}
+
+fn encode_places(places: &Places) -> Option<Vec<u8>> {
+    if places.business_onedrive.is_empty() {
+        encode(places)
+    } else {
+        encode(&(places, &places.business_onedrive))
+    }
 }
 
 fn load<T: DeserializeOwned>(path: &Path) -> Option<T> {
+    read_snapshot(path, |bytes| postcard::from_bytes(bytes).ok())
+}
+
+fn read_snapshot<T>(path: &Path, decode: impl FnOnce(&[u8]) -> Option<T>) -> Option<T> {
     let bytes = std::fs::read(path).ok()?;
     let (version, rest) = postcard::take_from_bytes::<u32>(&bytes).ok()?;
-    (version == SNAPSHOT_VERSION).then(|| postcard::from_bytes(rest).ok()).flatten()
+    (version == SNAPSHOT_VERSION).then(|| decode(rest)).flatten()
 }
 
 fn encode<T: Serialize>(value: &T) -> Option<Vec<u8>> {
