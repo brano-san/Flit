@@ -148,7 +148,7 @@ pub(crate) fn loaded() -> bool {
 
 pub(crate) fn options(video: bool, volume: Option<f32>) -> Vec<(&'static str, String)> {
     let fixed = [("config", "no"), ("terminal", "no"), ("load-scripts", "no"), ("ytdl", "no"), ("osc", "no"), ("input-default-bindings", "no"), ("input-vo-keyboard", "no"), ("keep-open", "no"), ("hwdec", "no"), ("audio-client-name", "Flit")];
-    let output: &[(&'static str, &str)] = if video { &[("vo", "libmpv")] } else { &[("vid", "no"), ("vo", "null")] };
+    let output: &[(&'static str, &str)] = if video { &[("vo", "libmpv"), ("pause", "yes")] } else { &[("vid", "no"), ("vo", "null")] };
     let mut all: Vec<(&'static str, String)> = fixed.iter().chain(output).map(|&(k, v)| (k, v.to_owned())).collect();
     all.extend(volume.map(|v| ("volume", percent(v).to_string())));
     all
@@ -368,8 +368,8 @@ impl Core {
         }
     }
 
-    fn hdr(&self, property: &CStr) -> Option<bool> {
-        let value = unsafe { (self.api.get_property_string)(self.handle, property.as_ptr()) };
+    fn source_is_hdr(&self) -> Option<bool> {
+        let value = unsafe { (self.api.get_property_string)(self.handle, c"video-params/gamma".as_ptr()) };
         if value.is_null() {
             return None;
         }
@@ -378,10 +378,16 @@ impl Core {
         Some(hdr)
     }
 
-    fn configure_color(&self, mode: &mut ToneMap) {
-        let Some(hdr) = self.hdr(c"video-params/gamma") else { return };
+    fn seekable(&self) -> bool {
+        let mut flag: c_int = 0;
+        let ok = unsafe { (self.api.get_property)(self.handle, c"seekable".as_ptr(), FORMAT_FLAG, (&raw mut flag).cast()) } >= 0;
+        ok && flag != 0
+    }
+
+    fn configure_color(&self, mode: &mut ToneMap) -> bool {
+        let Some(hdr) = self.source_is_hdr() else { return false };
         if hdr == mode.requested {
-            return;
+            return false;
         }
         mode.requested = hdr;
         if let Some(filter) = color_filter(hdr) {
@@ -389,10 +395,12 @@ impl Core {
             if !mode.active {
                 tracing::warn!("libmpv could not enable HDR tone mapping, using its standard video output");
             }
+            return mode.active;
         } else if mode.active {
             self.command(&[c"vf", c"remove", c"@flit-hdr"]);
             mode.active = false;
         }
+        false
     }
 
     fn sw_render(&self) -> Option<Render> {
@@ -402,7 +410,7 @@ impl Core {
         (ok && !ctx.is_null()).then_some(Render { api: self.api, ctx })
     }
 
-    fn drain(&self, progress: &mut Progress, video: &mut Option<(u32, u32)>, color: &mut ToneMap) -> Drained {
+    fn drain(&self, progress: &mut Progress, video: &mut Option<(u32, u32)>, color: &mut ToneMap, starting: bool) -> Drained {
         let mut out = Drained::default();
         loop {
             let ev = unsafe { (self.api.wait_event)(self.handle, 0.0) };
@@ -415,14 +423,13 @@ impl Core {
                 }
                 EVENT_PROPERTY_CHANGE => out.changed |= unsafe { property(ev.data.cast::<Property>().as_ref(), progress) },
                 EVENT_VIDEO_RECONFIG => {
-                    self.configure_color(color);
+                    if !starting {
+                        self.configure_color(color);
+                    }
                     let size = self.int(c"dwidth").zip(self.int(c"dheight"));
                     out.resized |= size != std::mem::replace(video, size);
-                    if progress.playing && color.active && self.hdr(c"video-out-params/gamma") == Some(false) {
-                        out.ready = true;
-                    }
                 }
-                EVENT_PLAYBACK_RESTART => out.ready |= !color.active || self.hdr(c"video-out-params/gamma") == Some(false),
+                EVENT_PLAYBACK_RESTART if starting => out.ready = !self.configure_color(color) || !self.seekable(),
                 EVENT_END_FILE => {
                     let reason = unsafe { ev.data.cast::<EndFile>().as_ref() }.map(|e| e.reason);
                     if matches!(reason, Some(END_EOF | END_ERROR)) {
@@ -657,6 +664,7 @@ fn run(s: &Start, shared: &Arc<Shared>, report: &Report) {
     let loaded = CString::new(s.path.as_os_str().as_bytes()).is_ok_and(|path| core.command(&[c"loadfile", &path]));
     let mut progress = Progress { playing: true, ..Progress::default() };
     let mut color = ToneMap::default();
+    let mut initial_pause = s.video.then_some(false);
     let (mut sent, mut video, mut area) = ((Instant::now(), progress), None, s.area);
     if !loaded {
         progress.finish();
@@ -675,20 +683,30 @@ fn run(s: &Start, shared: &Arc<Shared>, report: &Report) {
             (std::mem::take(&mut inbox.orders), std::mem::take(&mut inbox.placed).then_some(inbox.area).flatten())
         };
         for o in orders {
-            core.apply(o);
+            if let (Some(paused), Order::Pause(wanted)) = (&mut initial_pause, o) {
+                *paused = wanted;
+            } else {
+                core.apply(o);
+            }
         }
-        let drained = core.drain(&mut progress, &mut video, &mut color);
+        let drained = core.drain(&mut progress, &mut video, &mut color, initial_pause.is_some());
         if placed.is_some() || drained.resized {
             area = placed.or(area);
             canvas.resize(frame_size(video, area));
         }
         if drained.ready {
             canvas.hold(false);
+            if let Some(paused) = initial_pause.take() {
+                if !paused {
+                    core.apply(Order::Pause(false));
+                }
+                progress.playing = !paused;
+            }
         }
         if drained.ended {
             progress.finish();
         }
-        if progress.ended || (drained.changed && progress.due(&sent)) {
+        if progress.ended || (initial_pause.is_none() && (drained.changed || drained.ready) && progress.due(&sent)) {
             report(progress.event(s.gen));
             sent = (Instant::now(), progress);
         }

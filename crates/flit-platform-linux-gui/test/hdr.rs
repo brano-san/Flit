@@ -27,12 +27,14 @@ fn preview(path: &Path, size: (u32, u32)) -> (Embedded, mpsc::Receiver<HostEvent
     (player, events)
 }
 
-fn first_frame(path: &Path, size: (u32, u32)) -> Bitmap {
+fn first_frame(path: &Path, size: (u32, u32), paused: bool) -> Bitmap {
     let (player, events) = preview(path, size);
-    assert!(player.order(Order::Pause(true)));
+    if paused {
+        assert!(player.order(Order::Pause(true)));
+    }
     let deadline = Instant::now() + Duration::from_secs(25);
     let frame = loop {
-        let event = events.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("paused video frame");
+        let event = events.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("first video frame");
         let HostEvent::Frame(slot) = event else { continue };
         let (_, frame) = slot.take().expect("published frame");
         assert_eq!((frame.width, frame.height), size);
@@ -74,7 +76,7 @@ fn preview_frames_match_the_reference_at_the_start_of_hdr_and_sdr_videos() {
     let mut failures = Vec::new();
     for (name, hdr, size) in [("user-hlg", true, (360, 720)), ("hlg", true, (640, 360)), ("hdr10", true, (640, 360)), ("sdr", false, (640, 360))] {
         let path = Path::new(&dir).join(format!("{name}.mp4"));
-        let frame = first_frame(&path, size);
+        let frame = first_frame(&path, size, true);
         let rgb: Vec<_> = frame.rgba.chunks_exact(4).flat_map(|p| &p[..3]).copied().collect();
         let expected = reference(&path, hdr, size);
         let (mean, bright) = luminance(&rgb);
@@ -93,4 +95,17 @@ fn preview_frames_match_the_reference_at_the_start_of_hdr_and_sdr_videos() {
         }
     }
     assert!(failures.is_empty(), "frames outside tolerance: {failures:?}");
+}
+
+#[test]
+#[ignore = "needs libmpv, FFmpeg and FLIT_HDR_FIXTURES"]
+fn phone_video_starts_playing_with_a_tone_mapped_frame() {
+    let Some(dir) = std::env::var_os("FLIT_HDR_FIXTURES") else { return };
+    let path = Path::new(&dir).join("user-hlg.mp4");
+    let size = (360, 720);
+    let frame = first_frame(&path, size, false);
+    let rgb: Vec<_> = frame.rgba.chunks_exact(4).flat_map(|p| &p[..3]).copied().collect();
+    let (mean, bright) = luminance(&rgb);
+    let (target, white) = luminance(&reference(&path, true, size));
+    assert!((mean - target).abs() < 4.0 && (bright - white).abs() < 2.0, "first playing frame: mean {mean}, bright {bright}%");
 }
