@@ -99,3 +99,39 @@ fn drives_show_their_size_and_tags_or_this_pc_show_nothing() {
     assert_eq!(compact_count(999), "999");
     assert_eq!(compact_count(1_500_000), "1.5M");
 }
+
+fn app_with_network_folder() -> App {
+    let mut app = App::new(Persisted { path: loc(r"C:\start"), ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
+    let z = Drive { path: crate::path::FsPath::parse(r"Z:\").unwrap(), label: "share (Z:)".into(), total: 1 << 30, free: 1 << 29, file_system: "fuse.gvfsd-fuse".into(), removable: false, unmounted: false, kind: None, remote: Some("sftp:host=192.168.1.35".into()) };
+    app.set_places(Arc::new(Places { drives: vec![z], folders: vec![(KnownFolder::Downloads, loc(r"Z:\Downloads"))], ..Default::default() }));
+    app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    app.drain_effects().for_each(drop);
+    app
+}
+
+fn measured_after_hover(app: &mut App) -> bool {
+    let t0 = Instant::now();
+    hover(app, "Downloads", t0);
+    app.on_event(&Event::Timer, t0 + QUICK_DELAY);
+    assert!(app.quick.as_ref().is_some_and(|q| q.shown.is_some()), "the tip is shown");
+    app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { .. }, .. }))
+}
+
+#[test]
+fn a_folder_on_a_network_drive_is_not_counted_in_its_tip_when_network_statistics_are_off() {
+    let mut app = app_with_network_folder();
+    app.opts.sizes_network = false;
+    assert!(!measured_after_hover(&mut app), "network folders are not counted on hover");
+    assert!(!app.quick_rows().iter().any(|r| r.0 == "Subfolders:" || r.0 == "Size:"), "no counting rows are left waiting");
+    assert!(!app.sizes_allowed(&loc(r"Z:\Downloads")), "folder statistics in the list follow the same rule");
+}
+
+#[test]
+fn network_folders_are_counted_when_allowed_and_local_folders_keep_their_counts() {
+    let mut network = app_with_network_folder();
+    network.opts.sizes_network = true;
+    assert!(measured_after_hover(&mut network), "network counting switched on counts again");
+    let mut local = app();
+    local.opts.sizes_network = false;
+    assert!(measured_after_hover(&mut local), "a local folder is still counted");
+}

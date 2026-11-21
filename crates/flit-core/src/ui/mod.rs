@@ -3140,7 +3140,7 @@ impl App {
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         let mut checks: Vec<(u32, bool)> = Vec::new();
         let mut elided: Vec<usize> = Vec::new();
-        let want_thumbs = self.prefs.thumbnails && icon_px >= self.cs(THUMB_MIN_ICON) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !options::remote(&tab.view_loc));
+        let want_thumbs = self.prefs.thumbnails && icon_px >= self.cs(THUMB_MIN_ICON) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !self.network_place(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
             if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {

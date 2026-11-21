@@ -116,7 +116,7 @@ impl App {
         }
         let (loc, subject) = (q.loc.clone(), q.subject);
         let probe = loc.parent().filter(|_| subject != Subject::Volume).map(|parent| self.probe(parent));
-        let measure = (subject == Subject::Folder && loc.provider() == ProviderId::Local).then(|| {
+        let measure = (subject == Subject::Folder && loc.provider() == ProviderId::Local && self.measure_allowed(&loc)).then(|| {
             let id = MEASURE_IDS + self.archive.take_id();
             let ctl = OpCtl::new(None);
             let tab = self.tab().id;
