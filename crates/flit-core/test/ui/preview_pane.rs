@@ -248,8 +248,75 @@ fn shown_media(a: &mut App, name: &str, video: bool) -> u64 {
     a.on_preview(r.gen, PreviewData::Media { video, poster: Some(Bitmap { width: 2, height: 2, rgba: vec![9; 16] }) });
     a.preview_click(PaneHit::Play);
     frame(a);
-    a.drain_effects().for_each(drop);
     r.gen
+}
+
+fn add_file(a: &mut App, name: &str) {
+    use crate::listing::{ChangeKind, DirChange, Label};
+    a.tab_mut().view.as_mut().unwrap().apply(&DirChange { label: Label::Keep, name: name.into(), kind: ChangeKind::Added, meta: Some(Meta::default()) });
+}
+
+#[test]
+fn media_stays_in_place_when_focus_enters_and_leaves_the_preview() {
+    let split = super::super::panels::SPLIT;
+    for (name, video, size) in [("movie.mp4", true, (1200, 700)), ("song.mp3", false, (700, 1200))] {
+        let mut a = app(size);
+        add_file(&mut a, name);
+        a.set_pane_state(PaneState { visible: true, ..Default::default() });
+        shown_media(&mut a, name, video);
+        let placement = a.drain_effects().find_map(|e| if let Effect::Host(HostCmd::Place(rect)) = e { Some(rect) } else { None });
+        assert_eq!(placement, video.then_some(Some(a.preview.r.media)));
+        let mut g = Gfx::new(Mono, 2048);
+        let geometry = |a: &App, g: &Gfx<Mono>| {
+            let r = a.preview.r;
+            let image = g.dl.instances.iter().find(|i| i.kind == crate::render::kind::PREVIEW).unwrap();
+            (r.media, image.rect, r.play, r.seek, r.volume)
+        };
+        a.frame(&mut g, Instant::now());
+        assert_ne!(a.focus, Focus::Preview);
+        let before = geometry(&a, &g);
+        let r = a.preview.r;
+        assert!(r.play.h > 0.0 && r.seek.w > 0.0 && r.volume.w > 0.0);
+        mouse(&mut a, (r.body.x + 2.0, r.play.y - 2.0), MouseButton::Left, 1);
+        assert_eq!(a.focus, Focus::Preview);
+        for focused in [true, false] {
+            let now = a.clock();
+            if !focused {
+                press(&mut a, Key::Tab, NO);
+                assert_ne!(a.focus, Focus::Preview);
+            }
+            for dt in [Duration::ZERO, split / 2, split * 2] {
+                a.frame(&mut g, now + dt);
+                assert_eq!(geometry(&a, &g), before, "{name}, focus={focused}, elapsed={dt:?}");
+                assert_eq!(a.preview.r.foot.h, 0.0);
+                assert!(a.drain_effects().all(|e| !matches!(e, Effect::Host(HostCmd::Place(_)))));
+            }
+        }
+    }
+}
+
+#[test]
+fn media_loaded_while_the_footer_is_sliding_uses_the_full_preview_immediately() {
+    let mut a = text_preview((1200, 700), "alpha");
+    let body = a.preview.r.body;
+    mouse(&mut a, (body.x + 5.0, body.y + 5.0), MouseButton::Left, 1);
+    let now = Instant::now();
+    let split = super::super::panels::SPLIT;
+    let mut g = Gfx::new(Mono, 2048);
+    a.frame(&mut g, now);
+    a.frame(&mut g, now + split * 2);
+    assert!(a.preview.r.foot.h > 0.0);
+    press(&mut a, Key::Tab, NO);
+    add_file(&mut a, "movie.mp4");
+    select(&mut a, "movie.mp4");
+    a.frame(&mut g, now + split * 2);
+    let gen = requests(&mut a).pop().unwrap().gen;
+    a.frame(&mut g, now + split * 2 + split / 2);
+    assert!(a.preview.r.foot.h > 0.0);
+    a.on_preview(gen, PreviewData::Media { video: true, poster: None });
+    a.frame(&mut g, now + split * 2 + split / 2);
+    assert_eq!(a.preview.r.foot.h, 0.0);
+    assert_eq!(a.preview.r.body, body);
 }
 
 fn video_frame(width: u32) -> Bitmap {
@@ -508,6 +575,27 @@ fn the_inspector_dock_bar_shows_only_while_the_inspector_has_focus_and_in_pieces
     frame(&mut a);
     assert_ne!(a.focus, Focus::Preview);
     assert_eq!(a.preview.r.foot.h, 0.0, "the bar leaves with the focus");
+}
+
+#[test]
+fn a_text_filter_uses_the_inspector_footer_with_the_status_bar_disabled() {
+    let mut a = text_preview((1200, 700), "alpha\nbeta");
+    a.prefs.status_bar = false;
+    a.animations = false;
+    let body = a.preview.r.body;
+    mouse(&mut a, (body.x + 5.0, body.y + 5.0), MouseButton::Left, 1);
+    frame(&mut a);
+    assert_eq!(a.focus, Focus::Preview);
+    assert_eq!(a.preview.r.foot.h, 0.0);
+    assert!(a.run_action("inspector.filter", Instant::now()));
+    a.on_event(&Event::Char('b'), Instant::now());
+    frame(&mut a);
+    let r = a.preview.r;
+    assert!(r.filter.w > 0.0 && r.foot.contains(r.filter.x, r.filter.y));
+    assert_eq!(a.preview.doc.as_ref().unwrap().shown, 1);
+    press(&mut a, Key::Escape, NO);
+    frame(&mut a);
+    assert_eq!(a.preview.r.foot.h, 0.0);
 }
 
 #[test]

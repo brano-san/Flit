@@ -1069,10 +1069,15 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let st = self.preview.state;
         let shown = st.visible && !self.search.active && !self.on_home();
-        let foot_on = shown && self.focus == Focus::Preview && (self.prefs.status_bar || self.preview.filter.is_some());
-        let (now, animate) = (self.clock(), self.animations);
-        self.motion |= self.preview.foot_slide.aim(if foot_on { s(FOOT_H) } else { 0.0 }, animate, now, super::panels::SPLIT);
-        let foot_h = self.preview.foot_slide.value(now, super::panels::SPLIT).round();
+        let foot_h = if matches!(self.preview.content, Content::Media { .. }) {
+            self.preview.foot_slide = Default::default();
+            0.0
+        } else {
+            let foot_on = shown && self.focus == Focus::Preview && (self.prefs.status_bar || self.preview.filter.is_some());
+            let now = self.clock();
+            self.motion |= self.preview.foot_slide.aim(if foot_on { s(FOOT_H) } else { 0.0 }, self.animations, now, super::panels::SPLIT);
+            self.preview.foot_slide.value(now, super::panels::SPLIT).round()
+        };
         let l = &mut self.layout;
         l.bottom = l.status.y;
         let (x0, w, top, end) = (l.header.x, l.header.right(), l.toolbar.bottom(), l.status.bottom());
