@@ -1,6 +1,7 @@
 use crate::hdr_gpu::{ToneMapper, OUTPUT_POOL_LIMIT};
 use std::mem::ManuallyDrop;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL, E_POINTER};
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Media::MediaFoundation::*;
@@ -38,17 +39,18 @@ impl HdrColor {
     }
 }
 
-pub(crate) fn create(device: &ID3D11Device) -> Result<IMFTransform> {
+pub(crate) fn create(device: &ID3D11Device, failed: Arc<AtomicBool>) -> Result<IMFTransform> {
     ToneMapper::check_support(device)?;
     unsafe {
         let attributes = attributes()?;
         attributes.SetUINT32(&MF_SA_D3D11_AWARE, 1)?;
-        Ok(Effect { attributes, state: Mutex::new(State::default()), device: device.clone() }.into())
+        Ok(Effect { failed, attributes, state: Mutex::new(State::default()), device: device.clone() }.into())
     }
 }
 
 #[implement(IMFTransform)]
 struct Effect {
+    failed: Arc<AtomicBool>,
     attributes: IMFAttributes,
     state: Mutex<State>,
     device: ID3D11Device,
@@ -479,7 +481,12 @@ impl IMFTransform_Impl for Effect_Impl {
             }
             buffer.dwStatus = 0;
             buffer.pEvents = ManuallyDrop::new(None);
-            buffer.pSample = ManuallyDrop::new(Some(state.convert(&self.device)?));
+            let sample = state.convert(&self.device).inspect_err(|error| {
+                if state.pending.is_some() && ![MF_E_TRANSFORM_TYPE_NOT_SET, MF_E_TRANSFORM_STREAM_CHANGE, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_SAMPLEALLOCATOR_EMPTY].contains(&error.code()) {
+                    self.failed.store(true, Ordering::Relaxed);
+                }
+            })?;
+            buffer.pSample = ManuallyDrop::new(Some(sample));
         }
         Ok(())
     }

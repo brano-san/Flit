@@ -187,7 +187,7 @@ fn transferred_preview_matches_reference() {
                 hr.ok().unwrap();
                 (hr == S_OK).then_some(())
             });
-            let pixels = transferred_frame(&gpu.0, engine).unwrap();
+            let pixels = transferred_frame(&gpu.device, engine).unwrap();
             drop(player);
             compare(clip, &pixels, &expected);
         }
@@ -251,7 +251,9 @@ struct ClipCopy(PathBuf);
 
 impl ClipCopy {
     fn new(source: &Path) -> Self {
-        let name = format!("flit-hdr-release-{}.mp4", std::process::id());
+        static COPIES: AtomicU64 = AtomicU64::new(0);
+        let copy_id = COPIES.fetch_add(1, Ordering::Relaxed);
+        let name = format!("flit-hdr-release-{}-{copy_id}.mp4", std::process::id());
         let path = source.with_file_name(name);
         let mut output = std::fs::File::create_new(&path).unwrap();
         let copy = Self(path);
@@ -317,5 +319,73 @@ fn hosted_preview_matches_reference_and_releases_the_playing_file() {
             }
             wait_event(hwnd, "release", |ev| matches!(ev, HostEvent::Released { gen: 1 }));
         }
+    }
+}
+
+#[test]
+#[ignore = "requires a desktop, D3D11, HEVC and FLIT_HDR_FIXTURES"]
+fn a_failed_video_effect_reopens_once_and_restores_playback() {
+    unsafe {
+        let _thread = MediaThread::start();
+        let window = TestWindow::new();
+        let host = host_window(window.0, 0).unwrap();
+        place(host, Some(Rect::new(0.0, 0.0, 320.0, 180.0)));
+        let copy = ClipCopy::new(&fixture("hdr10"));
+        let path = FsPath::parse(&copy.0.to_string_lossy()).unwrap();
+        let mut player = open_media(&path, host, true, 0.375).unwrap();
+        player.command(MediaCmd::Play);
+        wait_for("initial playback", || (player.engine.GetCurrentTime() > 0.1).then_some(()));
+        let at = player.engine.GetCurrentTime();
+        let original = player.engine.clone();
+        player.engine.SetErrorCode(MF_MEDIA_ENGINE_ERR_DECODE).unwrap();
+        assert!(player.update(&path, host, at).is_err());
+        assert_eq!(player.engine, original);
+
+        let gpu = player.gpu.as_ref().unwrap();
+        let kind = MFCreateMediaType().unwrap();
+        kind.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video).unwrap();
+        kind.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_P010).unwrap();
+        kind.SetUINT64(&MF_MT_FRAME_SIZE, (640 << 32) | 360).unwrap();
+        kind.SetUINT32(&MF_MT_VIDEO_PRIMARIES, MFVideoPrimaries_BT2020.0 as u32).unwrap();
+        kind.SetUINT32(&MF_MT_TRANSFER_FUNCTION, MFVideoTransFunc_2084.0 as u32).unwrap();
+        let effect = crate::hdr_effect::create(&gpu.device, Arc::clone(&gpu.effect_failed)).unwrap();
+        let sdr = effect.GetInputAvailableType(0, 1).unwrap();
+        sdr.SetUINT64(&MF_MT_FRAME_SIZE, (640 << 32) | 360).unwrap();
+        effect.SetInputType(0, &sdr, 0).unwrap();
+        effect.SetOutputType(0, &effect.GetOutputAvailableType(0, 0).unwrap(), 0).unwrap();
+        effect.SetInputType(0, &kind, 0).unwrap();
+        let change = effect.ProcessOutput(0, &mut [MFT_OUTPUT_DATA_BUFFER::default()], &mut 0).unwrap_err();
+        assert_eq!(change.code(), MF_E_TRANSFORM_STREAM_CHANGE);
+        assert!(!gpu.effect_failed.load(Ordering::Relaxed));
+        effect.SetOutputType(0, &effect.GetOutputAvailableType(0, 0).unwrap(), 0).unwrap();
+        effect.ProcessInput(0, &MFCreateSample().unwrap(), 0).unwrap();
+        assert!(effect.ProcessOutput(0, &mut [MFT_OUTPUT_DATA_BUFFER::default()], &mut 0).is_err());
+        assert!(gpu.effect_failed.load(Ordering::Relaxed));
+        drop(effect);
+        assert!(!player.update(&path, host, at).unwrap());
+        assert_ne!(player.engine, original);
+        assert!(player.gpu.is_none());
+        assert!(player.resume_at.unwrap() >= at - 0.05);
+        assert_eq!(player.engine.GetVolume(), 0.375);
+        drop(original);
+        place(host, Some(Rect::new(0.0, 0.0, WIDTH as f32, HEIGHT as f32)));
+        player.command(MediaCmd::Seek(1.25));
+        wait_for("resumed playback", || {
+            player.update(&path, host, at).unwrap();
+            (!player.engine.IsPaused().as_bool() && player.engine.GetCurrentTime() >= 1.25).then_some(())
+        });
+        player.command(MediaCmd::Pause);
+        assert!(player.engine.IsPaused().as_bool());
+        wait_for("resized video in the lower-right quarter", || {
+            let pixels = window_frame(host);
+            pixels.chunks_exact(WIDTH * 4).skip(HEIGHT / 2).step_by(10)
+                .flat_map(|row| row.chunks_exact(4).skip(WIDTH / 2).step_by(10))
+                .any(|p| p[0].abs_diff(p[1]) > 30).then_some(())
+        });
+        player.engine.SetErrorCode(MF_MEDIA_ENGINE_ERR_DECODE).unwrap();
+        assert!(player.update(&path, host, at).is_err());
+        player.engine.Shutdown().unwrap();
+        drop(player);
+        std::fs::remove_file(&copy.0).unwrap();
     }
 }
