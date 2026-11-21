@@ -144,6 +144,14 @@ fn user_hlg_playback_honours_the_preview_controls_and_releases_the_file() {
     assert!(player.order(Order::Pause(false)));
     wait_for(&|position, duration, playing| playing && position >= duration - 4.0);
     wait_for(&|position, duration, playing| !playing && position == duration);
+    let shutdown = Instant::now() + Duration::from_secs(5);
+    loop {
+        match events.recv_timeout(shutdown.saturating_duration_since(Instant::now())) {
+            Ok(_) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(_) => panic!("the player kept the video open after EOF"),
+        }
+    }
     assert!(!player.order(Order::Pause(false)), "EOF ends the session");
     player.stop().unwrap().join().unwrap();
     let mut descriptors = std::fs::read_dir("/proc/self/fd").unwrap().flatten();
