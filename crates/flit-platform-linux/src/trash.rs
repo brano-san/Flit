@@ -97,11 +97,28 @@ fn parse_local_time(s: &[u8]) -> Option<i64> {
 }
 
 fn remove_any(p: &Path) -> io::Result<()> {
-    if fs::symlink_metadata(p)?.is_dir() {
-        fs::remove_dir_all(p)
-    } else {
-        fs::remove_file(p)
+    if !fs::symlink_metadata(p)?.is_dir() {
+        return fs::remove_file(p);
     }
+    match fs::remove_dir_all(p) {
+        Err(e) if e.kind() == io::ErrorKind::PermissionDenied => remove_forcing(p, unsafe { libc::getuid() }),
+        done => done,
+    }
+}
+
+fn remove_forcing(p: &Path, uid: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = fs::symlink_metadata(p)?;
+    if !meta.is_dir() {
+        return fs::remove_file(p);
+    }
+    if meta.uid() == uid && meta.mode() & 0o700 != 0o700 {
+        fs::set_permissions(p, fs::Permissions::from_mode((meta.mode() & 0o7777) | 0o700))?;
+    }
+    for entry in fs::read_dir(p)? {
+        remove_forcing(&entry?.path(), uid)?;
+    }
+    fs::remove_dir(p)
 }
 
 fn now_secs() -> i64 {

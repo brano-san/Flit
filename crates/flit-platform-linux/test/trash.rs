@@ -111,3 +111,57 @@ fn other_mounts_prefer_a_sticky_shared_trash_and_otherwise_their_own_folder() {
     symlink(sticky.join(".Trash"), linked.join(".Trash")).unwrap();
     assert_eq!(trash.top_trash(&linked), own(&linked), "a symbolic link is never trusted as the shared Trash");
 }
+
+fn as_root() -> bool {
+    (unsafe { libc::geteuid() }) == 0
+}
+
+#[test]
+fn emptying_the_trash_removes_folders_with_read_only_subfolders() {
+    use std::os::unix::fs::PermissionsExt;
+    if as_root() {
+        return;
+    }
+    let t = Temp::new("trash-readonly");
+    let trash = home(&t);
+    let project = t.path().join("project");
+    let objects = project.join(".git/objects/ab");
+    std::fs::create_dir_all(&objects).unwrap();
+    std::fs::write(objects.join("cdef"), b"blob").unwrap();
+    std::fs::set_permissions(objects.join("cdef"), std::fs::Permissions::from_mode(0o444)).unwrap();
+    std::fs::set_permissions(&objects, std::fs::Permissions::from_mode(0o555)).unwrap();
+    std::fs::set_permissions(project.join(".git/objects"), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let moved = trash.trash(&project).unwrap();
+    assert!(std::fs::remove_dir_all(&moved).is_err(), "a plain recursive delete is refused, as the user saw");
+    let (removed, error) = trash.empty(&[t.path().join("data/Trash")]);
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(removed, std::slice::from_ref(&moved));
+    assert!(!moved.exists());
+    assert_eq!(std::fs::read_dir(t.path().join("data/Trash/info")).unwrap().count(), 0, "its info file goes too");
+}
+
+#[test]
+fn forcing_a_delete_never_follows_links_out_of_the_trash() {
+    use std::os::unix::fs::PermissionsExt;
+    if as_root() {
+        return;
+    }
+    let t = Temp::new("trash-links");
+    let trash = home(&t);
+    let outside = t.path().join("outside");
+    std::fs::create_dir_all(outside.join("keep")).unwrap();
+    std::fs::write(outside.join("keep/file"), b"x").unwrap();
+    std::fs::set_permissions(outside.join("keep"), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let folder = t.path().join("folder");
+    let locked = folder.join("locked");
+    std::fs::create_dir_all(&locked).unwrap();
+    std::os::unix::fs::symlink(&outside, locked.join("link")).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let moved = trash.trash(&folder).unwrap();
+    let (_, error) = trash.empty(&[t.path().join("data/Trash")]);
+    assert!(error.is_none(), "{error:?}");
+    assert!(!moved.exists());
+    assert!(outside.join("keep/file").exists(), "the link target is untouched");
+    assert_eq!(std::fs::metadata(outside.join("keep")).unwrap().mode() & 0o777, 0o555, "its permissions too");
+    std::fs::set_permissions(outside.join("keep"), std::fs::Permissions::from_mode(0o755)).unwrap();
+}
