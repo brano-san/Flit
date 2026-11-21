@@ -24,8 +24,7 @@ fn blocks() {
             (Block::Rule, String::new()),
             (Block::Code, "fn x() {}".into()),
             (Block::Heading(1), "Setext".into()),
-            (Block::Body, "a  \u{2502}  b".into()),
-            (Block::Body, "1  \u{2502}  2".into()),
+            (Block::Table(0), "ab12".into()),
         ]
     );
     assert!(d.wrap && !d.mono);
@@ -70,4 +69,22 @@ fn large_markdown_timing() {
     }
     timings.sort();
     eprintln!("{} bytes, median of five parses: {:?}", input.len(), timings[2]);
+}
+
+#[test]
+fn table_cells_keep_their_alignment_text_and_inline_formatting() {
+    use crate::preview::Alignment::{Center, Left, Right};
+
+    let d = markdown("Name | **Status** | Score\n:--- | :---: | ---:\nfoo\\|bar | **ok** | `10`\nnext | | 2");
+    assert_eq!(d.paras.len(), 1);
+    let Block::Table(i) = d.paras[0].block else { panic!("expected a table") };
+    let table = &d.tables[i];
+    assert_eq!(table.align, [Left, Center, Right]);
+    let cells: Vec<Vec<String>> = table.rows.iter().map(|row| {
+        row.iter().map(|cell| cell.clone().map(|ri| d.run_text(&d.runs[ri as usize])).collect()).collect()
+    }).collect();
+    assert_eq!(cells, [["Name", "Status", "Score"], ["foo|bar", "ok", "10"], ["next", "", "2"]]);
+    assert!(table.rows[0].iter().flat_map(Clone::clone).all(|ri| d.runs[ri as usize].bold));
+    assert!(d.runs[table.rows[1][1].start as usize].bold);
+    assert!(d.runs[table.rows[1][2].start as usize].mono);
 }

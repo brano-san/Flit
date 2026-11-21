@@ -348,6 +348,74 @@ fn documents_wrap_to_the_pane_width() {
 }
 
 #[test]
+fn markdown_tables_wrap_cells_inside_the_pane_and_paint_the_header() {
+    let mut a = app((900, 600));
+    let d = preview::markdown_doc("| L | C | R |\n|:---|:---:|---:|\n| ab | ABCDEFGHIJKLMNO | 1234 |\n\nafter");
+    assert!(line_matches(&d, 0, "fghij"));
+    assert!(!line_matches(&d, 0, "lcr"));
+    let wide = layout_doc(&mut Gfx::new(Mono, 1024), &d, 400.0, (1.0, 12.5), &mut FxHashMap::default(), true, "");
+    let header = &wide.pieces[0..3];
+    let values = &wide.pieces[3..6];
+    assert_eq!(header[0].x, values[0].x);
+    assert_eq!(header[1].x, values[1].x + 70.0);
+    assert_eq!(header[2].x, values[2].x + 30.0);
+    a.preview.content = Content::Doc(d);
+    a.preview.r.body = Rect::new(20.0, 10.0, 100.0, 500.0);
+    for theme in [crate::theme::LIGHT, crate::theme::DARK] {
+        let mut g = Gfx::new(Mono, 1024);
+        let h = a.draw_doc(&mut g, &theme);
+        let lay = a.preview.doc.as_ref().unwrap();
+        let Content::Doc(d) = &a.preview.content else { unreachable!() };
+        let mut center = String::new();
+        let mut center_lines = 0;
+        for l in &lay.lines {
+            for p in &lay.pieces[l.pieces.start as usize..l.pieces.end as usize] {
+                let s = &d.text[p.start as usize..p.end as usize];
+                assert!(p.x >= 0.0 && p.x + s.chars().count() as f32 * 10.0 <= 100.01, "{s} at {}", p.x);
+                if "ABCDEFGHIJKLMNO".contains(s) && l.y > 0.0 {
+                    center.push_str(s);
+                    center_lines += 1;
+                }
+            }
+        }
+        assert_eq!(center, "ABCDEFGHIJKLMNO");
+        assert!(center_lines > 1);
+        assert!(h > lay.lines.last().unwrap().y && lay.lines.last().unwrap().para == 1);
+        let solids: Vec<_> = g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::SOLID).collect();
+        assert!(solids.iter().any(|i| i.color == theme.hover.0));
+        assert!(solids.iter().any(|i| i.color == theme.separator.0 && i.rect[2] > i.rect[3]));
+        assert!(solids.iter().any(|i| i.color == theme.separator.0 && i.rect[2] < i.rect[3]));
+    }
+}
+
+#[test]
+fn markdown_tables_keep_every_column_visible_when_only_one_glyph_fits() {
+    let mut g = Gfx::new(Mono, 1024);
+    let d = preview::markdown_doc("A|B|C\n---|---|---\nx|y|z");
+    let lay = layout_doc(&mut g, &d, 10.0, (1.0, 12.5), &mut FxHashMap::default(), true, "");
+    let lines: Vec<_> = lay.lines.iter().map(|l| {
+        let pieces = &lay.pieces[l.pieces.start as usize..l.pieces.end as usize];
+        assert_eq!(pieces.len(), 1);
+        let piece = &pieces[0];
+        assert_eq!(piece.x, 0.0);
+        &d.text[piece.start as usize..piece.end as usize]
+    }).collect();
+    assert_eq!(lines, ["A", "x", "B", "y", "C", "z"]);
+}
+
+#[test]
+fn markdown_hard_breaks_start_new_visual_lines_in_the_same_paragraph() {
+    let mut g = Gfx::new(Mono, 512);
+    let d = preview::markdown_doc("one  \ntwo\\\n**three**");
+    let lay = layout_doc(&mut g, &d, 400.0, (1.0, 12.5), &mut FxHashMap::default(), true, "");
+    let lines: Vec<String> = lay.lines.iter().map(|l| {
+        assert_eq!(l.para, 0);
+        lay.pieces[l.pieces.start as usize..l.pieces.end as usize].iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect()
+    }).collect();
+    assert_eq!(lines, ["one", "two", "three"]);
+}
+
+#[test]
 fn details_tab_shows_and_edits_the_selection_tags() {
     use crate::tags::{TagRequest, TagStore, Tags, COLORS};
     let mut a = app((1200, 700));

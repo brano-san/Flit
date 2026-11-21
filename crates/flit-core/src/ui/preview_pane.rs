@@ -1,3 +1,6 @@
+mod document_layout;
+
+use document_layout::{Grid, TextFlow};
 use super::field::{Field, TextCmd};
 use super::menu::{Cmd, Mark};
 use super::options::{InspectorAt, INSPECTOR_SIZE};
@@ -237,6 +240,7 @@ struct DocLayout {
     key: u64,
     lines: Vec<VLine>,
     pieces: Vec<Piece>,
+    grids: Vec<Grid>,
     height: f32,
     wide: f32,
     shown: usize,
@@ -331,7 +335,7 @@ fn ui(px: f32, sc: f32, bold: bool) -> FontStyle {
 
 fn run_font(r: &Run, block: Block, sc: f32, mono: f32) -> FontStyle {
     match block {
-        _ if r.mono => FontStyle::new(FontFamily::Mono, mono * sc, false),
+        _ if r.mono => FontStyle::new(FontFamily::Mono, mono * sc, r.bold),
         Block::Heading(1) => ui(20.0, sc, true),
         Block::Heading(2) => ui(17.0, sc, true),
         Block::Heading(_) => ui(14.5, sc, true),
@@ -373,6 +377,16 @@ fn put(pieces: &mut Vec<Piece>, first: usize, run: u32, start: u32, end: u32, x:
 pub(super) fn line_matches(d: &Doc, k: usize, query: &str) -> bool {
     if query.is_empty() {
         return true;
+    }
+    if let Some(Block::Table(i)) = d.paras.get(k).map(|p| p.block) {
+        return d.tables[i].rows.iter().flatten().any(|cell| {
+            if cell.is_empty() {
+                return false;
+            }
+            let first = &d.runs[cell.start as usize];
+            let last = &d.runs[cell.end as usize - 1];
+            d.text[first.start as usize..last.end as usize].to_lowercase().contains(query)
+        });
     }
     let text: String = d.para_text(k).collect();
     text.to_lowercase().contains(query)
@@ -519,58 +533,24 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (
             y += (12.0 * sc).round();
             continue;
         }
+        let mut flow = TextFlow { gfx: g, doc: d, widths, scale: sc, mono, block };
+        if let Block::Table(index) = block {
+            flow.table(index, k as u32, width, (lh, base), &mut y, &mut out);
+            continue;
+        }
         let indent = match block {
             Block::Item { depth } => ((depth as f32 * 18.0 + 4.0) * sc).round(),
             Block::Quote => (14.0 * sc).round(),
             Block::Code if !d.mono => (8.0 * sc).round(),
             _ => 0.0,
         };
-        let (mut x, mut first, mut number) = (indent, out.pieces.len(), num);
-        let line = |out: &mut DocLayout, first: &mut usize, y: &mut f32, number: &mut u32| {
-            out.lines.push(VLine { y: *y, h: lh, base, block, num: *number, para: k as u32, pieces: *first as u32..out.pieces.len() as u32 });
-            *y += lh;
-            *first = out.pieces.len();
-            *number = 0;
-        };
-        for ri in para.runs.clone() {
-            let run = d.runs[ri as usize];
-            let font = run_font(&run, block, sc, mono);
-            let text = d.run_text(&run);
-            let mut at = run.start;
-            for token in text.split_inclusive(' ') {
-                let start = at;
-                at += token.len() as u32;
-                let trimmed = token.trim_end_matches(' ');
-                let tw: f32 = token.chars().map(|c| char_w(g, widths, c, font)).sum();
-                let core: f32 = trimmed.chars().map(|c| char_w(g, widths, c, font)).sum();
-                if wrap && x > indent && x + core > width {
-                    line(&mut out, &mut first, &mut y, &mut number);
-                    x = indent;
-                    if trimmed.is_empty() {
-                        continue;
-                    }
-                }
-                if wrap && core > width - indent {
-                    let mut pos = start;
-                    for c in token.chars() {
-                        let cw = char_w(g, widths, c, font);
-                        if x > indent && x + cw > width {
-                            line(&mut out, &mut first, &mut y, &mut number);
-                            x = indent;
-                        }
-                        put(&mut out.pieces, first, ri, pos, pos + c.len_utf8() as u32, x);
-                        pos += c.len_utf8() as u32;
-                        x += cw;
-                        out.wide = out.wide.max(x);
-                    }
-                    continue;
-                }
-                put(&mut out.pieces, first, ri, start, at, x);
-                x += tw;
-                out.wide = out.wide.max(x);
-            }
-        }
-        line(&mut out, &mut first, &mut y, &mut number);
+        let mut number = num;
+        flow.lines(para.runs.clone(), indent..width, wrap, &mut out.pieces, |pieces, end| {
+            out.lines.push(VLine { y, h: lh, base, block, num: number, para: k as u32, pieces });
+            out.wide = out.wide.max(end);
+            y += lh;
+            number = 0;
+        });
         let next = d.paras.get(k + 1).map(|p| p.block);
         if !d.mono && !(block == Block::Code && next == Some(Block::Code)) {
             y += (6.0 * sc).round();
@@ -2273,6 +2253,7 @@ impl App {
         let dot_color = t.text_dim.alpha(0x70);
         p.hmax = if wrap { 0.0 } else { (lay.wide - width).max(0.0) };
         let shift = p.hscroll.min(p.hmax).round();
+        Grid::paint(&lay.grids, g, t, b, scroll);
         for line in &lay.lines[first..last] {
             let top = b.y + line.y - scroll;
             match line.block {
@@ -2306,7 +2287,9 @@ impl App {
                     g.dl.rect(Rect::new(x0 + a - shift, top, z - a, line.h), ink);
                 }
             }
+            let grid = if matches!(line.block, Block::Table(_)) { Grid::at(&lay.grids, line.y) } else { None };
             for piece in &lay.pieces[line.pieces.start as usize..line.pieces.end as usize] {
+                let instance = g.dl.instances.len();
                 let run = &d.runs[piece.run as usize];
                 let font = run_font(run, line.block, sc, mono);
                 let s = &d.text[piece.start as usize..piece.end as usize];
@@ -2322,6 +2305,9 @@ impl App {
                         }
                         x += cw;
                     }
+                }
+                if let Some(grid) = grid {
+                    g.dl.confine(instance, grid.cell_clip(b, piece.x));
                 }
             }
         }

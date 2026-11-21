@@ -99,6 +99,20 @@ pub enum Block {
     Quote,
     Item { depth: u8 },
     Rule,
+    Table(usize),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Alignment {
+    Left,
+    Center,
+    Right,
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Table {
+    pub align: Vec<Alignment>,
+    pub rows: Vec<Vec<Range<u32>>>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -112,6 +126,7 @@ pub struct Doc {
     pub text: String,
     pub runs: Vec<Run>,
     pub paras: Vec<Para>,
+    pub tables: Vec<Table>,
     pub mono: bool,
     pub wrap: bool,
     pub truncated: bool,

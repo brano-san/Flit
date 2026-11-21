@@ -1,5 +1,5 @@
 use super::syntax::{self, SYNTAXES};
-use super::{expand_tabs, Block, Doc, Tone};
+use super::{expand_tabs, Alignment, Block, Doc, Table, Tone};
 use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 #[derive(Default)]
@@ -12,7 +12,9 @@ struct Markdown {
     strong: usize,
     links: usize,
     images: usize,
-    cell: usize,
+    table: Option<Table>,
+    cell_start: u32,
+    table_head: bool,
 }
 
 impl Markdown {
@@ -125,14 +127,41 @@ pub fn markdown(src: &str) -> Doc {
                 md.finish();
                 md.doc.para(Block::Rule);
             }
-            Event::Start(Tag::TableRow | Tag::TableHead) => md.cell = 0,
-            Event::Start(Tag::TableCell) => {
-                if md.cell > 0 {
-                    md.doc.run("  │  ", Tone::Plain, false, false);
-                }
-                md.cell += 1;
+            Event::Start(Tag::Table(align)) => {
+                md.marker();
+                md.finish();
+                let align = align.into_iter().map(|a| match a {
+                    pulldown_cmark::Alignment::Center => Alignment::Center,
+                    pulldown_cmark::Alignment::Right => Alignment::Right,
+                    _ => Alignment::Left,
+                }).collect();
+                md.table = Some(Table { align, rows: Vec::new() });
             }
-            Event::End(TagEnd::TableRow | TagEnd::TableHead) => md.finish(),
+            Event::Start(Tag::TableRow | Tag::TableHead) => {
+                let table = md.table.as_mut().unwrap();
+                md.table_head = table.rows.is_empty();
+                if !md.table_head {
+                    md.doc.text.push('\n');
+                }
+                table.rows.push(Vec::with_capacity(table.align.len()));
+            }
+            Event::Start(Tag::TableCell) => {
+                let row = md.table.as_ref().unwrap().rows.last().unwrap();
+                if !row.is_empty() {
+                    md.doc.text.push('\t');
+                }
+                md.cell_start = md.doc.runs.len() as u32;
+            }
+            Event::End(TagEnd::TableCell) => {
+                let row = md.table.as_mut().unwrap().rows.last_mut().unwrap();
+                row.push(md.cell_start..md.doc.runs.len() as u32);
+            }
+            Event::End(TagEnd::Table) => {
+                let index = md.doc.tables.len();
+                md.doc.tables.push(md.table.take().unwrap());
+                md.doc.para(Block::Table(index));
+                md.table_head = false;
+            }
             Event::Start(Tag::Strong) => md.strong += 1,
             Event::End(TagEnd::Strong) => md.strong -= 1,
             Event::Start(Tag::Link { .. }) => md.links += 1,
@@ -142,13 +171,14 @@ pub fn markdown(src: &str) -> Doc {
             Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => {
                 md.marker();
                 let tone = if md.images > 0 { Tone::Dim } else if md.links > 0 { Tone::Link } else { Tone::Plain };
-                md.doc.run(&text, tone, md.strong > 0 || md.heading.is_some(), false);
+                md.doc.run(&text, tone, md.strong > 0 || md.heading.is_some() || md.table_head, false);
             }
             Event::Code(text) => {
                 md.marker();
-                md.doc.run(&text, Tone::String, md.strong > 0 || md.heading.is_some(), true);
+                md.doc.run(&text, Tone::String, md.strong > 0 || md.heading.is_some() || md.table_head, true);
             }
-            Event::SoftBreak | Event::HardBreak => md.doc.run(" ", Tone::Plain, false, false),
+            Event::SoftBreak => md.doc.run(" ", Tone::Plain, false, false),
+            Event::HardBreak => md.doc.run("\n", Tone::Plain, false, false),
             _ => {}
         }
     }
