@@ -1,20 +1,25 @@
 use std::{env, fs, path::PathBuf};
 
 fn main() {
-    println!("cargo:rerun-if-changed=shaders/ui.hlsl");
+    for shader in ["ui", "hdr"] {
+        println!("cargo:rerun-if-changed=shaders/{shader}.hlsl");
+    }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-    let src = fs::read_to_string("shaders/ui.hlsl").unwrap();
-    for (entry, target, file) in [("vs_main", "vs_5_0", "ui_vs.cso"), ("ps_main", "ps_5_0", "ui_ps.cso")] {
-        let code = compile(&src, entry, target).unwrap_or_else(|e| panic!("{entry}: {e}"));
-        fs::write(out.join(file), code).unwrap();
+    for shader in ["ui", "hdr"] {
+        let path = format!("shaders/{shader}.hlsl");
+        let src = fs::read_to_string(&path).unwrap();
+        for (entry, stage, target) in [("vs_main", "vs", "vs_5_0"), ("ps_main", "ps", "ps_5_0")] {
+            let code = compile(&src, &path, entry, target).unwrap_or_else(|e| panic!("{path} {entry}: {e}"));
+            fs::write(out.join(format!("{shader}_{stage}.cso")), code).unwrap();
+        }
     }
 }
 
 #[cfg(windows)]
-fn compile(src: &str, entry: &str, target: &str) -> Result<Vec<u8>, String> {
+fn compile(src: &str, name: &str, entry: &str, target: &str) -> Result<Vec<u8>, String> {
     use std::ffi::{c_void, CString};
     #[repr(C)]
     struct BlobVtbl {
@@ -47,7 +52,7 @@ fn compile(src: &str, entry: &str, target: &str) -> Result<Vec<u8>, String> {
         v
     }
     const OPTIMIZATION_LEVEL3: u32 = 1 << 15;
-    let (name, entry, target) = (CString::new("ui.hlsl").unwrap(), CString::new(entry).unwrap(), CString::new(target).unwrap());
+    let (name, entry, target) = (CString::new(name).unwrap(), CString::new(entry).unwrap(), CString::new(target).unwrap());
     let (mut code, mut errors) = (std::ptr::null_mut(), std::ptr::null_mut());
     unsafe {
         let hr = D3DCompile(
@@ -72,6 +77,6 @@ fn compile(src: &str, entry: &str, target: &str) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(not(windows))]
-fn compile(_: &str, _: &str, _: &str) -> Result<Vec<u8>, String> {
+fn compile(_: &str, _: &str, _: &str, _: &str) -> Result<Vec<u8>, String> {
     Err("cross-compiling to Windows needs a Windows host for D3DCompile".into())
 }

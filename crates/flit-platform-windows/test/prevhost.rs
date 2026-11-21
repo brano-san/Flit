@@ -29,3 +29,17 @@ fn deleting_renaming_or_moving_releases_the_previewed_file_and_copying_does_not(
     assert!(touches(&[p(r"C:\")], &p(r"C:\a\f.pdf")));
     assert!(!touches(&[p(r"C:\a\f")], &p(r"C:\a\f.pdf")) && !touches(&[p(r"C:\a\b")], &p(r"C:\a\bc\f.pdf")), "a name that only starts the same is left alone");
 }
+
+#[test]
+fn video_uses_the_available_device_and_retries_unsupported_devices_in_the_window() {
+    let unsupported = windows::core::Error::from_hresult(windows::Win32::Foundation::E_FAIL);
+    let render = |device: Option<&u8>| Ok(device.copied());
+    assert_eq!(video_or_legacy(Ok(7), render).unwrap(), Some(7));
+    assert_eq!(video_or_legacy(Err(unsupported.clone()), render).unwrap(), None);
+    let mut attempts = Vec::new();
+    video_or_legacy(Ok(7), |device| {
+        attempts.push(device.copied());
+        if device.is_some() { Err(unsupported.clone()) } else { Ok(()) }
+    }).unwrap();
+    assert_eq!(attempts, [Some(7), None]);
+}

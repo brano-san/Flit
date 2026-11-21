@@ -4,11 +4,16 @@ use flit_core::provider::FileOp;
 use flit_core::FsPath;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Condvar, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, BSTR, PCWSTR};
 use windows::Win32::Foundation::{COLORREF, HINSTANCE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Foundation::HMODULE;
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Graphics::Direct3D10::ID3D10Multithread;
+use windows::Win32::Graphics::Direct3D11::*;
+use windows::Win32::Graphics::Dxgi::Common::*;
 use windows::Win32::Graphics::Gdi::{CreateSolidBrush, DeleteObject, FillRect, HDC, HGDIOBJ};
 use windows::Win32::Media::MediaFoundation::*;
 use windows::Win32::System::Com::{CLSIDFromString, CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, CLSCTX_LOCAL_SERVER, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE, STGM_READ, STGM_SHARE_DENY_NONE};
@@ -47,7 +52,7 @@ struct Session {
     gen: u64,
     path: FsPath,
     handler: Option<IPreviewHandler>,
-    media: Option<IMFMediaEngine>,
+    media: Option<Player>,
     shown: (f64, f64, bool),
 }
 
@@ -294,27 +299,97 @@ pub(crate) unsafe fn open_handler(clsid: &str, path: &FsPath, host: HWND, bg: u3
     Ok(handler)
 }
 
-pub(crate) unsafe fn open_media(path: &FsPath, host: HWND, video: bool, volume: f32) -> windows::core::Result<IMFMediaEngine> {
+unsafe fn video_device() -> windows::core::Result<VideoDevice> {
+    let mut device = None;
+    D3D11CreateDevice(
+        None,
+        D3D_DRIVER_TYPE_HARDWARE,
+        HMODULE::default(),
+        D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        None,
+        D3D11_SDK_VERSION,
+        Some(&mut device),
+        None,
+        None,
+    )?;
+    let device = device.ok_or_else(windows::core::Error::empty)?;
+    let _ = device.cast::<ID3D10Multithread>()?.SetMultithreadProtected(true);
+    let (mut token, mut manager) = (0, None);
+    MFCreateDXGIDeviceManager(&mut token, &mut manager)?;
+    let manager = manager.ok_or_else(windows::core::Error::empty)?;
+    manager.ResetDevice(&device, token)?;
+    Ok(VideoDevice { device, manager, effect_failed: Arc::new(AtomicBool::new(false)) })
+}
+
+#[derive(Clone)]
+struct VideoDevice {
+    device: ID3D11Device,
+    manager: IMFDXGIDeviceManager,
+    effect_failed: Arc<AtomicBool>,
+}
+
+fn video_or_legacy<G, T>(device: windows::core::Result<G>, mut create: impl FnMut(Option<&G>) -> windows::core::Result<T>) -> windows::core::Result<T> {
+    match device.and_then(|gpu| create(Some(&gpu))) {
+        Ok(engine) => Ok(engine),
+        Err(e) => {
+            tracing::debug!("preview video device: {e}");
+            create(None)
+        }
+    }
+}
+
+unsafe fn start_mf() -> windows::core::Result<()> {
     if !MF.get() {
         MFStartup(MF_VERSION, MFSTARTUP_FULL)?;
         MF.set(true);
     }
+    Ok(())
+}
+
+unsafe fn open_media(path: &FsPath, host: HWND, video: bool, volume: f32) -> windows::core::Result<Player> {
+    start_mf()?;
+    let host = video.then_some(host);
+    let (engine, gpu) = if video {
+        video_or_legacy(video_device(), |gpu| Ok((create_engine(host, true, gpu)?, gpu.cloned())))?
+    } else {
+        (create_engine(None, false, None)?, None)
+    };
+    load_media(&engine, path, volume)?;
+    Ok(Player { engine, gpu, resume_at: None, play_requested: false })
+}
+
+unsafe fn create_engine(host: Option<HWND>, video: bool, gpu: Option<&VideoDevice>) -> windows::core::Result<IMFMediaEngine> {
     let factory: IMFMediaEngineClassFactory = CoCreateInstance(&CLSID_MFMediaEngineClassFactory, None, CLSCTX_INPROC_SERVER)?;
     let mut attrs = None;
-    MFCreateAttributes(&mut attrs, 2)?;
+    MFCreateAttributes(&mut attrs, 4)?;
     let attrs = attrs.ok_or_else(windows::core::Error::empty)?;
     let notify: IMFMediaEngineNotify = Notify.into();
     attrs.SetUnknown(&MF_MEDIA_ENGINE_CALLBACK, &notify)?;
-    let flags = if video {
-        attrs.SetUINT64(&MF_MEDIA_ENGINE_PLAYBACK_HWND, host.0 as u64)?;
-        0
-    } else {
-        MF_MEDIA_ENGINE_AUDIOONLY.0 as u32
-    };
+    if let Some(hwnd) = host {
+        attrs.SetUINT64(&MF_MEDIA_ENGINE_PLAYBACK_HWND, hwnd.0 as u64)?;
+    }
+    if let Some(gpu) = gpu {
+        attrs.SetUnknown(&MF_MEDIA_ENGINE_DXGI_MANAGER, &gpu.manager)?;
+        attrs.SetUINT32(&MF_MEDIA_ENGINE_VIDEO_OUTPUT_FORMAT, DXGI_FORMAT_B8G8R8A8_UNORM.0 as u32)?;
+    }
+    let flags = if video { 0 } else { MF_MEDIA_ENGINE_AUDIOONLY.0 as u32 };
     let engine = factory.CreateInstance(flags, &attrs)?;
-    engine.SetVolume(volume as f64)?;
-    engine.SetSource(&BSTR::from(path.display().as_ref()))?;
+    if let Some(gpu) = gpu {
+        let insert = crate::hdr_effect::create(&gpu.device, Arc::clone(&gpu.effect_failed)).and_then(|effect| engine.cast::<IMFMediaEngineEx>()?.InsertVideoEffect(&effect, true));
+        if let Err(error) = insert {
+            let _ = engine.Shutdown();
+            return Err(error);
+        }
+    }
     Ok(engine)
+}
+
+unsafe fn load_media(engine: &IMFMediaEngine, path: &FsPath, volume: f32) -> windows::core::Result<()> {
+    let result = engine.SetVolume(volume as f64).and_then(|()| engine.SetSource(&BSTR::from(path.display().as_ref())));
+    if result.is_err() {
+        let _ = engine.Shutdown();
+    }
+    result
 }
 
 fn close(s: Session) {
@@ -323,7 +398,7 @@ fn close(s: Session) {
             let _ = h.Unload();
         }
         if let Some(m) = s.media {
-            let _ = m.Shutdown();
+            let _ = m.engine.Shutdown();
         }
     }
 }
@@ -346,19 +421,79 @@ unsafe fn show(parent: isize, host: HWND, gen: u64, what: Hosted, path: &FsPath,
     }
 }
 
-unsafe fn media(s: &Session, cmd: MediaCmd) {
-    let Some(m) = &s.media else { return };
-    let _ = match cmd {
-        MediaCmd::Play => {
-            if m.IsEnded().as_bool() {
-                let _ = m.SetCurrentTime(0.0);
-            }
-            m.Play()
+struct Player {
+    engine: IMFMediaEngine,
+    gpu: Option<VideoDevice>,
+    resume_at: Option<f64>,
+    play_requested: bool,
+}
+
+impl Player {
+    unsafe fn resize(&self, rect: &RECT) {
+        if let Ok(ex) = self.engine.cast::<IMFMediaEngineEx>() {
+            let _ = ex.UpdateVideoStream(None, Some(rect), None);
         }
-        MediaCmd::Pause => m.Pause(),
-        MediaCmd::Seek(t) => m.SetCurrentTime(t),
-        MediaCmd::Volume(v) => m.SetVolume(v as f64),
-    };
+    }
+
+    unsafe fn update(&mut self, path: &FsPath, host: HWND, last_position: f64) -> Result<bool, String> {
+        let error = self.engine.GetError().ok();
+        if self.gpu.as_ref().is_some_and(|gpu| {
+            gpu.effect_failed.load(Ordering::Relaxed) || gpu.device.GetDeviceRemovedReason().is_err()
+        }) {
+            let current = self.engine.GetCurrentTime();
+            let position = if current.is_finite() && current > 0.0 { current } else { last_position.max(0.0) };
+            let volume = self.engine.GetVolume();
+            let _ = self.engine.Shutdown();
+            self.gpu = None;
+            self.engine = create_engine(Some(host), true, None).map_err(|e| crate::error_reason(&e))?;
+            load_media(&self.engine, path, volume as f32).map_err(|e| crate::error_reason(&e))?;
+            self.resume_at = Some(position);
+            return Ok(false);
+        }
+        if let Some(e) = error {
+            return Err(format!("media error {}", e.GetErrorCode()));
+        }
+        if let Some(position) = self.resume_at {
+            if self.engine.GetReadyState() < MF_MEDIA_ENGINE_READY_HAVE_METADATA.0 as u16 {
+                return Ok(false);
+            }
+            self.resize(&client(host));
+            if position > 0.0 {
+                self.engine.SetCurrentTime(position).map_err(|e| crate::error_reason(&e))?;
+            }
+            if self.play_requested {
+                self.engine.Play().map_err(|e| crate::error_reason(&e))?;
+            }
+            self.resume_at = None;
+        }
+        Ok(true)
+    }
+
+    unsafe fn command(&mut self, cmd: MediaCmd) {
+        let m = &self.engine;
+        let _ = match cmd {
+            MediaCmd::Play => {
+                self.play_requested = true;
+                if self.resume_at.is_some() { return; }
+                if m.IsEnded().as_bool() {
+                    let _ = m.SetCurrentTime(0.0);
+                }
+                m.Play()
+            }
+            MediaCmd::Pause => {
+                self.play_requested = false;
+                m.Pause()
+            }
+            MediaCmd::Seek(t) => {
+                if let Some(position) = &mut self.resume_at {
+                    *position = t;
+                    return;
+                }
+                m.SetCurrentTime(t)
+            }
+            MediaCmd::Volume(v) => m.SetVolume(v as f64),
+        };
+    }
 }
 
 unsafe fn poll(worker: HWND) {
@@ -366,12 +501,20 @@ unsafe fn poll(worker: HWND) {
     let (dead, any) = SESSIONS.with(|all| {
         let mut all = all.borrow_mut();
         for (&parent, s) in all.iter_mut() {
-            let Some(m) = &s.media else { continue };
-            if let Ok(e) = m.GetError() {
-                failed.push((parent, s.gen, e.GetErrorCode()));
-                continue;
+            let Some(player) = &mut s.media else { continue };
+            match player.update(&s.path, s.host, s.shown.0) {
+                Ok(true) => {}
+                Ok(false) => continue,
+                Err(message) => {
+                    failed.push((parent, s.gen, message));
+                    continue;
+                }
             }
+            let m = &player.engine;
             let ended = m.IsEnded().as_bool();
+            if ended {
+                player.play_requested = false;
+            }
             let dur = m.GetDuration();
             let dur = if dur.is_finite() { dur } else { 0.0 };
             let now = (if ended { dur } else { m.GetCurrentTime() }, dur, !ended && !m.IsPaused().as_bool());
@@ -380,14 +523,14 @@ unsafe fn poll(worker: HWND) {
                 post(parent, HostEvent::Media { gen: s.gen, position: now.0, duration: now.1, playing: now.2 });
             }
         }
-        let dead: Vec<_> = failed.iter().map(|&(parent, gen, code)| (parent, gen, code, all.remove(&parent))).collect();
+        let dead: Vec<_> = failed.into_iter().map(|(parent, gen, message)| (parent, gen, message, all.remove(&parent))).collect();
         (dead, all.values().any(|s| s.media.is_some()))
     });
-    for (parent, gen, code, session) in dead {
+    for (parent, gen, message, session) in dead {
         if let Some(s) = session {
             close(s);
         }
-        post(parent, HostEvent::Failed { gen, message: format!("media error {code}") });
+        post(parent, HostEvent::Failed { gen, message });
     }
     if any {
         SetTimer(Some(worker), 1, POLL_MS, None);
@@ -421,14 +564,14 @@ unsafe fn process(worker: HWND) {
                         if let Some(h) = &s.handler {
                             let _ = h.SetRect(&rc);
                         }
-                        if let Some(ex) = s.media.as_ref().and_then(|m| m.cast::<IMFMediaEngineEx>().ok()) {
-                            let _ = ex.UpdateVideoStream(None, Some(&rc), None);
+                        if let Some(player) = &s.media {
+                            player.resize(&rc);
                         }
                     }
                 }),
                 Job::Media { parent, cmd } => SESSIONS.with(|s| {
-                    if let Some(s) = s.borrow().get(&parent) {
-                        media(s, cmd);
+                    if let Some(player) = s.borrow_mut().get_mut(&parent).and_then(|s| s.media.as_mut()) {
+                        player.command(cmd);
                     }
                 }),
                 Job::Close { parent } => {
@@ -463,3 +606,7 @@ unsafe extern "system" fn worker_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPAR
 #[cfg(test)]
 #[path = "../test/prevhost.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test/preview_video.rs"]
+mod preview_video;
