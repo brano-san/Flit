@@ -132,14 +132,14 @@ pub fn try_file_lock(path: &Path) -> io::Result<Option<File>> {
 impl SocketInstance {
     pub fn acquire_in(runtime: &Path, open: &Open) -> Instance<Self> {
         let token = crate::activation::launcher_token();
-        let got = Self::lock_or_forward(runtime, &Open { activation: token.clone(), ..open.clone() });
+        let got = Self::lock_or_forward(runtime, Some(&Open { activation: token.clone(), ..open.clone() }));
         if let (Some(t), false) = (token, matches!(got, Instance::Forwarded)) {
             crate::window::startup_token(t);
         }
         got
     }
 
-    fn lock_or_forward(runtime: &Path, open: &Open) -> Instance<Self> {
+    fn lock_or_forward(runtime: &Path, open: Option<&Open>) -> Instance<Self> {
         let (lock_path, socket) = endpoints(runtime);
         match try_file_lock(&lock_path) {
             Ok(Some(file)) => {
@@ -152,9 +152,9 @@ impl SocketInstance {
                     Err(e) => Instance::Standalone(os_error("cannot create the single instance socket", &e)),
                 }
             }
-            Ok(None) => match forward(&socket, open) {
-                Ok(()) => Instance::Forwarded,
-                Err(e) => Instance::Standalone(e),
+            Ok(None) => match open.map(|open| forward(&socket, open)) {
+                Some(Err(e)) => Instance::Standalone(e),
+                _ => Instance::Forwarded,
             },
             Err(e) => Instance::Standalone(os_error("cannot lock the single instance file", &e)),
         }
@@ -166,6 +166,13 @@ impl SingleInstance for SocketInstance {
         match xdg::runtime_dir() {
             Some(dir) => Self::acquire_in(&dir, open),
             None => Instance::Standalone(PlatformError::new(-1, "XDG_RUNTIME_DIR is not set, so Flit cannot find a running instance")),
+        }
+    }
+
+    fn acquire_background() -> Instance<Self> {
+        match xdg::runtime_dir() {
+            Some(dir) => Self::lock_or_forward(&dir, None),
+            None => Self::acquire(&Open::default()),
         }
     }
 

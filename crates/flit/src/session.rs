@@ -3,6 +3,7 @@ use flit_core::Location;
 use flit_core::ui::{PanelsSession, Startup, WindowSession};
 use flit_platform::{Placement, Platform};
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::io::Write;
 use std::thread::JoinHandle;
@@ -12,6 +13,18 @@ const SETTLED: std::time::Duration = std::time::Duration::from_secs(60);
 
 pub fn restore_crash(startup: &Startup, unix: bool, settled: bool) -> bool {
     unix && settled && matches!(startup, Startup::Continue)
+}
+
+pub fn startup_windows(startup: &Startup, previous: Option<&Session>, restore_allowed: bool, restarted: bool) -> VecDeque<(WindowSession, Option<Placement>)> {
+    if !restore_allowed {
+        return VecDeque::new();
+    }
+    match startup {
+        _ if restarted => previous.into_iter().flat_map(Session::windows).collect(),
+        Startup::Continue => previous.into_iter().flat_map(Session::windows).collect(),
+        Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], ..Default::default() }, None)]),
+        Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), ..Default::default() }, None)]),
+    }
 }
 
 /// Map the requested window last so it gets focus even without a Wayland activation token.
@@ -128,6 +141,12 @@ impl Files {
 
     pub fn unmark(&self) {
         let _ = std::fs::remove_file(&self.marker);
+    }
+
+    pub fn finish(&self, snapshot: Option<&Session>) {
+        if snapshot.is_none_or(|s| write(&self.session, s)) {
+            self.unmark();
+        }
     }
 }
 

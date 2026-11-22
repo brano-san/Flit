@@ -21,17 +21,17 @@ impl Drop for Library {
 
 macro_rules! library_api {
     ($vis:vis struct $api:ident from $lib:literal {
-        $($field_vis:vis $field:ident = $symbol:literal: fn($($arg:ty),*) $(-> $ret:ty)?;)*
+        $($(#[$attr:meta])* $field_vis:vis $field:ident = $symbol:literal: fn($($arg:ty),*) $(-> $ret:ty)?;)*
     }) => {
         $vis struct $api {
-            $($field_vis $field: unsafe extern "C" fn($($arg),*) $(-> $ret)?,)*
+            $($(#[$attr])* $field_vis $field: unsafe extern "C" fn($($arg),*) $(-> $ret)?,)*
         }
 
         impl $api {
             fn load() -> Option<Self> {
                 let lib = $crate::symbols::Library::open($lib)?;
                 Some(Self {
-                    $($field: {
+                    $($(#[$attr])* $field: {
                         let symbol = lib.symbol($symbol)?;
                         unsafe { std::mem::transmute::<*mut std::ffi::c_void, unsafe extern "C" fn($($arg),*) $(-> $ret)?>(symbol.as_ptr()) }
                     },)*

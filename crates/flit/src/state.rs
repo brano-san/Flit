@@ -551,7 +551,7 @@ pub(crate) fn compatible_location(location: &Location) -> Location {
     }
 }
 
-fn file<P: Platform>() -> Option<PathBuf> {
+pub fn file<P: Platform>() -> Option<PathBuf> {
     P::state_dir().map(|d| d.join("state.bin"))
 }
 
@@ -570,13 +570,13 @@ pub fn load<P: Platform>() -> Saved {
 
 pub fn save<P: Platform>(s: &Saved) {
     let Some(f) = file::<P>() else { return };
+    save_to(&f, s);
+}
+
+pub fn save_to(f: &std::path::Path, s: &Saved) {
     let Some(bytes) = s.encode() else { return };
-    if let Some(dir) = f.parent() {
-        let _ = std::fs::create_dir_all(dir);
-    }
-    let tmp = f.with_extension(format!("{}.tmp", std::process::id()));
-    if std::fs::write(&tmp, bytes).is_ok() {
-        let _ = std::fs::rename(&tmp, &f);
+    if let Err(e) = crate::settings::write_atomic(f, &bytes) {
+        tracing::warn!("cannot save the window state: {e}");
     }
 }
 

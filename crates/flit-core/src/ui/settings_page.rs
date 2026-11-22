@@ -1818,6 +1818,7 @@ impl App {
         match line {
             Line::Off(i) if self.about.system_integration_unavailable && matches!(SETTINGS[*i].id, settings::AUTOSTART | settings::PROTOCOL_LINKS) => S::SettingsPageSystemUnavailable.t().into(),
             Line::Off(i) if settings::NEEDS_BUILTIN_ARCHIVES.contains(&SETTINGS[*i].id) => format!("{} {}", S::SettingsPageLineNeedsBuiltinArchives.t(), SETTINGS[*i].help.t()).into(),
+            Line::Off(i) if SETTINGS[*i].id == settings::BACKGROUND => S::BackgroundUnavailable.t().into(),
             Line::Off(i) => SETTINGS[*i].help.t().into(),
             Line::Setting(i) => SETTINGS[*i].help.t().into(),
             _ => "".into(),

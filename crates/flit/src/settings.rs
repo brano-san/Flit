@@ -10,8 +10,11 @@ use std::thread::JoinHandle;
 
 pub enum Job {
     Write(String),
+    SaveState(PathBuf, Box<crate::state::Saved>),
     Backup,
     Check,
+    #[cfg(target_os = "linux")]
+    CheckTray,
     Export(PathBuf, String, bool),
     Import(PathBuf),
     CacheSize,
@@ -20,11 +23,15 @@ pub enum Job {
     RaiseWatchLimit(fn() -> WatchLimit),
     SystemChanges(crate::system_changes::Action),
     ResolveLink(flit_platform::WindowId, flit_core::open::Open),
+    #[cfg(target_os = "linux")]
+    Portal(bool),
 }
 
 pub enum Reply {
     System { os: String, dates: (String, String), missing: Vec<flit_core::ui::MissingTool> },
     Changed(String),
+    #[cfg(target_os = "linux")]
+    TrayAvailable(bool),
     SaveFailed(String),
     Imported(Result<String, String>),
     Exported(Result<PathBuf, String>),
@@ -35,6 +42,8 @@ pub enum Reply {
     SystemChanges(crate::system_changes::Reply),
     SystemChangesUnavailable { notify: bool },
     ResolvedLink(flit_platform::WindowId, Option<crate::system_link::Link>),
+    #[cfg(target_os = "linux")]
+    Portal(bool, Result<bool, String>),
 }
 
 pub type Integrate = fn(bool) -> Result<(), PlatformError>;
@@ -101,6 +110,7 @@ fn work<P: Platform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>
                         }
                     }
                 }
+                Job::SaveState(path, saved) => crate::state::save_to(&path, &saved),
                 Job::Backup => {
                     if let Some(p) = &path {
                         let _ = std::fs::copy(p, backup_path(p));
@@ -112,6 +122,8 @@ fn work<P: Platform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>
                         reply(Reply::Changed(text));
                     }
                 }
+                #[cfg(target_os = "linux")]
+                Job::CheckTray => reply(Reply::TrayAvailable(flit_platform_linux_gui::tray_host_available())),
                 Job::Export(to, text, replace) => reply(export(to, &text, replace)),
                 Job::Import(from) => reply(Reply::Imported(std::fs::read_to_string(&from).map_err(|e| e.to_string()))),
                 Job::CacheSize => {
@@ -145,6 +157,12 @@ fn work<P: Platform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>
                         let notify = matches!(action, Action::Undo | Action::Autostart { startup: false, .. }
                             | Action::Protocol { startup: false, .. } | Action::RegisterArchive { startup: false });
                         reply(Reply::SystemChangesUnavailable { notify });
+                    }
+                }
+                #[cfg(target_os = "linux")]
+                Job::Portal(on) => {
+                    if let Some(path) = &path {
+                        reply(Reply::Portal(on, crate::portal_config::configure(path, on).map_err(|e| e.to_string())));
                     }
                 }
                 Job::CacheLimit(mb) => {
@@ -226,6 +244,10 @@ impl Settings {
             if previous.map_or(on, |was| was != on) {
                 self.send(Job::SystemChanges(crate::system_changes::Action::Protocol { on, startup: previous.is_none() }));
             }
+        }
+        #[cfg(target_os = "linux")]
+        if let Some(on) = flag(&values, settings::PORTAL_PICKER).filter(|on| *on != flag(&self.values, settings::PORTAL_PICKER).unwrap_or(false)) {
+            self.send(Job::Portal(on));
         }
         if let Some(level) = log_level(&values) {
             crate::logs::set_level(level);

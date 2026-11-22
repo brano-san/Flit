@@ -238,6 +238,7 @@ impl App {
             focus = Some(k);
         }
 
+        self.picker_accessibility(&mut t, &mut focus);
         t.focus = if self.active { focus } else { None };
         self.a11y_targets = targets;
         t

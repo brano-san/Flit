@@ -37,9 +37,11 @@ pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.a
 pub const PROTOCOL_LINKS: &str = "advanced.protocol_links";
 pub const AUTOSTART: &str = "advanced.autostart";
 pub const QUICK_ACCESS_SYNC: &str = "advanced.quick_access_sync";
+pub const BACKGROUND: &str = "windows.background";
+pub const PORTAL_PICKER: &str = "advanced.portal_file_chooser";
 pub const WINDOWS_ONLY: [&str; 6] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
 pub const WINDOW_TITLE: &str = "appearance.window_title";
-pub const LINUX_ONLY: [&str; 1] = [WINDOW_TITLE];
+pub const LINUX_ONLY: [&str; 2] = [WINDOW_TITLE, PORTAL_PICKER];
 
 fn browsed_archives_keep_builtin_handling(map: &mut Map<String, Json>) {
     if map.get("files.archives_as_folders") == Some(&Json::Bool(true)) {
@@ -443,9 +445,11 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.home_drives", Page::Windows, S::SettingsTitleGeneralHomeDrives, S::SettingsHelpGeneralHomeDrives, |a| a.widget_shown(Widget::Drives), |a, on| set_widget(a, Widget::Drives, on)),
     toggle("general.home_tags", Page::Windows, S::SettingsTitleGeneralHomeTags, S::SettingsHelpGeneralHomeTags, |a| a.widget_shown(Widget::Tags), |a, on| set_widget(a, Widget::Tags, on)),
     toggle("general.home_recent", Page::Windows, S::SettingsTitleGeneralHomeRecent, S::SettingsHelpGeneralHomeRecent, |a| a.widget_shown(Widget::Recent), |a, on| set_widget(a, Widget::Recent, on)),
+    toggle(BACKGROUND, Page::Windows, S::BackgroundTitle, S::BackgroundHelp, |a| a.background, |a, on| a.background = on),
     toggle(DEFAULT_MANAGER, Page::Advanced, S::SettingsTitleAdvancedDefaultManager, S::SettingsHelpAdvancedDefaultManager, |a| a.default_manager, |a, on| a.default_manager = on),
     toggle(QUICK_ACCESS_SYNC, Page::Advanced, S::SettingsTitleAdvancedQuickAccessSync, S::SettingsHelpAdvancedQuickAccessSync, |a| a.quick_access_sync, |a, on| a.quick_access_sync = on),
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
+    toggle(PORTAL_PICKER, Page::Advanced, S::PickPortalTitle, S::PickPortalHelp, |a| a.portal_picker, |a, on| a.portal_picker = on),
     toggle(CHECK_UPDATES, Page::About, S::SettingsTitleUpdatesCheckOnStart, S::SettingsHelpUpdatesCheckOnStart, |a| a.updates.on_start, |a, on| a.updates.on_start = on),
     Setting { id: "updates.skipped", page: Page::About, title: S::SettingsTitleUpdatesSkipped, help: S::SettingsHelpUpdatesSkipped, kind: Kind::Strings(|a| a.updates.skipped.clone(), |a, v| a.updates.skipped = v) },
     Setting { id: "keys", page: Page::Advanced, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
@@ -475,6 +479,7 @@ impl Setting {
     pub fn enabled(&self, a: &App) -> bool {
         self.id != LONG_PATHS && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id)) && (self.id != WINDOW_TITLE || a.server_frames != Some(false))
             && (!a.about.system_integration_unavailable || !matches!(self.id, AUTOSTART | PROTOCOL_LINKS))
+            && (self.id != BACKGROUND || !a.caps.unix_paths || a.tray_available || a.background)
     }
 
     pub fn get(&self, a: &App) -> Value {

@@ -20,6 +20,7 @@ pub mod mimeapps;
 pub mod name;
 pub mod nav;
 pub mod open;
+pub mod pick;
 pub mod path;
 pub mod preview;
 pub mod provider;

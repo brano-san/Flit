@@ -1,0 +1,3 @@
+title = "Keep Flit running after closing the last window"
+help = "The notification area icon lets you reopen Flit or quit."
+unavailable = "The desktop has no notification area for StatusNotifierItem icons."

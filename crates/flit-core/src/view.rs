@@ -92,6 +92,7 @@ pub struct DirView {
     pub anchor: Option<u32>,
     names: Option<FxHashMap<u64, SmallVec<[u32; 1]>>>,
     filter: Option<NameFilter>,
+    pick: Option<(bool, Option<Arc<crate::pick::Filter>>)>,
     groups: Vec<Group>,
     collapsed: Vec<u64>,
     shown: Option<Vec<u32>>,
@@ -118,6 +119,7 @@ impl DirView {
             anchor: None,
             names: None,
             filter: None,
+            pick: None,
             groups: Vec::new(),
             collapsed: Vec::new(),
             shown: None,
@@ -194,10 +196,18 @@ impl DirView {
         self.pos.clear();
         let l = &self.snap.listing;
         let tree = self.tree.as_ref().filter(|_| l.nested > 0 && self.snap.view.tree);
-        if tree.is_none() && self.hidden_types.is_empty() {
+        if tree.is_none() && self.hidden_types.is_empty() && self.pick.is_none() {
             return;
         }
-        let keep = |i: u32| self.filter.as_ref().is_none_or(|f| f.matched(i)) && (self.hidden_types.is_empty() || !self.hidden_types.contains(&type_key(l, i)));
+        let keep = |i: u32| {
+            self.filter.as_ref().is_none_or(|f| f.matched(i))
+                && (self.hidden_types.is_empty() || !self.hidden_types.contains(&type_key(l, i)))
+                && self.pick.as_ref().is_none_or(|(directories, filter)| {
+                    l.entries[i as usize].is_dir() || (!directories && filter.as_ref().is_none_or(|f| {
+                        f.matches_with_mime(l.name(i), l.picker_mime.get(&i).map(AsRef::as_ref))
+                    }))
+                })
+        };
         let mut rows = Vec::new();
         match tree {
             Some(open) => {
@@ -667,6 +677,9 @@ impl DirView {
                 continue;
             }
             let i = snap.listing.push_nested(child.name(k), e.meta(), e.accessed, folder);
+            if let Some(mime) = child.picker_mime.get(&k) {
+                snap.listing.picker_mime.insert(i, mime.clone());
+            }
             if let Some(label) = child.labeled(k) {
                 snap.listing.set_label(i, label);
             }
@@ -751,6 +764,22 @@ impl DirView {
             sort::sort_apart(&snap.listing, &snap.keys, view, &mut o);
             snap.order = o;
         }
+        self.rows_changed();
+        self.prune();
+    }
+
+    pub(crate) fn set_pick_filter(&mut self, directories: bool, filter: Option<Arc<crate::pick::Filter>>) {
+        if !directories && filter.is_none() {
+            return;
+        }
+        if self.pick.as_ref().is_some_and(|(d, f)| *d == directories && match (f, &filter) {
+            (Some(f), Some(g)) => Arc::ptr_eq(f, g),
+            (None, None) => true,
+            _ => false,
+        }) {
+            return;
+        }
+        self.pick = Some((directories, filter));
         self.rows_changed();
         self.prune();
     }

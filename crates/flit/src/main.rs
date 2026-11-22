@@ -26,6 +26,9 @@ mod system_journal;
 mod system_link;
 #[cfg(any(not(windows), test))]
 mod install_format;
+mod picker;
+#[cfg(any(test, target_os = "linux"))]
+mod portal_config;
 
 #[cfg(not(target_os = "linux"))]
 use flit_core::open::parse_args;
@@ -73,6 +76,7 @@ fn main() {
     let mut args: Vec<Vec<u8>> = Vec::new();
     let mut metrics: Option<PathBuf> = None;
     let mut activated = false;
+    let mut background = false;
     let raw: Vec<_> = std::env::args_os().skip(1).collect();
     let link = match system_link::cli(&raw) {
         Some(Ok(open)) => Some(open),
@@ -118,6 +122,26 @@ fn main() {
             update::resume_session();
         } else if a == "--unregister" {
             std::process::exit(system_changes::unregister::<P>());
+        } else if a == "--background" {
+            background = true;
+        } else if a == "--pick" {
+            let request = flit_core::pick::Request::from_cli(it.map(|a| wtf8(&a)).collect());
+            std::process::exit(picker::cli(request, started));
+        } else if a == "--file-chooser-portal" {
+            #[cfg(target_os = "linux")]
+            std::process::exit(flit_platform_linux_gui::file_chooser::run());
+        } else if a == "--file-chooser-request" {
+            #[cfg(target_os = "linux")]
+            std::process::exit(picker::portal_request(started));
+        } else if cfg!(target_os = "linux") && a == "--restore-file-chooser" {
+            #[cfg(target_os = "linux")]
+            if let Err(error) = settings::file::<P>().map_or(Ok(()), |path| portal_config::restore(&path)) {
+                use flit_core::i18n::{self, S};
+                picker::language();
+                eprintln!("{}", flit_core::tr!(S::PickPortalFailed, error = i18n::localize(&error.to_string())));
+                std::process::exit(1);
+            }
+            return;
         } else {
             args.push(wtf8(&a));
         }
@@ -130,9 +154,10 @@ fn main() {
     }
     update::on_start::<P>();
     let mut standalone = None;
+    let background = background && open.is_empty() && open.tag.is_none() && metrics.is_none() && !activated;
     let instance = match metrics {
         Some(_) => None,
-        None => match <P as Platform>::Instance::acquire(&open) {
+        None => match if background { <P as Platform>::Instance::acquire_background() } else { <P as Platform>::Instance::acquire(&open) } {
             Instance::Forwarded => {
                 if std::env::var_os("FLIT_TIMING").is_some() {
                     eprintln!("forwarded in {:?}", started.elapsed());
@@ -190,7 +215,7 @@ fn main() {
             tracing::info!("removed {gone} old unpacked copies");
         }
     });
-    if let Err(e) = app::run::<P>(open, instance, metrics, activated, started) {
+    if let Err(e) = app::run::<P>(open, instance, metrics, activated, background, None, started) {
         let ran = app::shown();
         if ran {
             tracing::error!("stopped: {e}");

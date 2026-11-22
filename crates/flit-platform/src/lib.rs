@@ -227,6 +227,14 @@ pub struct DropReply {
     pub onto: Option<FsPath>,
 }
 
+pub mod tray;
+
+pub enum Idle {
+    Exit,
+    Wait,
+    Open(WindowOptions),
+}
+
 pub trait WindowHandler<W: WindowSystem> {
     fn created(&mut self, window: &W::Window);
     fn event(&mut self, window: &W::Window, event: Event);
@@ -234,6 +242,9 @@ pub trait WindowHandler<W: WindowSystem> {
     fn redraw(&mut self, window: &W::Window);
     fn woken(&mut self, window: &W::Window);
     fn destroyed(&mut self, window: &W::Window);
+    fn idle(&mut self) -> Idle { Idle::Exit }
+    fn session_ending_without_windows(&mut self) {}
+    fn quit(&mut self) {}
     fn drag(&mut self, window: &W::Window, event: DragEvent) -> DropReply;
     fn accessibility(&mut self, _window: &W::Window) -> Option<flit_core::a11y::Tree> {
         None
@@ -245,7 +256,7 @@ pub trait WindowSystem: Sized + 'static {
     type Waker: Waker;
     fn new() -> Result<Self, PlatformError>;
     fn waker(&self) -> Self::Waker;
-    fn run<H: WindowHandler<Self>>(self, first: WindowOptions, handler: H) -> Result<(), PlatformError>;
+    fn run<H: WindowHandler<Self>>(self, first: Option<WindowOptions>, tray: Option<tray::Tray>, handler: H) -> Result<(), PlatformError>;
 }
 
 #[derive(Debug)]
@@ -657,6 +668,7 @@ pub enum Instance<S> {
 
 pub trait SingleInstance: Sized + Send + 'static {
     fn acquire(open: &Open) -> Instance<Self>;
+    fn acquire_background() -> Instance<Self> { Self::acquire(&Open::default()) }
     fn listen(self, opens: OpenSink, wake: Wake);
 }
 

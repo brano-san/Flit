@@ -21,6 +21,7 @@ pub(super) enum Confirmed {
     Pin(super::MenuKind, String, bool),
     Close,
     Quit,
+    Pick(crate::FsPath),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -103,6 +104,7 @@ impl App {
                 self.cancel_ops();
                 self.effects.push(super::Effect::Window(super::WindowCmd::Close));
             }
+            Confirmed::Pick(path) => self.pick_confirmed(path),
             Confirmed::Quit => {
                 self.cancel_ops();
                 self.effects.push(super::Effect::Window(super::WindowCmd::Quit));

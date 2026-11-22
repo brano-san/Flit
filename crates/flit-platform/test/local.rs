@@ -372,7 +372,7 @@ fn cancelled_list_publishes_nothing() {
     let slot = SnapshotSlot::default();
     let cancel = GenToken::default();
     cancel.set(2);
-    list(&fs(), 1, &p(r"C:\r"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &(Arc::new(|| {}) as Wake));
+    list(&fs(), 1, &p(r"C:\r"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &(Arc::new(|| {}) as Wake), None);
     assert!(slot.take().is_none());
 }
 
@@ -395,11 +395,11 @@ fn desktop_ini_is_read_only_for_listings_that_ask_for_the_folder_kind() {
     let fs = IniFs(AtomicUsize::new(0));
     let (slot, cancel, wake) = (SnapshotSlot::default(), GenToken::default(), Arc::new(|| {}) as Wake);
     cancel.set(4);
-    list(&fs, 4, &p(r"C:\v"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &wake);
+    list(&fs, 4, &p(r"C:\v"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &wake, None);
     assert_eq!((fs.0.load(Ordering::SeqCst), slot.kind(4)), (0, FolderKind::Unknown));
     slot.ask_kind(5);
     cancel.set(5);
-    list(&fs, 5, &p(r"C:\v"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &wake);
+    list(&fs, 5, &p(r"C:\v"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &wake, None);
     assert_eq!((fs.0.load(Ordering::SeqCst), slot.kind(5), slot.kind(4)), (1, FolderKind::Videos, FolderKind::Unknown));
 }
 
@@ -835,7 +835,7 @@ fn a_silent_share_reports_not_responding_until_it_answers() {
     let (slot, cancel) = (Arc::new(SnapshotSlot::default()), GenToken::default());
     cancel.set(1);
     let (watch, _) = unbounded();
-    let job = ListJob { tab: 1, gen: 1, path: p(r"\\srv\share"), view: ViewSpec::default(), case: CaseMode::Insensitive, out: slot.clone(), cancel: cancel.clone(), watch: None, tags: Arc::default() };
+    let job = ListJob { tab: 1, gen: 1, path: p(r"\\srv\share"), view: ViewSpec::default(), case: CaseMode::Insensitive, out: slot.clone(), cancel: cancel.clone(), watch: None, tags: Arc::default(), picker_mime: None };
     list_remote(fs, job, watch, Arc::new(|| {}), Duration::from_millis(50)).unwrap();
     let late = wait_for(&slot);
     assert_eq!(late.error, Some(FsError::not_responding()));
@@ -968,7 +968,7 @@ fn localized_folder_names_label_sort_and_filter_while_real_names_stay() {
     let (slot, cancel, wake) = (SnapshotSlot::default(), GenToken::default(), Arc::new(|| {}) as Wake);
     cancel.set(1);
     let dir = p(r"C:\flit-label-root");
-    list(&LabelFs, 1, &dir, ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &wake);
+    list(&LabelFs, 1, &dir, ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &wake, None);
     let snap = slot.take().unwrap();
     let l = &snap.listing;
     let shown: Vec<&str> = snap.order.iter().map(|&i| std::str::from_utf8(l.label(i)).unwrap()).collect();
@@ -1001,6 +1001,29 @@ fn folder_listings_ask_the_file_system_for_display_labels() {
     let slot = SnapshotSlot::default();
     let cancel = GenToken::default();
     cancel.set(1);
-    list(&DisplayLabelFs, 1, &p(r"C:\labels"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &(Arc::new(|| {}) as Wake));
+    list(&DisplayLabelFs, 1, &p(r"C:\labels"), ViewSpec::default(), CaseMode::Insensitive, Arc::default(), &slot, &cancel, &(Arc::new(|| {}) as Wake), None);
     assert_eq!(*LABELS_WANTED.lock().unwrap(), [true]);
+}
+
+#[test]
+fn file_picker_listing_classifies_files_only_when_requested() {
+    let wake: Wake = Arc::new(|| {});
+    let case = CaseMode::Insensitive;
+    let view = ViewSpec::default();
+    let slot = SnapshotSlot::default();
+    let cancel = GenToken::default();
+    let dir = p(r"C:\r");
+    cancel.set(1);
+    let classify = |path: &FsPath| {
+        assert_ne!(path.file_name(), b"sub", "the picker must not probe directories");
+        (path.file_name() == b"b.txt").then(|| vec!["text/plain".into()].into())
+    };
+    list(&fs(), 1, &dir, view, case, Arc::default(), &slot, &cancel, &wake, Some(classify));
+    let listed = slot.take().unwrap();
+    assert!(listed.done);
+    assert_eq!(listed.listing.name(0), b"b.txt");
+    assert_eq!(listed.listing.picker_mime[&0].as_ref(), ["text/plain"]);
+    assert_eq!(listed.listing.picker_mime.len(), 1);
+    list(&fs(), 1, &dir, view, case, Arc::default(), &slot, &cancel, &wake, None);
+    assert!(slot.take().unwrap().listing.picker_mime.is_empty());
 }

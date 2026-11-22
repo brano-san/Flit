@@ -4,6 +4,108 @@ use flit_platform::{OpenSink, Wake};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 use std::ptr::NonNull;
 
+#[path = "tray.rs"]
+pub(crate) mod tray;
+
+pub(crate) struct Bus {
+    pub(crate) api: &'static Api,
+    pub(crate) conn: *mut c_void,
+}
+
+impl Bus {
+    pub(crate) fn session() -> Option<Self> {
+        let api = load()?;
+        let address = CString::new(session_address()?).ok()?;
+        unsafe {
+            let mut err = Error::new();
+            (api.error_init)(&mut err);
+            let conn = (api.open_private)(address.as_ptr(), &mut err);
+            if conn.is_null() {
+                (api.error_free)(&mut err);
+                return None;
+            }
+            let bus = Self { api, conn };
+            let registered = (bus.api.register)(conn, &mut err) != 0;
+            (bus.api.error_free)(&mut err);
+            registered.then_some(bus)
+        }
+    }
+
+    pub(crate) fn call(&self, dest: &CStr, path: &CStr, interface: &CStr, member: &CStr, args: &[crate::atspi::V]) -> Option<Vec<crate::atspi::Arg>> {
+        unsafe {
+            let api = &self.api;
+            let msg = (api.new_method_call)(dest.as_ptr(), path.as_ptr(), interface.as_ptr(), member.as_ptr());
+            if msg.is_null() {
+                return None;
+            }
+            self.append(msg, args);
+            let mut err = Error::new();
+            (api.error_init)(&mut err);
+            let result = (api.call)(self.conn, msg, 1000, &mut err);
+            (api.error_free)(&mut err);
+            (api.unref)(msg);
+            if result.is_null() {
+                return None;
+            }
+            let values = crate::atspi::args(api, result);
+            (api.unref)(result);
+            Some(values)
+        }
+    }
+
+    unsafe fn append(&self, msg: *mut c_void, args: &[crate::atspi::V]) {
+        let mut iter = Iter::new();
+        (self.api.iter_init_append)(msg, &mut iter);
+        for arg in args {
+            crate::atspi::put(&self.api, &mut iter, "", arg);
+        }
+    }
+
+    pub(crate) unsafe fn send(&self, msg: *mut c_void, args: &[crate::atspi::V]) {
+        if !msg.is_null() {
+            self.append(msg, args);
+            (self.api.send)(self.conn, msg, std::ptr::null_mut());
+            (self.api.unref)(msg);
+        }
+    }
+
+    pub(crate) unsafe fn respond(&self, request: *mut c_void, args: &[crate::atspi::V]) {
+        self.send((self.api.new_return)(request), args);
+    }
+
+    pub(crate) unsafe fn signal(&self, path: &CStr, interface: &CStr, member: &CStr, args: &[crate::atspi::V]) {
+        self.send((self.api.new_signal)(path.as_ptr(), interface.as_ptr(), member.as_ptr()), args);
+    }
+
+    pub(crate) fn own(&self, name: &CStr) -> bool {
+        unsafe {
+            let mut err = Error::new();
+            (self.api.error_init)(&mut err);
+            let result = (self.api.request_name)(self.conn, name.as_ptr(), NAME_DO_NOT_QUEUE, &mut err);
+            (self.api.error_free)(&mut err);
+            result == PRIMARY_OWNER
+        }
+    }
+
+    pub(crate) fn subscribe(&self, rule: &CStr) {
+        unsafe {
+            let mut err = Error::new();
+            (self.api.error_init)(&mut err);
+            (self.api.add_match)(self.conn, rule.as_ptr(), &mut err);
+            (self.api.error_free)(&mut err);
+        }
+    }
+}
+
+impl Drop for Bus {
+    fn drop(&mut self) {
+        unsafe {
+            (self.api.close)(self.conn);
+            (self.api.release)(self.conn);
+        }
+    }
+}
+
 pub const NAME: &CStr = c"org.freedesktop.FileManager1";
 const INTROSPECTION: &CStr = c"<node><interface name=\"org.freedesktop.FileManager1\">\
 <method name=\"ShowFolders\"><arg type=\"as\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/></method>\
@@ -47,6 +149,10 @@ impl Iter {
     }
 }
 
+type AddWatch = unsafe extern "C" fn(*mut c_void, *mut c_void) -> u32;
+type WatchFunction = unsafe extern "C" fn(*mut c_void, *mut c_void);
+type FreeData = unsafe extern "C" fn(*mut c_void);
+
 crate::symbols::library_api! {
     pub(crate) struct Api from c"libdbus-1.so.3" {
         threads_init = c"dbus_threads_init_default": fn() -> u32;
@@ -59,6 +165,7 @@ crate::symbols::library_api! {
         pub(crate) pop = c"dbus_connection_pop_message": fn(*mut c_void) -> *mut c_void;
         pub(crate) msg_type = c"dbus_message_get_type": fn(*mut c_void) -> c_int;
         pub(crate) member = c"dbus_message_get_member": fn(*mut c_void) -> *const c_char;
+        pub(crate) sender = c"dbus_message_get_sender": fn(*mut c_void) -> *const c_char;
         pub(crate) interface = c"dbus_message_get_interface": fn(*mut c_void) -> *const c_char;
         pub(crate) iter_init = c"dbus_message_iter_init": fn(*mut c_void, *mut Iter) -> u32;
         pub(crate) iter_type = c"dbus_message_iter_get_arg_type": fn(*mut Iter) -> c_int;
@@ -82,6 +189,14 @@ crate::symbols::library_api! {
         pub(crate) unique_name = c"dbus_bus_get_unique_name": fn(*mut c_void) -> *const c_char;
         pub(crate) unix_fd = c"dbus_connection_get_unix_fd": fn(*mut c_void, *mut c_int) -> u32;
         pub(crate) dispatch_status = c"dbus_connection_get_dispatch_status": fn(*mut c_void) -> c_int;
+        pub(crate) is_connected = c"dbus_connection_get_is_connected": fn(*mut c_void) -> u32;
+        pub(crate) set_watches = c"dbus_connection_set_watch_functions": fn(*mut c_void, Option<AddWatch>, Option<WatchFunction>, Option<WatchFunction>, *mut c_void, Option<FreeData>) -> u32;
+        pub(crate) watch_fd = c"dbus_watch_get_unix_fd": fn(*mut c_void) -> c_int;
+        pub(crate) watch_flags = c"dbus_watch_get_flags": fn(*mut c_void) -> u32;
+        pub(crate) watch_enabled = c"dbus_watch_get_enabled": fn(*mut c_void) -> u32;
+        pub(crate) watch_handle = c"dbus_watch_handle": fn(*mut c_void, u32) -> u32;
+        #[cfg(test)]
+        pub(crate) signature = c"dbus_message_get_signature": fn(*mut c_void) -> *const c_char;
         pub(crate) close = c"dbus_connection_close": fn(*mut c_void);
         pub(crate) release = c"dbus_connection_unref": fn(*mut c_void);
         pub(crate) reply_serial = c"dbus_message_get_reply_serial": fn(*mut c_void) -> u32;

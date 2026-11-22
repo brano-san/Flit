@@ -14,6 +14,7 @@ use wayland_client::protocol::wl_seat::{self, WlSeat};
 use wayland_client::protocol::wl_surface::WlSurface;
 use wayland_client::{event_created_child, Connection, Dispatch, EventQueue, Proxy, QueueHandle, WEnum};
 use wayland_protocols::xdg::activation::v1::client::xdg_activation_v1::XdgActivationV1;
+use wayland_protocols::xdg::foreign::zv2::client::{zxdg_imported_v2::ZxdgImportedV2, zxdg_importer_v2::ZxdgImporterV2};
 
 pub type Payload = Arc<crate::clipboard::Payload>;
 
@@ -30,6 +31,7 @@ pub struct Wl {
     state: State,
     manager: Option<WlDataDeviceManager>,
     activation: Option<XdgActivationV1>,
+    importer: Option<ZxdgImporterV2>,
     server_decorations: bool,
 }
 
@@ -49,12 +51,13 @@ impl Wl {
         let qh = queue.handle();
         let manager = globals.bind::<WlDataDeviceManager, _, _>(&qh, 2..=3, ()).ok();
         let activation = globals.bind::<XdgActivationV1, _, _>(&qh, 1..=1, ()).ok();
+        let importer = globals.bind::<ZxdgImporterV2, _, _>(&qh, 1..=1, ()).ok();
         let server_decorations = globals.contents().with_list(|list| offers_server_decorations(list.iter().map(|g| g.interface.as_str())));
         let mut state = State::default();
         let seats = globals.contents().with_list(|list| list.iter().filter(|g| g.interface == WlSeat::interface().name).map(|g| (g.name, g.version.min(5))).collect::<Vec<_>>());
         state.seats = seats.into_iter().map(|(name, version)| (globals.registry().bind::<WlSeat, _, _>(name, version, &qh, ()), false, false)).collect();
         queue.roundtrip(&mut state).ok()?;
-        Some(Self { conn, queue, state, manager, activation, server_decorations })
+        Some(Self { conn, queue, state, manager, activation, importer, server_decorations })
     }
 
     pub fn server_decorations(&self) -> bool {
@@ -99,12 +102,31 @@ impl Wl {
         delivered
     }
 
+    pub fn attach_chooser(&self, surface: *mut c_void, handle: String) {
+        let Some(importer) = &self.importer else { return };
+        let Ok(id) = (unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.cast()) }) else { return };
+        let Ok(surface) = WlSurface::from_id(&self.conn, id) else { return };
+        let parent = importer.import_toplevel(handle, &self.queue.handle(), ());
+        parent.set_parent_of(&surface);
+        let _ = self.conn.flush();
+    }
+
     pub fn activate(&self, surface: *mut c_void, token: &str) -> bool {
         let Some(activation) = &self.activation else { return false };
         let Ok(id) = (unsafe { ObjectId::from_ptr(WlSurface::interface(), surface.cast()) }) else { return false };
         let Ok(surface) = WlSurface::from_id(&self.conn, id) else { return false };
         activation.activate(token.to_owned(), &surface);
         self.conn.flush().is_ok()
+    }
+}
+
+impl Dispatch<ZxdgImporterV2, ()> for State {
+    fn event(_: &mut Self, _: &ZxdgImporterV2, _: <ZxdgImporterV2 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {}
+}
+
+impl Dispatch<ZxdgImportedV2, ()> for State {
+    fn event(_: &mut Self, parent: &ZxdgImportedV2, _: <ZxdgImportedV2 as Proxy>::Event, _: &(), _: &Connection, _: &QueueHandle<Self>) {
+        parent.destroy();
     }
 }
 

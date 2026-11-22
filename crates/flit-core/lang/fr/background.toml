@@ -1,0 +1,3 @@
+title = "Garder Flit en arrière-plan après la fermeture de la dernière fenêtre"
+help = "L’icône de la zone de notification permet de rouvrir Flit ou de le quitter."
+unavailable = "Le bureau ne prend pas en charge les icônes StatusNotifierItem dans la zone de notification."

@@ -203,3 +203,28 @@ fn extensionless_png_and_replaced_content_choose_their_mime_icons_but_programs_d
     std::os::unix::fs::symlink(&path, &link).unwrap();
     assert!(content_icon_names(&link).is_empty(), "the link pipeline retains its target and emblem handling");
 }
+
+#[test]
+fn picker_can_identify_extensionless_text_and_keeps_missing_types_unknown() {
+    use crate::temp::Temp;
+    let temp = Temp::new("picker-mime");
+    let readme = temp.path().join("readme");
+    std::fs::write(&readme, b"hello world\n").unwrap();
+    let mime = picker_mime(&readme).unwrap();
+    assert!(mime.iter().any(|mime| mime == "text/plain"));
+    assert!(mime.iter().any(|mime| mime == OCTET_STREAM));
+    assert!(picker_mime(&temp.path().join("missing")).is_none());
+}
+
+#[test]
+fn portal_can_filter_magic_only_types_and_normalizes_aliases() {
+    let types = PickerTypes {
+        registered: ["application/x-from-magic".into()].into_iter().collect(),
+        aliases: [("application/x-magic-alias".into(), "application/x-from-magic".into())].into_iter().collect(),
+    };
+    assert_eq!(types.resolve("application/x-from-magic".into()).as_deref(), Some("application/x-from-magic"));
+    assert_eq!(types.resolve("application/x-magic-alias".into()).as_deref(), Some("application/x-from-magic"));
+    assert_eq!(types.resolve("text/plain".into()).as_deref(), Some("text/plain"));
+    assert_eq!(types.resolve("application/x-unknown".into()), None);
+    assert_eq!(types.resolve("not a type".into()), None);
+}
