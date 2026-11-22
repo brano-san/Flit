@@ -5,6 +5,7 @@ pub mod walk;
 mod wsl;
 mod pace;
 pub mod conflicts;
+pub mod scheduler;
 
 pub use digest::hash_file;
 pub use indexer::{root_of, start_indexer};
@@ -272,6 +273,9 @@ pub trait Fs: Send + Sync + 'static {
     }
     fn volume_size(&self, _path: &FsPath) -> u64 {
         0
+    }
+    fn server_key(&self, path: &FsPath) -> Option<scheduler::ServerKey> {
+        path.unc_parts().map(|(server, _, _)| server.to_ascii_lowercase())
     }
     fn operation_meta(&self, _path: &FsPath) -> Option<Meta> {
         None

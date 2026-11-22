@@ -504,6 +504,10 @@ impl Fs for NtFs {
         crate::shell::localized_name(dir)
     }
 
+    fn server_key(&self, path: &FsPath) -> Option<Vec<u8>> {
+        crate::network::server_key(path)
+    }
+
     fn remote(&self, path: &FsPath) -> bool {
         crate::network::remote(path)
     }

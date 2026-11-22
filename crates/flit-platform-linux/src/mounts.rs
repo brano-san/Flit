@@ -97,9 +97,41 @@ pub fn read() -> io::Result<Vec<Mount>> {
     Ok(parse(&std::fs::read(MOUNTINFO)?))
 }
 
-pub fn remote_path(path: &Path, mounts: &[Mount]) -> bool {
+fn enclosing<'a>(path: &Path, mounts: &'a [Mount]) -> Option<&'a Mount> {
     mounts.iter().rev().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len())
-        .is_some_and(|m| m.is_network() || m.fstype == "fuse.gvfsd-fuse")
+}
+
+pub(crate) fn volume_key(path: &Path, mounts: &[Mount]) -> Option<Vec<u8>> {
+    let (major, minor) = enclosing(path, mounts)?.dev;
+    Some(libc::makedev(major, minor).to_le_bytes().to_vec())
+}
+
+pub fn remote_path(path: &Path, mounts: &[Mount]) -> bool {
+    enclosing(path, mounts).is_some_and(|m| m.is_network() || m.fstype == "fuse.gvfsd-fuse")
+}
+
+pub(crate) fn server_key(path: &Path, mounts: &[Mount]) -> Option<Vec<u8>> {
+    let mount = enclosing(path, mounts)?;
+    let source = &mount.source;
+    let server = if mount.fstype == "fuse.gvfsd-fuse" {
+        let folder = path.strip_prefix(mount.path()).ok()?.components().next()?;
+        let entry = folder.as_os_str().as_bytes();
+        let properties = entry.iter().position(|&c| c == b':')?;
+        entry[properties + 1..].split(|&c| c == b',').find_map(|p| p.strip_prefix(b"server=").or_else(|| p.strip_prefix(b"host=")))?
+    } else if mount.is_network() {
+        if let Some(unc) = source.strip_prefix(b"//") {
+            unc.split(|&c| c == b'/').next()?
+        } else if let Some(start) = source.windows(3).position(|p| p == b"://") {
+            source[start + 3..].split(|&c| c == b'/').next()?.rsplit(|&c| c == b'@').next()?
+        } else if let Some(end) = source.windows(2).position(|p| p == b":/").or_else(|| source.ends_with(b":").then(|| source.len() - 1)) {
+            source[..end].rsplit(|&c| c == b'@').next()?
+        } else {
+            source
+        }
+    } else {
+        return None;
+    };
+    (!server.is_empty()).then(|| server.to_ascii_lowercase())
 }
 
 fn within(root: &[u8], of: &[u8]) -> bool {

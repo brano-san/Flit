@@ -102,6 +102,17 @@ pub(crate) fn connection(local: &str) -> Option<(String, bool)> {
     Some((String::from_utf16_lossy(&buf[..end]), online)).filter(|(r, _)| !r.is_empty())
 }
 
+pub(crate) fn server_key(path: &FsPath) -> Option<Vec<u8>> {
+    if let Some((server, _, _)) = path.unc_parts() {
+        return Some(server.to_ascii_lowercase());
+    }
+    if path.kind() != PathKind::Drive || !remote(path) {
+        return None;
+    }
+    let mapped = letter(path).and_then(|local| connection(&local)).and_then(|(unc, _)| FsPath::parse(&unc));
+    Some(mapped.as_ref().and_then(FsPath::unc_parts).map_or_else(|| path.root_bytes().to_ascii_lowercase(), |(server, _, _)| server.to_ascii_lowercase()))
+}
+
 pub(crate) fn remembered() -> Vec<(String, String)> {
     let mut out = Vec::new();
     unsafe {

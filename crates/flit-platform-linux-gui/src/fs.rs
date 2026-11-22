@@ -86,6 +86,10 @@ impl Fs for LinuxGuiFs {
         LinuxFs.operation_meta(path)
     }
 
+    fn server_key(&self, path: &FsPath) -> Option<Vec<u8>> {
+        LinuxFs.server_key(path)
+    }
+
     fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, PlatformError> {
         LinuxFs.hash(file, kinds, job)
     }
