@@ -269,3 +269,18 @@ fn a_folder_removed_and_restored_before_commit_needs_no_cascade() {
     assert_eq!(v.removed_dirs, 0);
     assert!(v.lookup(12).is_none());
 }
+
+#[test]
+fn operation_staging_names_never_enter_the_index() {
+    let mut v = volume();
+    v.upsert(&rec(10, 5, "report.txt", false));
+    v.commit();
+    assert!(v.lookup(10).is_some());
+    v.upsert(&rec(10, 5, ".flit-deleting-12-ab-cd", false));
+    v.upsert(&rec(11, 5, ".flit-stage-7-1.flit-partial", true));
+    v.upsert(&rec(12, 5, ".flit-deleting-notes", false));
+    v.commit();
+    assert!(v.lookup(10).is_none());
+    assert!(v.lookup(11).is_none());
+    assert_eq!(path(&v, 12), r"C:\.flit-deleting-notes");
+}

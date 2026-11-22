@@ -707,6 +707,9 @@ impl IndexSink for VolumeIndex {
     }
 
     fn upsert(&mut self, r: &IndexRecord<'_>) {
+        if r.parent != r.id && flit_core::name::is_operation_stage(r.name) {
+            return self.remove(r.id);
+        }
         let attrs = (r.attrs & KEPT_ATTRS) | if r.parent == r.id { ROOT } else { 0 };
         let found = self.lookup(r.id).or_else(|| self.revive(r.id));
         let i = match found {

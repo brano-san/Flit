@@ -31,11 +31,7 @@ pub fn is_stage_name(name: &[u8]) -> bool {
 }
 
 pub fn is_delete_name(name: &[u8]) -> bool {
-    let Some(id) = name.strip_prefix(DELETE_PREFIX) else { return false };
-    let mut fields = id.split(|&byte| byte == b'-');
-    let valid = |part: Option<&[u8]>, check: fn(&u8) -> bool| part.is_some_and(|part| !part.is_empty() && part.iter().all(check));
-    valid(fields.next(), u8::is_ascii_digit) && valid(fields.next(), u8::is_ascii_hexdigit)
-        && valid(fields.next(), u8::is_ascii_hexdigit) && fields.next().is_none()
+    flit_core::name::is_delete_stage(name)
 }
 
 fn active_deletes() -> std::sync::MutexGuard<'static, HashSet<Vec<u8>>> {

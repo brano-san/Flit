@@ -1,6 +1,18 @@
 use std::borrow::Cow;
 
 #[inline]
+pub fn is_delete_stage(name: &[u8]) -> bool {
+    let Some(id) = name.strip_prefix(b".flit-deleting-") else { return false };
+    let mut fields = id.split(|&byte| byte == b'-');
+    let valid = |part: Option<&[u8]>, check: fn(&u8) -> bool| part.is_some_and(|part| !part.is_empty() && part.iter().all(check));
+    valid(fields.next(), u8::is_ascii_digit) && valid(fields.next(), u8::is_ascii_hexdigit)
+        && valid(fields.next(), u8::is_ascii_hexdigit) && fields.next().is_none()
+}
+
+pub fn is_operation_stage(name: &[u8]) -> bool {
+    (name.starts_with(b".flit-stage-") && name.ends_with(b".flit-partial")) || is_delete_stage(name)
+}
+
 pub fn push_utf16(out: &mut Vec<u8>, src: &[u16]) {
     out.reserve(src.len());
     let mut i = 0;
