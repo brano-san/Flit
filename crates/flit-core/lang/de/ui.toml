@@ -131,7 +131,7 @@ replace = "Der Export der Einstellungen würde diese Datei in {folder} überschr
 restore_title = "Vorherige Sitzung wiederherstellen?"
 crashed = "Flit wurde beim letzten Mal nicht ordnungsgemäß beendet."
 crash_title = "Flit ist beim letzten Mal abgestürzt"
-crash_report = "Flit ist beim letzten Mal abgestürzt. Ein Absturzbericht wurde gespeichert: {name}."
+crash_report = "Flit ist beim letzten Mal abgestürzt. Für Fehlerberichte können Sie den anonymisierten Textbericht {name} verwenden."
 restore = "Wiederherstellen öffnet die Fenster und Registerkarten erneut, die geöffnet waren."
 
 [ops]

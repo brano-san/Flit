@@ -361,12 +361,12 @@ fn items_too_large_for_the_drive_are_skipped_or_cancel_without_setting_a_policy(
 #[test]
 fn a_crash_report_offers_its_folder_and_then_the_session() {
     let mut app = app_at(r"C:\x");
-    app.offer_crash_report(true, p(r"C:\logs\flit-crash-1.dmp"));
-    assert_eq!(app.dialog_buttons(), ["Restore", "Open folder", "Not now"]);
+    app.offer_crash_report(true, p(r"C:\logs\flit-crash-1.report.txt"));
+    assert_eq!(app.dialog_buttons(), ["Open folder", "Restore", "Not now"]);
     let (title, lines) = app.dialog_text().unwrap();
     assert_eq!(title, "Restore the previous session?");
-    assert!(lines[0].contains("flit-crash-1.dmp") && lines.len() == 2, "{lines:?}");
-    app.answer(1);
+    assert!(lines[0].contains("flit-crash-1.report.txt") && lines.len() == 2, "{lines:?}");
+    app.answer(0);
     assert_eq!(app.tab().view_loc, Location::parse(r"C:\logs").unwrap());
     assert_eq!((app.asking(), app.dialog_buttons()), (Some("restore"), vec!["Restore", "Not now"]));
     app.answer(0);
@@ -376,7 +376,7 @@ fn a_crash_report_offers_its_folder_and_then_the_session() {
 #[test]
 fn a_crash_report_without_a_session_only_opens_the_folder() {
     let mut app = app_at(r"C:\x");
-    app.offer_crash_report(false, p(r"C:\logs\flit-crash-1.dmp"));
+    app.offer_crash_report(false, p(r"C:\logs\flit-crash-1.report.txt"));
     assert_eq!(app.dialog_buttons(), ["Open folder", "Not now"]);
     assert_eq!(app.dialog_text().unwrap().0, "Flit crashed last time");
     app.answer(1);

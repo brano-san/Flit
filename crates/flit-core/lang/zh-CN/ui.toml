@@ -131,7 +131,7 @@ replace = "导出设置将覆盖 {folder} 中的此文件。"
 restore_title = "还原上一个会话？"
 crashed = "Flit 上次未正常关闭。"
 crash_title = "Flit 上次崩溃了"
-crash_report = "Flit 上次崩溃了。崩溃报告已保存：{name}。"
+crash_report = "Flit 上次崩溃了。您可以将匿名文本报告 {name} 附加到问题报告中。"
 restore = "“还原”会重新打开之前打开的窗口和标签页。"
 
 [ops]

@@ -145,11 +145,23 @@ pub fn crash_report(dir: &Path, since: std::time::SystemTime) -> Option<PathBuf>
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "dmp"))
-        .filter_map(|e| Some((e.metadata().and_then(|m| m.modified()).ok()?, e.path())))
-        .filter(|(t, _)| *t >= since)
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+        .filter_map(|e| {
+            let name = e.file_name();
+            let report = is_crash_report(&name);
+            if !report && !name.to_str().is_some_and(|name| name.starts_with("flit-crash-") && name.ends_with(".dmp")) {
+                return None;
+            }
+            let modified = e.metadata().and_then(|m| m.modified()).ok()?;
+            (modified >= since).then(|| (report, modified, e.path()))
+        })
         .max()
-        .map(|(_, p)| p)
+        .map(|(_, _, p)| p)
+}
+
+pub fn is_crash_report(name: &std::ffi::OsStr) -> bool {
+    let name = name.to_string_lossy();
+    name.starts_with("flit-crash-") && name.ends_with(".report.txt")
 }
 
 static SINK: OnceLock<Sink> = OnceLock::new();
@@ -166,19 +178,24 @@ pub fn panic_record(info: &std::panic::PanicHookInfo<'_>) -> String {
     format!("{} PANIC thread '{thread}' {info}\n{}\n", stamp(), std::backtrace::Backtrace::force_capture())
 }
 
-fn on_panic(info: &std::panic::PanicHookInfo<'_>) {
+fn on_panic(record: &str) {
     if let Some(sink) = SINK.get() {
-        sink.line(panic_record(info).into_bytes());
+        sink.line(record.as_bytes().to_vec());
         sink.flush(PANIC_FLUSH);
     }
+    #[cfg(windows)]
+    flit_platform_windows::crash::dump_now(record);
 }
 
 pub fn init(dir: Option<PathBuf>, echo: bool) {
-    let Some(sink) = Sink::start(dir, echo) else { return };
-    let Ok(()) = SINK.set(sink) else { return };
+    if Sink::start(dir, echo).is_some_and(|sink| SINK.set(sink).is_err()) {
+        return;
+    }
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
-        on_panic(info);
+        let record = panic_record(info);
+        let masked = flit_core::redact::passwords(&record);
+        on_panic(&masked);
         previous(info);
     }));
     let floor = if echo { LevelFilter::DEBUG } else { LevelFilter::OFF };

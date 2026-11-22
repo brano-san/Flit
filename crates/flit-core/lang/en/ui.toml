@@ -131,7 +131,7 @@ replace = "The settings export would write over this file in {folder}."
 restore_title = "Restore the previous session?"
 crashed = "Flit did not close properly last time."
 crash_title = "Flit crashed last time"
-crash_report = "Flit crashed last time. A crash report was saved: {name}."
+crash_report = "Flit crashed last time. You can attach the anonymized text report {name} to an issue."
 restore = "Restore reopens the windows and tabs that were open."
 
 [ops]
