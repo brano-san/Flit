@@ -5,18 +5,18 @@ title_in = "Recherche dans {name} — Flit"
 invalid = "La requête n’est pas valide."
 no_match = "Aucun fichier ne correspond."
 searching = "Recherche…"
-walking = ["Recherche… {n} résultat", "Recherche… {n} de résultats", "Recherche… {n} résultats"]
-walking_in = ["Recherche… {results} dans {n} dossier", "Recherche… {results} dans {n} de dossiers", "Recherche… {results} dans {n} dossiers"]
-results = ["{n} résultat", "{n} de résultats", "{n} résultats"]
+walking = ["Recherche… {n} résultat", "Recherche… {n} résultats", "Recherche… {n} résultats"]
+walking_in = ["Recherche… {results} dans {n} dossier", "Recherche… {results} dans {n} dossiers", "Recherche… {results} dans {n} dossiers"]
+results = ["{n} résultat", "{n} résultats", "{n} résultats"]
 done_in = "{results} en {ms} ms"
 in = "Dans {name}"
 all_drives = "Tous les lecteurs"
-recent = "Recherches récentes · Maj+Suppr en retire une"
-folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
+recent = "Recherches récentes · Maj+Suppr retire la recherche sélectionnée"
+folders = ["{n} dossier", "{n} dossiers", "{n} dossiers"]
 
 [error]
-rows_without_folders = "L’index a envoyé des lignes sans dossier."
-invalid_rows = "L’index a envoyé des lignes non valides : {error}"
+rows_without_folders = "L’index a renvoyé des lignes sans dossier."
+invalid_rows = "L’index a renvoyé des lignes non valides : {error}"
 unavailable = "La recherche n’est pas disponible : {error}"
 cannot_start = "Impossible de lancer la recherche : {error}"
 shell = "Windows Search : {error}"
@@ -35,25 +35,25 @@ connecting = "Connexion à l’index"
 service = "Service d’indexation"
 fallback = "Index local (flit-indexd indisponible)"
 local = "Index local"
-off = "L’indexation est désactivée dans Paramètres › Avancé ; Ctrl+Shift+F cherche dans le dossier ouvert"
+off = "L’indexation est désactivée dans Paramètres › Avancé. Ctrl+Maj+F recherche dans le dossier ouvert."
 
 [index]
 default = "index"
-ready = ["{label} {n} fichier", "{label} {n} de fichiers", "{label} {n} fichiers"]
-scanning = ["{label} indexation {percent} % ({n} fichier)", "{label} indexation {percent} % ({n} de fichiers)", "{label} indexation {percent} % ({n} fichiers)"]
-error = "{label} erreur : {error}"
+ready = ["{label} : {n} fichier", "{label} : {n} fichiers", "{label} : {n} fichiers"]
+scanning = ["{label} : indexation à {percent} % ({n} fichier)", "{label} : indexation à {percent} % ({n} fichiers)", "{label} : indexation à {percent} % ({n} fichiers)"]
+error = "{label} : erreur {error}"
 
 [exclude]
 action = "Exclure de la recherche"
 
 [explore]
 folders = "Dossiers"
-within = "Chercher dans les résultats"
-folders_help = "Affiche les dossiers et leur nombre de résultats."
-within_help = "Affinez les résultats de recherche actuels."
+within = "Rechercher dans les résultats"
+folders_help = "Affiche les dossiers et le nombre de résultats de chacun."
+within_help = "Affine les résultats de recherche actuels."
 similar = "Trouver des fichiers similaires"
 similar_help = "Recherche par type, date de modification, taille et étiquettes du fichier sélectionné."
-facets = "Facettes"
+facets = "Filtres"
 facets_help = "Affiche les filtres et un histogramme des dates de modification."
 year = "Année"
 no_extension = "Sans extension"

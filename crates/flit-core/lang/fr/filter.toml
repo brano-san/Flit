@@ -1,4 +1,4 @@
-files = "Filtrer {n} fichiers..."
+files = "Filtrer les fichiers ({n})…"
 seconds = "{n} s"
 toggle_all = "Tout cocher"
 untoggle_all = "Tout décocher"
