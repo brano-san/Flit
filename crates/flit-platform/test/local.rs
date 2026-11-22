@@ -1093,3 +1093,18 @@ fn file_picker_listing_classifies_files_only_when_requested() {
     list(&fs(), 1, &dir, view, case, Arc::default(), &slot, &cancel, &wake, None);
     assert!(slot.take().unwrap().listing.picker_mime.is_empty());
 }
+
+#[test]
+fn undoing_a_deduplication_keeps_its_own_identity_checks() {
+    use flit_core::provider::DedupBackup;
+    use flit_core::tags::FileKey;
+    use flit_core::undo::{self, Step};
+    let job = Job::detached(flit_core::provider::Resolve::Skip);
+    let fs = crate::replay::FileSystem { stamp: |_| Err(std::io::ErrorKind::NotFound.into()), children: |_| Ok(Vec::new()) };
+    let (keep, target, trash) = (FsPath::parse("/data/keep.bin").unwrap(), FsPath::parse("/data/copy.bin").unwrap(), FsPath::parse("/trash/files/copy.bin").unwrap());
+    let backup = DedupBackup { target: target.clone(), trash, linked: FileKey { volume: 1, id: 2 }, saved: FileKey { volume: 1, id: 3 } };
+    let op = FileOp::Dedup { keep: keep.clone(), candidates: vec![target.clone()], backups: vec![backup.clone()] };
+    let report = crate::replay::report(op, vec![(target.clone(), target)], Some(fs), &job);
+    assert_eq!(report.undo.checked, None);
+    assert_eq!(undo::inverse(&report), Some(Step::Run(FileOp::RestoreDedup { keep, backups: vec![backup] })));
+}

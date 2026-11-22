@@ -71,10 +71,11 @@ pub fn report(op: FileOp, items: Vec<(FsPath, FsPath)>, fs: Option<FileSystem>, 
 
 fn attach(report: &mut OpReport, fs: Option<FileSystem>) {
     if let (Some(fs), Some(steps)) = (fs, steps(report)) {
-        report.undo.checked = Some(match steps {
-            Ok(ops) => make_step(ops, fs),
-            Err(message) => Step::Refuse(message),
-        });
+        report.undo.checked = match steps {
+            Ok(ops) if undo::check_paths(&ops).is_none() => None,
+            Ok(ops) => Some(make_step(ops, fs)),
+            Err(message) => Some(Step::Refuse(message)),
+        };
     }
 }
 
