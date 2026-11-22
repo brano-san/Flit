@@ -96,7 +96,7 @@ impl Query {
     }
 
     pub fn has_metadata(&self) -> bool {
-        self.terms.iter().any(|t| matches!(t.filter, Filter::Rating(..) | Filter::Comment(_) | Filter::PortableTag(_)))
+        self.uses(&|f| matches!(f, Filter::Rating(..) | Filter::Comment(_) | Filter::PortableTag(_)))
     }
 
     pub fn matches(&self, e: &Plain<'_>, has_tag: &dyn Fn(&str) -> bool) -> bool {

@@ -214,3 +214,13 @@ fn portable_metadata_terms_match_rating_comment_and_tag() {
     assert!(!query.matches(&file, &|_| false));
     assert!(parse("rating:6", Clock::system(0)).is_err());
 }
+
+#[test]
+fn portable_metadata_inside_an_or_group_reads_the_metadata() {
+    let query = parse("<rating:5|portable-tag:travel> ext:jpg", Clock::system(0)).unwrap();
+    assert!(query.has_metadata());
+    let file = Plain { name: b"photo.jpg", lower_name: b"photo.jpg", path: b"", lower_path: b"", size: 10, modified: 0, dir: false };
+    let meta = flit_core::portable_meta::Metadata { rating: 2, comment: String::new(), tags: vec!["Travel".into()] };
+    assert!(query.matches_with(&file, Facts::default(), &|_| false, &|filter| filter.matches_metadata(&meta)));
+    assert!(!query.matches(&file, &|_| false));
+}
