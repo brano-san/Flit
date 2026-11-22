@@ -156,7 +156,7 @@ impl App {
         let m = self.mods;
         let t = self.tab();
         let Some(v) = &t.view else { return false };
-        let folder = (v.listing().entries.get(i as usize).is_some_and(|e| e.is_dir()) && !t.view_loc.is_recycle_bin()).then(|| t.entry_location(i));
+        let folder = (v.listing().entries.get(i as usize).is_some_and(|e| e.is_dir()) && !t.view_loc.is_recycle_bin()).then(|| t.entry_location(i)).flatten();
         let target = match (m.ctrl, m.shift, m.alt, folder) {
             (false, false, true, _) => None,
             (true, false, false, Some(folder)) => Some(folder),

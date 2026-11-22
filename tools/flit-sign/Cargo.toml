@@ -13,3 +13,6 @@ ed25519-compact.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true, features = ["Win32_Security_Cryptography"] }
+
+[lints]
+workspace = true

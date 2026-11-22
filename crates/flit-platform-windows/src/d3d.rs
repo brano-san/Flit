@@ -9,8 +9,8 @@ use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;
 use std::thread::ThreadId;
-use windows::core::{Interface, HRESULT, PCSTR};
-use windows::Win32::Foundation::{CloseHandle, HANDLE, HMODULE};
+use windows::core::{Error, Interface, HRESULT, PCSTR};
+use windows::Win32::Foundation::{CloseHandle, E_POINTER, HANDLE, HMODULE};
 use windows::Win32::Graphics::Direct3D::*;
 use windows::Win32::Graphics::Direct3D11::*;
 use windows::Win32::Graphics::DirectComposition::*;
@@ -119,9 +119,9 @@ fn texture(device: &ID3D11Device, size: u32) -> Result<(ID3D11Texture2D, ID3D11S
     let (mut tex, mut srv) = (None, None);
     unsafe {
         device.CreateTexture2D(&desc, None, Some(&mut tex)).map_err(err)?;
-        let tex = tex.unwrap();
+        let tex = com_output(tex).map_err(err)?;
         device.CreateShaderResourceView(&tex, None, Some(&mut srv)).map_err(err)?;
-        Ok((tex, srv.unwrap()))
+        Ok((tex, com_output(srv).map_err(err)?))
     }
 }
 
@@ -133,6 +133,10 @@ fn update(ctx: &ID3D11DeviceContext, tex: &ID3D11Texture2D, slot: Slot, rgba: &[
 }
 
 const SWAP_FLAGS: DXGI_SWAP_CHAIN_FLAG = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
+
+pub(crate) fn com_output<T>(output: Option<T>) -> windows::core::Result<T> {
+    output.ok_or_else(|| Error::from_hresult(E_POINTER))
+}
 
 fn create_device(driver: D3D_DRIVER_TYPE) -> windows::core::Result<(ID3D11Device, ID3D11DeviceContext)> {
     let (mut device, mut ctx) = (None, None);
@@ -150,7 +154,7 @@ fn create_device(driver: D3D_DRIVER_TYPE) -> windows::core::Result<(ID3D11Device
             Some(&mut ctx),
         )?;
     }
-    Ok((device.unwrap(), ctx.unwrap()))
+    Ok((com_output(device)?, com_output(ctx)?))
 }
 
 fn buffer(device: &ID3D11Device, bytes: usize, bind: D3D11_BIND_FLAG) -> Result<ID3D11Buffer, PlatformError> {
@@ -163,7 +167,7 @@ fn buffer(device: &ID3D11Device, bytes: usize, bind: D3D11_BIND_FLAG) -> Result<
     };
     let mut b = None;
     unsafe { device.CreateBuffer(&desc, None, Some(&mut b)).map_err(err)? };
-    Ok(b.unwrap())
+    com_output(b).map_err(err)
 }
 
 impl D3dDevice {
@@ -221,12 +225,12 @@ impl D3dDevice {
             let gpu = Gpu {
                 device,
                 ctx,
-                vs: vs.unwrap(),
-                ps: ps.unwrap(),
-                layout: layout.unwrap(),
-                sampler: sampler.unwrap(),
-                blend: blend.unwrap(),
-                raster: raster.unwrap(),
+                vs: com_output(vs).map_err(err)?,
+                ps: com_output(ps).map_err(err)?,
+                layout: com_output(layout).map_err(err)?,
+                sampler: com_output(sampler).map_err(err)?,
+                blend: com_output(blend).map_err(err)?,
+                raster: com_output(raster).map_err(err)?,
             };
             Ok(Self { gpu, render_thread: Cell::new(None), warp })
         }
@@ -323,8 +327,9 @@ impl D3dRenderer {
 
             let d = &self.dev;
             let ctx = &d.ctx;
+            let rtv = com_output(self.rtv.as_ref()).map_err(err)?;
             ctx.OMSetRenderTargets(Some(std::slice::from_ref(&self.rtv)), None);
-            ctx.ClearRenderTargetView(self.rtv.as_ref().unwrap(), &list.clear.to_f32());
+            ctx.ClearRenderTargetView(rtv, &list.clear.to_f32());
             ctx.RSSetViewports(Some(&[D3D11_VIEWPORT { Width: w as f32, Height: h as f32, MaxDepth: 1.0, ..Default::default() }]));
             ctx.RSSetState(&d.raster);
             ctx.OMSetBlendState(&d.blend, None, u32::MAX);
@@ -427,8 +432,7 @@ pub fn hidden() -> bool {
 }
 
 fn png(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
-    const ONE_BLACK_PIXEL: [u8; 4] = [0, 0, 0, 0];
-    let (w, h, raw) = if w == 0 || h == 0 || raw.is_empty() { (1, 1, &ONE_BLACK_PIXEL[..]) } else { (w, h, raw) };
+    let (w, h, raw) = if w == 0 || h == 0 || raw.is_empty() { (1, 1, &flit_core::theme::CLEAR_PIXEL[..]) } else { (w, h, raw) };
     let mut z = vec![0x78, 0x01];
     let blocks: Vec<&[u8]> = raw.chunks(0xFFFF).collect();
     for (i, b) in blocks.iter().enumerate() {

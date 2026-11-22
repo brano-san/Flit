@@ -1,0 +1,126 @@
+[package]
+name = "flit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+license = "MIT"
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+resolver = "3"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+
+[lints]
+workspace = true
+
+[features]
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+flit-archive = { path = "../crates/flit-archive", default-features = false, features = ["fuzzing"] }
+flit-core = { path = "../crates/flit-core", default-features = false }
+flit-proto = { path = "../crates/flit-proto", default-features = false }
+flit-search = { path = "../crates/flit-search", default-features = false }
+libfuzzer-sys = { version = "0.4.13", default-features = false, features = ["link_libfuzzer"], optional = true }
+
+[[bin]]
+name = "ntfs"
+path = "fuzz_targets/ntfs.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "transport"
+path = "fuzz_targets/transport.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "indexd"
+path = "fuzz_targets/indexd.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "wsl_agent"
+path = "fuzz_targets/wsl_agent.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "getdents"
+path = "fuzz_targets/getdents.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "desktop_entry"
+path = "fuzz_targets/desktop_entry.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xbel"
+path = "fuzz_targets/xbel.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "archive_headers"
+path = "fuzz_targets/archive_headers.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "raw_tiff"
+path = "fuzz_targets/raw_tiff.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "split_crc"
+path = "fuzz_targets/split_crc.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "git_porcelain"
+path = "fuzz_targets/git_porcelain.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "flit_link"
+path = "fuzz_targets/flit_link.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false

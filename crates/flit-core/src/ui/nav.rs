@@ -346,7 +346,11 @@ impl App {
         edit.move_to(paste.caret, false);
         let line = text.lines().next().unwrap_or("");
         match paste.field {
-            PasteField::Menu => self.context_menu_mut().unwrap().insert(line),
+            PasteField::Menu => {
+                if let Some(menu) = self.context_menu_mut() {
+                    menu.insert(line);
+                }
+            }
             PasteField::Search => self.search_paste(line),
             PasteField::Rename => { self.ops_paste(line); }
             PasteField::Field(Hit::Form(k)) => self.form_insert_at(k, line),

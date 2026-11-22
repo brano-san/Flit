@@ -1052,7 +1052,7 @@ fn the_recycle_bin_shows_where_items_came_from_and_refuses_ordinary_file_command
     let names: Vec<&[u8]> = v.rows().iter().map(|&i| v.listing().name(i)).collect();
     assert_eq!(names, [&b"old"[..], b"report.txt"]);
     let report = v.rows()[1];
-    assert_eq!(app.tab().entry_location(report), Location::parse(BIN_REPORT.1).unwrap());
+    assert_eq!(app.tab().entry_location(report), Location::parse(BIN_REPORT.1));
     select(&mut app, &["report.txt"]);
     key(&mut app, Key::Enter, NO);
     assert!(app.drain_effects().all(|e| !matches!(e, Effect::Provider { req: ProviderRequest::Open { .. } | ProviderRequest::List { .. }, .. })));
@@ -2110,7 +2110,7 @@ fn item_paths_of_a_plain_folder_match_the_general_path_for_every_kind_of_folder(
         let mut app = app_at(dir);
         deliver(&mut app, &[("a.txt", false), ("sub", true), ("Ubuntu", true)]);
         let items: Vec<u32> = (0..3).collect();
-        let general: Option<Vec<FsPath>> = items.iter().map(|&i| app.tab().entry_location(i).to_windows()).collect();
+        let general: Option<Vec<FsPath>> = items.iter().map(|&i| app.tab().entry_location(i)?.to_windows()).collect();
         assert_eq!(app.item_paths(&items).ok(), general, "{dir}");
     }
 }

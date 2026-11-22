@@ -21,7 +21,7 @@ fn saved_servers_are_visible_before_discovery_and_keep_their_own_group() {
     assert_eq!(rows(&a), ["Zebra", "Alpha"]);
     let view = a.tab().view.as_ref().unwrap();
     assert_eq!(view.groups().iter().map(|g| g.count).collect::<Vec<_>>(), [1, 1]);
-    assert_eq!(a.tab().entry_location(view.rows()[0]), network_location(SFTP));
+    assert_eq!(a.tab().entry_location(view.rows()[0]), Some(network_location(SFTP)));
     publish(&mut a, true, &found, None);
     assert_eq!(rows(&a), ["Zebra", "Alpha"]);
     configure(&mut a, SFTP, None);

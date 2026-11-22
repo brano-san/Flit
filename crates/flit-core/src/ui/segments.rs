@@ -22,7 +22,7 @@ impl App {
         if entry.is_dir() {
             return None;
         }
-        tab.entry_location(index).to_windows()
+        tab.entry_location(index)?.to_windows()
     }
 
     pub(super) fn segments_menu(&self, menu: &mut Menu) {

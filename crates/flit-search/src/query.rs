@@ -348,8 +348,7 @@ impl Parser<'_> {
     fn expression(&mut self, depth: usize) -> ParseResult<Query> {
         let mut branches = Vec::new();
         let mut terms = self.conjunction(depth)?;
-        while matches!(self.tokens.peek(), Some((_, Token::Or))) {
-            let (at, _) = self.tokens.next().unwrap();
+        while let Some((at, _)) = self.tokens.next_if(|(_, token)| matches!(token, Token::Or)) {
             if terms.is_empty() {
                 return Err((at, "missing expression before |".into()));
             }
@@ -371,8 +370,7 @@ impl Parser<'_> {
         let mut negate = false;
         let mut unary = None;
         let mut conjunction = None;
-        while self.tokens.peek().is_some_and(|(_, t)| !matches!(t, Token::Or | Token::Close)) {
-            let (at, token) = self.tokens.next().unwrap();
+        while let Some((at, token)) = self.tokens.next_if(|(_, token)| !matches!(token, Token::Or | Token::Close)) {
             let parsed = match token {
                 Token::Word(w, false) if w == "NOT" || w == "!" => {
                     negate = !negate;

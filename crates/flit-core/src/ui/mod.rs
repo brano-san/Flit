@@ -1246,7 +1246,7 @@ impl App {
             }
             OpenTarget::CurrentTab => {
                 let mut it = routes.into_iter();
-                let first = it.next().unwrap();
+                let Some(first) = it.next() else { return };
                 self.route_here(first, now);
                 if connect {
                     self.begin_network(self.cur);
@@ -1427,16 +1427,18 @@ impl App {
             return;
         }
         let t = self.tab();
+        let Some(view) = &t.view else { return };
+        let listing = view.listing();
+        let Some(&e) = listing.entries.get(i as usize) else { return };
         if t.view_loc.is_recycle_bin() {
-            let name = name::display(t.view.as_ref().unwrap().listing().name(i)).into_owned();
+            let name = name::display(listing.name(i)).into_owned();
             self.tab_mut().error = Some(crate::tr!(S::UiInRecycleBin, name = name));
             return;
         }
         if self.caps.unix_paths && t.view_loc.path().is_network() {
             return self.open_network(i, now);
         }
-        let e = t.view.as_ref().unwrap().listing().entries[i as usize];
-        let loc = t.entry_location(i);
+        let Some(loc) = t.entry_location(i) else { return };
         if self.caps.unix_paths && t.view_loc.path().kind() == PathKind::Computer && self.mount_drive(loc.path()) {
             return;
         }
@@ -3460,8 +3462,8 @@ impl App {
                     (false, false) => t.name_ink(e.attrs),
                 };
                 if let Some((br, st)) = badge {
-                    g.dl.round_rect(br, git::status_color(st), br.w / 2.0);
-                    centered(g, br, st.letter(), FontStyle::new(FontFamily::Ui, br.h * 0.72, true), Color::rgb(0xFF_FF_FF));
+                    g.dl.round_rect(br, theme::git_status_color(st), br.w / 2.0);
+                    centered(g, br, st.letter(), FontStyle::new(FontFamily::Ui, br.h * 0.72, true), crate::theme::WHITE);
                 }
                 let shown = self.shown_name(listing, i);
                 if g.measure(&shown, font) > (p.name.w - self.mark_reserve(e.tags)).max(0.0) {

@@ -1508,7 +1508,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             raw.set_visible(true);
         }
         self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone(), server), clicks: Clicks::new(input::double_click()), fingers: Default::default(), awaiting_placement });
-        let node = self.nodes.last().unwrap();
+        let Some(node) = self.nodes.last() else { return };
         self.handler.created(&node.window);
         self.handler.event(&node.window, Event::WindowButtons(window_buttons()));
         let wayland = node.window.is_wayland();

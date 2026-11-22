@@ -24,3 +24,6 @@ postcard.workspace = true
 [[bench]]
 name = "core"
 harness = false
+
+[lints]
+workspace = true

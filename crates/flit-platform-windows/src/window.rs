@@ -6,7 +6,7 @@ use flit_core::input::{CursorIcon, Event, HitArea, Key, Mods, MouseButton, Preed
 use windows::Win32::System::SystemServices::MK_CONTROL;
 use flit_core::a11y::Tree;
 use flit_core::render::{Color, Rect};
-use flit_core::theme::SystemColors;
+use flit_core::theme::{SystemColors, CONTRAST_PREVIEW};
 use crate::uia::{WM_A11Y_FOCUS, WM_A11Y_INVOKE, WM_A11Y_SELECT};
 use windows::Win32::UI::Accessibility::{IRawElementProviderSimple, UiaClientsAreListening, UiaDisconnectProvider, UiaReturnRawElementProvider, UiaRootObjectId, HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use flit_core::ui::{Bitmap, DragEvent, ShellMenu};
@@ -558,8 +558,7 @@ fn within_monitor(r: RECT, whole: bool) -> RECT {
 
 pub(crate) fn high_contrast() -> Option<SystemColors> {
     if crate::d3d::capture_path().is_some() && std::env::var_os("FLIT_CAPTURE_CONTRAST").is_some() {
-        let c = Color::rgb;
-        return Some(SystemColors { window: c(0x000000), window_text: c(0xFFFFFF), highlight: c(0x1AEBFF), highlight_text: c(0x000000), hotlight: c(0x75E9FC), gray_text: c(0x3FF23F), btn_face: c(0x000000) });
+        return Some(CONTRAST_PREVIEW);
     }
     let mut hc = HIGHCONTRASTW { cbSize: size_of::<HIGHCONTRASTW>() as u32, ..Default::default() };
     unsafe { SystemParametersInfoW(SPI_GETHIGHCONTRAST, hc.cbSize, Some(&mut hc as *mut HIGHCONTRASTW as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) }.ok()?;
@@ -684,13 +683,16 @@ impl<H: WindowHandler<Win32>> Node<H> {
 
     fn root_provider(&self, hwnd: HWND) -> IRawElementProviderSimple {
         let tree = if self.ready.get() { self.shared().handler.try_borrow_mut().ok().and_then(|mut h| h.accessibility(&self.window)) } else { None };
-        if self.window.a11y.borrow().is_none() {
-            let first = crate::uia::Access::new(hwnd, tree.clone().unwrap_or_else(|| Tree::new(String::new(), Rect::default())));
-            *self.window.a11y.borrow_mut() = Some(first);
-        } else if let (Some(acc), Some(tree)) = (self.window.a11y.borrow().as_ref(), tree) {
-            acc.update(tree);
+        if let Some(acc) = self.window.a11y.borrow().as_ref() {
+            if let Some(tree) = tree {
+                acc.update(tree);
+            }
+            return acc.root.clone();
         }
-        self.window.a11y.borrow().as_ref().map(|a| a.root.clone()).expect("accessibility root")
+        let first = crate::uia::Access::new(hwnd, tree.unwrap_or_else(|| Tree::new(String::new(), Rect::default())));
+        let root = first.root.clone();
+        *self.window.a11y.borrow_mut() = Some(first);
+        root
     }
 
     fn redraw_now(&self) {

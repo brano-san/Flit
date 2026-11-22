@@ -1,5 +1,6 @@
 use flit_core::i18n::{Lang, S};
 use flit_core::input::Mods;
+use flit_core::theme::{DRAG_BADGE_COLOR, DRAG_FOLDER_COLOR, DRAG_GHOST_BACKGROUND, DRAG_GHOST_BACKGROUND_PIXEL, DRAG_GHOST_BORDER_PIXEL, DRAG_GHOST_FOLDER_PIXEL, DRAG_LABEL_COLOR};
 use flit_core::ui::{drop_effect, Bitmap};
 use flit_core::FsPath;
 use std::ffi::c_void;
@@ -187,8 +188,6 @@ struct Source {
     action: std::cell::Cell<Suggested>,
 }
 
-const GHOST_BACKGROUND: [u8; 3] = [0xf4, 0xf4, 0xf4];
-
 fn bgrx_screen(setup: &x11rb::protocol::xproto::Setup, screen: &x11rb::protocol::xproto::Screen) -> bool {
     let wide = setup.pixmap_formats.iter().any(|f| f.depth == screen.root_depth && f.bits_per_pixel == 32);
     let rgb = screen.allowed_depths.iter().flat_map(|d| &d.visuals).any(|v| v.visual_id == screen.root_visual && (v.red_mask, v.green_mask, v.blue_mask) == (0xff_0000, 0xff00, 0xff));
@@ -213,9 +212,9 @@ impl Source {
         conn.set_selection_owner(window, atoms.XdndSelection, CURRENT_TIME)?;
         let ghost = conn.generate_id()?;
         let screen = &conn.setup().roots[screen];
-        let pixels = bgrx_screen(conn.setup(), screen).then(|| (picture.width as u16, picture.height as u16, over_background(picture, GHOST_BACKGROUND)));
+        let pixels = bgrx_screen(conn.setup(), screen).then(|| (picture.width as u16, picture.height as u16, over_background(picture, DRAG_GHOST_BACKGROUND)));
         let (w, h, border) = pixels.as_ref().map_or((40, 40, 1), |p| (p.0, p.1, 0));
-        let aux = CreateWindowAux::new().override_redirect(1).background_pixel(0xf4f4f4).border_pixel(0x808080).event_mask(EventMask::EXPOSURE);
+        let aux = CreateWindowAux::new().override_redirect(1).background_pixel(DRAG_GHOST_BACKGROUND_PIXEL).border_pixel(DRAG_GHOST_BORDER_PIXEL).event_mask(EventMask::EXPOSURE);
         conn.create_window(screen.root_depth, ghost, root, -100, -100, w, h, border, WindowClass::INPUT_OUTPUT, screen.root_visual, &aux)?;
         let runs = opaque_runs(picture);
         if pixels.is_some() && !runs.is_empty() {
@@ -233,7 +232,7 @@ impl Source {
     fn paint(&self) -> R<()> {
         use x11rb::protocol::xproto::{CreateGCAux, ImageFormat};
         let gc = self.conn.generate_id()?;
-        self.conn.create_gc(gc, self.ghost, &CreateGCAux::new().foreground(0xf0bc48))?;
+        self.conn.create_gc(gc, self.ghost, &CreateGCAux::new().foreground(DRAG_GHOST_FOLDER_PIXEL))?;
         match &self.pixels {
             Some((w, h, bytes)) => self.conn.put_image(ImageFormat::Z_PIXMAP, self.ghost, gc, *w, *h, 0, 0, 0, self.depth, bytes)?,
             None => self.conn.poly_fill_rectangle(self.ghost, gc, &[Rectangle { x: 4, y: 6, width: 15, height: 9 }, Rectangle { x: 4, y: 12, width: 32, height: 22 }])?,
@@ -474,9 +473,6 @@ const STACK_STEP: f32 = 6.0;
 const STACK_OPACITY: f32 = 0.55;
 const BADGE_RADIUS: f32 = 11.0;
 const BADGE_TEXT: f32 = 13.0;
-const BADGE_COLOR: [u8; 4] = [0x35, 0x84, 0xe4, 255];
-const FOLDER_COLOR: [u8; 4] = [240, 188, 72, 255];
-const WHITE: [u8; 4] = [255, 255, 255, 255];
 const MOST_COUNTED: usize = 999;
 const PICTURE_WAIT: Duration = Duration::from_millis(40);
 
@@ -514,7 +510,7 @@ fn draw_icon(canvas: &mut Bitmap, icon: &Bitmap, (x0, y0): (i32, i32), side: u32
 
 fn draw_folder(canvas: &mut Bitmap, (x0, y0): (i32, i32), side: u32, opacity: f32) {
     let s = side as f32 / 40.0;
-    let color = tint(FOLDER_COLOR, opacity);
+    let color = tint(DRAG_FOLDER_COLOR, opacity);
     for y in (5.0 * s) as i32..(35.0 * s) as i32 {
         for x in (4.0 * s) as i32..(36.0 * s) as i32 {
             if y as f32 >= 11.0 * s || (x as f32) < 19.0 * s {
@@ -587,9 +583,9 @@ pub fn compose_drag(icon: Option<&Bitmap>, count: usize, scale: f32) -> Bitmap {
         let label = label_glyphs(&badge_text(count), px);
         let width = label.as_ref().map_or(0.0, |l| l.2 + radius).max(radius * 2.0);
         let center = (total as f32 - width / 2.0, radius);
-        fill_pill(&mut canvas, center, width, radius, BADGE_COLOR);
+        fill_pill(&mut canvas, center, width, radius, DRAG_BADGE_COLOR);
         if let Some(label) = label {
-            draw_label(&mut canvas, label, center, px, WHITE);
+            draw_label(&mut canvas, label, center, px, DRAG_LABEL_COLOR);
         }
     }
     canvas

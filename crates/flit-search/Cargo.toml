@@ -23,3 +23,6 @@ proptest.workspace = true
 [[bench]]
 name = "search"
 harness = false
+
+[lints]
+workspace = true

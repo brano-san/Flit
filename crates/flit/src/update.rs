@@ -79,7 +79,7 @@ pub fn binaries(archive: &[u8]) -> Result<Vec<(&'static str, Vec<u8>)>, String> 
     let mut zip = zip::ZipArchive::new(io::Cursor::new(archive)).map_err(|e| e.to_string())?;
     let mut out = Vec::new();
     for name in BINARIES {
-        let index = (0..zip.len()).find(|&i| zip.by_index(i).is_ok_and(|f| f.is_file() && f.name().rsplit(['/', '\\']).next() == Some(*name))).ok_or_else(|| missing(name))?;
+        let index = (0..zip.len()).find(|&i| zip.by_index(i).is_ok_and(|f| f.is_file() && f.name().is_ok_and(|path| path.rsplit(['/', '\\']).next() == Some(*name)))).ok_or_else(|| missing(name))?;
         let mut file = zip.by_index(index).map_err(|e| e.to_string())?;
         let mut bytes = Vec::with_capacity(file.size() as usize);
         file.read_to_end(&mut bytes).map_err(|e| e.to_string())?;

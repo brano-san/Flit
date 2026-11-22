@@ -268,7 +268,7 @@ impl App {
     }
 
     pub(super) fn open_network(&mut self, i: u32, now: Instant) {
-        let folder = self.tab().entry_location(i);
+        let Some(folder) = self.tab().entry_location(i) else { return };
         if network_address(folder.path()).is_some() {
             self.dispatch_entries(vec![Route { folder, select: None }], OpenTarget::CurrentTab, now);
         }

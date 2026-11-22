@@ -191,3 +191,11 @@ fn shell_places() {
     assert!(dcim.is_inside(&phone));
     assert_eq!(p("This PC"), FsPath::computer());
 }
+
+#[test]
+fn built_roots_match_parsed_roots() {
+    assert_eq!(FsPath::unix_root(), p("/"));
+    assert_eq!(p(r"D:\Games\x").root_path(), p(r"D:\"));
+    assert_eq!(p(r"D:\Games\x").root_path(), FsPath::parse_exact(br"D:\").unwrap());
+    assert_eq!(p("/home/user").root_path(), FsPath::unix_root());
+}

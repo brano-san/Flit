@@ -19,7 +19,7 @@ use crate::provider::GenToken;
 use crate::recycle;
 use crate::render::{Color, Rect};
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
-use crate::theme::Theme;
+use crate::theme::{self, tone_color, Theme};
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::ops::Range;
@@ -411,20 +411,6 @@ fn run_font(r: &Run, block: Block, sc: f32, mono: f32) -> FontStyle {
 fn para_font(block: Block, mono: bool, sc: f32, mono_px: f32) -> FontStyle {
     let r = Run { start: 0, end: 0, tone: Tone::Plain, bold: false, mono: mono || block == Block::Code, strike: false };
     run_font(&r, block, sc, mono_px)
-}
-
-fn tone_color(t: &Theme, dark: bool, tone: Tone) -> Color {
-    let pick = |d: u32, l: u32| Color::rgb(if dark { d } else { l });
-    match tone {
-        Tone::Plain => t.text,
-        Tone::Dim | Tone::Comment => t.text_dim,
-        Tone::Keyword => pick(0x569CD6, 0x0033B3),
-        Tone::String => pick(0xCE9178, 0xA31515),
-        Tone::Number => pick(0xB5CEA8, 0x098658),
-        Tone::Link => t.accent,
-        Tone::Added => pick(0x6A9955, 0x22863A),
-        Tone::Removed => t.error,
-    }
 }
 
 fn char_w<B: TextBackend>(g: &mut Gfx<B>, widths: &mut FxHashMap<(char, FontStyle), f32>, c: char, font: FontStyle) -> f32 {
@@ -1361,7 +1347,7 @@ impl App {
                 let e = l.entries[i as usize];
                 let name = l.name(i);
                 let row_dir = if crate::library::is_library(t.view_loc.path()) { FsPath::parse_exact(crate::library::folder(l, i)) } else if e.attrs & attr::NESTED != 0 { t.view_loc.to_windows().map(|d| d.join(l.folder(i))) } else { None };
-                let path = if in_bin { recycle::recycled(l, i) } else { row_dir.as_ref().map_or_else(|| t.entry_location(i).to_windows(), |d| Some(d.join(name))) };
+                let path = if in_bin { recycle::recycled(l, i) } else { row_dir.as_ref().map_or_else(|| t.entry_location(i)?.to_windows(), |d| Some(d.join(name))) };
                 let kind = if e.is_dir() { Kind::Folder } else { preview::kind_of(name) };
                 let drive = (e.attrs & attr::VOLUME != 0)
                     .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free)))
@@ -2274,13 +2260,13 @@ impl App {
         let r = Rect::new(x0, y0, dw, dh);
         let background = if self.preview_is_svg() { Some(self.opts.svg_background) } else { look.grid.then_some(Bg::Checker) };
         if let Some(Bg::Black | Bg::White) = background {
-            g.dl.rect(r, Color::rgb(if background == Some(Bg::Black) { 0 } else { 0xFFFFFF }));
+            g.dl.rect(r, if background == Some(Bg::Black) { theme::BLACK } else { theme::WHITE });
         }
         if background == Some(Bg::Checker) {
             let cell = self.s(CHECKER).max(4.0);
             let visible = Rect::new(r.x.max(b.x), r.y.max(b.y), (r.right().min(b.right()) - r.x.max(b.x)).max(0.0), (r.bottom().min(b.bottom()) - r.y.max(b.y)).max(0.0));
-            g.dl.rect(visible, Color::rgb(if self.dark { 0x3A3A3A } else { 0xFFFFFF }));
-            let dark = Color::rgb(if self.dark { 0x2A2A2A } else { 0xE4E4E4 });
+            let (light, dark) = theme::preview_checker(self.dark);
+            g.dl.rect(visible, light);
             let (cols, rows) = ((visible.w / cell).ceil() as usize, (visible.h / cell).ceil() as usize);
             for row in 0..rows {
                 for col in (row % 2..cols).step_by(2) {
@@ -2442,7 +2428,7 @@ impl App {
             p.doc = Some(lay);
         }
         p.r.gutter = gutter;
-        let lay = p.doc.as_ref().unwrap();
+        let Some(lay) = &p.doc else { return 0.0 };
         let scroll = p.scroll;
         let first = lay.lines.partition_point(|l| l.y + l.h < scroll);
         let last = lay.lines.partition_point(|l| b.y + l.y - scroll <= b.bottom()).max(first);

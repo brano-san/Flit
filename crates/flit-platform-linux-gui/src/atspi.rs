@@ -291,14 +291,13 @@ pub(crate) fn changes(win: WindowId, old: Option<&Tree>, new: &Tree, out: &mut V
     let mut picked = Vec::new();
     let index: HashMap<u64, usize> = old.map(|t| t.nodes.iter().enumerate().map(|(k, n)| (n.id, k)).collect()).unwrap_or_default();
     for n in &new.nodes {
-        let Some(o) = old.zip(index.get(&n.id)).map(|(t, &k)| &t.nodes[k]) else {
+        let Some((old, o)) = old.zip(index.get(&n.id)).map(|(t, &k)| (t, &t.nodes[k])) else {
             if old.is_some() && n.selected && selectable(n.role) {
                 out.push(state_event(node(n.id), "selected", true));
                 picked.push(n.parent);
             }
             continue;
         };
-        let old = old.expect("an old node comes from an old tree");
         let before: Vec<u64> = o.children.iter().map(|&c| old.nodes[c].id).collect();
         let after: Vec<u64> = n.children.iter().map(|&c| new.nodes[c].id).collect();
         if before != after {

@@ -1,0 +1,30 @@
+[licenses]
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Zlib",
+]
+include-dev = true
+
+[[licenses.clarify]]
+crate = "unrar-ng-sys@=0.7.7"
+expression = "(MIT OR Apache-2.0) AND LicenseRef-UnRAR"
+license-files = [{ path = "vendor/unrar/license.txt", hash = 0x46456911 }]
+
+[[licenses.exceptions]]
+crate = "unrar-ng-sys@=0.7.7"
+allow = ["LicenseRef-UnRAR"]
+
+[advisories]
+yanked = "deny"
+ignore = [{ id = "RUSTSEC-2026-0543", reason = "delharc 0.8.0 requires chrono for LHA timestamps" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

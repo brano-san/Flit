@@ -170,7 +170,7 @@ impl Platform for Linux {
     }
 
     fn home() -> FsPath {
-        xdg::home().and_then(|h| xdg::fs_path(&h)).unwrap_or_else(|| FsPath::parse("/").unwrap())
+        xdg::home().and_then(|h| xdg::fs_path(&h)).unwrap_or_else(FsPath::unix_root)
     }
 
     fn network_warning() -> Option<flit_core::provider::NetworkWarning> {

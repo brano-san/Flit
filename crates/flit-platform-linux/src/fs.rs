@@ -11,6 +11,9 @@ use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "dirent.rs"]
+mod dirent;
+
 pub(crate) const DENTS_BUFFER: usize = 64 << 10;
 const BATCH: usize = 1024;
 pub const DEEP_LIMIT: usize = 2_000_000;
@@ -291,21 +294,10 @@ pub fn dents_ino(fd: libc::c_int, mut each: impl FnMut(&CStr, u8, u64) -> bool) 
         if n == 0 {
             return Ok(());
         }
-        let mut off = 0;
-        while off + 19 < n as usize {
-            let reclen = u16::from_ne_bytes([buf[off + 16], buf[off + 17]]) as usize;
-            if reclen < 20 || off + reclen > n as usize {
-                return Err(io::Error::from_raw_os_error(libc::EIO));
-            }
-            let (d_type, ino) = (buf[off + 18], u64::from_ne_bytes(buf[off..off + 8].try_into().unwrap_or_default()));
-            let Ok(name) = CStr::from_bytes_until_nul(&buf[off + 19..off + reclen]) else { break };
-            off += reclen;
-            if matches!(name.to_bytes(), b"." | b"..") {
-                continue;
-            }
-            if !each(name, d_type, ino) {
-                return Ok(());
-            }
+        match dirent::for_each(&buf[..n as usize], &mut each) {
+            Some(std::ops::ControlFlow::Continue(())) => {}
+            Some(std::ops::ControlFlow::Break(())) => return Ok(()),
+            None => return Err(io::Error::from_raw_os_error(libc::EIO)),
         }
     }
 }

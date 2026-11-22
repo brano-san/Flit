@@ -268,7 +268,7 @@ fn reserve_stage(dir: RawFd) -> io::Result<(CString, OwnedFd)> {
     static NEXT: AtomicU64 = AtomicU64::new(0);
     loop {
         let id = NEXT.fetch_add(1, Ordering::Relaxed);
-        let name = CString::new(format!(".flit-stage-{}-{id}.flit-partial", std::process::id())).unwrap();
+        let name = CString::new(format!(".flit-stage-{}-{id}.flit-partial", std::process::id())).map_err(|_| errno(libc::EINVAL))?;
         match check(unsafe { libc::mkdirat(dir, name.as_ptr(), 0o700) }) {
             Ok(()) => return open_dir_at(dir, &name).map(|fd| (name, fd)),
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
@@ -1363,7 +1363,14 @@ impl<'a> Engine<'a> {
             let Some(t) = t.as_ref().filter(|_| ok) else { continue };
             let dir = t.dir.as_raw_fd();
             let deleted = if let Some((path, record)) = stage {
-                let name = cstring(path.file_name()).expect("generated stage name");
+                let name = match cstring(path.file_name()) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        record.keep();
+                        self.fail(&path, &error);
+                        continue;
+                    }
+                };
                 let matches = || undo_stamp(&path).is_ok_and(|(stamp, _)| record.matches(stamp));
                 let deleted = if matches() && !self.stopped() {
                     let prepared = if t.node.is_dir() {

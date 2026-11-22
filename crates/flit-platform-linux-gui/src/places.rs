@@ -1,3 +1,8 @@
+#[path = "xbel.rs"]
+mod xbel;
+
+use xbel::{attribute, attribute_range, bookmark_href, bookmark_tags, unescape_xml};
+
 use flit_core::i18n::S;
 use flit_core::listing::{attr, Meta};
 use flit_core::ui::Drive;
@@ -172,7 +177,9 @@ fn run_command(mut cmd: std::process::Command, wait: std::time::Duration, each: 
     let mut child = cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let deadline = std::time::Instant::now() + wait;
     let result = (|| {
-        let stdout = child.stdout.take().unwrap();
+        let (Some(stdout), Some(stderr)) = (child.stdout.take(), child.stderr.take()) else {
+            return Err(std::io::Error::other(S::ErrorsFsNotResponding.en()));
+        };
         let stdout = match each {
             None => drain(stdout)?,
             Some(mut each) => std::thread::Builder::new().spawn(move || {
@@ -185,7 +192,7 @@ fn run_command(mut cmd: std::process::Command, wait: std::time::Duration, each: 
                 Ok(Vec::new())
             })?,
         };
-        let stderr = drain(child.stderr.take().unwrap())?;
+        let stderr = drain(stderr)?;
         loop {
             if stdout.is_finished() && stderr.is_finished() {
                 if let Some(status) = child.try_wait()? {
@@ -452,60 +459,6 @@ pub fn empty(trash: &Trash, tops: &[PathBuf]) -> OpOutcome {
     OpOutcome { items, error: error.map(|e| PlatformError::from_io(&e, flit_core::tr_en!(S::ErrorsOpsTrashPartial, error = flit_core::fmt::io_reason(&e)))) }
 }
 
-fn attribute_range(tag: &[u8], name: &[u8]) -> Option<std::ops::Range<usize>> {
-    let mut rest = &tag[tag.iter().position(u8::is_ascii_whitespace)?..];
-    loop {
-        rest = rest.trim_ascii_start();
-        let key_end = rest.iter().position(|b| b.is_ascii_whitespace() || *b == b'=')?;
-        let value = rest[key_end..].trim_ascii_start().strip_prefix(b"=")?.trim_ascii_start();
-        let (&quote, value) = value.split_first()?;
-        if !matches!(quote, b'\'' | b'"') {
-            return None;
-        }
-        let end = value.iter().position(|&b| b == quote)?;
-        if &rest[..key_end] == name {
-            let start = tag.len() - value.len();
-            return Some(start..start + end);
-        }
-        rest = &value[end + 1..];
-    }
-}
-
-fn attribute<'a>(tag: &'a [u8], name: &[u8]) -> Option<&'a [u8]> {
-    Some(&tag[attribute_range(tag, name)?])
-}
-
-fn numeric_xml_reference(s: &[u8]) -> Option<(usize, char)> {
-    let number = s.strip_prefix(b"&#")?;
-    let (digits, radix) = number.strip_prefix(b"x").map_or((number, 10), |hex| (hex, 16));
-    let end = digits.iter().position(|b| !b.is_ascii_hexdigit())?;
-    if digits[end] != b';' {
-        return None;
-    }
-    let code = u32::from_str_radix(std::str::from_utf8(&digits[..end]).ok()?, radix).ok()?;
-    let c = char::from_u32(code)?;
-    Some((s.len() - digits.len() + end + 1, c))
-}
-
-fn unescape_xml(s: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(s.len());
-    let mut i = 0;
-    while i < s.len() {
-        let entity = [(&b"&amp;"[..], b'&'), (b"&lt;", b'<'), (b"&gt;", b'>'), (b"&quot;", b'"'), (b"&apos;", b'\'')].into_iter().find(|(e, _)| s[i..].starts_with(e));
-        if let Some((e, c)) = entity {
-            out.push(c);
-            i += e.len();
-        } else if let Some((len, c)) = numeric_xml_reference(&s[i..]) {
-            out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes());
-            i += len;
-        } else {
-            out.push(s[i]);
-            i += 1;
-        }
-    }
-    out
-}
-
 fn utc_ticks(s: &[u8]) -> Option<i64> {
     let s = std::str::from_utf8(s.get(..19)?).ok()?;
     let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i32>().ok();
@@ -522,7 +475,7 @@ fn utc_ticks(s: &[u8]) -> Option<i64> {
 
 pub fn bookmarks_from(gtk: &[u8], kde: &[u8], skip: &[&[u8]], is_dir: impl Fn(&Path) -> bool) -> Vec<flit_core::Location> {
     let gtk = gtk.split(|&b| b == b'\n').filter_map(|l| l.strip_suffix(b"\r").unwrap_or(l).split(|&b| b == b' ').next());
-    let kde = kde.split(|&b| b == b'<').filter(|t| t.starts_with(b"bookmark ")).filter_map(|t| attribute(t, b"href")).map(unescape_xml);
+    let kde = bookmark_tags(kde).filter_map(bookmark_href);
     let mut out: Vec<flit_core::Location> = Vec::new();
     for uri in gtk.map(<[u8]>::to_vec).chain(kde) {
         let Some(path) = crate::instance::decode_uri(&uri).filter(|p| p.starts_with(b"/") && !skip.contains(&p.as_slice())) else { continue };
@@ -667,11 +620,9 @@ pub fn remember_recent(paths: Vec<PathBuf>) {
 }
 
 pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path) -> Option<bool>) -> Vec<flit_core::ui::Recent> {
-    let mut found: Vec<(i64, Vec<u8>)> = xbel
-        .split(|&b| b == b'<')
-        .filter(|t| t.starts_with(b"bookmark "))
+    let mut found: Vec<(i64, Vec<u8>)> = bookmark_tags(xbel)
         .filter_map(|tag| {
-            let href = unescape_xml(attribute(tag, b"href")?);
+            let href = bookmark_href(tag)?;
             let path = crate::instance::decode_uri(&href).filter(|p| p.starts_with(b"/"))?;
             let at = attribute(tag, b"modified").or_else(|| attribute(tag, b"visited")).and_then(utc_ticks).unwrap_or(0);
             Some((at, path))

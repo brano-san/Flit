@@ -153,8 +153,8 @@ fn normalize(n: &mut Node) {
         }
     }
     *kids = flat;
-    if kids.len() == 1 {
-        *n = kids.pop().unwrap().0;
+    if let Some((child, _)) = (kids.len() == 1).then(|| kids.pop()).flatten() {
+        *n = child;
     }
 }
 

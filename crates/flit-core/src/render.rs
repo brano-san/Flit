@@ -252,19 +252,19 @@ impl DrawList {
     }
 
     pub fn image(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
-        self.push(r, uv, Color(0xFFFF_FFFF).alpha(alpha), 0.0, 0.0, kind::IMAGE);
+        self.push(r, uv, crate::theme::WHITE.alpha(alpha), 0.0, 0.0, kind::IMAGE);
     }
 
     pub fn thumb(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
-        self.push(r, uv, Color(0xFFFF_FFFF).alpha(alpha), 0.0, 0.0, kind::THUMB);
+        self.push(r, uv, crate::theme::WHITE.alpha(alpha), 0.0, 0.0, kind::THUMB);
     }
 
     pub fn backdrop(&mut self, r: Rect, uv: [f32; 4], alpha: u8) {
-        self.push(r, uv, Color(0xFFFF_FFFF).alpha(alpha), 0.0, 0.0, kind::BACKDROP);
+        self.push(r, uv, crate::theme::WHITE.alpha(alpha), 0.0, 0.0, kind::BACKDROP);
     }
 
     pub fn preview(&mut self, r: Rect) {
-        self.push(r, [0.0, 0.0, 1.0, 1.0], Color(0xFFFF_FFFF), 0.0, 0.0, kind::PREVIEW);
+        self.push(r, [0.0, 0.0, 1.0, 1.0], crate::theme::WHITE, 0.0, 0.0, kind::PREVIEW);
     }
 
     pub fn check(&mut self, r: Rect, color: Color) {

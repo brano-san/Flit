@@ -50,9 +50,10 @@ impl Atlas {
                 if self.next_y + ph > self.size {
                     return None;
                 }
-                self.shelves.push(Shelf { y: self.next_y, h: ph, x: 0 });
+                let y = self.next_y;
+                self.shelves.push(Shelf { y, h: ph, x: pw });
                 self.next_y += ph;
-                self.shelves.last_mut().unwrap()
+                return Some(Slot { x: 0, y, w, h });
             }
         };
         let slot = Slot { x: shelf.x, y: shelf.y, w, h };

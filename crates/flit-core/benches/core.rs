@@ -74,7 +74,10 @@ fn filter_benches(c: &mut Criterion, listing: Listing, keys: SortKeys) {
     let view = ViewSpec::default();
     let mut order = Vec::new();
     sort::sort(&listing, &keys, view, &mut order);
-    let path = FsPath::parse(r"C:\bench").unwrap();
+    let Some(path) = FsPath::parse(r"C:\bench") else {
+        eprintln!("invalid synthetic directory path");
+        std::process::exit(1);
+    };
     let snap = DirSnapshot { gen: 1, path, listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO };
     let mut v = DirView::new(Arc::new(snap));
     c.bench_function("filter_100k_ascii (keystroke from no filter)", |b| {

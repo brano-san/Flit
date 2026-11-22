@@ -343,7 +343,7 @@ impl App {
     pub(super) fn selected_folders(&self) -> Vec<Location> {
         let t = self.tab();
         match &t.view {
-            Some(v) if !t.view_loc.is_recycle_bin() => v.selected().filter(|&i| v.listing().entries[i as usize].is_dir()).map(|i| t.entry_location(i)).collect(),
+            Some(v) if !t.view_loc.is_recycle_bin() => v.selected().filter(|&i| v.listing().entries[i as usize].is_dir()).filter_map(|i| t.entry_location(i)).collect(),
             _ => Vec::new(),
         }
     }

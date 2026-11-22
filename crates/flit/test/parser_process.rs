@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};

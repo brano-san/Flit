@@ -215,8 +215,12 @@ impl Doc {
     }
 
     pub fn para(&mut self, block: Block) {
+        self.para_with_quote_depth(block, u8::from(block == Block::Quote));
+    }
+
+    fn para_with_quote_depth(&mut self, block: Block, quote_depth: u8) {
         let start = self.open_start();
-        self.paras.push(Para { block, quote_depth: u8::from(block == Block::Quote), runs: start..self.runs.len() as u32 });
+        self.paras.push(Para { block, quote_depth, runs: start..self.runs.len() as u32 });
     }
 
     pub fn run_text(&self, r: &Run) -> &str {

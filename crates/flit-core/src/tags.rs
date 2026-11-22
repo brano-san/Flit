@@ -7,18 +7,7 @@ use std::sync::{Arc, RwLock};
 
 pub const MAX_TAGS: usize = 32;
 pub const MAX_NAME: usize = 64;
-pub const COLORS: [(S, u32); 10] = [
-    (S::ThemeTagColorRed, 0xE81123),
-    (S::ThemeTagColorOrange, 0xF7630C),
-    (S::ThemeTagColorYellow, 0xFFB900),
-    (S::ThemeTagColorGreen, 0x16C60C),
-    (S::ThemeTagColorTeal, 0x00B7C3),
-    (S::ThemeTagColorBlue, 0x0078D4),
-    (S::ThemeTagColorPurple, 0x8764B8),
-    (S::ThemeTagColorPink, 0xE3008C),
-    (S::ThemeTagColorBrown, 0x8E562E),
-    (S::ThemeTagColorGray, 0x7A7574),
-];
+pub use crate::theme::TAG_COLORS as COLORS;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tag {

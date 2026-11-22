@@ -244,8 +244,11 @@ impl Pending {
         let mut child = Command::new(std::env::current_exe()?).arg("--file-chooser-request")
             .env(PARENT_ENV, parent).env(MODAL_ENV, if call.modal { "1" } else { "0" })
             .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
-        let mut stdin = child.stdin.take().expect("piped stdin");
-        let stdout = child.stdout.take().expect("piped stdout");
+        let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(io::Error::other("missing file chooser pipes"));
+        };
         let (tx, output) = mpsc::channel();
         if let Err(e) = std::thread::Builder::new().name("flit-chooser".into()).spawn(move || {
             let wrote = stdin.write_all(&input).is_ok();
@@ -361,10 +364,9 @@ unsafe fn handle(bus: &Bus, msg: *mut c_void, owner: Option<&str>, pending: &mut
         let incoming = args(api, msg);
         if let [Arg::S(handle), Arg::S(_), Arg::S(parent), Arg::S(title), Arg::L(options)] = incoming.as_slice() {
             if valid_handle(handle) && pending.len() < 16 && !pending.contains_key(handle) {
-                if let Some(call) = parse(&member, title, options, crate::mime::picker_filter_type) {
+                if let (Some(call), Ok(path)) = (parse(&member, title, options, crate::mime::picker_filter_type), CString::new(handle.as_bytes())) {
                     if let Ok(request) = Pending::spawn(msg, call, parent) {
                         pending.insert(handle.clone(), request);
-                        let path = CString::new(handle.as_bytes()).expect("valid request path");
                         bus.signal(&path, c"org.freedesktop.impl.portal.Request", c"Created", &[]);
                         return true;
                     }

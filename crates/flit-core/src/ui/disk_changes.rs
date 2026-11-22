@@ -31,7 +31,7 @@ impl App {
     pub(super) fn disk_changes(&mut self) {
         let path = self.current_location().to_windows().filter(|p| p.kind() == PathKind::Drive && !self.caps.unix_paths);
         let Some(path) = path else { return self.status(S::DiskChangesLocalOnly.t()); };
-        let root = FsPath::parse_exact(path.root_bytes()).expect("a drive has a root");
+        let root = path.root_path();
         let output = path.join(b"disk-changes.csv");
         let controls = vec![
             Control::line(&root.display()),

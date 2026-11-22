@@ -46,6 +46,10 @@ impl FsPath {
         Self { s: Vec::new(), root: 0, kind: PathKind::Computer }
     }
 
+    pub fn unix_root() -> Self {
+        Self { s: vec![b'/'], root: 1, kind: PathKind::Unix }
+    }
+
     pub fn recycle_bin() -> Self {
         Self { s: RECYCLE_BIN_SHELL.as_bytes().to_vec(), root: RECYCLE_BIN_SHELL.len() as u16, kind: PathKind::RecycleBin }
     }
@@ -283,6 +287,10 @@ impl FsPath {
 
     pub fn root_bytes(&self) -> &[u8] {
         &self.s[..self.root as usize]
+    }
+
+    pub(crate) fn root_path(&self) -> Self {
+        Self { s: self.root_bytes().to_vec(), root: self.root, kind: self.kind }
     }
 
     pub fn is_root(&self) -> bool {

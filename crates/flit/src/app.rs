@@ -1615,11 +1615,12 @@ impl<P: Platform> Handler<P> {
                 }
             }
             let mode = if found.is_some() { OpenTarget::CurrentTab } else { OpenTarget::NewTab };
-            self.windows.get_mut(&target).unwrap().app.dispatch_open(vec![route], mode, open.properties, now);
+            let Some(st) = self.windows.get_mut(&target) else { return };
+            st.app.dispatch_open(vec![route], mode, open.properties, now);
         }
-        let app = &mut self.windows.get_mut(&target).unwrap().app;
-        app.report_dropped(total);
-        app.show_open_errors(&errors);
+        let Some(st) = self.windows.get_mut(&target) else { return };
+        st.app.report_dropped(total);
+        st.app.show_open_errors(&errors);
         self.raise = Some(target);
         (self.wake)();
     }
@@ -1668,7 +1669,7 @@ impl<P: Platform> Handler<P> {
         let animating = st.app.frame(&mut st.gfx, t);
         *st.visible.content.lock().unwrap_or_else(|e| e.into_inner()) = st.app.visible_content_icons();
         *st.visible.overlays.lock().unwrap_or_else(|e| e.into_inner()) = st.app.visible_overlays();
-        let renderer = st.renderer.as_mut().unwrap();
+        let Some(renderer) = &mut st.renderer else { return };
         for &(slot, off) in &st.gfx.uploads.rects {
             let len = (slot.w * slot.h * 4) as usize;
             renderer.upload(slot, &st.gfx.uploads.data[off..off + len]);
