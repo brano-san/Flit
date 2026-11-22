@@ -500,6 +500,7 @@ struct Control {
     attach_companions: AtomicBool,
     answer: Mutex<Answer>,
     changed: Condvar,
+    replay: std::sync::OnceLock<crate::undo::Replay>,
 }
 
 #[derive(Clone, Default, Debug)]
@@ -510,6 +511,16 @@ impl OpCtl {
         let ctl = Self::default();
         ctl.lock().policy = policy;
         ctl
+    }
+
+    pub fn checked(replay: crate::undo::Replay) -> Self {
+        let ctl = Self::new(Some(Resolve::Skip));
+        let _ = ctl.0.replay.set(replay);
+        ctl
+    }
+
+    pub fn replay(&self) -> Option<&crate::undo::Replay> {
+        self.0.replay.get()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Answer> {
@@ -702,6 +713,13 @@ pub type OpId = u64;
 pub struct OpReport {
     pub op: FileOp,
     pub items: Vec<(FsPath, FsPath)>,
+    pub undo: crate::undo::Report,
+}
+
+impl OpReport {
+    pub fn new(op: FileOp, items: Vec<(FsPath, FsPath)>) -> Self {
+        Self { op, items, undo: Default::default() }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -90,7 +90,7 @@ fn extract_delete_keeps_the_archive_on_failure_and_trashes_it_only_on_success() 
         let (id, op) = only(&mut app);
         assert!(matches!(&op, FileOp::Archive(ArchiveOp::Extract { place: Place::Smart, .. })));
         let tab = app.tab().id;
-        app.op_done(tab, id, error.clone().map(Into::into), Some(OpReport { op, items: vec![(p(r"C:\x\a.zip"), p(r"C:\x\a"))] }), t0());
+        app.op_done(tab, id, error.clone().map(Into::into), Some(OpReport::new(op, vec![(p(r"C:\x\a.zip"), p(r"C:\x\a"))])), t0());
         let next = ops(&mut app);
         if error.is_none() {
             assert!(matches!(next.as_slice(), [(_, FileOp::Trash(paths))] if paths == &[p(r"C:\x\a.zip")]));
@@ -107,7 +107,7 @@ fn form(app: &App) -> &Form {
 fn finish(app: &mut App, id: OpId, op: FileOp, items: &[(&str, &str)], error: Option<OpError>) {
     let tab = app.tab().id;
     let items = items.iter().map(|(a, b)| (p(a), p(b))).collect();
-    app.on_provider_event(ProviderEvent::OpDone { tab, id, error, report: Some(OpReport { op, items }) }, t0());
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error, report: Some(OpReport::new(op, items)) }, t0());
 }
 
 #[test]
@@ -648,7 +648,7 @@ fn unpacked_to(app: &mut App, then: &str) -> (OpId, Vec<FsPath>, FsPath) {
 fn unpacked(app: &mut App, id: OpId, items: Vec<FsPath>, dest: &FsPath, error: Option<&str>) {
     let tab = app.tab().id;
     let made = items.iter().map(|i| (i.clone(), dest.join(i.file_name()))).collect();
-    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(Into::into), report: Some(OpReport { op: FileOp::Copy { items, dest: dest.clone() }, items: made }) }, t0());
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(Into::into), report: Some(OpReport::new(FileOp::Copy { items, dest: dest.clone() }, made)) }, t0());
 }
 
 #[test]

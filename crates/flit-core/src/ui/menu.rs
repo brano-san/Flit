@@ -145,6 +145,7 @@ pub(super) enum Cmd {
     EditAddress(Option<usize>),
     RenameServer(String),
     RemoveServer(String),
+    UndoHistory(u64, crate::undo::Origin, bool),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -832,6 +833,7 @@ impl App {
             Some(Cmd::CopyAddress(loc)) => self.effects.push(super::Effect::SetClipboard(self.as_path_text(&loc))),
             Some(Cmd::RenameServer(address)) => self.ask_rename_server(address),
             Some(Cmd::RemoveServer(address)) => self.remove_saved_server(&address),
+            Some(Cmd::UndoHistory(id, origin, group)) => self.undo_history_command(id, origin, group),
             Some(Cmd::EditAddress(crumb)) => match crumb {
                 Some(i) => self.open_crumb(i),
                 None => self.open_address(),

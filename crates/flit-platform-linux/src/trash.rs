@@ -271,10 +271,18 @@ impl Trash {
     }
 
     pub fn trash(&self, path: &Path) -> io::Result<PathBuf> {
-        self.trash_from(path, path)
+        self.trash_with(path, path, false)
     }
 
     pub fn trash_from(&self, path: &Path, original: &Path) -> io::Result<PathBuf> {
+        self.trash_with(path, original, false)
+    }
+
+    pub(crate) fn trash_checked(&self, path: &Path) -> io::Result<PathBuf> {
+        self.trash_with(path, path, true)
+    }
+
+    fn trash_with(&self, path: &Path, original: &Path, checked: bool) -> io::Result<PathBuf> {
         let base = original.file_name().ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
         let dev = fs::symlink_metadata(path)?.dev();
         let (dir, original) = self.place(original, dev)?;
@@ -297,9 +305,20 @@ impl Trash {
                 let _ = fs::remove_file(&info_path);
                 continue;
             }
-            let moved = file.write_all(record.as_bytes()).and_then(|()| fs::rename(path, &target));
+            let moved = file.write_all(record.as_bytes()).and_then(|()| {
+                if !checked {
+                    return fs::rename(path, &target);
+                }
+                file.sync_data()?;
+                let from = crate::fs::cstring(path.as_os_str().as_bytes())?;
+                let to = crate::fs::cstring(target.as_os_str().as_bytes())?;
+                crate::ops::rename_exact(libc::AT_FDCWD, &from, libc::AT_FDCWD, &to)
+            });
             if let Err(e) = moved {
                 let _ = fs::remove_file(&info_path);
+                if e.kind() == io::ErrorKind::AlreadyExists {
+                    continue;
+                }
                 return Err(e);
             }
             return Ok(target);

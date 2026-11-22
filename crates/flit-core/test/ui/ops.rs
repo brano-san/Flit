@@ -89,8 +89,49 @@ fn ops(app: &mut App) -> Vec<(OpId, FileOp)> {
 
 fn done(app: &mut App, id: OpId, op: FileOp, items: &[(&str, &str)]) {
     let tab = app.tab().id;
-    let report = OpReport { op, items: items.iter().map(|&(a, b)| (p(a), p(b))).collect() };
+    let report = OpReport::new(op, items.iter().map(|&(a, b)| (p(a), p(b))).collect());
     app.on_provider_event(ProviderEvent::OpDone { tab, id, error: None, report: Some(report) }, t0());
+}
+
+#[test]
+fn undo_history_groups_dependent_actions_from_newest_to_oldest() {
+    let mut app = app_at(r"C:\work");
+    for (a, b) in [(r"C:\work\a", r"C:\work\b"), (r"C:\work\b", r"C:\work\c")] {
+        let operation = FileOp::MoveTo(vec![(p(a), p(b))]);
+        app.ops.journal.record(Origin::Fresh, ProviderId::Local, &OpReport::new(operation, vec![(p(a), p(b))]));
+    }
+    let earlier = app.ops.journal.entries(Origin::Undo)[0].id;
+    assert!(app.run_action("edit.undo_history", t0()));
+    let menu = app.drain_effects().find_map(|e| match e { Effect::ShellMenu(menu) => Some(menu), _ => None }).unwrap();
+    app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending: false }, t0());
+    app.frame(&mut Gfx::new(Mono, 1024), t0());
+    assert!(app.own_menu_open());
+    assert!(app.menu.iter().any(|cmd| matches!(cmd, crate::ui::menu::Cmd::UndoHistory(id, Origin::Undo, true) if *id == earlier)));
+    app.undo_history_command(earlier, Origin::Undo, false);
+    assert!(ops(&mut app).is_empty());
+
+    let group = app.menu.iter().position(|cmd| matches!(cmd, crate::ui::menu::Cmd::UndoHistory(id, Origin::Undo, true) if *id == earlier)).unwrap();
+    app.menu_command(group, t0());
+    let [(id, back)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(back, FileOp::MoveTo(vec![(p(r"C:\work\c"), p(r"C:\work\b"))]));
+    done(&mut app, id, back, &[(r"C:\work\c", r"C:\work\b")]);
+    let [(id, back)] = ops(&mut app).try_into().unwrap();
+    assert_eq!(back, FileOp::MoveTo(vec![(p(r"C:\work\b"), p(r"C:\work\a"))]));
+    done(&mut app, id, back, &[(r"C:\work\b", r"C:\work\a")]);
+    assert_eq!(app.undo_depth(), (0, 2));
+}
+
+#[test]
+fn checked_undo_keeps_the_provider_that_observed_the_file() {
+    let mut app = app_at(r"C:\work");
+    let undo = FileOp::Trash(vec![p(r"\\wsl.localhost\Ubuntu\home\copy.txt")]);
+    let plan = crate::undo::Replay { steps: vec![undo.clone()], checks: Vec::new(), recheck_tree: false, captured_ns: None };
+    app.start_op_with_ctl(ProviderId::Local, app.tab().id, undo.clone(), Origin::Undo, Then::Select, OpCtl::checked(plan.clone()));
+    let (provider, op, checks) = app.drain_effects().find_map(|e| match e {
+        Effect::Provider { provider, req: ProviderRequest::Op { op, ctl, .. } } => Some((provider, op, ctl.replay().cloned())),
+        _ => None,
+    }).unwrap();
+    assert_eq!((provider, op, checks), (ProviderId::Local, undo, Some(plan)));
 }
 
 fn change(app: &mut App, kind: ChangeKind, name: &str, dir: bool) {
@@ -2717,7 +2758,7 @@ fn linux_content_drop_failures_stay_visible_in_the_status_and_operation_panel() 
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     let tab = app.tab().id;
     let message = "Permission denied";
-    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some(message.into()), report: Some(OpReport { op, items: Vec::new() }) }, t0());
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some(message.into()), report: Some(OpReport::new(op, Vec::new())) }, t0());
     assert_eq!(app.tab().error.as_deref(), Some(message));
     assert!(matches!(&app.job_states()[0].1, crate::ui::JobState::Failed(error) if error == message));
     assert!(selected(&app).is_empty());
@@ -2751,7 +2792,7 @@ fn completed_and_cancelled_drop_jobs_do_not_retain_the_private_payload_in_histor
         let [(id, op)] = ops(&mut app).try_into().unwrap();
         assert!(weak.upgrade().is_some());
         let tab = app.tab().id;
-        app.on_provider_event(ProviderEvent::OpDone { tab, id, error: cancel.then(|| crate::provider::OpError::new(crate::provider::PlatformErrorKind::Cancelled, "aborted")), report: Some(OpReport { op, items: Vec::new() }) }, t0());
+        app.on_provider_event(ProviderEvent::OpDone { tab, id, error: cancel.then(|| crate::provider::OpError::new(crate::provider::PlatformErrorKind::Cancelled, "aborted")), report: Some(OpReport::new(op, Vec::new())) }, t0());
         assert!(weak.upgrade().is_none(), "the finished job only keeps a summary");
         assert_eq!(app.running_jobs(), 0);
         assert_eq!(app.job_states().len(), 1);

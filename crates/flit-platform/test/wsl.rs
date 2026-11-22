@@ -364,7 +364,7 @@ fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
     let s = setup(fake, Timing::default());
     s.wsl.submit(ProviderRequest::Op { tab: 2, id: 11, op: FileOp::Trash(vec![unix("/tmp/a")]), ctl: OpCtl::default() });
     let done = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 2, id: 11, error, report } = e { Some((error, report)) } else { None });
-    assert_eq!(done, (Some("nope".into()), Some(OpReport { op: FileOp::Trash(vec![unix("/tmp/a")]), items: Vec::new() })));
+    assert_eq!(done, (Some("nope".into()), Some(OpReport::new(FileOp::Trash(vec![unix("/tmp/a")]), Vec::new()))));
     let token = GenToken::default();
     token.set(1);
     s.wsl.submit(ProviderRequest::DirSizes { tab: 2, gen: 1, dir: unix("/"), items: vec![(3, b"usr".to_vec())], cancel: token, allowed: [true; 3] });
@@ -416,6 +416,64 @@ fn copy() -> FileOp {
 }
 
 #[test]
+fn undo_for_unreplaced_operations_is_sent_back_to_the_wsl_agent() {
+    let original = unix("/src/a");
+    let moved = unix("/src/b");
+    let op = FileOp::Rename { item: original.clone(), name: b"b".to_vec() };
+    let inverse = FileOp::Rename { item: moved.clone(), name: b"a".to_vec() };
+    let stamp = flit_core::undo::Stamp { size: 4, modified: 100, device: 2, file: 3, access: None };
+    let plan = flit_core::undo::Replay {
+        steps: vec![inverse.clone()],
+        checks: vec![(moved.clone(), Some(stamp)), (original.clone(), None)],
+        recheck_tree: false, captured_ns: Some(100),
+    };
+    let agent_plan = plan.clone();
+    let s = setup(Fake::new(move |req| Some(match req {
+        Request::Op { id, .. } => vec![
+            Event::OpUndo { id: *id, undo: Undo::Checked(agent_plan.clone()) },
+            Event::OpDone { id: *id, error: None, items: vec![(original.clone(), moved.clone())] },
+        ],
+        Request::Replay { id, plan } => {
+            assert_eq!(plan, &agent_plan);
+            vec![Event::OpDone { id: *id, error: None, items: vec![(moved.clone(), original.clone())] }]
+        }
+        _ => Vec::new(),
+    })), Timing::default());
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 1, op, ctl: OpCtl::default() });
+    let report = event(&s.events, |e| match e {
+        ProviderEvent::OpDone { id: 1, error: None, report, .. } => report,
+        _ => None,
+    });
+    assert_eq!(report.undo.checked, Some(Step::Checked(plan.clone())));
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 2, op: inverse, ctl: OpCtl::checked(plan) });
+    let undone = event(&s.events, |e| match e {
+        ProviderEvent::OpDone { id: 2, error: None, report, .. } => report,
+        _ => None,
+    });
+    assert_eq!(undone.items, vec![(unix("/src/b"), unix("/src/a"))]);
+    assert!(s.local.0.lock().unwrap().is_empty());
+}
+
+#[test]
+fn a_wsl_replacement_without_a_backup_reports_the_specific_refusal() {
+    let s = setup(Fake::new(|req| Some(match req {
+        Request::Op { id, .. } => vec![
+            Event::OpReplaced { id: *id, targets: vec![(unix("/dst/a"), None)] },
+            Event::OpUndo { id: *id, undo: Undo::BackupUnavailable },
+            Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] },
+        ],
+        _ => Vec::new(),
+    })), Timing::default());
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 1, op: copy(), ctl: OpCtl::default() });
+    let report = event(&s.events, |e| match e {
+        ProviderEvent::OpDone { id: 1, error: None, report, .. } => report,
+        _ => None,
+    });
+    assert_eq!(report.undo.replaced, vec![(unix("/dst/a"), None)]);
+    assert_eq!(report.undo.checked, Some(Step::Refuse(S::ErrorsOpsUndoBackup.en())));
+}
+
+#[test]
 fn operations_run_on_the_agent_with_progress_and_conflicts() {
     let s = setup(Fake::new(op_events), Timing::default());
     let ctl = OpCtl::default();
@@ -426,7 +484,9 @@ fn operations_run_on_the_agent_with_progress_and_conflicts() {
     assert_eq!(conflict.target, unix("/dst/a"));
     ctl.answer(Resolve::Replace, true);
     let done = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 4, error, report } = e { Some((error, report)) } else { None });
-    assert_eq!(done, (None, Some(OpReport { op: copy(), items: vec![(unix("/src/a"), unix("/dst/a"))] })));
+    let mut report = OpReport::new(copy(), vec![(unix("/src/a"), unix("/dst/a"))]);
+    report.undo.checked = Some(flit_core::undo::Step::Refuse(S::ErrorsOpsUndoUnavailable.en()));
+    assert_eq!(done, (None, Some(report)));
     assert_eq!(ctl.policy(), Some(Resolve::Replace));
     assert!(matches!(&s.fake.seen()[..], [Request::Lang { code }, Request::Op { id: 1, policy: None, .. }, Request::Answer { id: 1, choice: Some(Resolve::Replace), policy: Some(Resolve::Replace) }] if code == flit_core::i18n::lang().code()));
     assert!(s.local.0.lock().unwrap().is_empty());

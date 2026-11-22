@@ -3,13 +3,14 @@ use crate::inotify::{Notice, Notify};
 use crate::ops;
 use crate::trash::Trash;
 use crossbeam_channel::{unbounded, Sender};
-use flit_core::i18n::Lang;
+use flit_core::i18n::{Lang, S};
 use flit_core::listing::DirStats;
 use flit_core::provider::{FileOp, OpCtl};
+use flit_core::undo::Step;
 use flit_core::{FsError, FsErrorKind, FsPath};
-use flit_platform::Job;
+use flit_platform::{replay, FileOps, Job, OpOutcome, PlatformError};
 use flit_proto::listing::{check_name, EntryBatch};
-use flit_proto::provider::{Event, ReqId, Request, VERSION};
+use flit_proto::provider::{check_replay, Event, ReqId, Request, Undo, VERSION};
 use flit_proto::transport::{encode, read_frame, read_hello, Hello, ProtoError, Protocol};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsStr;
@@ -120,6 +121,29 @@ fn sizes(ctx: &Ctx, id: ReqId, dir: &FsPath, items: Vec<(u32, Vec<u8>)>) {
     ctx.finish(id);
 }
 
+struct AgentOps<'a> {
+    trash: Option<&'a Trash>,
+    lang: Lang,
+}
+
+impl FileOps for AgentOps<'_> {
+    fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+        ops::run_in(op, job, self.trash, self.lang)
+    }
+
+    fn can_restore(&self, backup: &FsPath, original: &FsPath) -> bool {
+        self.trash.zip(host(backup)).zip(host(original)).is_some_and(|((trash, backup), original)| {
+            trash.entry(backup).is_ok_and(|(_, stored)| stored == original)
+        })
+    }
+
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::unsupported("clipboard"))
+    }
+
+    fn clear_clipboard(&mut self) {}
+}
+
 fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
     let (progress, conflict, failure) = (ctx.events.clone(), ctx.events.clone(), ctx.events.clone());
     let job = Job::asking(
@@ -134,30 +158,50 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
             let _ = failure.send(Event::OpFailure { id, failure: f });
         }),
     );
-    let reviewed = !matches!(op, FileOp::Rename { .. });
-    let prepared = if job.ctl().includes_companions() {
-        job.prepare_companions(&crate::LinuxFs, op.clone())
+    let mut agent = AgentOps { trash: ctx.trash.as_ref().as_ref(), lang: ctx.lang() };
+    let (out, next) = if let Some(plan) = job.ctl().replay() {
+        replay::run(&mut agent, plan, Some(ops::undo_fs()), &job)
     } else {
-        Ok(op.clone())
-    };
-    let op = match prepared {
-        Ok(op) => op,
-        Err(error) => {
+        let reviewed = !matches!(op, FileOp::Rename { .. });
+        let prepared = if job.ctl().includes_companions() {
+            job.prepare_companions(&crate::LinuxFs, op.clone())
+        } else {
+            Ok(op.clone())
+        };
+        let op = match prepared {
+            Ok(op) => op,
+            Err(error) => {
+                ctx.ops().remove(&id);
+                ctx.send(Event::OpDone { id, error: Some(error.into()), items: Vec::new() });
+                return;
+            }
+        };
+        let conflicts = if reviewed { flit_platform::conflicts::collect(&crate::LinuxFs, &op, job.ctl()) } else { Vec::new() };
+        if !review_conflicts(id, conflicts, job.ctl(), |event| ctx.send(event)) {
             ctx.ops().remove(&id);
-            ctx.send(Event::OpDone { id, error: Some(error.into()), items: Vec::new() });
+            ctx.send(Event::OpDone { id, error: Some(flit_core::provider::OpError::new(flit_platform::PlatformErrorKind::Cancelled, flit_platform::CANCELLED)), items: Vec::new() });
             return;
         }
+        let out = agent.file_op(&op, &job);
+        let report = replay::report(op.clone(), out.items, Some(ops::undo_fs()), &job);
+        if report.op != op {
+            ctx.send(Event::OpPerformed { id, op: report.op });
+        }
+        if !report.undo.replaced.is_empty() {
+            ctx.send(Event::OpReplaced { id, targets: report.undo.replaced });
+        }
+        (OpOutcome { items: report.items, error: out.error }, report.undo.checked)
     };
-    let conflicts = if reviewed { flit_platform::conflicts::collect(&crate::LinuxFs, &op, job.ctl()) } else { Vec::new() };
-    if !review_conflicts(id, conflicts, job.ctl(), |event| ctx.send(event)) {
-        ctx.ops().remove(&id);
-        ctx.send(Event::OpDone { id, error: Some(flit_core::provider::OpError::new(flit_platform::PlatformErrorKind::Cancelled, flit_platform::CANCELLED)), items: Vec::new() });
-        return;
-    }
-    let out = ops::run_in(&op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
     ctx.ops().remove(&id);
-    if let Some(done) = job.take_performed() {
-        ctx.send(Event::OpPerformed { id, op: done });
+    if let Some(step) = next {
+        let undo = match step {
+            Step::Checked(plan) => Undo::Checked(plan),
+            Step::Refuse(reason) if reason == S::ErrorsOpsUndoBackup.en() => Undo::BackupUnavailable,
+            Step::Refuse(reason) if reason == S::ErrorsOpsNotRecycled.en() => Undo::NotRecycled,
+            Step::Refuse(reason) if reason == S::ErrorsOpsUndoStamp.en() => Undo::StampUnavailable,
+            _ => Undo::Unavailable,
+        };
+        ctx.send(Event::OpUndo { id, undo });
     }
     ctx.send(Event::OpDone { id, error: out.error.map(|e| flit_core::provider::OpError::new(e.kind, e.message)), items: out.items });
 }
@@ -202,6 +246,7 @@ pub fn serve(input: impl Read, output: impl Write + Send + 'static, build: Strin
 }
 
 pub fn serve_with_companions(mut input: impl Read, output: impl Write + Send + 'static, build: String, trash: Option<Trash>, companions: bool) -> Result<(), ProtoError> {
+    ops::start_pending_recovery();
     let (events, rx) = unbounded();
     let ours = hello(build);
     let theirs = ours.clone();
@@ -275,14 +320,28 @@ pub fn serve_with_companions(mut input: impl Read, output: impl Write + Send + '
             }
             Request::Op { id, op: o, policy } => {
                 let ctl = OpCtl::new(policy);
-                if companions { ctl.attach_companions(); }
-                ctx.ops().insert(id, ctl.clone());
-                if !spawn("flit-agent-op", move || op(&c, id, &o, ctl)) {
-                    ctx.ops().remove(&id);
-                    ctx.send(Event::OpDone { id, error: Some("The Linux agent cannot start another operation".into()), items: Vec::new() });
+                if companions {
+                    ctl.attach_companions();
                 }
+                start_op(&ctx, id, o, ctl);
+            }
+            Request::Replay { id, plan } => {
+                if let Err(error) = check_replay(&plan) {
+                    ctx.send(Event::OpDone { id, error: Some(error.to_string().into()), items: Vec::new() });
+                    continue;
+                }
+                start_op(&ctx, id, plan.steps[0].clone(), OpCtl::checked(plan));
             }
         }
+    }
+}
+
+fn start_op(ctx: &Ctx, id: ReqId, request: FileOp, ctl: OpCtl) {
+    ctx.ops().insert(id, ctl.clone());
+    let worker = ctx.clone();
+    if !spawn("flit-agent-op", move || op(&worker, id, &request, ctl)) {
+        ctx.ops().remove(&id);
+        ctx.send(Event::OpDone { id, error: Some("The Linux agent cannot start another operation".into()), items: Vec::new() });
     }
 }
 

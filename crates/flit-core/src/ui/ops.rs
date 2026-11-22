@@ -244,6 +244,7 @@ pub(super) struct Ops {
     next_id: OpId,
     pending: Vec<Pending>,
     journal: Journal,
+    undo_remaining: Vec<u64>,
     reveal: Vec<Reveal>,
     rename: Option<Rename>,
     retry: Option<Retry>,
@@ -603,13 +604,16 @@ impl App {
     }
 
     fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
+        self.start_op_with_ctl(provider, tab, op, origin, then, OpCtl::new(self.conflict_default));
+    }
+
+    fn start_op_with_ctl(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then, ctl: OpCtl) {
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
             t.undo = None;
         }
-        let provider = self.admin_route(provider, tab);
-        let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
+        let routed = if ctl.replay().is_some() { Some((provider, op)) } else { route(self.admin_route(provider, tab), op, self.caps.unix_paths) };
+        let Some((provider, op)) = routed else { return self.status(MIXED_PATHS.t()) };
         let id = self.allocate_op_id();
-        let ctl = OpCtl::new(self.conflict_default);
         if self.hide_companions && provider == ProviderId::Local && origin == Origin::Fresh
             && matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Paste { .. })
             && op.all_paths(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unix))
@@ -617,7 +621,7 @@ impl App {
             ctl.attach_companions();
         }
         self.track_job(id, &provider, &op, &ctl);
-        let optimistic_removal = provider == ProviderId::Local
+        let optimistic_removal = ctl.replay().is_none() && provider == ProviderId::Local
             && match &op {
                 FileOp::Trash(items) | FileOp::Delete(items) => self.tabs.iter().find(|t| t.id == tab).is_some_and(|t| {
                     let (Some(view), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return false };
@@ -635,7 +639,7 @@ impl App {
                 FileOp::Trash(items) | FileOp::Delete(items) => items,
                 _ => unreachable!(),
             };
-            let report = OpReport { op: op.clone(), items: sources.iter().cloned().map(|path| (path.clone(), path)).collect() };
+            let report = OpReport::new(op.clone(), sources.iter().cloned().map(|path| (path.clone(), path)).collect());
             if let Some(k) = self.tabs.iter().position(|t| t.id == tab) {
                 self.drop_gone(k, &provider, &report);
             }
@@ -1185,11 +1189,85 @@ impl App {
     }
 
     fn replay(&mut self, origin: Origin) {
-        match self.ops.journal.take(origin) {
+        self.replay_entry(origin, None, false);
+    }
+
+    fn replay_entry(&mut self, origin: Origin, entry: Option<u64>, recheck_tree: bool) {
+        if self.ops.journal.running() {
+            if self.ops.journal.entries(origin).is_empty() {
+                self.status(if origin == Origin::Undo { S::UiOpsNothingToUndo } else { S::UiOpsNothingToRedo }.t());
+            }
+            return;
+        }
+        let op_before = self.ops.next_id;
+        match self.ops.journal.begin(origin, entry) {
             None => self.status(if origin == Origin::Undo { S::UiOpsNothingToUndo } else { S::UiOpsNothingToRedo }.t()),
             Some((_, Step::Refuse(msg))) => self.status(msg),
             Some((provider, Step::Run(op))) => self.start_op_on(provider, self.tab().id, op, origin, Then::Select),
+            Some((provider, Step::Checked(mut replay))) => {
+                if let Some(op) = replay.steps.first().cloned() {
+                    replay.recheck_tree = recheck_tree;
+                    self.start_op_with_ctl(provider, self.tab().id, op, origin, Then::Select, OpCtl::checked(replay));
+                }
+            }
         }
+        if self.ops.next_id == op_before {
+            self.ops.journal.retry();
+            self.ops.undo_remaining.clear();
+        }
+    }
+
+    pub(super) fn undo_history_command(&mut self, id: u64, origin: Origin, group: bool) {
+        if self.ops.journal.running() {
+            return;
+        }
+        let blockers = self.ops.journal.blockers(origin, id);
+        if blockers.is_empty() {
+            self.replay_entry(origin, Some(id), false);
+        } else if group && origin == Origin::Undo {
+            self.ops.undo_remaining = std::iter::once(id).chain(blockers.into_iter().rev()).collect();
+            self.continue_undo_history(false);
+        }
+    }
+
+    fn continue_undo_history(&mut self, recheck_tree: bool) {
+        if let Some(next) = self.ops.undo_remaining.pop() {
+            self.replay_entry(Origin::Undo, Some(next), recheck_tree);
+        }
+    }
+
+    pub(super) fn open_undo_history(&mut self) {
+        use super::menu::{Cmd, Mark};
+        let menu = self.collect(|a, menu| {
+            let journal = &a.ops.journal;
+            for (origin, label) in [(Origin::Undo, S::UiOpsUndoHistoryUndo), (Origin::Redo, S::UiOpsUndoHistoryRedo)] {
+                menu.separator();
+                for entry in journal.entries(origin).iter().rev() {
+                    let operation = entry.label();
+                    let label = crate::tr!(label, operation = operation);
+                    let blocked = journal.blockers(origin, entry.id);
+                    let command = Cmd::UndoHistory(entry.id, origin, false);
+                    if let Some(last) = blocked.first().and_then(|id| journal.entries(origin).iter().find(|e| e.id == *id)) {
+                        let operation = last.label();
+                        let reason = crate::tr!(S::UiOpsUndoHistoryBlock, operation = operation);
+                        menu.submenu(&label, |menu| {
+                            menu.header(&reason);
+                            if origin == Origin::Undo {
+                                let label = if blocked.len() == 1 { S::UiOpsUndoHistoryBoth } else { S::UiOpsUndoHistoryGroup };
+                                let runnable = blocked.iter().all(|id| journal.entries(origin).iter().find(|e| e.id == *id).is_some_and(|e| !matches!(e.step, Step::Refuse(_))));
+                                menu.entry(Cmd::UndoHistory(entry.id, origin, true), label.t(), String::new(), Mark::None, false, journal.running() || !runnable);
+                            }
+                        });
+                    } else {
+                        menu.entry(command, &label, String::new(), Mark::None, false, journal.running());
+                    }
+                }
+            }
+            if journal.depth() == (0, 0) {
+                menu.header(S::UiOpsUndoHistoryEmpty.t());
+            }
+        });
+        self.flit_menu(self.layout.list.x, self.layout.list.y, menu);
     }
 
     pub fn undo_depth(&self) -> (usize, usize) {
@@ -1302,7 +1380,14 @@ impl App {
             let provider = pending.as_ref().map_or(ProviderId::Local, |p| p.provider.clone());
             self.tags_moved(&provider, r);
         }
-        let (Some(report), Some(p)) = (report, pending) else { return };
+        let Some(p) = pending else { return };
+        let Some(report) = report else {
+            if p.origin != Origin::Fresh {
+                self.ops.journal.retry();
+                self.ops.undo_remaining.clear();
+            }
+            return;
+        };
         if error.is_none() {
             if let FileOp::Trash(items) = &report.op {
                 let owner = k.unwrap_or(self.cur);
@@ -1312,7 +1397,8 @@ impl App {
             }
         }
         let incomplete_removal = p.optimistic_removal && (error.is_some() || report.items.len() != removal_count(&report.op));
-        if incomplete_removal {
+        let composite = p.ctl.replay().is_some_and(|plan| plan.steps.len() > 1);
+        if incomplete_removal || (composite && any_done) {
             if let Some(k) = k {
                 self.reload(k, now);
             }
@@ -1323,6 +1409,13 @@ impl App {
         }
         if !matches!(p.then, Then::Clipboard | Then::Drag) {
             self.ops.journal.record(p.origin, p.provider.clone(), &report);
+        }
+        if p.origin == Origin::Undo {
+            if error.is_none() && any_done {
+                self.continue_undo_history(true);
+            } else {
+                self.ops.undo_remaining.clear();
+            }
         }
         self.each_pane(|a, k| {
             let t = &mut a.tabs[k];

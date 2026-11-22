@@ -374,3 +374,4 @@
 "tags.quick" = "Utilisez 1–9 pour modifier les étiquettes de la sélection. Échap quitte ce mode."
 "filter.save" = "Enregistre le filtre actuel du dossier."
 "filter.saved" = "Choisissez un filtre enregistré. Suppr le supprime."
+"edit.undo_history" = "Choisir une opération à annuler ou à rétablir"

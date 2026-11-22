@@ -25,7 +25,7 @@ fn staging_reservation_has_one_owner_and_never_removes_a_rivals_marker() {
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
     let actors: Vec<_> = (0..2).map(|_| {
         let (path, start) = (reserved.clone(), barrier.clone());
-        std::thread::spawn(move || { start.wait(); LinkStage::reserve(path, LinkKind::Shortcut, false) })
+        std::thread::spawn(move || { start.wait(); LinkStage::reserve(path, LinkKind::Shortcut, false, None) })
     }).collect();
     let mut results: Vec<_> = actors.into_iter().map(|h| h.join().unwrap()).collect();
     assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
@@ -33,7 +33,7 @@ fn staging_reservation_has_one_owner_and_never_removes_a_rivals_marker() {
     let owner = results.remove(results.iter().position(Result::is_ok).unwrap()).unwrap();
     let marker = crate::fileops::std_path(&owner.path);
     std::fs::write(&marker, "rival marker").unwrap();
-    assert!(LinkStage::reserve(reserved.clone(), LinkKind::Shortcut, false).is_err());
+    assert!(LinkStage::reserve(reserved.clone(), LinkKind::Shortcut, false, None).is_err());
     drop(owner);
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "rival marker");
     std::fs::remove_file(marker).unwrap();
@@ -46,7 +46,7 @@ fn staging_cleanup_never_deletes_a_foreign_file_that_arrives_after_placement() {
     let root = crate::test_temp().join(format!("flit-w10-handoff-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
     let path = |name: &str| FsPath::parse(root.join(name).to_str().unwrap()).unwrap();
-    let mut stage = LinkStage::reserve(path("stage"), LinkKind::Hard, false).unwrap();
+    let mut stage = LinkStage::reserve(path("stage"), LinkKind::Hard, false, None).unwrap();
     std::fs::write(crate::fileops::std_path(&stage.path), "owned link").unwrap();
     stage.made = true;
     let old_path = stage.path.clone();

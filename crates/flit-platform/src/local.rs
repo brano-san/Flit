@@ -162,6 +162,95 @@ fn quick(op: &FileOp) -> bool {
     matches!(op, FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::NewStream { .. } | FileOp::Link { .. } | FileOp::Restore(_) | FileOp::FolderIcon { .. })
 }
 
+#[derive(Default)]
+struct OperationPaths {
+    reads: Vec<FsPath>,
+    writes: Vec<FsPath>,
+}
+
+impl OperationPaths {
+    fn add(&mut self, op: &FileOp) {
+        if let FileOp::Copy { items, dest } = op {
+            self.reads.extend_from_slice(items);
+            self.writes.push(dest.clone());
+            return;
+        }
+        let paths = std::cell::RefCell::new(&mut self.writes);
+        op.all_paths(|path| {
+            paths.borrow_mut().push(path.clone());
+            true
+        });
+        let FileOp::Rename { item, name } = op else { return };
+        if let Some(parent) = item.parent() {
+            self.writes.push(parent.join(name));
+        }
+    }
+
+    fn conflicts(&self, other: &Self) -> bool {
+        let overlap = |a: &FsPath, b: &FsPath| a.same(b) || a.is_inside(b) || b.is_inside(a);
+        self.writes.iter().any(|a| other.writes.iter().chain(&other.reads).any(|b| overlap(a, b)))
+            || self.reads.iter().any(|a| other.writes.iter().any(|b| overlap(a, b)))
+    }
+}
+
+#[derive(Default)]
+struct PathQueue {
+    pending: Mutex<Vec<Arc<OperationPaths>>>,
+    freed: Condvar,
+}
+
+struct PathTurn {
+    queue: Arc<PathQueue>,
+    paths: Arc<OperationPaths>,
+}
+
+impl PathQueue {
+    fn reserve(self: &Arc<Self>, op: &FileOp, job: &Job) -> (PathTurn, bool) {
+        let mut paths = OperationPaths::default();
+        if let Some(replay) = job.ctl().replay() {
+            for step in &replay.steps {
+                paths.add(step);
+            }
+            paths.reads.extend(replay.checks.iter().map(|(path, _)| path.clone()));
+        } else {
+            paths.add(op);
+        }
+        let paths = Arc::new(paths);
+        let mut pending = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+        let blocked = pending.iter().any(|earlier| paths.conflicts(earlier));
+        pending.push(paths.clone());
+        (PathTurn { queue: self.clone(), paths }, blocked)
+    }
+}
+
+impl PathTurn {
+    fn wait(&self, job: &Job) -> bool {
+        let mut pending = self.queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+        loop {
+            if job.cancelled() {
+                return false;
+            }
+            if !pending.iter().take_while(|earlier| !Arc::ptr_eq(earlier, &self.paths)).any(|earlier| self.paths.conflicts(earlier)) {
+                return true;
+            }
+            if job.progress().stage != Stage::Queued {
+                drop(pending);
+                job.update(|p| p.stage = Stage::Queued);
+                pending = self.queue.pending.lock().unwrap_or_else(|e| e.into_inner());
+            } else {
+                pending = self.queue.freed.wait_timeout(pending, QUEUE_POLL).unwrap_or_else(|e| e.into_inner()).0;
+            }
+        }
+    }
+}
+
+impl Drop for PathTurn {
+    fn drop(&mut self) {
+        self.queue.pending.lock().unwrap_or_else(|e| e.into_inner()).retain(|paths| !Arc::ptr_eq(paths, &self.paths));
+        self.queue.freed.notify_all();
+    }
+}
+
 enum WatchCmd {
     Arm { tab: TabId, gen: u64, path: FsPath, cancel: GenToken, armed: Sender<()> },
     Stop { tab: TabId, gen: u64 },
@@ -301,6 +390,21 @@ impl LocalProvider {
         let (ops, ops_rx) = unbounded::<OpMsg>();
         let busy = Arc::new(AtomicUsize::new(0));
         let (gate, running, ops_fs) = (Arc::new(Gate::default()), busy.clone(), fs.clone());
+        let paths = Arc::new(PathQueue::default());
+        let (quick_ops, quick_rx) = unbounded::<(FileOp, bool, Job, Reply, PathTurn)>();
+        let quick_running = busy.clone();
+        spawn("flit-quick-ops".into(), move || {
+            let mut sh = S::new();
+            for (op, cut, job, reply, turn) in quick_rx {
+                match &mut sh {
+                    Ok(_) if job.cancelled() => reply.done((Some(CANCELLED.into()), Some(OpReport::new(op, Vec::new())))),
+                    Ok(sh) => reply.finish(perform(sh, op, cut, &job)),
+                    Err(e) => reply.done((Some(e.to_string()), None)),
+                }
+                drop(turn);
+                quick_running.fetch_sub(1, Ordering::AcqRel);
+            }
+        })?;
         spawn("flit-shell-ops".into(), move || {
             let mut sh = S::new();
             for OpMsg { tab, id, op, ctl } in ops_rx {
@@ -320,39 +424,50 @@ impl LocalProvider {
                     }
                 };
                 let job = reply.job(ctl);
-                if quick(&op) && !job.ctl().includes_companions() {
-                    reply.finish(perform(sh, op, cut, &job));
+                running.fetch_add(1, Ordering::AcqRel);
+                let (path_turn, blocked) = paths.reserve(&op, &job);
+                if !blocked && job.ctl().replay().is_none() && !job.ctl().includes_companions() && quick(&op) {
+                    if quick_ops.send((op, cut, job, reply.clone(), path_turn)).is_err() {
+                        running.fetch_sub(1, Ordering::AcqRel);
+                        reply.done((Some(flit_core::i18n::S::ErrorsOpsUndoUnavailable.en().into()), None));
+                    }
                     continue;
                 }
-                running.fetch_add(1, Ordering::AcqRel);
                 let (gate, running, failed, fs) = (gate.clone(), running.clone(), reply.clone(), ops_fs.clone());
+                let worker_running = running.clone();
                 let started = spawn(format!("flit-op-{id}"), move || {
-                    let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
-                    let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
-                        (true, _) => (Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), Some(OpReport { op, items: Vec::new() }), Vec::new()),
-                        (false, Ok(mut sh)) => {
-                            let reviewed = !matches!(op, FileOp::Rename { .. });
-                            let planned = if job.ctl().includes_companions() {
-                                job.prepare_companions(&*fs, op)
-                            } else {
-                                Ok(op)
-                            };
-                            match planned {
-                                Ok(op) if !reviewed || S::reviews_transfer_conflicts() || job.preflight_conflicts(|| crate::conflicts::collect(&*fs, &op, job.ctl())) => perform(&mut sh, op, cut, &job),
-                                Ok(op) => (Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), Some(OpReport { op, items: Vec::new() }), Vec::new()),
-                                Err(e) => (Some(e.into()), None, Vec::new()),
+                    let cancelled = |op| (Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), Some(OpReport::new(op, Vec::new())), Vec::new());
+                    let result = if path_turn.wait(&job) {
+                        let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
+                        match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
+                            (true, _) => cancelled(op),
+                            (false, Ok(mut sh)) => {
+                                let reviewed = !matches!(op, FileOp::Rename { .. });
+                                let planned = if job.ctl().includes_companions() {
+                                    job.prepare_companions(&*fs, op)
+                                } else {
+                                    Ok(op)
+                                };
+                                match planned {
+                                    Ok(op) if !reviewed || S::reviews_transfer_conflicts() || job.preflight_conflicts(|| crate::conflicts::collect(&*fs, &op, job.ctl())) => perform(&mut sh, op, cut, &job),
+                                    Ok(op) => cancelled(op),
+                                    Err(e) => (Some(e.into()), None, Vec::new()),
+                                }
                             }
+                            (false, Err(e)) => (Some(e.operation_error()), None, Vec::new()),
                         }
-                        (false, Err(e)) => (Some(e.operation_error()), None, Vec::new()),
+                    } else {
+                        cancelled(op)
                     };
-                    drop(turn);
                     reply.finish(result);
                     if let Some(notice) = job.take_notice() {
                         reply.send(ProviderEvent::OpNotice { tab: reply.tab, text: notice.en().into() });
                     }
-                    running.fetch_sub(1, Ordering::AcqRel);
+                    drop(path_turn);
+                    worker_running.fetch_sub(1, Ordering::AcqRel);
                 });
                 if let Err(e) = started {
+                    running.fetch_sub(1, Ordering::AcqRel);
                     failed.done((Some(e.operation_error()), None));
                 }
             }
@@ -519,7 +634,14 @@ type Finished = (Option<OpError>, Option<OpReport>, Vec<FsPath>);
 
 fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> Finished {
     if matches!(&op, FileOp::Move { items, .. } if items.is_empty()) {
-        return (None, Some(OpReport { op, items: Vec::new() }), Vec::new());
+        return (None, Some(OpReport::new(op, Vec::new())), Vec::new());
+    }
+    let fs = sh.undo_fs();
+    if let Some(replay) = job.ctl().replay() {
+        let (out, next) = crate::replay::run(sh, replay, fs, job);
+        let mut report = OpReport::new(op, out.items);
+        report.undo.checked = next;
+        return (out.error.map(|e| e.operation_error()), Some(report), Vec::new());
     }
     let out = match &op {
         FileOp::Segments { source, dest, part_size } => crate::segments::run(sh, source, dest, *part_size, job),
@@ -529,7 +651,7 @@ fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> Finished
         sh.clear_clipboard();
     }
     let untrashable = out.error.as_ref().map(|e| e.untrashable.clone()).unwrap_or_default();
-    (out.error.map(|e| e.operation_error()), Some(OpReport { op: job.take_performed().unwrap_or(op), items: out.items }), untrashable)
+    (out.error.map(|e| e.operation_error()), Some(crate::replay::report(op, out.items, fs, job)), untrashable)
 }
 
 #[cfg(test)]

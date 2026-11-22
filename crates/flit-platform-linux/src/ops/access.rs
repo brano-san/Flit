@@ -153,6 +153,9 @@ impl Engine<'_> {
                 break;
             }
             match top(&c.item) {
+                Ok(t) if self.job.ctl().replay().is_some() && access_of(&t.node) != c.from => {
+                    self.note(flit_platform::replay::refused(std::slice::from_ref(&c.item)).message);
+                }
                 Ok(t) => {
                     let to = target(&t.node, c.to.mode, c.to.uid, c.to.gid);
                     self.apply_access(t.dir.as_raw_fd(), &t.name, &c.item, &t.node, to, &mut out);

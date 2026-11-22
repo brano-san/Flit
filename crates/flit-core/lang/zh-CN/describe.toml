@@ -374,3 +374,4 @@
 "tags.quick" = "按 1–9 切换所选项目的标签。按 Esc 退出。"
 "filter.save" = "保存当前文件夹的筛选条件。"
 "filter.saved" = "选择已保存的筛选条件。按 Delete 删除。"
+"edit.undo_history" = "选择要撤销或重做的操作"

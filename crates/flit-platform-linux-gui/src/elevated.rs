@@ -169,6 +169,14 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
                 }
             }
             Event::OpDone { error, items, .. } => break Ok(OpOutcome { items, error: error.map(|e| PlatformError::new(-1, e.message).with_kind(e.kind)) }),
+            Event::OpReplaced { targets, .. } => {
+                if let Err(e) = flit_proto::provider::check_replacements(op, &targets) {
+                    break Err(e);
+                }
+                for (target, _) in targets {
+                    job.replaced(target, None);
+                }
+            }
             Event::OpPerformed { op: done, .. } => {
                 if let Err(e) = check_performed(op, &done) {
                     break Err(e);
@@ -239,12 +247,20 @@ fn retried(first: OpOutcome, again: Result<OpOutcome, PlatformError>) -> OpOutco
 
 pub fn file_op(op: &FileOp, job: &Job, plain: impl FnOnce() -> OpOutcome) -> OpOutcome {
     if needs_root(op) {
-        return run(op, job).unwrap_or_else(only_elevated);
+        return run_elevated_transfer(op, job).unwrap_or_else(only_elevated);
     }
     let first = plain();
     let Some(rest) = retry(op, &first) else { return first };
-    let again = run(&rest, job);
+    let again = run_elevated_transfer(&rest, job);
     retried(first, again)
+}
+
+fn run_elevated_transfer(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
+    let result = run(op, job)?;
+    if matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_)) && !result.items.is_empty() {
+        job.mark_unverified();
+    }
+    Ok(result)
 }
 
 fn member(gid: u32) -> bool {

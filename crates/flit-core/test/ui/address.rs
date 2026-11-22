@@ -752,7 +752,7 @@ fn a_folder_without_permission_offers_continue_which_gets_access_and_reloads_it(
     let dir = FsPath::parse(r"C:\Locked").unwrap();
     assert_eq!(op, crate::provider::FileOp::GrantAccess(dir.clone()));
     let (tab, gen) = (app.tab().id, app.tab().gen);
-    let report = crate::provider::OpReport { op: op.clone(), items: vec![(dir.clone(), dir.clone())] };
+    let report = crate::provider::OpReport::new(op.clone(), vec![(dir.clone(), dir.clone())]);
     app.on_provider_event(crate::provider::ProviderEvent::OpDone { tab, id, error: Some("cancelled".into()), report: Some(report.clone()) }, Instant::now());
     assert_eq!(app.tab().gen, gen, "a refused prompt leaves the folder as it was");
     app.grant_access();

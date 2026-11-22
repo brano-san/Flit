@@ -374,3 +374,4 @@
 "tags.quick" = "Mit den Tasten 1–9 Tags für die Auswahl umschalten. Esc beendet den Modus."
 "filter.save" = "Speichert den aktuellen Ordnerfilter."
 "filter.saved" = "Wählt einen gespeicherten Filter. Entf löscht ihn."
+"edit.undo_history" = "Vorgang zum Rückgängigmachen oder Wiederholen wählen"

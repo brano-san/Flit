@@ -920,6 +920,7 @@ dependencies = [
  "flit-platform",
  "flit-proto",
  "flit-search",
+ "proptest",
  "rayon",
  "tracing",
  "windows",

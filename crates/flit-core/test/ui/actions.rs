@@ -725,3 +725,75 @@ fn copy_as_path_quotes_like_explorer_on_windows() {
     assert_eq!(app.as_path_text(&Location::parse(r"C:\Work\b c.txt").unwrap()), r"C:\Work\b c.txt");
     assert_eq!(app.as_path_label(), "Copy path");
 }
+
+#[test]
+fn each_action_keeps_the_app_consistent_in_edge_states() {
+    use crate::path::FsPath;
+    use crate::provider::FileOp;
+    use crate::ui::harness::{app, frame};
+    use std::panic::{catch_unwind, AssertUnwindSafe};
+
+    let mut panics = Vec::new();
+    let mut executed = std::collections::HashSet::new();
+    for unix in [false, true] {
+        for scenario in ["no tabs", "empty", "no selection", "multi-selection", "search", "archive", "WSL", "confirmation", "network"] {
+            for action in ACTIONS {
+                let now = Instant::now();
+                let location = match scenario {
+                    "archive" => Location::parse(r"C:\Work\c.zip\folder"),
+                    "WSL" => Location::parse(r"\\wsl.localhost\Ubuntu\home"),
+                    "network" => Some(Location::Local(FsPath::network())),
+                    _ => None,
+                };
+                let mut a = if let Some(path) = location {
+                    App::new(Persisted { path, ..Default::default() }, Vec::new(), 0, false, 1.0, (1000, 600), now)
+                } else {
+                    app(if matches!(scenario, "empty" | "no tabs") { &[] } else { &["a.txt", "b.png", "c.zip"] })
+                };
+                a.builtin_archives = true;
+                a.set_caps(crate::caps::Caps { unix_paths: unix });
+                match scenario {
+                    "no tabs" => a.tabs.clear(),
+                    "multi-selection" => {
+                        assert!(a.run_action("select.all", now));
+                    }
+                    "search" => a.open_search(),
+                    "archive" => {
+                        a.archives_as_folders = true;
+                        assert!(a.archive_view().is_some());
+                    }
+                    "confirmation" => a.ask_confirm(FileOp::Delete(vec![FsPath::parse(r"C:\Work\a.txt").unwrap()])),
+                    _ => {}
+                }
+                a.drain_effects().for_each(drop);
+                let checked = catch_unwind(AssertUnwindSafe(|| {
+                    let _ = a.available(action.id);
+                    if a.run_action(action.id, now) {
+                        executed.insert(action.id);
+                    }
+                    if scenario == "no tabs" {
+                        assert!(a.tabs.is_empty());
+                        assert!(a.drain_effects().next().is_none());
+                        return;
+                    }
+                    assert!(a.cur < a.tabs.len());
+                    assert_eq!(a.tabs.iter().map(|tab| tab.id).collect::<std::collections::HashSet<_>>().len(), a.tabs.len());
+                    for tab in &a.tabs {
+                        if let Some(view) = &tab.view {
+                            let count = view.listing().len() as u32;
+                            assert!(view.focus.is_none_or(|index| index < count));
+                            assert!(view.selected().all(|index| index < count));
+                        }
+                    }
+                    frame(&mut a);
+                }));
+                if checked.is_err() {
+                    panics.push((unix, scenario, action.id));
+                }
+            }
+        }
+    }
+    assert!(panics.is_empty(), "{panics:?}");
+    let missing: Vec<_> = ACTIONS.iter().filter(|a| a.run.is_some() && !executed.contains(a.id)).map(|a| a.id).collect();
+    assert!(missing.is_empty(), "actions not exercised: {missing:?}");
+}

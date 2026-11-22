@@ -588,6 +588,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("ops.clear", G::Flit, S::ActionsOpsClear, S::DescribeOpsClear, &[], |a, _| a.clear_completed()),
     Action::new("edit.undo", G::Flit, S::ActionsEditUndo, S::DescribeEditUndo, &[ctrl(c('Z'))], |a, _| a.undo()),
     Action::new("edit.redo", G::Flit, S::ActionsEditRedo, S::DescribeEditRedo, &[ctrl(c('Y')), ctrl_shift(c('Z'))], |a, _| a.redo()),
+    Action::new("edit.undo_history", G::Flit, S::ActionsEditUndoHistory, S::DescribeEditUndoHistory, &[], |a, _| a.open_undo_history()),
     Action::new("item.properties", G::Flit, S::ActionsItemProperties, S::DescribeItemProperties, &[alt_shift(Key::Enter)], |a, _| a.properties_dialog()),
     Action::new("view.pane.preview", G::Flit, S::ActionsViewPanePreview, S::DescribeViewPanePreview, &[alt(c('P'))], |a, _| a.show_preview_tab(false)),
     Action::new("view.pane.details", G::Flit, S::ActionsViewPaneDetails, S::DescribeViewPaneDetails, &[alt_shift(c('P'))], |a, _| a.show_preview_tab(true)),
@@ -685,6 +686,9 @@ fn smart_quote(text: &str) -> String {
 
 impl App {
     pub(super) fn run_bound(&mut self, key: Key, mods: Mods, now: Instant) -> bool {
+        if self.tabs.is_empty() {
+            return false;
+        }
         if key == Key::Space && mods == Mods::default() && self.tab().typing(now) {
             return false;
         }
@@ -715,7 +719,7 @@ impl App {
     }
 
     pub fn supports(&self, id: &str) -> bool {
-        if !self.picker_allows(id) {
+        if self.tabs.is_empty() || !self.picker_allows(id) {
             return false;
         }
         if id == "drive.add_server" {

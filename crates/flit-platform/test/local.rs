@@ -131,7 +131,7 @@ fn list_streams_sorted_snapshots_and_sizes() {
     assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 4, id: 0, error: Some(_), report: None }));
     let trash = FileOp::Trash(vec![p(r"C:\r\c")]);
     provider.submit(ProviderRequest::Op { tab: 9, id: 3, op: trash.clone(), ctl: OpCtl::default() });
-    let report = Some(OpReport { op: trash, items: vec![(p(r"C:\r\c"), p(r"C:\r\c"))] });
+    let report = Some(OpReport::new(trash, vec![(p(r"C:\r\c"), p(r"C:\r\c"))]));
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 9, id: 3, error: None, report });
 }
 
@@ -228,6 +228,72 @@ fn transfers_to_one_volume_queue_and_others_run_alongside() {
     provider.wait_idle(Duration::from_secs(5));
 }
 
+struct OverlappingShell;
+
+impl Shell for OverlappingShell {
+    fn new() -> Result<Self, PlatformError> {
+        Ok(Self)
+    }
+    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
+        None
+    }
+    fn type_name(&mut self, _: &[u8]) -> Option<String> {
+        None
+    }
+    fn open(&mut self, _: &FsPath) -> Result<(), PlatformError> {
+        Ok(())
+    }
+}
+
+impl FileOps for OverlappingShell {
+    fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+        job.update(|p| p.stage = Stage::Running);
+        if matches!(op, FileOp::Delete(_) | FileOp::Move { .. }) {
+            let limit = Instant::now() + Duration::from_secs(5);
+            while !job.cancelled() && Instant::now() < limit {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+        OpOutcome::default()
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        Err(PlatformError::new(-1, "empty"))
+    }
+    fn clear_clipboard(&mut self) {}
+}
+
+#[test]
+fn quick_renames_and_restores_wait_for_overlapping_operations_only() {
+    for slow in [
+        FileOp::Delete(vec![p(r"C:\project\tree")]),
+        FileOp::Move { items: vec![p(r"C:\project\tree")], dest: p(r"C:\elsewhere") },
+    ] {
+        let (tx, rx) = unbounded();
+        let local = LocalProvider::new::<_, NoWatch, OverlappingShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
+        let submit = |id, op, ctl| local.submit(ProviderRequest::Op { tab: 1, id, op, ctl });
+        let next = || rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        let release = OpCtl::default();
+        submit(1, slow, release.clone());
+        assert!(matches!(next(), ProviderEvent::OpProgress { id: 1, progress: OpProgress { stage: Stage::Running, .. }, .. }));
+
+        let rename = |path| FileOp::Rename { item: p(path), name: b"renamed".to_vec() };
+        submit(2, rename(r"c:\PROJECT\tree\child"), OpCtl::default());
+        assert!(matches!(next(), ProviderEvent::OpProgress { id: 2, progress: OpProgress { stage: Stage::Queued, .. }, .. }));
+        submit(3, FileOp::Restore(vec![(p(r"D:\bin\project"), p(r"C:\project"))]), OpCtl::default());
+        assert!(matches!(next(), ProviderEvent::OpProgress { id: 3, progress: OpProgress { stage: Stage::Queued, .. }, .. }));
+        submit(4, rename(r"C:\project-other\child"), OpCtl::default());
+        assert!(matches!(next(), ProviderEvent::OpProgress { id: 4, progress: OpProgress { stage: Stage::Running, .. }, .. }));
+        assert!(matches!(next(), ProviderEvent::OpDone { id: 4, error: None, .. }));
+
+        release.cancel();
+        assert!(matches!(next(), ProviderEvent::OpDone { id: 1, .. }));
+        for id in [2, 3] {
+            assert!(matches!(next(), ProviderEvent::OpProgress { id: seen, progress: OpProgress { stage: Stage::Running, .. }, .. } if seen == id));
+            assert!(matches!(next(), ProviderEvent::OpDone { id: seen, error: None, .. } if seen == id));
+        }
+    }
+}
+
 #[derive(Default)]
 struct Clip {
     files: Vec<FsPath>,
@@ -304,7 +370,7 @@ fn paste_resolves_the_clipboard_into_copy_or_move() {
     let mut cut = Clip { files: files.clone(), cut: true, ..Default::default() };
     let (error, report) = run_op(&mut cut, FileOp::Paste { dest: p(r"C:\b") });
     let moved = FileOp::Move { items: vec![p(r"C:\a\x.txt")], dest: p(r"C:\b") };
-    assert_eq!((error, report), (None, Some(OpReport { op: moved.clone(), items: vec![(p(r"C:\a\x.txt"), p(r"C:\b\x.txt"))] })));
+    assert_eq!((error, report), (None, Some(OpReport::new(moved.clone(), vec![(p(r"C:\a\x.txt"), p(r"C:\b\x.txt"))]))));
     assert_eq!((cut.ran, cut.cleared), (vec![moved], true));
 
     let mut copy = Clip { files: files.clone(), ..Default::default() };

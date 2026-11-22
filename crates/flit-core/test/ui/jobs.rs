@@ -87,7 +87,7 @@ fn letter(app: &mut App, vk: char, typed: char, mods: Mods) {
 
 fn finish(app: &mut App, id: OpId, error: Option<&str>) {
     let tab = app.tab().id;
-    let report = OpReport { op: FileOp::Paste { dest: p(r"C:\x") }, items: Vec::new() };
+    let report = OpReport::new(FileOp::Paste { dest: p(r"C:\x") }, Vec::new());
     app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(Into::into), report: Some(report) }, t0());
 }
 
@@ -561,7 +561,7 @@ fn items_the_trash_refuses_can_be_deleted_permanently_instead() {
     let tab = app.tab().id;
     let refused = vec![p("/media/usb/b"), p("/media/usb/c")];
     app.on_provider_event(ProviderEvent::Untrashable { tab, id, items: refused.clone() }, t0());
-    let report = OpReport { op: FileOp::Trash(all), items: vec![(p("/media/usb/a"), p("/home/u/.local/share/Trash/files/a"))] };
+    let report = OpReport::new(FileOp::Trash(all), vec![(p("/media/usb/a"), p("/home/u/.local/share/Trash/files/a"))]);
     app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some("2 items failed. Cannot move /media/usb/b to the Trash: Permission denied".into()), report: Some(report) }, t0());
     assert_eq!(app.asking(), Some("untrashable"));
     let (title, lines) = app.dialog_text().unwrap();

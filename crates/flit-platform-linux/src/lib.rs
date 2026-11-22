@@ -21,6 +21,8 @@ mod temp;
 pub use fs::{host, rename_local_noreplace, stat_path, xattr, xattr_names, LinuxFs};
 pub use inotify::{Inotify, Notice, Notify};
 pub use ops::run as run_op;
+pub use ops::start_pending_recovery;
+pub use ops::undo_fs;
 pub use tags::{file_key, merged_tag_names, resolve_files, sync_tag_names};
 pub use walk::{indexed, WalkIndex};
 pub use trash::{percent_decode, percent_encode, trash_time, Trash};

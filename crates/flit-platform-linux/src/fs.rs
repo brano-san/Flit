@@ -338,6 +338,9 @@ pub fn hidden_list_in(dir: &Path) -> HashSet<Vec<u8>> {
 }
 
 pub fn mark_listed_hidden(meta: &mut Meta, name: &[u8], hidden: &HashSet<Vec<u8>>) {
+    if flit_platform::pending::is_delete_name(name) {
+        meta.attrs &= !attr::HIDDEN;
+    }
     if !hidden.is_empty() && hidden.contains(name) {
         meta.attrs |= attr::HIDDEN;
     }
@@ -347,6 +350,9 @@ pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result
     let fd = open_dir(dir)?;
     let hidden = hidden_list(fd.as_raw_fd());
     dents(fd.as_raw_fd(), |name, d_type| {
+        if flit_platform::pending::is_stage_name(name.to_bytes()) {
+            return true;
+        }
         let mut meta = entry_meta(fd.as_raw_fd(), name, d_type);
         mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
         each(name.to_bytes(), meta)

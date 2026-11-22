@@ -374,3 +374,4 @@
 "tags.quick" = "Use keys 1–9 to toggle single tags on the selection. Press Esc to exit."
 "filter.save" = "Save the current folder filter."
 "filter.saved" = "Choose a saved filter. Delete removes it."
+"edit.undo_history" = "Choose an operation to undo or redo"

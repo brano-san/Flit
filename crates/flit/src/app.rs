@@ -2042,6 +2042,11 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         graphics.pending = 2;
     }
     let (events_tx, events) = unbounded();
+    let (recovery_events, recovery_wake) = (events_tx.clone(), wake.clone());
+    flit_platform::pending::set_recovery_reporter(move |error| {
+        let _ = recovery_events.send(ProviderEvent::OpDone { tab: 0, id: 0, error: Some(error.into()), report: None });
+        recovery_wake();
+    });
     let local = LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx.clone(), wake.clone())?;
     #[cfg(target_os = "linux")]
     let local = if picker.as_ref().is_some_and(|(request, _)| !request.directories() && request.filters.iter().any(|filter| !filter.mime_types.is_empty())) {

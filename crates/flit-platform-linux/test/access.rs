@@ -24,7 +24,7 @@ fn chmod(p: &Path, m: u32) {
 fn performed(op: FileOp) -> (OpReport, Option<String>) {
     let job = Job::detached(Resolve::Skip);
     let out = run(&op, &job, None);
-    (OpReport { op: job.take_performed().unwrap_or(op), items: out.items }, out.error.map(|e| e.message))
+    (OpReport::new(job.take_performed().unwrap_or(op), out.items), out.error.map(|e| e.message))
 }
 
 #[test]
