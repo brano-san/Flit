@@ -823,6 +823,7 @@ impl<P: Platform> Handler<P> {
                     let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names, system: shell, portable });
                 }
                 Effect::PortableMetadata { id: request, req } => self.settings.send(Job::Portable(id, request, req)),
+                Effect::DiskChanges { id: request, request: req } => self.settings.send(Job::DiskChanges(id, request, req)),
                 effect @ (Effect::Pinned(_) | Effect::PinnedCleared | Effect::PinnedFiles(_)) => {
                     let wake = !matches!(&effect, Effect::PinnedFiles(_));
                     let windows = self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app);
@@ -1030,6 +1031,11 @@ impl<P: Platform> Handler<P> {
                 settings::Reply::Portable(target, request, result) => {
                     if let Some(st) = self.windows.get_mut(&target) {
                         st.app.on_portable_metadata(request, result);
+                    }
+                }
+                settings::Reply::DiskChanges(target, request, result) => {
+                    if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.on_disk_changes(request, result);
                     }
                 }
                 settings::Reply::Exported(Ok(path)) => self.status(id, flit_core::tr!(S::UiAppExported, path = path.display())),

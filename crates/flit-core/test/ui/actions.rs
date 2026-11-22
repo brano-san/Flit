@@ -80,6 +80,7 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Join parts…", ""),
         ("Replace duplicates with hard links…", ""),
         ("File metadata…", ""),
+        ("What changed on this disk…", ""),
     ]),
     ("View", &[
         ("Zoom In Content", "Ctrl+MouseWheelUp, Ctrl+=, Ctrl+Shift+="),

@@ -25,6 +25,7 @@ mod jumplist;
 mod library;
 mod links;
 mod mft;
+pub mod disk_changes;
 mod namespace;
 mod network;
 mod pipe;

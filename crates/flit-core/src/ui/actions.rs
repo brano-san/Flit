@@ -532,6 +532,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("file.join", G::Folder, S::SegmentsJoin, S::SegmentsDescribeJoin, &[], |a, _| a.segments_dialog(false)),
     Action::new("file.dedup", G::Folder, S::DedupTitle, S::DedupDescribe, &[], |a, _| a.dedup_selection()),
     Action::new("file.metadata", G::Folder, S::PortableMetaTitle, S::PortableMetaDescribe, &[], |a, _| a.file_metadata()),
+    Action::new("disk.changes", G::Folder, S::DiskChangesTitle, S::DiskChangesDescribe, &[], |a, _| a.disk_changes()),
     Action::new("settings.export", G::Flit, S::ActionsSettingsExport, S::DescribeSettingsExport, &[], |a, _| a.ask_export_settings()),
     Action::new("settings.import", G::Flit, S::ActionsSettingsImport, S::DescribeSettingsImport, &[], |a, _| a.ask_import_settings()),
     Action::new("settings.reset", G::Flit, S::ActionsSettingsReset, S::DescribeSettingsReset, &[], |a, _| a.ask_reset_settings()),

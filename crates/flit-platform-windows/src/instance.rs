@@ -77,10 +77,15 @@ fn names() -> (Vec<u16>, Vec<u16>) {
     (wide(format!(r"Local\flit-{sid}{suffix}")), wide(format!(r"\\.\pipe\flit-{sid}-{session}{suffix}")))
 }
 
+pub(crate) fn server_pid(f: &File) -> Option<u32> {
+    let mut pid = 0;
+    unsafe { GetNamedPipeServerProcessId(HANDLE(f.as_raw_handle()), &mut pid) }.ok()?;
+    Some(pid)
+}
+
 fn same_user_server(f: &File) -> Option<u32> {
-    let mut pid = 0u32;
+    let pid = server_pid(f)?;
     unsafe {
-        GetNamedPipeServerProcessId(HANDLE(f.as_raw_handle()), &mut pid).ok()?;
         let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
         let sid = process_user_sid(process);
         let _ = CloseHandle(process);
@@ -92,7 +97,7 @@ fn proto_err(e: ProtoError) -> PlatformError {
     PlatformError::new(-1, format!("running Flit instance: {e}"))
 }
 
-fn connect(pipe: &[u16]) -> Result<File, PlatformError> {
+pub(crate) fn connect(pipe: &[u16]) -> Result<File, PlatformError> {
     let deadline = Instant::now() + CONNECT_TIMEOUT;
     let flags = SECURITY_SQOS_PRESENT | SECURITY_IDENTIFICATION;
     loop {
@@ -184,12 +189,26 @@ impl Drop for OwnerOnly {
     }
 }
 
-fn owner_only() -> Result<OwnerOnly, String> {
+fn pipe_security(allow_admins: bool) -> Result<OwnerOnly, String> {
     let sid = user_sid().ok_or("the current user SID is unavailable")?;
-    let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid})").encode_utf16().chain(Some(0)).collect();
+    let admins = if allow_admins { "(A;;GA;;;BA)" } else { "" };
+    let sddl: Vec<u16> = format!("D:P(A;;GA;;;{sid}){admins}").encode_utf16().chain(Some(0)).collect();
     let mut sd = PSECURITY_DESCRIPTOR::default();
     unsafe { ConvertStringSecurityDescriptorToSecurityDescriptorW(PCWSTR(sddl.as_ptr()), SDDL_REVISION_1, &mut sd, None) }.map_err(|e| e.to_string())?;
     Ok(OwnerOnly(sd))
+}
+
+pub(crate) fn private_polling_pipe(name: &[u16]) -> Result<File, PlatformError> {
+    let security = pipe_security(true).map_err(|e| PlatformError::new(-1, e))?;
+    let attrs = SECURITY_ATTRIBUTES { nLength: size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: security.0 .0, bInheritHandle: false.into() };
+    let mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE;
+    let h = unsafe {
+        CreateNamedPipeW(PCWSTR(name.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 64 * 1024, 64 * 1024, 0, Some(&attrs))
+    };
+    if h.is_invalid() {
+        return Err(err(windows::core::Error::from_thread()));
+    }
+    Ok(unsafe { File::from_raw_handle(h.0) })
 }
 
 struct ClientSlot(Receiver<()>);
@@ -201,7 +220,7 @@ impl Drop for ClientSlot {
 }
 
 fn listen_loop(pipe: Vec<u16>, opens: OpenSink, wake: Wake) {
-    let security = match owner_only() {
+    let security = match pipe_security(false) {
         Ok(s) => s,
         Err(e) => {
             tracing::error!("single instance disabled: cannot build the pipe security descriptor: {e}");

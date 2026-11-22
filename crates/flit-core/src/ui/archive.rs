@@ -83,6 +83,7 @@ pub(super) enum Kind {
     Dedup { keep: FsPath, candidates: Vec<FsPath> },
     PortableMetaWait { id: u64, path: FsPath, sidecar: FsPath },
     PortableMeta { path: FsPath, sidecar: FsPath, value: crate::portable_meta::Metadata },
+    DiskChanges(super::disk_changes::DiskForm),
 }
 
 impl Kind {
@@ -113,6 +114,7 @@ impl Kind {
             Kind::Segments { .. } => "segments",
             Kind::Dedup { .. } => "dedup",
             Kind::PortableMetaWait { .. } | Kind::PortableMeta { .. } => "portable_metadata",
+            Kind::DiskChanges(_) => "disk_changes",
         }
     }
 }
@@ -785,6 +787,7 @@ impl App {
             Kind::Segments { .. } => self.submit_segments(f),
             Kind::PortableMeta { .. } => self.submit_portable_metadata(f, b),
             Kind::PortableMetaWait { .. } => None,
+            Kind::DiskChanges(_) => self.submit_disk_changes(f),
             Kind::Dedup { keep, candidates } => {
                 self.submit_dedup(keep, candidates);
                 None
@@ -808,6 +811,7 @@ impl App {
             Kind::Hashes(Hashing { run: Some(r), .. }) => r.ctl.cancel(),
             Kind::Properties(m) => m.ctl.cancel(),
             Kind::Update(u) => self.cancel_update(u),
+            Kind::DiskChanges(form) => form.cancel(),
             _ => {}
         }
         super::network::mount_form_closed(f);

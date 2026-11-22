@@ -41,6 +41,7 @@ mod settings_import;
 mod segments;
 mod dedup;
 mod portable_meta;
+mod disk_changes;
 mod settings_page;
 mod setting_editor;
 pub mod sidebar;
@@ -442,6 +443,7 @@ pub enum Effect {
     StartDrag(Vec<FsPath>),
     ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>>, shell: bool, portable: bool },
     PortableMetadata { id: u64, req: crate::portable_meta::Request },
+    DiskChanges { id: u64, request: crate::disk_changes::Request },
     Pinned(Vec<Location>),
     PinnedCleared,
     SavedServer(ServerChange),
@@ -721,6 +723,7 @@ pub struct App {
     hide_companions: bool,
     metadata_ads: bool,
     metadata_request_id: u64,
+    disk_changes_id: u64,
     pub startup: Startup,
     pub startup_pages: Vec<Location>,
     pub about: About,
@@ -864,6 +867,7 @@ impl App {
             hide_companions: false,
             metadata_ads: false,
             metadata_request_id: 0,
+            disk_changes_id: 0,
             startup_pages: match &state.startup {
                 Startup::Folders(pages) => pages.clone(),
                 _ => Vec::new(),

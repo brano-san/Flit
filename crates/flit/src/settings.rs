@@ -15,6 +15,7 @@ pub enum Job {
     Export(PathBuf, String, bool),
     Import(WindowId, PathBuf),
     Portable(WindowId, u64, flit_core::portable_meta::Request),
+    DiskChanges(WindowId, u64, flit_core::disk_changes::Request),
     BackupImport(WindowId, Box<settings::ImportPlan>, String),
     CacheSize,
     CacheLimit(u32),
@@ -28,6 +29,7 @@ pub enum Reply {
     SaveFailed(String),
     Imported(WindowId, Result<Doc, String>),
     Portable(WindowId, u64, Result<flit_core::portable_meta::Metadata, String>),
+    DiskChanges(WindowId, u64, flit_core::disk_changes::Reply),
     ImportBackedUp(WindowId, Box<settings::ImportPlan>, Result<PathBuf, String>),
     Exported(Result<PathBuf, String>),
     ExportExists { path: PathBuf, size: u64, modified: i64 },
@@ -144,6 +146,20 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate:
                 Job::Export(to, text, replace) => reply(export(to, &text, replace)),
                 Job::Import(id, from) => reply(Reply::Imported(id, read_import(&from))),
                 Job::Portable(id, request, req) => reply(Reply::Portable(id, request, crate::portable_meta::request(req).map_err(|e| e.to_string()))),
+                Job::DiskChanges(id, request, req) => {
+                    let exporting = matches!(req, flit_core::disk_changes::Request::Export { .. });
+                    let (tx, wake) = (replies.clone(), wake.clone());
+                    let started = std::thread::Builder::new().name("flit-disk-changes".into()).spawn(move || {
+                        let _ = tx.send(Reply::DiskChanges(id, request, crate::disk_changes::run(req)));
+                        wake();
+                    });
+                    if let Err(e) = started {
+                        use flit_core::disk_changes::{Error, Reply as DiskReply};
+                        let failed = Error::Failed(e.to_string());
+                        let outcome = if exporting { DiskReply::Exported(Err(failed)) } else { DiskReply::Read(Err(failed)) };
+                        reply(Reply::DiskChanges(id, request, outcome));
+                    }
+                }
                 Job::BackupImport(id, plan, text) => reply(Reply::ImportBackedUp(id, plan, backup_import(path.as_deref(), &last, &text))),
                 Job::CacheSize => {
                     if let Some(c) = &cache {
