@@ -134,12 +134,30 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
             let _ = failure.send(Event::OpFailure { id, failure: f });
         }),
     );
+    let conflicts = flit_platform::conflicts::collect(&crate::LinuxFs, op, job.ctl());
+    if !review_conflicts(id, conflicts, job.ctl(), |event| ctx.send(event)) {
+        ctx.ops().remove(&id);
+        ctx.send(Event::OpDone { id, error: Some(flit_platform::CANCELLED.into()), items: Vec::new() });
+        return;
+    }
     let out = ops::run_in(op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
     ctx.ops().remove(&id);
     if let Some(done) = job.take_performed() {
         ctx.send(Event::OpPerformed { id, op: done });
     }
     ctx.send(Event::OpDone { id, error: out.error.map(|e| e.message), items: out.items });
+}
+
+fn review_conflicts(id: ReqId, conflicts: Vec<flit_core::provider::Conflict>, ctl: &OpCtl, send: impl FnOnce(Event)) -> bool {
+    if conflicts.is_empty() || ctl.is_cancelled() {
+        return !ctl.is_cancelled();
+    }
+    let event = Event::OpConflicts { id, conflicts };
+    if encode(&event, &mut Vec::new()).is_err() {
+        return !ctl.is_cancelled();
+    }
+    let Event::OpConflicts { conflicts, .. } = event else { unreachable!() };
+    ctl.preflight(conflicts, |conflicts| send(Event::OpConflicts { id, conflicts }))
 }
 
 fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> bool {
@@ -204,6 +222,15 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
             Request::Pause { id, paused } => {
                 if let Some(ctl) = ctx.ops().get(&id) {
                     ctl.pause(paused);
+                }
+            }
+            Request::ConflictAnswers { id, choices } => {
+                if let Some(ctl) = ctx.ops().get(&id) {
+                    if let Some(choices) = choices {
+                        ctl.answer_conflicts(choices);
+                    } else {
+                        ctl.cancel();
+                    }
                 }
             }
             Request::CopyLimit { id, megabytes_per_second } => {

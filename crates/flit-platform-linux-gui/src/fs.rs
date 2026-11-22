@@ -82,6 +82,10 @@ impl Fs for LinuxGuiFs {
             .unwrap_or_else(|| LinuxFs.read_background_dir(dir, out))
     }
 
+    fn operation_meta(&self, path: &FsPath) -> Option<flit_core::Meta> {
+        LinuxFs.operation_meta(path)
+    }
+
     fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, PlatformError> {
         LinuxFs.hash(file, kinds, job)
     }

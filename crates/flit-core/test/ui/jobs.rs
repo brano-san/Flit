@@ -743,6 +743,60 @@ fn conflict_buttons_never_overlap_even_in_a_narrow_window() {
 }
 
 #[test]
+fn one_conflict_review_applies_file_and_folder_choices_independently() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    let mut leaf = sizes(15, 25);
+    let mut folder = sizes(0, 0);
+    leaf.target = FsPath::parse(r"C:\x\file").unwrap();
+    folder.target = FsPath::parse(r"C:\x\folder").unwrap();
+    folder.from.attrs = crate::listing::attr::DIR;
+    folder.to.attrs = crate::listing::attr::DIR;
+    let conflicts = vec![leaf, folder];
+    let tab = app.tab().id;
+    app.on_provider_event(ProviderEvent::OpConflicts { tab, id, conflicts: conflicts.clone() }, t0());
+    for width in [1000, 420, 300] {
+        app.on_event(&Event::Resized { width, height: 450 }, t0());
+        let mut draw = Gfx::new(Mono, 2048);
+        app.frame(&mut draw, t0());
+        let form = app.jobs.form.as_ref().unwrap();
+        assert!(form.button_rects.iter().all(|r| r.x >= form.rect.x && r.right() <= form.rect.right() && r.w > 0.0));
+    }
+    let choose = |app: &mut App, row: usize, value: usize| {
+        let Control::Choice { sel, .. } = &mut app.jobs.form.as_mut().unwrap().controls[row] else { panic!("expected a conflict choice") };
+        *sel = value;
+        app.form_changed(row);
+    };
+    choose(&mut app, 0, 2);
+    choose(&mut app, 1, 1);
+    let form = app.jobs.form.as_ref().unwrap();
+    assert_eq!((form.choice(2), form.choice(3)), (1, 0));
+    choose(&mut app, 2, 3);
+    assert!(app.jobs.form.as_ref().unwrap().note.contains("15 B"));
+    app.form_submit(0);
+    assert!(app.jobs.form.as_ref().unwrap().error);
+    choose(&mut app, 2, 1);
+
+    let (ready, shown) = std::sync::mpsc::channel();
+    let observer = ctl.clone();
+    let worker = std::thread::spawn(move || observer.confirm_conflicts(conflicts, |_| { ready.send(()).unwrap(); }));
+    shown.recv_timeout(Duration::from_secs(2)).unwrap();
+    app.form_submit(0);
+    assert_eq!(worker.join().unwrap(), Some(vec![Resolve::Skip, Resolve::Replace]));
+    assert!(app.jobs.form.is_none());
+}
+
+#[test]
+fn closing_a_conflict_review_cancels_the_transfer() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    app.on_provider_event(ProviderEvent::OpConflicts { tab: app.tab().id, id, conflicts: vec![sizes(10, 20)] }, t0());
+    key(&mut app, Key::Escape);
+    assert!(ctl.is_cancelled());
+    assert!(app.jobs.form.is_none());
+}
+
+#[test]
 fn speed_limit_from_the_operations_panel_changes_only_that_copy() {
     let mut app = app_at(r"C:\x");
     app.run_action("ops.show", t0());
@@ -800,6 +854,38 @@ fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
     assert!(!app.job_menu_items(done).contains(&"Resume"));
 }
 #[test]
+fn review_for_a_missing_job_releases_the_waiting_operation() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    app.jobs.list.clear();
+    let (ready, started) = mpsc::channel();
+    let observer = ctl.clone();
+    let waiting = std::thread::spawn(move || observer.confirm_conflicts(vec![sizes(1, 2)], |_| ready.send(()).unwrap()));
+    started.recv_timeout(Duration::from_secs(2)).unwrap();
+    app.job_conflicts(id, vec![sizes(1, 2)]);
+    assert!(ctl.is_cancelled());
+    assert_eq!(waiting.join().unwrap(), None);
+    assert!(app.jobs.form.is_none());
+}
+
+#[test]
+fn a_speed_limit_form_preserves_an_open_conflict_review() {
+    let mut app = app_at(r"C:\x");
+    let (id, ctl) = paste(&mut app);
+    ctl.set_copy_limit_available(true);
+    app.job_conflicts(id, vec![sizes(1, 2)]);
+    let option = app.job_menu(0).iter().position(|&s| s == S::UiJobCopyLimit).unwrap();
+    app.jobs.menu = Some(0);
+    app.run_job_menu(option, t0());
+    assert!(matches!(app.jobs.form.as_ref().unwrap().kind, super::super::archive::Kind::CopyLimit(_)));
+    app.jobs.form.as_mut().unwrap().set_text(0, "3");
+    app.form_submit(0);
+    assert!(matches!(app.jobs.form.as_ref().unwrap().kind, super::super::archive::Kind::ConflictTable { .. }));
+    assert_eq!(ctl.copy_limit(), 3);
+    assert!(!ctl.is_cancelled());
+}
+
+#[test]
 fn a_transfer_outside_the_flit_engine_has_no_speed_limit_controls() {
     let mut app = app_at(r"C:\x");
     let (_, ctl) = paste(&mut app);
@@ -814,3 +900,33 @@ fn a_transfer_outside_the_flit_engine_has_no_speed_limit_controls() {
     assert!(!app.jobs.list[0].detail(false).contains("7"));
 }
 
+#[test]
+fn folder_review_defaults_to_merge_and_hides_children_when_the_folder_is_renamed() {
+    let mut app = app_at(r"C:\x");
+    let (id, _) = paste(&mut app);
+    let folder = Conflict {
+        source: p(r"C:\in\tree"), target: p(r"C:\out\tree"),
+        from: Meta { attrs: crate::listing::attr::DIR, ..Default::default() },
+        to: Meta { attrs: crate::listing::attr::DIR, ..Default::default() },
+    };
+    let file = Conflict { source: folder.source.join(b"file"), target: folder.target.join(b"file"), ..sizes(1, 2) };
+    app.job_conflicts(id, vec![folder, file, sizes(1, 2)]);
+    let form = app.jobs.form.as_mut().unwrap();
+    let Control::Choice { sel, options, .. } = &mut form.controls[2] else { panic!("expected a folder choice") };
+    assert_eq!(options[*sel], "Merge");
+    assert!(!options.iter().any(|s| s == "Replace"));
+    let choose = |app: &mut App, index: usize, choice: usize| {
+        let Control::Choice { sel, .. } = &mut app.jobs.form.as_mut().unwrap().controls[index] else { panic!("expected a choice") };
+        *sel = choice;
+        app.form_changed(index);
+    };
+    choose(&mut app, 3, 1);
+    choose(&mut app, 2, 2);
+    assert_eq!(app.jobs.form.as_ref().unwrap().controls.len(), 4);
+    choose(&mut app, 2, 0);
+    let form = app.jobs.form.as_ref().unwrap();
+    assert_eq!(form.controls.len(), 5);
+    assert_eq!(form.choice(3), 1);
+    app.form_submit(0);
+    assert!(app.jobs.form.is_none());
+}

@@ -87,12 +87,20 @@ impl Reply {
     }
 
     fn job(&self, ctl: OpCtl) -> Job {
-        let (p, c, f) = (self.clone(), self.clone(), self.clone());
-        Job::asking(
+        let (p, c, f, b) = (self.clone(), self.clone(), self.clone(), self.clone());
+        let review = ctl.clone();
+        Job::asking_with_conflicts(
             ctl,
             Box::new(move |progress| p.send(ProviderEvent::OpProgress { tab: p.tab, id: p.id, progress })),
             Box::new(move |conflict| c.send(ProviderEvent::OpConflict { tab: c.tab, id: c.id, conflict })),
             Box::new(move |failure| f.send(ProviderEvent::OpFailure { tab: f.tab, id: f.id, failure })),
+            Box::new(move |conflicts| {
+                if b.events.send(ProviderEvent::OpConflicts { tab: b.tab, id: b.id, conflicts }).is_ok() {
+                    (b.wake)();
+                } else {
+                    review.cancel();
+                }
+            }),
         )
     }
 }
@@ -297,7 +305,10 @@ impl LocalProvider {
                 let (gate, running, failed, fs) = (gate.clone(), running.clone(), reply.clone(), ops_fs.clone());
                 let started = spawn(format!("flit-op-{id}"), move || {
                     let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
-                    let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
+                    let ready = !turn.as_ref().is_some_and(Option::is_none)
+                        && (S::reviews_transfer_conflicts()
+                            || job.preflight_conflicts(|| crate::conflicts::collect(&*fs, &op, job.ctl())));
+                    let result = match (!ready, S::new()) {
                         (true, _) => (Some(CANCELLED.into()), Some(OpReport { op, items: Vec::new() }), Vec::new()),
                         (false, Ok(mut sh)) => perform(&mut sh, op, cut, &job),
                         (false, Err(e)) => (Some(e.to_string()), None, Vec::new()),

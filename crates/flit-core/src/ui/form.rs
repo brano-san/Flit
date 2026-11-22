@@ -217,6 +217,9 @@ impl App {
 
     pub(super) fn open_form(&mut self, form: Form) {
         self.nav.palette = None;
+        if self.jobs.form.as_ref().is_some_and(|f| matches!(f.kind, Kind::ConflictTable { .. })) {
+            self.jobs.suspended_conflicts = self.jobs.form.take();
+        }
         self.jobs.form = Some(form);
         self.layout();
         self.dirty = true;
@@ -604,7 +607,7 @@ impl App {
         let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
         let (hover, active, pressed) = (self.hover, self.active, self.pressed);
         let mut reflow = false;
-        if let Some(f) = &mut self.jobs.form {
+        if let Some(f) = self.jobs.form.as_mut().filter(|f| !matches!(f.kind, Kind::ConflictTable { .. })) {
             reflow = f.properties_buttons();
             let width = (f.rect.w - s(62.0)).max(1.0);
             for c in &mut f.controls {
@@ -626,10 +629,13 @@ impl App {
         let mid = |r: Rect| (r.y + (r.h + mf.ascent - mf.descent) / 2.0).round();
         let n = f.controls.len();
         g.dl.set_clip(Some(f.document.viewport));
-        for k in 0..n {
+        let top = f.document.viewport.y + f.document.scroll.pos;
+        let bottom = f.document.viewport.bottom() + f.document.scroll.pos;
+        let first = f.rows.partition_point(|r| r.bottom() <= top);
+        let last = f.rows.partition_point(|r| r.y < bottom);
+        for k in first..last {
             let mut row = f.rows[k];
             row.y -= f.document.scroll.pos;
-            if row.bottom() <= f.document.viewport.y || row.y >= f.document.viewport.bottom() { continue; }
             let focused = f.focus == k;
             let label_w = s(LABEL_W).min(row.w * 0.42);
             let lx = row.x + label_w;

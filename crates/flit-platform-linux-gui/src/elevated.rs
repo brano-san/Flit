@@ -146,6 +146,15 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
         };
         match ev {
             Event::OpProgress { progress, .. } => job.update(|p| *p = progress),
+            Event::OpConflicts { conflicts, .. } => {
+                if let Err(e) = flit_proto::provider::check_conflicts(op, &conflicts) {
+                    break Err(e);
+                }
+                let choices = job.confirm_conflicts(conflicts);
+                if let Err(e) = send(&output, &Request::ConflictAnswers { id: OP, choices }) {
+                    break Err(e);
+                }
+            }
             Event::OpConflict { conflict, .. } => {
                 let choice = job.resolve(conflict);
                 if let Err(e) = send(&output, &Request::Answer { id: OP, choice, policy: job.ctl().policy() }) {

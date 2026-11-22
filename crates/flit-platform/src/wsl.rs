@@ -7,7 +7,7 @@ use flit_core::path::PathKind;
 use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpId, OpReport, Recover, Resolve, SnapshotSlot};
 use flit_core::sort::{SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
-use flit_proto::provider::{agent_runs, check_conflict, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
+use flit_proto::provider::{agent_runs, check_conflict, check_conflicts, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
 use flit_proto::transport::{read_frame, read_hello, write_frame, Hello, ProtoError, Protocol};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
@@ -91,6 +91,7 @@ enum Msg {
     Lost(u64, String),
     Answer(ReqId, Option<Resolve>, Option<Resolve>),
     Recover(ReqId, Option<Recover>, bool),
+    ConflictAnswers(ReqId, Option<Vec<Resolve>>),
     Quit,
 }
 
@@ -330,6 +331,11 @@ impl Ctl {
                 Ok(Msg::Answer(id, choice, policy)) => {
                     if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
                         self.send(Request::Answer { id, choice, policy });
+                    }
+                }
+                Ok(Msg::ConflictAnswers(id, choices)) => {
+                    if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
+                        self.send(Request::ConflictAnswers { id, choices });
                     }
                 }
                 Ok(Msg::Recover(id, choice, all)) => {
@@ -700,6 +706,27 @@ impl Ctl {
         }
     }
 
+    fn review_conflicts(&mut self, id: ReqId, conflicts: Vec<flit_core::provider::Conflict>) {
+        let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
+        if let Err(e) = check_conflicts(&o.request, &conflicts) {
+            return self.crashed(&e.to_string());
+        }
+        let (tab, op, ctl, events, wake, tx) = (o.tab, o.op, o.ctl.clone(), self.events.clone(), self.wake.clone(), self.tx.clone());
+        let started = std::thread::Builder::new().name(format!("flit-wsl-review-{op}")).spawn(move || {
+            let choices = ctl.confirm_conflicts(conflicts, |conflicts| {
+                if events.send(ProviderEvent::OpConflicts { tab, id: op, conflicts }).is_ok() {
+                    wake();
+                } else {
+                    ctl.cancel();
+                }
+            });
+            let _ = tx.send(Msg::ConflictAnswers(id, choices));
+        });
+        if started.is_err() {
+            self.send(Request::ConflictAnswers { id, choices: None });
+        }
+    }
+
     fn recover(&mut self, id: ReqId, failure: Failure) {
         let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
         if let Err(e) = check_failure(&o.request, &failure) {
@@ -785,6 +812,7 @@ impl Ctl {
                 }
             }
             Event::OpConflict { id, conflict } => self.ask(id, conflict),
+            Event::OpConflicts { id, conflicts } => self.review_conflicts(id, conflicts),
             Event::OpFailure { id, failure } => self.recover(id, failure),
             Event::OpDone { id, error, items } => self.finished(id, error, items),
             Event::OpPerformed { id, op } => self.performed(id, op),
@@ -818,6 +846,7 @@ impl Ctl {
             match p {
                 Pending::List(l) => l.finish(Some(FsError { kind: FsErrorKind::Unavailable, code: 0 }), &self.wake),
                 Pending::Op(o) => {
+                    o.ctl.close_conflict_review();
                     o.ctl.answer(Resolve::Skip, false);
                     o.ctl.answer_failure(Recover::Skip, false);
                     self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(lost.clone()), report: None });

@@ -577,6 +577,10 @@ fn device_op(op: &FileOp, job: &Job) -> OpOutcome {
 }
 
 impl FileOps for ShellCom {
+    fn reviews_transfer_conflicts() -> bool {
+        true
+    }
+
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         if !op.all_paths(|p| p.kind() != flit_core::path::PathKind::Shell) {
             return device_op(op, job);

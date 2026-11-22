@@ -815,6 +815,12 @@ impl<'a> Engine<'a> {
         if !self.room(dest, total.bytes) {
             return None;
         }
+        if !self.job.preflight_conflicts(|| {
+            let items = items.iter().zip(&native).filter(|(_, supported)| **supported).map(|(item, _)| item.clone()).collect();
+            flit_platform::conflicts::collect(&crate::NtFs, &FileOp::Copy { items, dest: dest.clone() }, self.job.ctl())
+        }) {
+            return None;
+        }
         self.running(total);
         self.touch(Some(dest.clone()));
         let mut shell = Vec::new();
@@ -865,6 +871,12 @@ impl<'a> Engine<'a> {
         }
         total.entries += far.entries;
         total.bytes += far.bytes;
+        if !self.job.preflight_conflicts(|| {
+            let pairs = pairs.iter().zip(&native).filter(|(_, supported)| **supported).map(|(pair, _)| pair.clone()).collect();
+            flit_platform::conflicts::collect(&crate::NtFs, &FileOp::MoveTo(pairs), self.job.ctl())
+        }) {
+            return None;
+        }
         self.running(total);
         let mut shell = Vec::new();
         for (k, (from, to)) in pairs.iter().enumerate() {

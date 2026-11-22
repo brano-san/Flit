@@ -176,7 +176,7 @@ fn trash_operation_moves_to_the_freedesktop_trash_and_back() {
 }
 
 #[test]
-fn conflicts_are_asked_over_the_channel_and_cancel_stops_the_operation() {
+fn conflicts_are_reviewed_before_writes_and_cancel_stops_the_operation() {
     let t = Temp::new("agent-ask");
     t.file("a", 1);
     std::fs::create_dir(t.path().join("dst")).unwrap();
@@ -187,15 +187,19 @@ fn conflicts_are_asked_over_the_channel_and_cancel_stops_the_operation() {
     let conflict = loop {
         match c.next() {
             Event::OpProgress { .. } => {}
-            Event::OpConflict { id: 1, conflict } => break conflict,
+            Event::OpConflicts { id: 1, mut conflicts } => {
+                assert_eq!(conflicts.len(), 1);
+                break conflicts.pop().unwrap();
+            }
             other => panic!("unexpected {other:?}"),
         }
     };
     assert_eq!((conflict.target, conflict.to.size), (fs_path(&t.path().join("dst/a")), 2));
-    c.send(Request::Answer { id: 1, choice: Some(flit_core::provider::Resolve::KeepBoth), policy: None });
+    assert!(!t.path().join("dst/a (2)").exists());
+    c.send(Request::ConflictAnswers { id: 1, choices: Some(vec![flit_core::provider::Resolve::KeepBoth]) });
     assert_eq!(c.done(1), (None, vec![(fs_path(&t.path().join("a")), fs_path(&t.path().join("dst/a (2)")))]));
     c.op(2, copy);
-    while !matches!(c.next(), Event::OpConflict { id: 2, .. }) {}
+    while !matches!(c.next(), Event::OpConflicts { id: 2, .. }) {}
     c.send(Request::Cancel { id: 2 });
     let (error, items) = c.done(2);
     assert_eq!((error.as_deref(), items), (Some(flit_platform::CANCELLED), Vec::new()));
@@ -235,4 +239,28 @@ fn shutdown_eof_and_garbage_end_the_session() {
     req_w.write_all("w\0s\0l\0:\0 \0".as_bytes()).unwrap();
     drop(req_w);
     assert!(matches!(serve(req_r, ev_w, String::new(), None), Err(ProtoError::NotFlit)));
+}
+
+#[test]
+fn a_batch_over_the_frame_limit_falls_back_to_the_first_individual_question() {
+    use flit_core::provider::{Conflict, Resolve};
+
+    let prefix = format!("/{}", vec!["a".repeat(240); 8].join("/"));
+    let conflicts: Vec<_> = (0..5000).map(|i| Conflict {
+        source: FsPath::parse(&format!("{prefix}/in/{i}")).unwrap(),
+        target: FsPath::parse(&format!("{prefix}/out/{i}")).unwrap(),
+        from: Meta::default(),
+        to: Meta::default(),
+    }).collect();
+    let ctl = OpCtl::default();
+    assert!(review_conflicts(1, conflicts.clone(), &ctl, |_| panic!("oversized event was sent")));
+    assert_eq!(ctl.resolve(&conflicts[0], || ctl.answer(Resolve::Skip, true)), Some(Resolve::Skip));
+    assert_eq!(ctl.resolve(&conflicts[1], || panic!("apply to all did not arrive")), Some(Resolve::Skip));
+
+    let ctl = OpCtl::default();
+    assert!(review_conflicts(2, vec![conflicts[0].clone()], &ctl, |event| {
+        assert!(matches!(event, Event::OpConflicts { id: 2, conflicts } if conflicts.len() == 1));
+        ctl.answer_conflicts(vec![Resolve::KeepBoth]);
+    }));
+    assert_eq!(ctl.planned_conflict(&conflicts[0]), Some(Resolve::KeepBoth));
 }

@@ -78,6 +78,7 @@ pub(super) enum Kind {
     RenameServer(String),
     MountQuestion(super::network::Question),
     CopyLimit(OpId),
+    ConflictTable { id: OpId, review: super::jobs::ConflictReview },
 }
 
 impl Kind {
@@ -104,6 +105,7 @@ impl Kind {
             Kind::RenameServer(_) => "rename_server",
             Kind::MountQuestion(_) => "mount_question",
             Kind::CopyLimit(_) => "copy_limit",
+            Kind::ConflictTable { .. } => "conflict_table",
         }
     }
 }
@@ -744,6 +746,7 @@ impl App {
         self.extract_changed(k);
         self.permissions_changed(k);
         self.batch_rename_changed(k);
+        self.conflict_table_changed(k);
         self.sync_form_buttons();
     }
 
@@ -774,10 +777,12 @@ impl App {
             Kind::RenameServer(_) => self.submit_server_name(f),
             Kind::MountQuestion(_) => self.submit_mount_question(f),
             Kind::CopyLimit(id) => self.submit_copy_limit(f, id),
+            Kind::ConflictTable { id, .. } => self.submit_conflict_table(f, id),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
         }
+        self.show_conflict_table();
     }
 
     pub(super) fn form_closed(&mut self, f: Form) {
@@ -785,9 +790,15 @@ impl App {
             Kind::Hashes(Hashing { run: Some(r), .. }) => r.ctl.cancel(),
             Kind::Properties(m) => m.ctl.cancel(),
             Kind::Update(u) => self.cancel_update(u),
+            Kind::ConflictTable { id, .. } => {
+                if let Some(ctl) = self.op_ctl(*id) {
+                    ctl.cancel();
+                }
+            }
             _ => {}
         }
         super::network::mount_form_closed(f);
+        self.show_conflict_table();
     }
 }
 

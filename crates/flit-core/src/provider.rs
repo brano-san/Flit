@@ -5,6 +5,7 @@ use crate::listing::{DirChange, DirSnapshot, DirStats, Meta};
 use crate::path::FsPath;
 use crate::sort::{CaseMode, ViewSpec};
 use arc_swap::ArcSwapOption;
+use std::collections::HashMap;
 use std::fmt;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -393,8 +394,30 @@ pub struct OpProgress {
     pub total_items: u64,
 }
 
+#[derive(Debug)]
+struct PlannedConflict {
+    from: Meta,
+    to: Meta,
+    choice: Resolve,
+}
+
+impl PlannedConflict {
+    fn matches(&self, conflict: &Conflict) -> bool {
+        let same_entry = |reviewed: Meta, current: Meta| {
+            reviewed == current || (reviewed.created > 0
+                && reviewed.created == current.created
+                && reviewed.attrs == current.attrs
+                && reviewed.attrs & (crate::listing::attr::DIR | crate::listing::attr::LINK) == crate::listing::attr::DIR)
+        };
+        same_entry(self.from, conflict.from) && same_entry(self.to, conflict.to)
+    }
+}
+
 #[derive(Default, Debug)]
 struct Answer {
+    batch: Option<Vec<Resolve>>,
+    review_closed: bool,
+    planned: HashMap<(FsPath, FsPath), PlannedConflict>,
     policy: Option<Resolve>,
     given: Option<(Resolve, bool)>,
     skip_all: bool,
@@ -487,9 +510,63 @@ impl OpCtl {
         self.0.changed.notify_all();
     }
 
+    pub fn answer_conflicts(&self, choices: Vec<Resolve>) {
+        self.lock().batch = Some(choices);
+        self.0.changed.notify_all();
+    }
+
+    pub fn close_conflict_review(&self) {
+        self.lock().review_closed = true;
+        self.0.changed.notify_all();
+    }
+
+    pub fn confirm_conflicts(&self, conflicts: Vec<Conflict>, ask: impl FnOnce(Vec<Conflict>)) -> Option<Vec<Resolve>> {
+        let count = conflicts.len();
+        {
+            let mut answers = self.lock();
+            if answers.review_closed || self.is_cancelled() {
+                return None;
+            }
+            answers.batch = None;
+        }
+        ask(conflicts);
+        let mut answers = self.lock();
+        while answers.batch.is_none() && !answers.review_closed && !self.is_cancelled() {
+            answers = self.0.changed.wait(answers).unwrap_or_else(|e| e.into_inner());
+        }
+        if answers.review_closed || self.is_cancelled() {
+            return None;
+        }
+        answers.batch.take().filter(|choices| choices.len() == count)
+    }
+
+    pub fn planned_conflict(&self, conflict: &Conflict) -> Option<Resolve> {
+        self.lock().planned.get(&(conflict.source.clone(), conflict.target.clone()))
+            .filter(|p| p.matches(conflict)).map(|p| p.choice)
+    }
+
+    pub fn preflight(&self, conflicts: Vec<Conflict>, ask: impl FnOnce(Vec<Conflict>)) -> bool {
+        if conflicts.is_empty() {
+            return !self.is_cancelled();
+        }
+        let Some(choices) = self.confirm_conflicts(conflicts.clone(), ask) else { return false };
+        self.lock().planned.extend(conflicts.into_iter().zip(choices).map(|(c, choice)| {
+            ((c.source, c.target), PlannedConflict { from: c.from, to: c.to, choice })
+        }));
+        true
+    }
+
     pub fn resolve(&self, c: &Conflict, mut ask: impl FnMut()) -> Option<Resolve> {
         loop {
+            if self.is_cancelled() {
+                return None;
+            }
             let mut a = self.lock();
+            if !a.planned.is_empty() && !crate::limits::too_large(c) && !crate::archive::is_unreadable(c) && !crate::limits::is_short_of_space(c) {
+                if let Some(planned) = a.planned.get(&(c.source.clone(), c.target.clone())).filter(|p| p.matches(c)) {
+                    return Some(planned.choice);
+                }
+            }
             if let Some(choice) = a.policy.filter(|_| !crate::limits::is_short_of_space(c)).and_then(|p| p.decide(c)) {
                 return Some(choice);
             }
@@ -690,6 +767,7 @@ pub enum ProviderEvent {
     OpDone { tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport> },
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
+    OpConflicts { tab: TabId, id: OpId, conflicts: Vec<Conflict> },
     OpFailure { tab: TabId, id: OpId, failure: Failure },
     Untrashable { tab: TabId, id: OpId, items: Vec<FsPath> },
     Navigate { tab: TabId, path: FsPath },

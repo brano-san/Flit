@@ -389,7 +389,7 @@ impl App {
             _ => false,
         };
         if !handled || error.is_some() { self.jobs.form = Some(f); }
-        if handled { self.layout(); self.dirty = true; }
+        if handled { self.show_conflict_table(); self.layout(); self.dirty = true; }
         handled
     }
 

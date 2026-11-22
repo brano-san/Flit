@@ -484,6 +484,9 @@ impl Fs for NtFs {
         self.list(dir, out, false)
     }
 
+    fn operation_meta(&self, path: &FsPath) -> Option<Meta> {
+        crate::engine::stat(path)
+    }
 
     fn read_background_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
         self.list(dir, out, true)
