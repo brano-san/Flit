@@ -22,7 +22,7 @@ use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::ops::Range;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const MIN_RIGHT: f32 = 200.0;
 const MIN_BOTTOM: f32 = 120.0;
@@ -42,6 +42,8 @@ const CARD_W: f32 = 320.0;
 const CHECKER: f32 = 10.0;
 const ZOOM_STEP: f32 = 1.25;
 const ZOOM_RANGE: (f32, f32) = (0.05, 16.0);
+const KEEP_PREVIEW_FOR: Duration = Duration::from_secs(60);
+const PREVIOUS_PREVIEW_BYTES: usize = 12 << 20;
 const G_PLAY: &str = "\u{E768}";
 const G_PAUSE: &str = "\u{E769}";
 const G_VOLUME: &str = "\u{E767}";
@@ -152,12 +154,13 @@ struct Subject {
     dir_key: Vec<u8>,
     many: Option<(usize, u64)>,
     drive: Option<(u64, u64)>,
+    listing_gen: Option<u64>,
 }
 
 impl Subject {
     fn key(&self) -> u64 {
         let e = self.entry.map(|e| (e.size, e.modified, e.attrs));
-        hash::hash(&(&self.title, self.path.as_ref().map(|p| p.as_bytes()), self.kind, e, self.many, self.drive))
+        hash::hash(&(&self.title, self.path.as_ref().map(|p| p.as_bytes()), self.kind, e, self.many, self.drive, self.listing_gen))
     }
 }
 
@@ -172,6 +175,15 @@ enum Content {
     Media { video: bool },
     Handler,
     Basic(Option<Note>),
+}
+
+struct PreviousPreview {
+    key: u64,
+    until: Instant,
+    content: Content,
+    image: Option<Bitmap>,
+    px: u32,
+    pretty: Pretty,
 }
 
 #[derive(Default)]
@@ -316,6 +328,7 @@ pub(super) struct PreviewPane {
     chips: Vec<(Rect, PaneHit)>,
     buttons: Vec<(Rect, PaneHit)>,
     download: u64,
+    previous: Option<PreviousPreview>,
     pretty: Pretty,
 }
 
@@ -326,6 +339,24 @@ impl PreviewPane {
         self.pick = Pick::default();
         self.scroll = 0.0;
         self.hscroll = 0.0;
+    }
+
+    fn previous_size(&self) -> Option<usize> {
+        let content = match &self.content {
+            Content::Doc(d) => doc_capacity(d),
+            Content::Image => 0,
+            Content::Folder(f) => {
+                f.entries.capacity() * size_of::<preview::FolderItem>()
+                    + f.entries.iter().map(|e| e.name.capacity()).sum::<usize>()
+                    + f.types.capacity() * size_of::<(String, u64)>()
+                    + f.types.iter().map(|(t, _)| t.capacity()).sum::<usize>()
+            }
+            Content::Basic(None) if self.image.is_some() => 0,
+            Content::Basic(Some(Note::Shortcut(target))) => target.capacity(),
+            _ => return None,
+        };
+        let raw = if let Pretty::On(raw) = &self.pretty { doc_capacity(raw) } else { 0 };
+        Some(content + raw + self.image.as_ref().map_or(0, |b| b.rgba.capacity()))
     }
 
     fn held(&self) -> usize {
@@ -345,6 +376,16 @@ impl PreviewPane {
     fn effective_wrap(&self, d: &Doc) -> bool {
         if d.mono { self.look.wrap.unwrap_or(d.wrap) } else { true }
     }
+}
+
+fn doc_capacity(d: &Doc) -> usize {
+    d.text.capacity() + d.runs.capacity() * size_of::<Run>() + d.paras.capacity() * size_of::<preview::Para>()
+        + d.tables.capacity() * size_of::<preview::Table>()
+        + d.tables.iter().map(|t| {
+            t.align.capacity() * size_of::<preview::Alignment>()
+                + t.rows.capacity() * size_of::<Vec<Range<u32>>>()
+                + t.rows.iter().map(|r| r.capacity() * size_of::<Range<u32>>()).sum::<usize>()
+        }).sum::<usize>()
 }
 
 fn ui(px: f32, sc: f32, bold: bool) -> FontStyle {
@@ -1303,7 +1344,7 @@ impl App {
         let l = v.listing();
         let in_bin = t.view_loc.is_recycle_bin();
         let dir_key = t.view_loc.to_windows().map(|p| p.as_bytes().to_vec()).unwrap_or_default();
-        let base = Subject { title: t.title(), path: None, kind: Kind::Folder, entry: None, ext: Vec::new(), dir_key, many: None, drive: None };
+        let base = Subject { title: t.title(), path: None, kind: Kind::Folder, entry: None, ext: Vec::new(), dir_key, many: None, drive: None, listing_gen: Some(t.gen) };
         match v.selected_count() {
             0 => Some(Subject { path: t.view_loc.to_windows().filter(|p| p.kind() != PathKind::Computer), ..base }),
             1 => {
@@ -1317,7 +1358,7 @@ impl App {
                     .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free)))
                     .flatten();
                 let dir_key = if in_bin { recycle::origin(l, i).to_vec() } else { row_dir.map_or(base.dir_key, |d| d.as_bytes().to_vec()) };
-                Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, ..base })
+                Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, listing_gen: None, ..base })
             }
             n => Some(Subject { title: crate::trn!(P::PreviewSelected, n), many: Some((n, v.selected_size())), path: None, ..base }),
         }
@@ -1352,6 +1393,16 @@ impl App {
             Some(Some(n)) if !n.is_empty() => n.clone(),
             _ if ext.is_empty() => S::DetailsTypeFile.t().into(),
             _ => crate::tr!(S::DetailsTypeExtFile, ext = name::display(ext).to_uppercase()),
+        }
+    }
+
+    pub(super) fn expire_previous_preview(&mut self, now: Instant) {
+        if let Some(previous) = &self.preview.previous {
+            if previous.until <= now {
+                self.preview.previous = None;
+            } else {
+                self.arm_timer(now, previous.until);
+            }
         }
     }
 
@@ -1433,6 +1484,23 @@ impl App {
         let archived = self.archive_view().is_some();
         let (types, dirs, files) = if subject.as_ref().is_some_and(|s| s.many.is_some()) { self.selection_types() } else { (Vec::new(), 0, 0) };
         let p = &mut self.preview;
+        let mut previous = p.previous.take().filter(|v| v.until > now);
+        let cached = if previous.as_ref().is_some_and(|v| v.key == key) { previous.take() } else { None };
+        let had_image = p.image.is_some();
+        if p.key != 0 && p.previous_size().is_some_and(|n| n <= PREVIOUS_PREVIEW_BYTES) {
+            previous = Some(PreviousPreview {
+                key: p.key,
+                until: now + KEEP_PREVIEW_FOR,
+                content: std::mem::take(&mut p.content),
+                image: p.image.take(),
+                px: p.image_px,
+                pretty: match std::mem::take(&mut p.pretty) {
+                    ready @ Pretty::On(_) => ready,
+                    _ => Pretty::Off,
+                },
+            });
+        }
+        p.previous = previous;
         p.pretty = Pretty::Off;
         p.key = key;
         p.gen = gen;
@@ -1447,12 +1515,14 @@ impl App {
                 s.title = String::new();
             }
         }
-        if p.image.take().is_some() {
+        p.image = None;
+        if had_image {
             p.image_rev += 1;
         }
         if std::mem::take(&mut p.host).gen != 0 {
             self.effects.push(Effect::Host(HostCmd::Close));
         }
+        self.expire_previous_preview(now);
         let p = &mut self.preview;
         p.content = Content::Empty;
         p.requested = None;
@@ -1474,6 +1544,16 @@ impl App {
         }
         let side = p.r.body.w.max(p.r.body.h) * 2.0;
         let px = (side as u32).clamp(256, IMAGE_PX);
+        if let Some(cached) = cached.filter(|cached| cached.px >= px) {
+            p.content = cached.content;
+            p.image = cached.image;
+            p.image_px = cached.px;
+            p.pretty = cached.pretty;
+            if p.image.is_some() {
+                p.image_rev += 1;
+            }
+            return;
+        }
         p.image_px = px;
         p.content = Content::Loading;
         p.requested = Some(now);

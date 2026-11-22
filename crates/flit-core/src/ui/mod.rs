@@ -2034,6 +2034,7 @@ impl App {
                 self.strip_timer(now);
                 self.tip_timer(now);
                 self.quick_timer(now);
+                self.expire_previous_preview(now);
                 self.expire_error(now);
                 self.expire_undo_bar(now);
                 self.dirty |= self.shell_props_due(now);
