@@ -4,7 +4,7 @@ use flit_core::provider::{FileOp, Launch, OpenAsk};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
 use flit_core::FsPath;
-use flit_platform::{FileOps, Job, OpOutcome, Pasted, PlatformError, Shell};
+use flit_platform::{FileOps, Job, OpOutcome, Pasted, PlatformError, PreviewPicture, Shell};
 use flit_platform_linux::{host, run_op};
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
@@ -31,7 +31,7 @@ fn spawn_error(what: &str, e: &io::Error) -> PlatformError {
     if e.kind() == io::ErrorKind::NotFound && crate::tools::package_for(what, "").is_some() && on_path(OsStr::new(what)).is_none() {
         return tool_missing(what);
     }
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{what}: {e}"))
+    PlatformError::from_io(e, format!("{what}: {e}"))
 }
 
 pub fn detach(mut cmd: Command) -> io::Result<()> {
@@ -736,14 +736,33 @@ impl Shell for LinuxShell {
     }
 
     fn thumbnail(&mut self, req: &IconRequest) -> Option<Bitmap> {
+        self.thumbnail_current(req, &|| true)
+    }
+
+    fn thumbnail_current(&mut self, req: &IconRequest, current: &dyn Fn() -> bool) -> Option<Bitmap> {
         let cache = crate::xdg::cache_dir().and_then(|d| d.parent().map(|p| p.join("thumbnails")));
         let path = host(&req.path)?;
-        crate::thumb::thumbnail(path, req.size, cache.clone()).or_else(|| crate::thumbnailers::produce(path, req.size, cache.as_deref(), |px| crate::thumbnailers::system_png(path, px).or_else(|| poster_png(path, px))))
+        match crate::thumb::thumbnail(path, req.size, cache.clone(), current) {
+            PreviewPicture::Ready(bitmap) => Some(bitmap),
+            PreviewPicture::Missing if current() => crate::thumbnailers::produce(path, req.size, cache.as_deref(), |px| crate::thumbnailers::system_png(path, px).or_else(|| poster_png(path, px))),
+            _ => None,
+        }
     }
 
     fn preview_image(&mut self, path: &FsPath, max: u32) -> Option<Bitmap> {
-        let path = host(path)?;
-        crate::thumb::image(path, max).or_else(|| crate::thumbnailers::thumbnail(path, max))
+        match self.preview_picture(path, max, &|| true) {
+            flit_platform::PreviewPicture::Ready(bitmap) => Some(bitmap),
+            _ => None,
+        }
+    }
+
+    fn preview_picture(&mut self, path: &FsPath, max: u32, current: &dyn Fn() -> bool) -> flit_platform::PreviewPicture {
+        use flit_platform::PreviewPicture;
+        let Some(path) = host(path) else { return PreviewPicture::Missing };
+        match crate::thumb::image(path, max, current) {
+            PreviewPicture::Missing if current() => crate::thumbnailers::thumbnail(path, max).map_or(PreviewPicture::Missing, PreviewPicture::Ready),
+            image => image,
+        }
     }
 
     fn poster(&mut self, path: &FsPath, size: u32) -> Option<Bitmap> {
@@ -926,10 +945,11 @@ fn generated_png(path: &Path, size: u32) -> Option<Vec<u8>> {
 }
 
 fn poster(path: &Path, size: u32) -> Option<Bitmap> {
-    if let Some(b) = crate::thumb::thumbnail(path, size, None) {
-        return Some(b);
+    match crate::thumb::thumbnail(path, size, None, &|| true) {
+        PreviewPicture::Ready(bitmap) => Some(bitmap),
+        PreviewPicture::Missing => crate::thumbnailers::produce(path, size, None, |px| generated_png(path, px)),
+        PreviewPicture::Failed => None,
     }
-    crate::thumbnailers::produce(path, size, None, |px| generated_png(path, px))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

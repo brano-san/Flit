@@ -123,6 +123,9 @@ impl From<Failure> for io::Error {
     fn from(f: Failure) -> io::Error {
         let kind = match () {
             _ if f.cancelled() => io::ErrorKind::Interrupted,
+            _ if f.busy() => io::ErrorKind::ResourceBusy,
+            _ if f.name.ends_with(".NotAuthorized") || f.name.ends_with(".NotAuthorizedCanObtain") => io::ErrorKind::PermissionDenied,
+            _ if f.name.ends_with(".FileNotFound") || f.name.ends_with(".UnknownObject") => io::ErrorKind::NotFound,
             _ => io::ErrorKind::Other,
         };
         io::Error::new(kind, f.reason())
@@ -285,7 +288,7 @@ pub fn system_address() -> String {
 }
 
 pub(crate) struct Bus {
-    api: Api,
+    api: &'static Api,
     raw: *mut c_void,
 }
 
@@ -319,7 +322,7 @@ impl Bus {
     }
 
     pub(crate) fn call(&self, dest: &str, path: &str, iface: &str, member: &str, values: &[V], timeout: c_int) -> Result<Vec<Arg>, Failure> {
-        let api = &self.api;
+        let api = self.api;
         unsafe {
             let msg = (api.new_method_call)(cstr(dest).as_ptr(), cstr(path).as_ptr(), cstr(iface).as_ptr(), cstr(member).as_ptr());
             if msg.is_null() {
@@ -346,7 +349,7 @@ impl Bus {
     }
 
     fn listen(&self, rules: &[&str], settle: Duration, fire: &dyn Fn()) {
-        let api = &self.api;
+        let api = self.api;
         for rule in rules {
             let mut err = dbus::Error::new();
             unsafe {

@@ -222,7 +222,7 @@ fn transfers_to_one_volume_queue_and_others_run_alongside() {
     assert!(matches!(next(), ProviderEvent::OpProgress { id: 3, progress: OpProgress { stage: Stage::Running, .. }, .. }));
     assert!(matches!(next(), ProviderEvent::OpDone { id: 3, error: None, .. }));
     waiting.cancel();
-    assert!(matches!(next(), ProviderEvent::OpDone { id: 2, error: Some(e), .. } if e == CANCELLED));
+    assert!(matches!(next(), ProviderEvent::OpDone { id: 2, error: Some(e), .. } if e.kind == crate::PlatformErrorKind::Cancelled && e.message == CANCELLED));
     RELEASE_C.store(true, Ordering::Release);
     assert!(matches!(next(), ProviderEvent::OpDone { id: 1, error: None, .. }));
     provider.wait_idle(Duration::from_secs(5));
@@ -476,7 +476,7 @@ fn shortcuts_to_folders_navigate_and_launches_reach_the_shell() {
     let provider = LocalProvider::new::<_, NoWatch, LinkShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
     let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
     let error = |e: ProviderEvent| match e {
-        ProviderEvent::OpDone { error: Some(e), .. } => e,
+        ProviderEvent::OpDone { error: Some(e), .. } => e.message,
         e => panic!("{e:?}"),
     };
     provider.submit(ProviderRequest::Open { tab: 3, path: p(r"C:\r\docs.LNK") });
@@ -498,7 +498,7 @@ fn a_wrong_passphrase_comes_back_as_its_own_event_and_other_unlock_errors_as_fai
     provider.submit(unlock("wrong"));
     assert_eq!(next(), ProviderEvent::WrongPassphrase { tab: 4, device: p("/dev/sdd2") });
     provider.submit(unlock("busy"));
-    assert!(matches!(next(), ProviderEvent::OpDone { tab: 4, id: 0, error: Some(e), report: None } if e.contains("in use")));
+    assert!(matches!(next(), ProviderEvent::OpDone { tab: 4, id: 0, error: Some(e), report: None } if e.message.contains("in use")));
     provider.submit(unlock("right"));
     assert_eq!(next(), ProviderEvent::Navigate { tab: 4, path: p("/media/u/vault") });
 }
@@ -543,11 +543,11 @@ fn a_slow_server_connection_does_not_hold_up_opening_files() {
     provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
     provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("sftp://gone/".into()) });
     provider.submit(ProviderRequest::Open { tab: 7, path: p(r"C:\r\a.txt") });
-    assert!(matches!(next(), ProviderEvent::OpDone { error: Some(e), .. } if e.starts_with(r"opened C:\r\a.txt")));
+    assert!(matches!(next(), ProviderEvent::OpDone { error: Some(e), .. } if e.message.starts_with(r"opened C:\r\a.txt")));
     let mut rest = [next(), next()];
     rest.sort_by_key(|e| format!("{e:?}"));
     assert_eq!(rest[0], ProviderEvent::Navigate { tab: 7, path: p(r"C:\mnt\share") });
-    assert!(matches!(&rest[1], ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.contains("sftp://gone/ is not responding")));
+    assert!(matches!(&rest[1], ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.message.contains("sftp://gone/ is not responding")));
 }
 
 struct LoginShell;
@@ -598,7 +598,7 @@ fn a_login_question_goes_to_the_tab_that_connected_and_its_answer_opens_the_shar
     provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
     let answer = asked(&rx);
     provider.submit(ProviderRequest::Open { tab: 7, path: p(r"C:\r\a.txt") });
-    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(e), .. } if e.starts_with("opened")), "an open login form does not block opening files");
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(e), .. } if e.message.starts_with("opened")), "an open login form does not block opening files");
     answer.send(MountReply::Login { user: "ann".into(), domain: String::new(), password: flit_core::provider::Password::new("s3cret".into()), anonymous: false, remember: false });
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::Navigate { tab: 7, path: p(r"C:\mnt\share") });
 }
@@ -612,7 +612,7 @@ fn cancelling_the_login_neither_navigates_nor_reports_an_error() {
     assert!(rx.recv_timeout(Duration::from_millis(500)).is_err(), "a cancelled login is silent");
     provider.submit(ProviderRequest::Launch { tab: 7, launch: Launch::ConnectServer("smb://nas/share".into()) });
     drop(asked(&rx));
-    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.contains("login refused")), "a form that went away without an answer is an error");
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { tab: 7, error: Some(e), .. } if e.message.contains("login refused")), "a form that went away without an answer is an error");
 }
 
 #[test]
@@ -633,7 +633,7 @@ fn only_a_successful_requested_login_returns_an_address_to_save() {
     asked(&rx).send(MountReply::Cancel);
     connect();
     drop(asked(&rx));
-    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(e), .. } if e.contains("login refused")));
+    assert!(matches!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::OpDone { error: Some(e), .. } if e.message.contains("login refused")));
     connect();
     asked(&rx).send(MountReply::Login { user: "ann".into(), domain: String::new(), password: flit_core::provider::Password::new("s3cret".into()), anonymous: false, remember: false });
     assert_eq!(rx.recv_timeout(Duration::from_secs(5)).unwrap(), ProviderEvent::SavedServerConnected { tab: 7, address: uri.into(), path: p(r"C:\mnt\share") });
@@ -644,7 +644,7 @@ fn launchers_to_folders_navigate_and_scripts_ask_before_opening() {
     let (tx, rx) = unbounded();
     let provider = LocalProvider::new::<_, NoWatch, LinkShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
     let next = || rx.recv_timeout(Duration::from_secs(5)).unwrap();
-    let opened = |e: ProviderEvent| matches!(e, ProviderEvent::OpDone { error: Some(e), .. } if e.starts_with("opened "));
+    let opened = |e: ProviderEvent| matches!(e, ProviderEvent::OpDone { error: Some(e), .. } if e.message.starts_with("opened "));
     provider.submit(ProviderRequest::Open { tab: 3, path: p("/home/u/Docs.desktop") });
     assert_eq!(next(), ProviderEvent::Navigate { tab: 3, path: p("/home/u/Documents") });
     provider.submit(ProviderRequest::Open { tab: 3, path: p("/home/u/untrusted.desktop") });

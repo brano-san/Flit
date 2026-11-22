@@ -13,7 +13,7 @@ use flit_core::archive::{self, ArchiveOp, PASSWORD_CODE};
 use flit_core::listing::{attr, FsError, FsErrorKind, ListingBuilder, Meta};
 use flit_core::path::FsPath;
 use flit_core::provider::FileOp;
-use flit_platform::{Job, OpOutcome, PlatformError};
+use flit_platform::{Job, OpOutcome, PlatformError, PlatformErrorKind};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::path::Path;
@@ -28,7 +28,7 @@ pub struct Env<'a> {
 pub use flit_platform::std_path;
 
 pub(crate) fn io_error(e: std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().map_or(-1, i64::from), e.to_string())
+    PlatformError::from_io(&e, e.to_string())
 }
 
 pub(crate) fn corrupt(message: &str) -> PlatformError {
@@ -36,7 +36,13 @@ pub(crate) fn corrupt(message: &str) -> PlatformError {
 }
 
 pub(crate) fn password_error(had_password: bool) -> PlatformError {
-    PlatformError::new(PASSWORD_CODE, if had_password { flit_core::i18n::S::ErrorsArchiveWrongPassword.en() } else { flit_core::i18n::S::ErrorsArchivePasswordNeeded.en() })
+    use flit_core::i18n::S;
+    let (kind, message) = if had_password {
+        (PlatformErrorKind::WrongPassword, S::ErrorsArchiveWrongPassword)
+    } else {
+        (PlatformErrorKind::PasswordNeeded, S::ErrorsArchivePasswordNeeded)
+    };
+    PlatformError::new(PASSWORD_CODE, message.en()).with_kind(kind)
 }
 
 pub fn locate(path: &FsPath) -> Option<(FsPath, String)> {
@@ -144,6 +150,40 @@ fn open(item: &FsPath, job: &Job, env: &Env<'_>) -> extract::Outcome {
     let dir = std::env::temp_dir().join("Flit").join(format!("{}-{stamp}-{}", std::process::id(), OPENED.fetch_add(1, Ordering::Relaxed)));
     let dest = FsPath::parse(&dir.to_string_lossy()).ok_or_else(|| (Vec::new(), PlatformError::new(-1, "The temporary folder cannot be used")))?;
     extract::entries(&archive, std::slice::from_ref(item), &dest, job, env)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewError {
+    Failed,
+    TooLarge,
+    PasswordRequired,
+}
+
+pub fn preview_paths(path: &FsPath) -> Result<String, PreviewError> {
+    let meta = std::fs::metadata(std_path(path)).map_err(|_| PreviewError::Failed)?;
+    const MAX_PREVIEW_ARCHIVE: u64 = 256 << 20;
+    if !meta.is_file() {
+        return Err(PreviewError::Failed);
+    }
+    if meta.len() > MAX_PREVIEW_ARCHIVE {
+        return Err(PreviewError::TooLarge);
+    }
+    let index = index::open(path, 0).map_err(|error| {
+        if archive::needs_password(error.kind) { PreviewError::PasswordRequired } else { PreviewError::Failed }
+    })?;
+    let mut out = String::new();
+    for item in &index.items {
+        let bytes = item.path.len() + 2;
+        if out.len() + bytes > flit_core::preview::TEXT_BYTES {
+            break;
+        }
+        out.push_str(&item.path);
+        if item.dir {
+            out.push('/');
+        }
+        out.push('\n');
+    }
+    Ok(out)
 }
 
 pub fn forget(archive: &FsPath) {

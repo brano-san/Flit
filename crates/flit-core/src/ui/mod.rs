@@ -1494,7 +1494,7 @@ impl App {
                     self.dirty |= k == self.cur;
                 }
             }
-            ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error.map(|e| crate::i18n::localize(&e).into_owned()), report, now),
+            ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error, report, now),
             ProviderEvent::SavedServerConnected { tab, address, path } => {
                 self.change_server(ServerChange::Add(address));
                 self.on_provider_event(ProviderEvent::Navigate { tab, path }, now);

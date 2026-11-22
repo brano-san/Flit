@@ -2,6 +2,20 @@ use super::*;
 use crate::temp::Temp;
 use std::time::Instant;
 
+fn image(path: &Path, size: u32) -> Option<Bitmap> {
+    match super::image(path, size, &|| true) {
+        PreviewPicture::Ready(bitmap) => Some(bitmap),
+        _ => None,
+    }
+}
+
+fn thumbnail(path: &Path, size: u32, cache: Option<PathBuf>) -> Option<Bitmap> {
+    match super::thumbnail(path, size, cache, &|| true) {
+        PreviewPicture::Ready(bitmap) => Some(bitmap),
+        _ => None,
+    }
+}
+
 fn write_png(path: &Path, w: u32, h: u32, text: Option<(&str, String)>) {
     let mut e = png::Encoder::new(File::create(path).unwrap(), w, h);
     e.set_color(png::ColorType::Rgb);
@@ -51,10 +65,23 @@ fn the_content_not_the_extension_picks_the_decoder_and_webp_decodes() {
     let webp = t.path().join("a.png");
     let px: Vec<u8> = (0..30 * 10).flat_map(|_| [255, 0, 0, 128]).collect();
     image_webp::WebPEncoder::new(File::create(&webp).unwrap()).encode(&px, 30, 10, image_webp::ColorType::Rgba8).unwrap();
-    let b = image(&webp, 1000).unwrap();
-    assert_eq!((b.width, b.height), (30, 10));
+    let mut decoded = Vec::new();
+    decode_webp(&webp, 15, &mut decoded).unwrap();
+    let b = unpack_bitmap(decoded, 15).unwrap();
+    assert_eq!((b.width, b.height), (15, 5));
     assert_eq!(&b.rgba[..4], &[128, 0, 0, 128]);
-    assert_eq!(thumbnail(&webp, 15, None).map(|b| (b.width, b.height)), Some((15, 5)));
+    let decode = |embedded, error| decode_file(&webp, 15, embedded, |path, size| {
+        assert_eq!((path, size), (webp.as_path(), 15));
+        Err(error)
+    });
+    for embedded in [false, true] {
+        assert!(matches!(decode(embedded, parse_process::Error::Unsupported), PreviewPicture::Missing));
+        assert!(matches!(decode(embedded, parse_process::Error::Cancelled), PreviewPicture::Missing));
+        assert!(matches!(decode(embedded, parse_process::Error::TimedOut), PreviewPicture::Failed));
+        assert!(matches!(decode(embedded, parse_process::Error::Failed), PreviewPicture::Failed));
+    }
+    assert!(unpack_bitmap(vec![0; 7], 15).is_none());
+    assert!(matches!(decode_file(&disguised, 15, true, |_, _| panic!("PNG started the parser")), PreviewPicture::Ready(_)));
     std::fs::write(t.path().join("text.png"), b"hello").unwrap();
     assert!(image(&t.path().join("text.png"), 100).is_none());
 }

@@ -7,13 +7,14 @@ reading = "正在读取属性…"
 loading = "正在加载预览…"
 new_tag = "+ 新建标记"
 shortcut = "指向 {target} 的快捷方式"
-too_large = "图片太大，无法预览"
+too_large = "文件太大，无法预览"
 online_only = "仅联机存储。\n预览会将文件下载到此设备。"
 download = "下载以预览"
 copy_image = "复制图像"
 truncated = ["显示前 {n} 个字符"]
 folders = ["{n} 个文件夹"]
 files = ["{n} 个文件"]
+cannot_open = "无法打开此文件"
 
 [field]
 path = "路径"

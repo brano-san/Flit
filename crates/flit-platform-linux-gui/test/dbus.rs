@@ -200,14 +200,13 @@ fn launcher_signal_has_the_desktop_identity_and_typed_progress_properties() {
     use crate::atspi::{args, Arg};
     let api = load().expect("libdbus is needed for message serialization");
     for (percent, visible, progress) in [(Some(37), 1, 0.37), (None, 0, 0.0)] {
-        let msg = launcher_signal(&api, launcher_values(percent));
-        assert!(!msg.is_null());
+        let message = launcher_signal(api, launcher_values(percent)).unwrap();
+        let msg = message.raw.as_ptr();
         unsafe {
             assert_eq!(text((api.path)(msg)), format!("/com/canonical/unity/launcherentry/{}", std::process::id()));
             assert_eq!(text((api.interface)(msg)), "com.canonical.Unity.LauncherEntry");
             assert_eq!(text((api.member)(msg)), "Update");
-            let values = args(&api, msg);
-            (api.unref)(msg);
+            let values = args(api, msg);
             assert_eq!(values, vec![Arg::S("application://flit.desktop".into()), Arg::L(vec![Arg::L(vec![Arg::S("progress".into()), Arg::L(vec![Arg::D(progress)])]), Arg::L(vec![Arg::S("progress-visible".into()), Arg::L(vec![Arg::I(visible)])])])]);
         }
     }
@@ -222,4 +221,11 @@ fn launcher_emits_progress_on_an_isolated_session_bus() {
         crate::shell::launcher_progress(percent);
         std::thread::sleep(Duration::from_millis(200));
     }
+}
+
+#[test]
+fn dbus_uses_the_same_initialized_api_for_all_callers() {
+    let first = load().expect("libdbus is needed for message serialization");
+    let second = std::thread::spawn(|| load().unwrap()).join().unwrap();
+    assert!(std::ptr::eq(first, second));
 }

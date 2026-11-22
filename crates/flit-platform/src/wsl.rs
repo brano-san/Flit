@@ -4,7 +4,7 @@ use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use flit_core::i18n::S;
 use flit_core::listing::Listing;
 use flit_core::path::PathKind;
-use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpId, OpReport, Recover, Resolve, SnapshotSlot};
+use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpError, OpId, OpReport, Recover, Resolve, SnapshotSlot};
 use flit_core::sort::{SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
 use flit_proto::provider::{agent_runs, check_conflict, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
@@ -446,7 +446,7 @@ impl Ctl {
         let (items, cut) = match (self.clipboard.files)() {
             Ok(files) => files,
             Err(e) => {
-                self.emit(ProviderEvent::OpDone { tab, id, error: Some(e.message), report: None });
+                self.emit(ProviderEvent::OpDone { tab, id, error: Some(OpError::new(e.kind, e.message)), report: None });
                 return None;
             }
         };
@@ -584,7 +584,7 @@ impl Ctl {
                         self.emit(ProviderEvent::Denied { tab, error: error.clone() });
                     }
                 }
-                ProviderRequest::Op { tab, id, .. } => self.emit(ProviderEvent::OpDone { tab, id, error: Some(error.clone()), report: None }),
+                ProviderRequest::Op { tab, id, .. } => self.emit(ProviderEvent::OpDone { tab, id, error: Some(error.clone().into()), report: None }),
                 ProviderRequest::DirSizes { tab, gen, items, .. } => self.emit(ProviderEvent::SizesSkipped { tab, gen, items: items.iter().map(|(i, _)| *i).collect() }),
                 _ => {}
             }
@@ -652,7 +652,7 @@ impl Ctl {
             ProviderRequest::Op { tab, id: op, op: request, ctl } if runs(&request, self.admin) => {
                 let clear = self.clears.remove(&op);
                 if ctl.is_cancelled() {
-                    return self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(CANCELLED.into()), report: Some(OpReport { op: request, items: Vec::new() }) });
+                    return self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), report: Some(OpReport { op: request, items: Vec::new() }) });
                 }
                 let id = self.id();
                 let policy = ctl.policy();
@@ -709,10 +709,10 @@ impl Ctl {
         }
     }
 
-    fn finished(&mut self, id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)>) {
+    fn finished(&mut self, id: ReqId, error: Option<OpError>, items: Vec<(FsPath, FsPath)>) {
         let Some(Pending::Op(o)) = self.pending.remove(&id) else { return };
         if let Err(e) = check_report(&o.request, &items) {
-            self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(self.lost()), report: None });
+            self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(self.lost().into()), report: None });
             return self.crashed(&e.to_string());
         }
         if o.clear && error.is_none() {
@@ -811,14 +811,14 @@ impl Ctl {
                 Pending::Op(o) => {
                     o.ctl.answer(Resolve::Skip, false);
                     o.ctl.answer_failure(Recover::Skip, false);
-                    self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(lost.clone()), report: None });
+                    self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(lost.clone().into()), report: None });
                 }
                 Pending::Sizes { .. } => {}
             }
         }
         self.clears.clear();
         for (tab, _) in std::mem::take(&mut self.watches) {
-            self.emit(ProviderEvent::OpDone { tab, id: 0, error: Some(self.stopped()), report: None });
+            self.emit(ProviderEvent::OpDone { tab, id: 0, error: Some(self.stopped().into()), report: None });
         }
         let now = Instant::now();
         self.crashes.push_back(now);

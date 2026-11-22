@@ -83,9 +83,12 @@ fn le64(b: &[u8], at: usize) -> u64 {
 }
 
 fn read_at(f: &mut File, at: u64, len: usize) -> std::io::Result<Vec<u8>> {
-    let mut buf = vec![0; len];
+    let mut buf = Vec::new();
     f.seek(SeekFrom::Start(at))?;
-    f.read_exact(&mut buf)?;
+    f.take(len as u64).read_to_end(&mut buf)?;
+    if buf.len() != len {
+        return Err(std::io::ErrorKind::UnexpectedEof.into());
+    }
     Ok(buf)
 }
 
@@ -113,7 +116,7 @@ fn zip_entries(f: &mut File, len: u64, offset_min: i32) -> Result<Vec<Raw>, Plat
     let start = cd_end - cd_size;
     let delta = start.saturating_sub(cd_off);
     let cd = read_at(f, cd_off + delta, cd_size as usize).map_err(io_error)?;
-    let mut out = Vec::with_capacity(count.min(1 << 20) as usize);
+    let mut out = Vec::new();
     let mut p = 0usize;
     while out.len() < count as usize && le32(&cd, p) == 0x0201_4b50 {
         let made_by = le16(&cd, p + 4) >> 8;

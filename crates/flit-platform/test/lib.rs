@@ -174,3 +174,19 @@ fn progress_from_a_paused_job_holds_the_worker_until_it_resumes() {
     worker.join().unwrap();
     assert_eq!(job.progress().items, 1);
 }
+
+#[test]
+fn platform_errors_keep_their_default_and_classify_io_errors() {
+    use std::io::ErrorKind;
+    assert_eq!(PlatformError::new(5, "anything").kind, PlatformErrorKind::Other);
+    for (native, kind) in [
+        (ErrorKind::NotFound, PlatformErrorKind::NotFound),
+        (ErrorKind::PermissionDenied, PlatformErrorKind::AccessDenied),
+        (ErrorKind::AlreadyExists, PlatformErrorKind::Exists),
+        (ErrorKind::StorageFull, PlatformErrorKind::NoSpace),
+        (ErrorKind::ResourceBusy, PlatformErrorKind::Busy),
+        (ErrorKind::Interrupted, PlatformErrorKind::Other),
+    ] {
+        assert_eq!(PlatformError::from_io(&native.into(), "same message").kind, kind);
+    }
+}

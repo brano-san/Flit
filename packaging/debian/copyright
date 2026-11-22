@@ -1,0 +1,135 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: Flit
+Source: https://github.com/brano-san/Flit
+Comment: The binary package includes UnRAR from the unrar-ng-sys Cargo
+ crate (vendor/unrar/ within the crate). Copyright belongs to Alexander
+ Roshal. The UnRAR license is reproduced below.
+
+Files: *
+Copyright: 2026 Andrey
+License: MIT
+
+Files: crates/flit-platform-linux-gui/assets/FlitSans.ttf
+Copyright: 2003 Bitstream, Inc.
+License: Bitstream-Vera
+ FlitSans.ttf is a renamed subset of DejaVu Sans 2.37 (https://dejavu-fonts.github.io/):
+ Latin, Greek, Cyrillic, combining marks and common punctuation, without hinting and OpenType layout tables.
+ .
+ Fonts are (c) Bitstream (see below). DejaVu changes are in public domain.
+ .
+ Bitstream Vera Fonts Copyright
+ .
+ Copyright (c) 2003 by Bitstream, Inc. All Rights Reserved. Bitstream Vera is
+ a trademark of Bitstream, Inc.
+ .
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of the fonts accompanying this license ("Fonts") and associated
+ documentation files (the "Font Software"), to reproduce and distribute the
+ Font Software, including without limitation the rights to use, copy, merge,
+ publish, distribute, and/or sell copies of the Font Software, and to permit
+ persons to whom the Font Software is furnished to do so, subject to the
+ following conditions:
+ .
+ The above copyright and trademark notices and this permission notice shall
+ be included in all copies of one or more of the Font Software typefaces.
+ .
+ The Font Software may be modified, altered, or added to, and in particular
+ the designs of glyphs or characters in the Fonts may be modified and
+ additional glyphs or characters may be added to the Fonts, only if the fonts
+ are renamed to names not containing either the words "Bitstream" or the word
+ "Vera".
+ .
+ This License becomes null and void to the extent applicable to Fonts or Font
+ Software that has been modified and is distributed under the "Bitstream
+ Vera" names.
+ .
+ The Font Software may be sold as part of a larger software package but no
+ copy of one or more of the Font Software typefaces may be sold by itself.
+ .
+ THE FONT SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+ OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF COPYRIGHT, PATENT,
+ TRADEMARK, OR OTHER RIGHT. IN NO EVENT SHALL BITSTREAM OR THE GNOME
+ FOUNDATION BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, INCLUDING
+ ANY GENERAL, SPECIAL, INDIRECT, INCIDENTAL, OR CONSEQUENTIAL DAMAGES,
+ WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF
+ THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM OTHER DEALINGS IN THE
+ FONT SOFTWARE.
+ .
+ Except as contained in this notice, the names of Gnome, the Gnome
+ Foundation, and Bitstream Inc., shall not be used in advertising or
+ otherwise to promote the sale, use or other dealings in this Font Software
+ without prior written authorization from the Gnome Foundation or Bitstream
+ Inc., respectively. For further information, contact: fonts at gnome dot
+ org.
+
+Files: crates/flit-platform-linux-gui/assets/FlitIcons.ttf
+Copyright: 2020 Microsoft Corporation
+License: MIT
+
+License: MIT
+ MIT License
+ .
+ Copyright (c) 2026 Andrey
+ .
+ Permission is hereby granted, free of charge, to any person obtaining a copy
+ of this software and associated documentation files (the "Software"), to deal
+ in the Software without restriction, including without limitation the rights
+ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ copies of the Software, and to permit persons to whom the Software is
+ furnished to do so, subject to the following conditions:
+ .
+ The above copyright notice and this permission notice shall be included in all
+ copies or substantial portions of the Software.
+ .
+ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ SOFTWARE.
+
+License: UnRAR
+ ******    *****   ******   UnRAR - free utility for RAR archives
+  **   **  **   **  **   **  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  ******   *******  ******    License for use and distribution of
+  **   **  **   **  **   **   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+  **   **  **   **  **   **         FREE portable version
+                                    ~~~~~~~~~~~~~~~~~~~~~
+ .
+       The source code of UnRAR utility is freeware. This means:
+ .
+    1. All copyrights to RAR and the utility UnRAR are exclusively
+       owned by the author - Alexander Roshal.
+ .
+    2. UnRAR source code may be used in any software to handle
+       RAR archives without limitations free of charge, but cannot be
+       used to develop RAR (WinRAR) compatible archiver and to
+       re-create RAR compression algorithm, which is proprietary.
+       Distribution of modified UnRAR source code in separate form
+       or as a part of other software is permitted, provided that
+       full text of this paragraph, starting from "UnRAR source code"
+       words, is included in license, or in documentation if license
+       is not available, and in source code comments of resulting package.
+ .
+    3. The UnRAR utility may be freely distributed. It is allowed
+       to distribute UnRAR inside of other software packages.
+ .
+    4. THE RAR ARCHIVER AND THE UnRAR UTILITY ARE DISTRIBUTED "AS IS".
+       NO WARRANTY OF ANY KIND IS EXPRESSED OR IMPLIED.  YOU USE AT
+       YOUR OWN RISK. THE AUTHOR WILL NOT BE LIABLE FOR DATA LOSS,
+       DAMAGES, LOSS OF PROFITS OR ANY OTHER KIND OF LOSS WHILE USING
+       OR MISUSING THIS SOFTWARE.
+ .
+    5. Installing and using the UnRAR utility signifies acceptance of
+       these terms and conditions of the license.
+ .
+    6. If you don't agree with terms of the license you must remove
+       UnRAR files from your storage devices and cease to use the
+       utility.
+ .
+       Thank you for your interest in RAR and UnRAR.
+ .
+ .
+                                             Alexander L. Roshal

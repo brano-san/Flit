@@ -5,7 +5,7 @@ use flit_core::digest::HashKind;
 use flit_core::desktop_ini::{self, FolderKind};
 use flit_core::listing::{attr, DirSnapshot, DirStats, Listing, ListingBuilder};
 use flit_core::path::PathKind;
-use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpId, OpReport, SnapshotSlot, Stage, Totals};
+use flit_core::provider::{FileOp, GenToken, Launch, OpCtl, OpError, OpId, OpReport, SnapshotSlot, Stage, Totals};
 use flit_core::sort::{self, CaseMode, SortKeys, ViewSpec};
 use flit_core::tags::{TagCell, Tags};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
@@ -75,7 +75,7 @@ impl Reply {
         (self.wake)();
     }
 
-    fn done(&self, (error, report): (Option<String>, Option<OpReport>)) {
+    fn done(&self, (error, report): (Option<OpError>, Option<OpReport>)) {
         self.send(ProviderEvent::OpDone { tab: self.tab, id: self.id, error, report });
     }
 
@@ -237,7 +237,7 @@ impl LocalProvider {
                     if let Err(e) = started {
                         let event = match gen {
                             Some(gen) => ProviderEvent::NetworkConnected { tab, gen, result: Err(e.to_string()) },
-                            None => ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None },
+                            None => ProviderEvent::OpDone { tab, id: 0, error: Some(e.operation_error()), report: None },
                         };
                         let _ = open_events.send(event);
                         open_wake();
@@ -277,7 +277,7 @@ impl LocalProvider {
                 let sh = match &mut sh {
                     Ok(sh) => sh,
                     Err(e) => {
-                        reply.done((Some(e.to_string()), None));
+                        reply.done((Some(e.operation_error()), None));
                         continue;
                     }
                 };
@@ -298,16 +298,16 @@ impl LocalProvider {
                 let started = spawn(format!("flit-op-{id}"), move || {
                     let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
                     let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
-                        (true, _) => (Some(CANCELLED.into()), Some(OpReport { op, items: Vec::new() }), Vec::new()),
+                        (true, _) => (Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), Some(OpReport { op, items: Vec::new() }), Vec::new()),
                         (false, Ok(mut sh)) => perform(&mut sh, op, cut, &job),
-                        (false, Err(e)) => (Some(e.to_string()), None, Vec::new()),
+                        (false, Err(e)) => (Some(e.operation_error()), None, Vec::new()),
                     };
                     drop(turn);
                     reply.finish(result);
                     running.fetch_sub(1, Ordering::AcqRel);
                 });
                 if let Err(e) = started {
-                    failed.done((Some(e.to_string()), None));
+                    failed.done((Some(e.operation_error()), None));
                 }
             }
         })?;
@@ -364,7 +364,7 @@ pub fn real_path<S: Shell>(sh: &mut S, item: &FsPath) -> Option<FsPath> {
 fn shell_event(tab: TabId, done: Result<Option<ProviderEvent>, PlatformError>) -> Option<ProviderEvent> {
     match done {
         Ok(event) => event,
-        Err(e) => Some(ProviderEvent::OpDone { tab, id: 0, error: Some(e.to_string()), report: None }),
+        Err(e) => Some(ProviderEvent::OpDone { tab, id: 0, error: Some(e.operation_error()), report: None }),
     }
 }
 
@@ -447,7 +447,7 @@ fn same_dir(item: &FsPath, dir: &FsPath) -> bool {
     item.parent().is_some_and(|p| p.as_bytes().eq_ignore_ascii_case(dir.as_bytes()))
 }
 
-fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), String> {
+fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), OpError> {
     Ok(match op {
         FileOp::Paste { dest } => match sh.clipboard_files() {
             Ok((items, true)) => (FileOp::Move { items: items.into_iter().filter(|i| !same_dir(i, &dest)).collect(), dest }, true),
@@ -455,16 +455,16 @@ fn resolve_paste<S: FileOps>(sh: &mut S, op: FileOp) -> Result<(FileOp, bool), S
             Err(_) if sh.clipboard_content() => (FileOp::Paste { dest }, false),
             Err(e) => match sh.clipboard_data(&dest) {
                 Some(op) => (op, false),
-                None => return Err(e.to_string()),
+                None => return Err(e.operation_error()),
             },
         },
-        FileOp::PasteLink { dest } => (FileOp::Link { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest }, false),
-        FileOp::PasteLinkAs { dest, kind } => (FileOp::LinkAs { items: sh.clipboard_files().map_err(|e| e.to_string())?.0, dest, kind }, false),
+        FileOp::PasteLink { dest } => (FileOp::Link { items: sh.clipboard_files().map_err(|e| e.operation_error())?.0, dest }, false),
+        FileOp::PasteLinkAs { dest, kind } => (FileOp::LinkAs { items: sh.clipboard_files().map_err(|e| e.operation_error())?.0, dest, kind }, false),
         op => (op, false),
     })
 }
 
-type Finished = (Option<String>, Option<OpReport>, Vec<FsPath>);
+type Finished = (Option<OpError>, Option<OpReport>, Vec<FsPath>);
 
 fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> Finished {
     if matches!(&op, FileOp::Move { items, .. } if items.is_empty()) {
@@ -475,7 +475,7 @@ fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> Finished
         sh.clear_clipboard();
     }
     let untrashable = out.error.as_ref().map(|e| e.untrashable.clone()).unwrap_or_default();
-    (out.error.map(|e| e.to_string()), Some(OpReport { op: job.take_performed().unwrap_or(op), items: out.items }), untrashable)
+    (out.error.map(|e| e.operation_error()), Some(OpReport { op: job.take_performed().unwrap_or(op), items: out.items }), untrashable)
 }
 
 #[cfg(test)]
@@ -483,9 +483,9 @@ fn run_op<S: FileOps>(sh: &mut S, op: FileOp) -> (Option<String>, Option<OpRepor
     match resolve_paste(sh, op) {
         Ok((op, cut)) => {
             let (error, report, _) = perform(sh, op, cut, &Job::detached(flit_core::provider::Resolve::Skip));
-            (error, report)
+            (error.map(|e| e.message), report)
         }
-        Err(e) => (Some(e), None),
+        Err(e) => (Some(e.message), None),
     }
 }
 

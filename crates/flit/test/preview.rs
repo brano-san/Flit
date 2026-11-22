@@ -77,3 +77,21 @@ fn loads_by_kind_within_limits() {
     stale.cancel.set(8);
     assert!(load(&mut s, &stale).is_none());
 }
+
+#[test]
+fn archive_preview_uses_basic_details_for_time_size_and_password_limits() {
+    use parse_process::Error;
+    let d = temp();
+    let req = req(&d, "archive.7z", false);
+    let mut shell = Fake;
+    assert!(matches!(archive_preview(&mut shell, &req, Err(Error::TooLarge)), Some(PreviewData::Basic { note: Some(Note::TooLarge), .. })));
+    for error in [Error::TimedOut, Error::PasswordRequired] {
+        assert!(matches!(archive_preview(&mut shell, &req, Err(error)), Some(PreviewData::Basic { note: None, .. })));
+    }
+    let response = |names: &[u8]| [parse_process::ARCHIVE_HEADER, names].concat();
+    for broken in [Err(Error::Failed), Ok(response(&[255, b'\n'])), Ok(response(b"truncated")), Ok(b"unframed\n".to_vec())] {
+        assert!(matches!(archive_preview(&mut shell, &req, broken), Some(PreviewData::Basic { note: Some(Note::Message(_)), .. })));
+    }
+    assert!(archive_preview(&mut shell, &req, Err(Error::Cancelled)).is_none());
+    assert!(matches!(archive_preview(&mut shell, &req, Ok(response(b"sample.txt\n"))), Some(PreviewData::Doc(_))));
+}

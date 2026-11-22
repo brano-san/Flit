@@ -2727,7 +2727,7 @@ fn completed_and_cancelled_drop_jobs_do_not_retain_the_private_payload_in_histor
         let [(id, op)] = ops(&mut app).try_into().unwrap();
         assert!(weak.upgrade().is_some());
         let tab = app.tab().id;
-        app.on_provider_event(ProviderEvent::OpDone { tab, id, error: cancel.then(|| crate::i18n::S::ErrorsEngineCancelled.en().to_owned()), report: Some(OpReport { op, items: Vec::new() }) }, t0());
+        app.on_provider_event(ProviderEvent::OpDone { tab, id, error: cancel.then(|| crate::provider::OpError::new(crate::provider::PlatformErrorKind::Cancelled, "aborted")), report: Some(OpReport { op, items: Vec::new() }) }, t0());
         assert!(weak.upgrade().is_none(), "the finished job only keeps a summary");
         assert_eq!(app.running_jobs(), 0);
         assert_eq!(app.job_states().len(), 1);

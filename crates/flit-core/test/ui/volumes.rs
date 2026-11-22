@@ -220,7 +220,7 @@ fn a_wrong_passphrase_asks_again_and_other_unlock_failures_go_to_the_status_bar(
     assert!(app.jobs.form.is_none() && launches(&mut app).is_empty(), "cancelling stops the attempts");
 
     let busy = "Cannot unlock /dev/sdd2: The drive is in use".to_owned();
-    app.on_provider_event(ProviderEvent::OpDone { tab, id: 0, error: Some(busy.clone()), report: None }, Instant::now());
+    app.on_provider_event(ProviderEvent::OpDone { tab, id: 0, error: Some(busy.clone().into()), report: None }, Instant::now());
     assert!(app.jobs.form.is_none(), "a busy, gone or forbidden volume does not ask for the passphrase again");
     assert_eq!(app.tab().error.as_deref(), Some(busy.as_str()));
     assert!(launches(&mut app).is_empty());

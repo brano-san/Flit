@@ -148,7 +148,7 @@ impl Client {
         loop {
             match self.next() {
                 Event::OpProgress { id: got, .. } if got == id => {}
-                Event::OpDone { id: got, error, items } if got == id => return (error, items),
+                Event::OpDone { id: got, error, items } if got == id => return (error.map(|e| e.message), items),
                 other => panic!("unexpected {other:?}"),
             }
         }

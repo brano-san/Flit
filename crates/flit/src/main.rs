@@ -9,6 +9,7 @@ mod layouts;
 mod logs;
 mod metrics;
 mod overlays;
+mod parser;
 mod places;
 mod quick_sync;
 mod preview;
@@ -85,7 +86,9 @@ fn main() {
     };
     let mut it = if link.is_some() { Vec::new() } else { raw }.into_iter();
     while let Some(a) = it.next() {
-        if a == "--diagnose" {
+        if a == flit_platform::parse_process::SUBCOMMAND {
+            std::process::exit(parser::serve(it));
+        } else if a == "--diagnose" {
             #[cfg(windows)]
             flit_platform_windows::diagnose::attach_console();
             match diagnose::run::<P>() {

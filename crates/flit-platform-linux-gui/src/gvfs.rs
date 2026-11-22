@@ -513,10 +513,10 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 
 pub fn mount(address: &str, server: &str, spec: &Spec, prompt: &MountPrompt, wait: Duration) -> std::io::Result<Outcome> {
     let Some(api) = dbus::load() else { return Ok(Outcome::Unavailable) };
-    let Some(conn) = Conn::open(&api, address) else { return Ok(Outcome::Unavailable) };
+    let Some(conn) = Conn::open(api, address) else { return Ok(Outcome::Unavailable) };
     let me = unsafe { dbus::text((api.unique_name)(conn.raw)) };
     let path = format!("/org/flit/MountOperation/op{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
-    let Some(serial) = conn.send(mount_location_message(&api, spec, &me, &path)) else { return Ok(Outcome::Unavailable) };
+    let Some(serial) = conn.send(mount_location_message(api, spec, &me, &path)) else { return Ok(Outcome::Unavailable) };
     let mut budget = Budget::start(wait, Instant::now());
     let mut session = Session { path, server: server.to_owned(), prompt, held: None, asked: false, cancelled: false, abandoned: false };
     let result = 'run: loop {
@@ -533,7 +533,7 @@ pub fn mount(address: &str, server: &str, spec: &Spec, prompt: &MountPrompt, wai
             }
             let kind = unsafe { (api.msg_type)(msg) };
             if (kind == TYPE_RETURN || kind == TYPE_ERROR) && unsafe { (api.reply_serial)(msg) } == serial {
-                let done = session.finished(&api, msg, &budget);
+                let done = session.finished(api, msg, &budget);
                 unsafe { (api.unref)(msg) };
                 break 'run done;
             }

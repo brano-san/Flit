@@ -139,7 +139,7 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
     if let Some(done) = job.take_performed() {
         ctx.send(Event::OpPerformed { id, op: done });
     }
-    ctx.send(Event::OpDone { id, error: out.error.map(|e| e.message), items: out.items });
+    ctx.send(Event::OpDone { id, error: out.error.map(|e| flit_core::provider::OpError::new(e.kind, e.message)), items: out.items });
 }
 
 fn spawn(name: &str, body: impl FnOnce() + Send + 'static) -> bool {

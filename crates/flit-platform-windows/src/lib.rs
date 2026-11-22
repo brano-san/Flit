@@ -76,7 +76,24 @@ use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SIGDN_F
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, SystemParametersInfoW, MB_ICONERROR, MB_OK, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
 
 pub(crate) fn err(e: windows::core::Error) -> PlatformError {
-    PlatformError::new(e.code().0 as i64, error_reason(&e))
+    win_error(e.code().0 as i64, error_reason(&e))
+}
+
+pub(crate) fn win_error(code: i64, message: impl Into<String>) -> PlatformError {
+    use flit_platform::PlatformErrorKind;
+    use windows::Win32::Foundation::*;
+    let raw = code as u32;
+    let win32 = WIN32_ERROR(if raw >> 16 == 0x8007 { raw & 0xFFFF } else { raw });
+    let kind = match win32 {
+        ERROR_CANCELLED | ERROR_OPERATION_ABORTED | WIN32_ERROR(0x8027_0000) | WIN32_ERROR(0x8000_4004) => PlatformErrorKind::Cancelled,
+        ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND | ERROR_INVALID_NAME | ERROR_BAD_PATHNAME | ERROR_BAD_NETPATH | ERROR_BAD_NET_NAME => PlatformErrorKind::NotFound,
+        ERROR_ACCESS_DENIED | ERROR_PRIVILEGE_NOT_HELD | ERROR_WRITE_PROTECT => PlatformErrorKind::AccessDenied,
+        ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS => PlatformErrorKind::Exists,
+        ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL | ERROR_DISK_QUOTA_EXCEEDED => PlatformErrorKind::NoSpace,
+        ERROR_BUSY | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION => PlatformErrorKind::Busy,
+        _ => PlatformErrorKind::Other,
+    };
+    PlatformError::new(code, message).with_kind(kind)
 }
 
 pub(crate) fn error_reason(e: &windows::core::Error) -> String {
@@ -130,6 +147,29 @@ pub struct Windows;
 impl Windows {
     fn standard_places() -> Vec<FsPath> {
         flit_core::ui::KnownFolder::ALL.iter().filter_map(|k| Self::known_folder(k.shell_name())).filter_map(|l| l.to_windows()).collect()
+    }
+}
+
+impl flit_platform::IndexPlatform for Windows {
+    type Source = <Self as Platform>::IndexSource;
+    type Walk = <Self as Platform>::FallbackIndex;
+    type Service = <Self as Platform>::Service;
+
+    fn walk_source(roots: &[String]) -> Result<Self::Walk, PlatformError> {
+        if roots.is_empty() {
+            return <Self::Walk as flit_platform::IndexSource>::new();
+        }
+        let parsed: Option<Vec<_>> = roots.iter().map(|r| FsPath::parse(r)).collect();
+        let parsed = parsed.ok_or_else(|| PlatformError::new(-1, "a --walk root is not an absolute path"))?;
+        Ok(WalkIndex::with_roots(parsed))
+    }
+
+    fn utc_offset_minutes() -> i32 {
+        <Self as Platform>::utc_offset_minutes()
+    }
+
+    fn state_dir() -> Option<std::path::PathBuf> {
+        <Self as Platform>::state_dir()
     }
 }
 

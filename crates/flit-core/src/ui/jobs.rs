@@ -9,7 +9,7 @@ use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
-use crate::provider::{Conflict, Failure, FileOp, OpCtl, OpId, OpProgress, Recover, Resolve, Stage};
+use crate::provider::{Conflict, Failure, FileOp, OpCtl, OpId, OpProgress, PlatformErrorKind, Recover, Resolve, Stage};
 use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
@@ -53,13 +53,6 @@ const FAILURE_BUTTONS: [S; 4] = [S::UiButtonRetry, S::UiButtonSkip, S::UiButtonS
 const FULL_BUTTONS: [S; 2] = [S::UiButtonRetry, S::UiButtonCancel];
 const UNTRASHABLE_BUTTONS: [S; 2] = [S::UiButtonDeletePermanently, S::UiButtonCancel];
 const EXTENSION_BUTTONS: [S; 2] = [S::WidgetsYes, S::UiButtonNo];
-
-const CANCEL_CODES: [&str; 3] = ["(0x80270000)", "(0x800704C7)", "(0x80004004)"];
-
-pub fn cancelled_error(e: &str) -> bool {
-    let said = |s: S| e.starts_with(s.t()) || e.starts_with(s.en());
-    CANCEL_CODES.iter().any(|c| e.trim_end().ends_with(c)) || said(S::ErrorsEngineCancelled) || said(S::ErrorsEngineDeletionCancelled)
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobState {
@@ -768,7 +761,7 @@ impl App {
             None => &[],
         };
         let mut keys = keys.to_vec();
-        if matches!(self.jobs.asks.front(), Some(Ask::Failure { failure, .. }) if failure.error == S::ErrorsEngineSymlinkPrivilege.en()) {
+        if matches!(self.jobs.asks.front(), Some(Ask::Failure { failure, .. }) if failure.error.kind == PlatformErrorKind::SymlinkPrivilege) {
             if let Some(first) = keys.first_mut() {
                 *first = S::MenuLinksRetryAdmin;
             }
@@ -872,7 +865,7 @@ impl App {
             }
         }
         if let Some(ask) = j.asks.front() {
-            let elevating = matches!(ask, Ask::Failure { failure, .. } if failure.error == S::ErrorsEngineSymlinkPrivilege.en());
+            let elevating = matches!(ask, Ask::Failure { failure, .. } if failure.error.kind == PlatformErrorKind::SymlinkPrivilege);
             let checked = (matches!(ask, Ask::Conflict { .. }) && !ask.too_large()) || can_delete_instead(ask);
             let policies = policy.iter().filter(|&&p| p).count();
             let buttons = policy.len() - policies - usize::from(elevating);
@@ -1200,7 +1193,7 @@ impl App {
                 let folder = f.path.parent().map(|p| p.display().into_owned()).unwrap_or_default();
                 let hint = if f.fatal { S::UiFailureFullHint.t().to_owned() } else { crate::tr!(S::UiFailureWhere, folder = folder) };
                 let title = if f.fatal { S::UiFailureFullTitle.t().to_owned() } else { failure_title(op, quoted(&f.path)) };
-                (title, vec![crate::i18n::localize(&f.error).into_owned(), hint])
+                (title, vec![crate::i18n::localize(&f.error.message).into_owned(), hint])
             }
             Some(Ask::Confirm(op, provider)) => {
                 let (title, text) = confirm_text(op);

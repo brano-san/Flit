@@ -49,3 +49,12 @@ fn the_service_hardening_never_needs_user_namespaces() {
         assert!(!l.iter().any(|x| x.starts_with(key)), "{key} needs unprivileged user namespaces in a user service and fails with 226/NAMESPACE where they are off:\n{unit}");
     }
 }
+
+#[cfg(windows)]
+#[test]
+fn the_index_service_accepts_absolute_walk_roots_and_rejects_relative_ones() {
+    use flit_platform::IndexPlatform;
+    use flit_platform_windows::Windows;
+    assert!(Windows::walk_source(&[r"C:\some-folder".to_owned()]).is_ok());
+    assert!(Windows::walk_source(&["relative".to_owned()]).is_err());
+}

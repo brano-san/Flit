@@ -1,10 +1,12 @@
 mod digest;
 mod indexer;
 mod local;
+pub mod parse_process;
 pub mod walk;
 mod wsl;
 
 pub use digest::hash_file;
+pub use flit_core::provider::PlatformErrorKind;
 pub use indexer::{root_of, start_indexer};
 pub use local::{measure, read_deep, via_unc, LocalProvider, CANCELLED};
 pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Clipboard, Timing, WslProvider, UNMAPPABLE};
@@ -74,6 +76,7 @@ pub enum Resolved {
 
 #[derive(Debug, Clone)]
 pub struct PlatformError {
+    pub kind: PlatformErrorKind,
     pub code: i64,
     pub message: String,
     pub untrashable: Vec<FsPath>,
@@ -82,7 +85,34 @@ pub struct PlatformError {
 
 impl PlatformError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), untrashable: Vec::new(), wrong_passphrase: false }
+        Self { kind: PlatformErrorKind::Other, code, message: message.into(), untrashable: Vec::new(), wrong_passphrase: false }
+    }
+    pub fn with_kind(mut self, kind: PlatformErrorKind) -> Self {
+        self.kind = kind;
+        self
+    }
+    pub fn cancelled(code: i64, message: impl Into<String>) -> Self {
+        Self::new(code, message).with_kind(PlatformErrorKind::Cancelled)
+    }
+    pub fn from_io(e: &std::io::Error, message: impl Into<String>) -> Self {
+        use std::io::ErrorKind;
+        let code = e.raw_os_error().map_or(-1, i64::from);
+        #[cfg(windows)]
+        if matches!(code, 995 | 1223) {
+            return Self::cancelled(code, message);
+        }
+        let kind = match e.kind() {
+            ErrorKind::NotFound | ErrorKind::NotADirectory => PlatformErrorKind::NotFound,
+            ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => PlatformErrorKind::AccessDenied,
+            ErrorKind::AlreadyExists => PlatformErrorKind::Exists,
+            ErrorKind::StorageFull | ErrorKind::QuotaExceeded => PlatformErrorKind::NoSpace,
+            ErrorKind::ResourceBusy | ErrorKind::ExecutableFileBusy => PlatformErrorKind::Busy,
+            _ => PlatformErrorKind::Other,
+        };
+        Self::new(code, message).with_kind(kind)
+    }
+    pub fn operation_error(&self) -> flit_core::provider::OpError {
+        flit_core::provider::OpError::new(self.kind, self.to_string())
     }
     pub fn wrong_passphrase(mut self) -> Self {
         self.wrong_passphrase = true;
@@ -305,6 +335,12 @@ pub trait Watcher: Sized + Send + 'static {
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>);
 }
 
+pub enum PreviewPicture {
+    Ready(Bitmap),
+    Missing,
+    Failed,
+}
+
 pub trait Shell: Sized {
     const BATCHES_FOLDER_ICONS: bool = false;
     const ICON_OVERLAYS: bool = false;
@@ -319,6 +355,9 @@ pub trait Shell: Sized {
     }
     fn overlay_image(&mut self, _slot: u8, _size: u32) -> Option<Bitmap> {
         None
+    }
+    fn thumbnail_current(&mut self, req: &IconRequest, _current: &dyn Fn() -> bool) -> Option<Bitmap> {
+        self.thumbnail(req)
     }
     fn thumbnail(&mut self, _req: &IconRequest) -> Option<Bitmap> {
         None
@@ -345,6 +384,9 @@ pub trait Shell: Sized {
     }
     fn link_target(&mut self, _link: &FsPath) -> Option<FsPath> {
         None
+    }
+    fn preview_picture(&mut self, path: &FsPath, max: u32, _current: &dyn Fn() -> bool) -> PreviewPicture {
+        self.preview_image(path, max).map_or(PreviewPicture::Missing, PreviewPicture::Ready)
     }
     fn preview_image(&mut self, _path: &FsPath, _max: u32) -> Option<Bitmap> {
         None
@@ -590,6 +632,16 @@ pub trait Service {
     fn run(body: fn() -> Result<(), PlatformError>) -> Result<(), PlatformError>;
     fn connect() -> Result<Self::Conn, PlatformError>;
     fn listen(max_clients: usize, on_client: OnClient<Self::Conn>) -> Result<(), PlatformError>;
+}
+
+pub trait IndexPlatform {
+    type Source: IndexSource + 'static;
+    type Walk: IndexSource + 'static;
+    type Service: Service;
+
+    fn walk_source(roots: &[String]) -> Result<Self::Walk, PlatformError>;
+    fn utc_offset_minutes() -> i32;
+    fn state_dir() -> Option<std::path::PathBuf>;
 }
 
 pub trait Platform: 'static {

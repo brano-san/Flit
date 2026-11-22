@@ -1,7 +1,7 @@
 use crate::digest::HashKind;
 use crate::listing::Meta;
 use crate::path::{FsPath, PathKind};
-use crate::provider::Conflict;
+use crate::provider::{Conflict, PlatformErrorKind};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::sync::Mutex;
@@ -285,9 +285,8 @@ pub fn is_unreadable(c: &Conflict) -> bool {
     c.source == c.target
 }
 
-pub fn needs_password(error: &str) -> bool {
-    use crate::i18n::S;
-    [S::ErrorsArchivePasswordNeeded, S::ErrorsArchiveWrongPassword].iter().any(|s| error.contains(s.en()) || error.contains(s.t()))
+pub fn needs_password(kind: PlatformErrorKind) -> bool {
+    matches!(kind, PlatformErrorKind::PasswordNeeded | PlatformErrorKind::WrongPassword)
 }
 
 #[derive(Default)]

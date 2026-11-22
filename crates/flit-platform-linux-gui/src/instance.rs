@@ -34,7 +34,7 @@ pub fn endpoints(runtime: &Path) -> (PathBuf, PathBuf) {
 }
 
 fn os_error(what: &str, e: &io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{what}: {e}"))
+    PlatformError::from_io(e, format!("{what}: {e}"))
 }
 
 fn proto_err(e: ProtoError) -> PlatformError {

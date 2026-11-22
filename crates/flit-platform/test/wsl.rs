@@ -310,7 +310,7 @@ fn hostile_names_drop_the_connection() {
     assert_eq!(snap.error.as_ref().unwrap().kind, FsErrorKind::Unavailable);
     assert!(snap.listing.is_empty());
     let note = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 4, id: 0, error, .. } = e { error } else { None });
-    assert!(note.contains("Press F5"));
+    assert!(note.message.contains("Press F5"));
 }
 
 #[test]
@@ -397,7 +397,7 @@ fn simplified_mode_reports_unmappable_operations() {
     let s = setup(fake, Timing { hello: Duration::from_millis(50), ..Timing::default() });
     s.wsl.submit(ProviderRequest::Op { tab: 3, id: 5, op: FileOp::Trash(vec![FsPath::parse_bytes(b"/tmp/bad\xFF").unwrap()]), ctl: OpCtl::default() });
     let done = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 3, id: 5, error, .. } = e { error } else { None });
-    assert_eq!(done, UNMAPPABLE);
+    assert_eq!(done.message, UNMAPPABLE);
 }
 
 fn op_events(req: &Request) -> Option<Vec<Event>> {
@@ -406,7 +406,7 @@ fn op_events(req: &Request) -> Option<Vec<Event>> {
     Some(match req {
         Request::Op { id, .. } => vec![Event::OpProgress { id: *id, progress }, Event::OpConflict { id: *id, conflict }],
         Request::Answer { id, choice: Some(_), .. } => vec![Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] }],
-        Request::Cancel { id } => vec![Event::OpDone { id: *id, error: Some(CANCELLED.into()), items: Vec::new() }],
+        Request::Cancel { id } => vec![Event::OpDone { id: *id, error: Some(flit_core::provider::OpError::new(crate::PlatformErrorKind::Cancelled, "abgebrochen")), items: Vec::new() }],
         _ => Vec::new(),
     })
 }
@@ -466,7 +466,9 @@ fn cancelling_an_operation_reaches_the_agent() {
     until("op", || s.fake.seen().iter().any(|r| matches!(r, Request::Op { policy: Some(Resolve::Skip), .. })));
     ctl.cancel();
     let error = event(&s.events, |e| if let ProviderEvent::OpDone { id: 5, error, .. } = e { Some(error) } else { None });
-    assert_eq!(error.as_deref(), Some(CANCELLED));
+    let error = error.unwrap();
+    assert_eq!(error.kind, crate::PlatformErrorKind::Cancelled);
+    assert_eq!(error.message, "abgebrochen");
     assert!(s.fake.seen().contains(&Request::Cancel { id: 1 }));
 }
 
@@ -546,10 +548,10 @@ fn failures_are_asked_through_the_agent_and_paths_outside_the_operation_end_it()
     let ctl = OpCtl::default();
     s.wsl.submit(ProviderRequest::Op { tab: 1, id: 6, op: copy(), ctl: ctl.clone() });
     let failure = event(&s.events, |e| if let ProviderEvent::OpFailure { tab: 1, id: 6, failure } = e { Some(failure) } else { None });
-    assert_eq!((failure.path, failure.error.as_str(), failure.fatal), (unix("/src/a"), "Permission denied", false));
+    assert_eq!((failure.path, failure.error.message.as_str(), failure.fatal), (unix("/src/a"), "Permission denied", false));
     ctl.answer_failure(Recover::Retry, false);
     let lost = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 6, error, .. } = e { Some(error) } else { None });
-    assert!(lost.is_some_and(|e| e.contains("was lost")), "a failure naming another path is refused like a forged conflict");
+    assert!(lost.is_some_and(|e| e.message.contains("was lost")), "a failure naming another path is refused like a forged conflict");
     assert!(s.fake.seen().iter().any(|r| matches!(r, Request::Recover { id: 1, choice: Some(Recover::Retry), all: false })));
 }
 
@@ -630,7 +632,7 @@ fn a_missing_pkexec_and_queued_operations_get_the_reason() {
     let (wsl, _, local, events) = refused_setup("pkexec is not installed", true);
     wsl.submit(ProviderRequest::Op { tab: 6, id: 3, op: FileOp::Delete(vec![unix("/root/a")]), ctl: OpCtl::default() });
     let done = event(&events, |e| if let ProviderEvent::OpDone { tab: 6, id: 3, error, .. } = e { error } else { None });
-    assert_eq!(done, "Cannot open the folder as administrator: pkexec is not installed");
+    assert_eq!(done.message, "Cannot open the folder as administrator: pkexec is not installed");
     assert!(local.0.lock().unwrap().is_empty());
 }
 
@@ -689,7 +691,7 @@ fn a_crashed_admin_agent_reports_it_and_starts_again_only_on_demand() {
         let snap = finished(&list(&s.wsl, 1, gen, "/root"));
         assert_eq!(snap.error.as_ref().unwrap().kind, FsErrorKind::Unavailable);
         let stopped = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 0, error, .. } = e { error } else { None });
-        assert!(stopped.starts_with("The administrator agent stopped"), "{stopped}");
+        assert!(stopped.message.starts_with("The administrator agent stopped"), "{stopped}");
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(s.fake.launches.load(Ordering::SeqCst), gen as usize);
     }
@@ -725,7 +727,7 @@ fn no_operation_in_an_admin_tab_runs_as_the_user() {
         if k < on_agent.len() {
             assert_eq!(error, None, "{op:?} runs on the agent");
         } else {
-            assert_eq!(error.as_deref(), Some("This command is not available in an administrator tab"), "{op:?}");
+            assert_eq!(error.as_ref().map(|e| e.message.as_str()), Some("This command is not available in an administrator tab"), "{op:?}");
         }
     }
     let ran: Vec<FileOp> = s.fake.seen().into_iter().filter_map(|r| if let Request::Op { op, .. } = r { Some(op) } else { None }).collect();

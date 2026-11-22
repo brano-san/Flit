@@ -1,4 +1,5 @@
 use crate::fs::{map_attrs, open_dir};
+use crate::walk_index::Handle;
 use crossbeam_channel::Sender;
 use flit_core::listing::{ChangeKind, DirChange, Meta};
 use flit_core::path::PathKind;
@@ -8,7 +9,7 @@ use std::collections::HashMap;
 use std::mem::offset_of;
 use std::sync::{Arc, Mutex, MutexGuard};
 use windows::core::PCWSTR;
-use windows::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
+use windows::Win32::Foundation::INVALID_HANDLE_VALUE;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::IO::{CancelIoEx, CreateIoCompletionPort, GetQueuedCompletionStatus, PostQueuedCompletionStatus, OVERLAPPED};
 use windows::Win32::System::Threading::INFINITE;
@@ -18,11 +19,8 @@ const QUIT: usize = 0;
 
 type Record = FILE_NOTIFY_EXTENDED_INFORMATION;
 
-struct Port(HANDLE);
-unsafe impl Send for Port {}
-
 pub struct DirWatcher {
-    port: Port,
+    port: Arc<Handle>,
     state: Arc<Mutex<State>>,
 }
 
@@ -36,11 +34,7 @@ struct State {
 
 impl State {
     fn close(&mut self, key: usize) {
-        if let Some(w) = self.slots.remove(&key) {
-            unsafe {
-                let _ = CloseHandle(w.dir);
-            }
-        }
+        self.slots.remove(&key);
     }
 
     fn stop(&mut self, key: usize) {
@@ -62,17 +56,14 @@ fn lock(state: &Mutex<State>) -> MutexGuard<'_, State> {
 
 impl Watcher for DirWatcher {
     fn new(events: Sender<ProviderEvent>, wake: Wake) -> Result<Self, PlatformError> {
-        let port = unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1) }.map_err(crate::err)?;
+        let port = Arc::new(Handle(unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1) }.map_err(crate::err)?));
         let state = Arc::new(Mutex::new(State::default()));
-        let (thread_port, thread_state) = (Port(port), state.clone());
+        let (thread_port, thread_state) = (port.clone(), state.clone());
         std::thread::Builder::new()
             .name("flit-watcher".into())
-            .spawn(move || {
-                let port = thread_port;
-                run(port.0, &thread_state, events, wake)
-            })
+            .spawn(move || run(&thread_port, &thread_state, events, wake))
             .map_err(|e| PlatformError::new(-1, format!("cannot start watcher: {e}")))?;
-        Ok(Self { port: Port(port), state })
+        Ok(Self { port, state })
     }
 
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>) {
@@ -96,7 +87,7 @@ impl DirWatcher {
             st.stop_tab(tab);
         }
         let Some(dirs) = dirs else { return };
-        let opened: Vec<(&FsPath, HANDLE)> = dirs.iter().filter_map(|d| Some((d, open_dir(d, FILE_LIST_DIRECTORY.0, true).ok()?))).collect();
+        let opened: Vec<(&FsPath, Handle)> = dirs.iter().filter_map(|d| Some((d, Handle(open_dir(d, FILE_LIST_DIRECTORY.0, true).ok()?)))).collect();
         let mut st = lock(&self.state);
         let current = st.latest.get(&tab) == Some(&rank);
         if current {
@@ -106,10 +97,7 @@ impl DirWatcher {
         for (path, h) in opened {
             st.last_key += 1;
             let key = st.last_key;
-            if !current || unsafe { CreateIoCompletionPort(h, Some(self.port.0), key, 0) }.is_err() {
-                unsafe {
-                    let _ = CloseHandle(h);
-                }
+            if !current || unsafe { CreateIoCompletionPort(h.0, Some(self.port.0), key, 0) }.is_err() {
                 continue;
             }
             st.slots.insert(key, Watch { tab, gen, path: path.clone(), dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan, extended: true });
@@ -137,7 +125,7 @@ struct Watch {
     tab: TabId,
     gen: u64,
     path: FsPath,
-    dir: HANDLE,
+    dir: Handle,
     ov: Box<OVERLAPPED>,
     buf: Vec<u64>,
     closing: bool,
@@ -164,13 +152,13 @@ impl Watch {
             | FILE_NOTIFY_CHANGE_LAST_WRITE
             | FILE_NOTIFY_CHANGE_CREATION;
         *self.ov = OVERLAPPED::default();
-        unsafe { ReadDirectoryChangesExW(self.dir, self.buf.as_mut_ptr() as _, BUFFER as u32, false, filter, None, Some(&mut *self.ov), None, class).is_ok() }
+        unsafe { ReadDirectoryChangesExW(self.dir.0, self.buf.as_mut_ptr() as _, BUFFER as u32, false, filter, None, Some(&mut *self.ov), None, class).is_ok() }
     }
 
     fn cancel(&mut self) {
         self.closing = true;
         unsafe {
-            let _ = CancelIoEx(self.dir, Some(&*self.ov));
+            let _ = CancelIoEx(self.dir.0, Some(&*self.ov));
         }
     }
 
@@ -300,11 +288,11 @@ fn changes(dir: &FsPath, notices: Vec<Notice>, extended: bool) -> Option<Vec<Dir
         .collect()
 }
 
-fn run(port: HANDLE, state: &Mutex<State>, events: Sender<ProviderEvent>, wake: Wake) {
+fn run(port: &Handle, state: &Mutex<State>, events: Sender<ProviderEvent>, wake: Wake) {
     let mut quitting = false;
     loop {
         let (mut n, mut key, mut ov) = (0u32, 0usize, std::ptr::null_mut::<OVERLAPPED>());
-        let ok = unsafe { GetQueuedCompletionStatus(port, &mut n, &mut key, &mut ov, INFINITE) }.is_ok();
+        let ok = unsafe { GetQueuedCompletionStatus(port.0, &mut n, &mut key, &mut ov, INFINITE) }.is_ok();
         if !ok && ov.is_null() {
             break;
         }
@@ -350,9 +338,6 @@ fn run(port: HANDLE, state: &Mutex<State>, events: Sender<ProviderEvent>, wake: 
         };
         let _ = events.send(ev);
         wake();
-    }
-    unsafe {
-        let _ = CloseHandle(port);
     }
 }
 

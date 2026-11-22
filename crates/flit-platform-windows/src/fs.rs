@@ -220,15 +220,17 @@ fn open_child(parent: &Handle, name: &[u16]) -> Option<Handle> {
     open_relative(parent, name, FILE_LIST_DIRECTORY.0, FILE_DIRECTORY_FILE.0 | FILE_OPEN_FOR_BACKUP_INTENT.0)
 }
 
-fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u16])) -> (u64, u64) {
+fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, totals: &mut (u64, u64), mut subdir: impl FnMut(&[u16])) -> Result<(), FsError> {
     SCAN_BUFFER.with_borrow_mut(|buf| {
-        let (mut bytes, mut files) = (0, 0);
         let mut first = true;
         while keep_going() {
             let mut iosb = IO_STATUS_BLOCK::default();
             let st = unsafe { NtQueryDirectoryFile(dir.0, None, None, None, &mut iosb, buf.as_mut_ptr() as _, BUFFER as u32, FileFullDirectoryInformation, false, None, first) };
-            if st.is_err() {
+            if st == STATUS_NO_MORE_FILES || (first && st == STATUS_NO_SUCH_FILE) {
                 break;
+            }
+            if st.is_err() || iosb.Information == 0 {
+                return Err(if st.is_err() { nt_error(st) } else { fs_error(ERROR_INSUFFICIENT_BUFFER) });
             }
             first = false;
             let base = buf.as_ptr() as *const u8;
@@ -237,8 +239,8 @@ fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u1
                 let e = unsafe { base.add(off) } as *const FILE_FULL_DIR_INFORMATION;
                 let (next, attrs, tag, size, len) = unsafe { ((*e).NextEntryOffset, (*e).FileAttributes, (*e).EaSize, (*e).EndOfFile as u64, (*e).FileNameLength as usize / 2) };
                 if attrs & FILE_ATTRIBUTE_DIRECTORY.0 == 0 {
-                    bytes += size;
-                    files += 1;
+                    totals.0 += size;
+                    totals.1 += 1;
                 } else if map_attrs(attrs, tag) & attr::LINK == 0 {
                     let name = unsafe { std::slice::from_raw_parts(base.add(off + offset_of!(FILE_FULL_DIR_INFORMATION, FileName)) as *const u16, len) };
                     if name != [b'.' as u16] && name != [b'.' as u16, b'.' as u16] {
@@ -251,7 +253,7 @@ fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u1
                 off += next as usize;
             }
         }
-        (bytes, files)
+        Ok(())
     })
 }
 
@@ -287,12 +289,17 @@ impl Tree<'_> {
     fn visit<'s>(&'s self, s: &rayon::Scope<'s>, dir: Option<Handle>) {
         if let Some(parent) = dir {
             let mut subdirs = Subdirs { parent, names: Vec::new(), ends: Vec::new() };
-            let (bytes, files) = scan(&subdirs.parent, self.keep_going, |name| {
+            let mut counts = (0, 0);
+            let result = scan(&subdirs.parent, self.keep_going, &mut counts, |name| {
                 subdirs.names.extend_from_slice(name);
                 subdirs.ends.push(subdirs.names.len());
             });
-            self.bytes.fetch_add(bytes, Ordering::Relaxed);
-            self.files.fetch_add(files, Ordering::Relaxed);
+            if let Err(error) = result {
+                self.partial.store(true, Ordering::Relaxed);
+                tracing::debug!(?error, "cannot finish enumerating a directory for its size");
+            }
+            self.bytes.fetch_add(counts.0, Ordering::Relaxed);
+            self.files.fetch_add(counts.1, Ordering::Relaxed);
             self.folders.fetch_add(subdirs.ends.len() as u64, Ordering::Relaxed);
             self.open.fetch_add(subdirs.ends.len(), Ordering::Relaxed);
             let subdirs = Arc::new(subdirs);

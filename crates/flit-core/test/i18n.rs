@@ -200,7 +200,6 @@ fn folder_errors_follow_the_language() {
     set_lang(Lang::Ru);
     assert_eq!(e.to_string(), coded("Отказано в доступе"));
     assert_eq!(localize("Access denied (0x00000005)"), "Отказано в доступе (0x00000005)");
-    assert!(crate::archive::needs_password(S::ErrorsArchiveWrongPassword.t()));
     set_lang(Lang::En);
 }
 

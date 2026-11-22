@@ -472,7 +472,9 @@ fn cancelling_removes_the_partial_copy() {
     ctl.cancel();
     let job = Job::new(ctl, Box::new(|_| {}), Box::new(|_| {}));
     let out = run(&FileOp::Copy { items: vec![fp(&big)], dest: fp(&dst) }, &job, None);
-    assert_eq!(out.error.unwrap().message, CANCELLED);
+    let error = out.error.unwrap();
+    assert_eq!(error.kind, flit_platform::PlatformErrorKind::Cancelled);
+    assert_eq!(error.message, CANCELLED);
     assert!(listing(&dst).is_empty());
     let e = Engine::new(&job);
     let src = top(&fp(&big)).unwrap();

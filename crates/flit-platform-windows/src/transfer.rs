@@ -218,7 +218,7 @@ pub(crate) fn content_of(data: &IDataObject) -> Option<Content> {
 }
 
 fn io(e: std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().map_or(-1, i64::from), flit_core::fmt::io_reason(&e))
+    PlatformError::from_io(&e, flit_core::fmt::io_reason(&e))
 }
 
 fn failed(error: PlatformError) -> OpOutcome {
@@ -243,7 +243,7 @@ fn pump(stream: &IStream, target: &Path, job: &Job) -> Result<(), PlatformError>
     let mut buf = vec![0u8; CHUNK];
     loop {
         if job.cancelled() {
-            return Err(PlatformError::new(-1, S::ErrorsEngineCancelled.en()));
+            return Err(PlatformError::cancelled(-1, S::ErrorsEngineCancelled.en()));
         }
         let mut read = 0u32;
         unsafe { stream.Read(buf.as_mut_ptr().cast(), buf.len() as u32, Some(&mut read)) }.ok().map_err(err)?;

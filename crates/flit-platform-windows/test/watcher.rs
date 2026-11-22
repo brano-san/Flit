@@ -120,7 +120,7 @@ fn a_stopped_watch_lives_until_its_queued_completion_is_dequeued() {
     let key = 7;
     unsafe { CreateIoCompletionPort(h, Some(port), key, 0) }.unwrap();
     let mut st = State::default();
-    st.slots.insert(key, Watch { tab: 1, gen: 1, path: dir, dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false, extended: true });
+    st.slots.insert(key, Watch { tab: 1, gen: 1, path: dir, dir: Handle(h), ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false, extended: true });
     assert!(st.slots.get_mut(&key).unwrap().issue());
     std::fs::write(root.join("x"), b"1").unwrap();
     std::thread::sleep(Duration::from_millis(300));
@@ -136,7 +136,7 @@ fn a_stopped_watch_lives_until_its_queued_completion_is_dequeued() {
     st.close(key);
     assert!(st.slots.is_empty());
     unsafe {
-        let _ = CloseHandle(port);
+        let _ = windows::Win32::Foundation::CloseHandle(port);
     }
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -224,21 +224,19 @@ fn a_volume_without_extended_notices_still_reports_changes_with_metadata() {
     let state = Arc::new(Mutex::new(State::default()));
     {
         let mut st = lock(&state);
-        st.slots.insert(key, Watch { tab: 2, gen: 4, path: dir, dir: h, ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false, extended: false });
+        st.slots.insert(key, Watch { tab: 2, gen: 4, path: dir, dir: Handle(h), ov: Box::default(), buf: vec![0u64; BUFFER / 8], closing: false, rescan: false, extended: false });
         assert!(st.slots.get_mut(&key).unwrap().issue());
         st.by_tab.insert(2, vec![key]);
     }
     let (tx, rx) = crossbeam_channel::unbounded();
-    let (thread_port, thread_state) = (Port(port), state.clone());
-    let worker = std::thread::spawn(move || {
-        let port = thread_port;
-        run(port.0, &thread_state, tx, Arc::new(|| {}))
-    });
+    let port = Arc::new(Handle(port));
+    let (thread_port, thread_state) = (port.clone(), state.clone());
+    let worker = std::thread::spawn(move || run(&thread_port, &thread_state, tx, Arc::new(|| {})));
     std::fs::write(root.join("pasted.bin"), b"12345").unwrap();
     assert!(wait_for(&rx, |c| c.name == b"pasted.bin" && c.kind != ChangeKind::Removed && c.meta.as_ref().is_some_and(|m| m.size == 5)));
     assert!(!lock(&state).slots[&key].extended);
     unsafe {
-        let _ = PostQueuedCompletionStatus(port, 0, QUIT, None);
+        let _ = PostQueuedCompletionStatus(port.0, 0, QUIT, None);
     }
     worker.join().unwrap();
     let _ = std::fs::remove_dir_all(&root);

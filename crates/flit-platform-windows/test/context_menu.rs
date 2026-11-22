@@ -630,7 +630,7 @@ fn share_properties_and_drag_failures_reach_the_status_bar_and_cancels_stay_quie
     run(HWND::default(), ShellUi::Verb(vec![missing], c"cut"), &send);
     let seen = seen.borrow();
     assert!(matches!(&seen[..], [Event::ShellError(a), Event::ShellError(b)] if a.starts_with("Cannot open the Share window: ") && b.starts_with("The Windows shell cannot run the command: ")), "{seen:?}");
-    let cancelled = PlatformError::new(ERROR_CANCELLED.to_hresult().0 as i64, "cancelled");
+    let cancelled = crate::win_error(windows::Win32::Foundation::ERROR_CANCELLED.to_hresult().0 as i64, "operation stopped");
     assert_eq!(failure_text(S::ErrorsEngineDragFailed, &cancelled), None);
     assert_eq!(failure_text(S::ErrorsEngineDragFailed, &PlatformError::new(5, "Access is denied.\r\n")).as_deref(), Some("Cannot start dragging: Access is denied."));
 }

@@ -1,9 +1,10 @@
 use flit_core::ui::Bitmap;
+use flit_platform::{parse_process, PreviewPicture};
 use md5::{Digest, Md5};
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 const MAX_SOURCE_BYTES: u64 = 256 << 20;
@@ -117,9 +118,13 @@ pub fn orient(b: Bitmap, o: u16) -> Bitmap {
     Bitmap { width: nw as u32, height: nh as u32, rgba }
 }
 
-pub fn webp_bytes(data: &[u8]) -> Option<Bitmap> {
+fn webp_bytes(data: &[u8]) -> Option<Bitmap> {
     let mut decoder = image_webp::WebPDecoder::new(std::io::Cursor::new(data)).ok()?;
     let (width, height) = decoder.dimensions();
+    let rgba_size = u64::from(width) * u64::from(height);
+    if rgba_size > (MAX_DECODED_BYTES / 4) as u64 {
+        return None;
+    }
     let size = decoder.output_buffer_size().filter(|&n| n <= MAX_DECODED_BYTES)?;
     let mut buf = vec![0; size];
     decoder.read_image(&mut buf).ok()?;
@@ -127,24 +132,69 @@ pub fn webp_bytes(data: &[u8]) -> Option<Bitmap> {
     Some(Bitmap { width, height, rgba })
 }
 
-fn decode_file(path: &Path, size: u32, embedded: bool) -> Option<Bitmap> {
-    if std::fs::metadata(path).ok()?.len() > MAX_SOURCE_BYTES {
+fn source(path: &Path) -> Option<(File, usize)> {
+    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NONBLOCK).open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    (meta.is_file() && meta.len() <= MAX_SOURCE_BYTES).then_some((file, meta.len() as usize))
+}
+
+fn read_source(file: impl Read, len: usize) -> Option<Vec<u8>> {
+    let mut data = Vec::with_capacity(len);
+    file.take(MAX_SOURCE_BYTES + 1).read_to_end(&mut data).ok()?;
+    (data.len() as u64 <= MAX_SOURCE_BYTES).then_some(data)
+}
+
+pub fn decode_webp(path: &Path, size: u32, out: &mut impl Write) -> io::Result<()> {
+    let invalid = || io::Error::from(io::ErrorKind::InvalidData);
+    let (file, len) = source(path).ok_or_else(invalid)?;
+    let data = read_source(file, len).ok_or_else(invalid)?;
+    let bitmap = webp_bytes(&data).map(|image| fit(image, size)).ok_or_else(invalid)?;
+    out.write_all(&bitmap.rgba)?;
+    out.write_all(&bitmap.width.to_le_bytes())?;
+    out.write_all(&bitmap.height.to_le_bytes())
+}
+
+fn unpack_bitmap(mut bytes: Vec<u8>, size: u32) -> Option<Bitmap> {
+    let end = bytes.len().checked_sub(8)?;
+    let width = u32::from_le_bytes(bytes[end..end + 4].try_into().ok()?);
+    let height = u32::from_le_bytes(bytes[end + 4..].try_into().ok()?);
+    if width == 0 || height == 0 || width.max(height) > size || u64::from(width) * u64::from(height) != (end / 4) as u64 || !end.is_multiple_of(4) {
         return None;
     }
-    let data = std::fs::read(path).ok()?;
-    let b = match sniff(&data)? {
-        Format::Png => png_bytes(&data)?,
-        Format::Webp => webp_bytes(&data)?,
-        Format::Jpeg if embedded => decode_jpeg(&data, size)?,
-        Format::Jpeg => orient(decode_jpeg_bytes(&data, size)?, orientation(&data)),
+    bytes.truncate(end);
+    Some(Bitmap { width, height, rgba: bytes })
+}
+
+fn webp(path: &Path, size: u32, current: &dyn Fn() -> bool) -> Result<Bitmap, parse_process::Error> {
+    let max_bytes = (u64::from(size).pow(2).min((MAX_DECODED_BYTES / 4) as u64) * 4) as usize;
+    let bytes = parse_process::run(path, "webp", &[&size.to_string()], max_bytes + 8, current)?;
+    unpack_bitmap(bytes, size).ok_or(parse_process::Error::Failed)
+}
+
+fn decode_file(path: &Path, size: u32, embedded: bool, webp: impl FnOnce(&Path, u32) -> Result<Bitmap, parse_process::Error>) -> PreviewPicture {
+    let Some((file, len)) = source(path) else { return PreviewPicture::Missing };
+    let mut file = BufReader::with_capacity(12, file);
+    let Some(format) = file.fill_buf().ok().and_then(sniff) else { return PreviewPicture::Missing };
+    if format == Format::Webp {
+        return match webp(path, size) {
+            Ok(bitmap) => PreviewPicture::Ready(bitmap),
+            Err(parse_process::Error::Unsupported | parse_process::Error::Cancelled) => PreviewPicture::Missing,
+            Err(_) => PreviewPicture::Failed,
+        };
+    }
+    let Some(data) = read_source(file, len) else { return PreviewPicture::Missing };
+    let decoded = match format {
+        Format::Png => png_bytes(&data),
+        Format::Jpeg if embedded => decode_jpeg(&data, size),
+        Format::Jpeg => decode_jpeg_bytes(&data, size).map(|image| orient(image, orientation(&data))),
+        Format::Webp => unreachable!(),
     };
-    Some(fit(b, size))
+    decoded.map_or(PreviewPicture::Missing, |image| PreviewPicture::Ready(fit(image, size)))
 }
 
-pub fn image(path: &Path, max: u32) -> Option<Bitmap> {
-    decode_file(path, max, false)
+pub fn image(path: &Path, size: u32, current: &dyn Fn() -> bool) -> PreviewPicture {
+    decode_file(path, size, false, |p, px| webp(p, px, current))
 }
-
 pub fn decode_png(path: &Path) -> Option<Bitmap> {
     let mut decoder = png::Decoder::new_with_limits(BufReader::new(File::open(path).ok()?), png::Limits { bytes: MAX_DECODED_BYTES });
     decoder.set_transformations(png::Transformations::normalize_to_color8());
@@ -252,14 +302,14 @@ pub fn fit(b: Bitmap, size: u32) -> Bitmap {
     Bitmap { width: w, height: h, rgba }
 }
 
-pub fn thumbnail(path: &Path, size: u32, cache: Option<PathBuf>) -> Option<Bitmap> {
+pub fn thumbnail(path: &Path, size: u32, cache: Option<PathBuf>, current: &dyn Fn() -> bool) -> PreviewPicture {
     if let Some(b) = cache.and_then(|c| cached(path, &c, size)) {
-        return Some(fit(b, size));
+        return PreviewPicture::Ready(fit(b, size));
     }
     if !supported(path) {
-        return None;
+        return PreviewPicture::Missing;
     }
-    decode_file(path, size, true)
+    decode_file(path, size, true, |p, px| webp(p, px, current))
 }
 
 #[cfg(test)]

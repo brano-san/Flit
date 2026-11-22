@@ -1,6 +1,7 @@
 use super::*;
 use crate::transport::{decode, encode};
 use flit_core::listing::{ChangeKind, DirStats};
+use flit_core::provider::PlatformErrorKind;
 use flit_core::FsErrorKind;
 
 #[test]
@@ -55,7 +56,7 @@ fn roundtrip_every_message() {
         Event::OpDone { id: 5, error: None, items: vec![(unix(b"/tmp/a"), unix(b"/home/u/.local/share/Trash/files/a"))] },
         Event::OpProgress { id: 6, progress: OpProgress { stage: flit_core::provider::Stage::Running, bytes: 1, total_bytes: 2, items: 3, total_items: 4 } },
         Event::OpConflict { id: 6, conflict: Conflict { source: unix(b"/tmp/\xFF"), target: unix(b"/home/\xFF"), from: Meta::default(), to: Meta { size: 5, ..Default::default() } } },
-        Event::OpFailure { id: 6, failure: Failure { path: unix(b"/tmp/\xFF"), error: "Permission denied (os error 13)".into(), fatal: false } },
+        Event::OpFailure { id: 6, failure: Failure { path: unix(b"/tmp/\xFF"), error: OpError::new(PlatformErrorKind::AccessDenied, "Permission denied (os error 13)"), fatal: false } },
         Event::OpFailure { id: 6, failure: Failure { path: unix(b"/home"), error: "No space left on device".into(), fatal: true } },
     ];
     for m in events {
@@ -141,7 +142,7 @@ fn failures_must_name_the_operation_paths_and_stay_short() {
     assert!(check_failure(&restore, &f("/tmp/a")).is_ok());
     assert!(check_failure(&FileOp::Trash(vec![unix(b"/s/a")]), &f("/s/a")).is_err(), "the Trash reports at the end instead");
     assert!(check_failure(&FileOp::Rename { item: unix(b"/s/a"), name: b"b".to_vec() }, &f("/s/a")).is_err());
-    let long = Event::OpFailure { id: 1, failure: Failure { error: "x".repeat(MAX_FAILURE_TEXT + 1), ..f("/s/a") } };
+    let long = Event::OpFailure { id: 1, failure: Failure { error: "x".repeat(MAX_FAILURE_TEXT + 1).into(), ..f("/s/a") } };
     assert!(long.validate(false).is_err());
     assert!(Event::OpFailure { id: 1, failure: f("/s/a") }.validate(true).is_ok());
 }

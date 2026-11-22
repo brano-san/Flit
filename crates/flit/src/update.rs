@@ -19,7 +19,6 @@ const OLD_SLOTS: usize = 8;
 const PROBE: &str = ".flit-update-probe";
 const EXIT_WAIT: Duration = Duration::from_secs(30);
 pub const INSTALL_ELEVATED: &str = "--install-update";
-const CANCELLED: i64 = 1223;
 
 static RESTARTED: AtomicBool = AtomicBool::new(false);
 static RELAUNCH: OnceLock<PathBuf> = OnceLock::new();
@@ -299,7 +298,7 @@ fn elevated<P: Platform>(archive: &[u8], signature: &str) -> Result<bool, String
     match ran {
         Ok(0) => Ok(true),
         Ok(code) => Err(reason.unwrap_or_else(|| format!("the installer stopped with code {code}"))),
-        Err(e) if e.code == CANCELLED => Ok(false),
+        Err(e) if e.kind == flit_platform::PlatformErrorKind::Cancelled => Ok(false),
         Err(e) => Err(e.message),
     }
 }

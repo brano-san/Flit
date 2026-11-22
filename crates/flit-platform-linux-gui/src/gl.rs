@@ -16,7 +16,6 @@ use glutin::prelude::*;
 use glutin::surface::{SurfaceAttributesBuilder, SwapInterval, WindowSurface};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::cell::Cell;
-use std::ffi::CStr;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::thread::ThreadId;
@@ -32,7 +31,21 @@ struct Globals {
     pad: f32,
 }
 
-type ResetStatus = unsafe extern "system" fn() -> u32;
+struct ResetStatus(unsafe extern "system" fn() -> u32);
+
+impl ResetStatus {
+    fn load(display: &Display) -> Option<Self> {
+        [c"glGetGraphicsResetStatusKHR", c"glGetGraphicsResetStatusEXT", c"glGetGraphicsResetStatus"]
+            .into_iter()
+            .map(|name| display.get_proc_address(name))
+            .find(|ptr| !ptr.is_null())
+            .map(|ptr| Self(unsafe { std::mem::transmute::<*const std::ffi::c_void, unsafe extern "system" fn() -> u32>(ptr) }))
+    }
+
+    fn lost(&self, context: &PossiblyCurrentContext) -> bool {
+        context.is_current() && unsafe { (self.0)() } != glow::NO_ERROR
+    }
+}
 
 struct Shared {
     gl: glow::Context,
@@ -201,13 +214,7 @@ impl GlDevice {
             let software = ["llvmpipe", "softpipe", "SwiftShader"].iter().any(|s| renderer.contains(s));
             let reset_status = (robust
                 && ["GL_KHR_robustness", "GL_EXT_robustness"].iter().any(|e| gl.supported_extensions().contains(*e)))
-            .then(|| {
-                [c"glGetGraphicsResetStatusKHR", c"glGetGraphicsResetStatusEXT", c"glGetGraphicsResetStatus"]
-                    .into_iter()
-                    .map(|name: &CStr| display.get_proc_address(name))
-                    .find(|p| !p.is_null())
-                    .map(|p| std::mem::transmute::<*const std::ffi::c_void, ResetStatus>(p))
-            })
+            .then(|| ResetStatus::load(&display))
             .flatten();
             let program = program(&gl, shader::FRAGMENT).map_err(|e| PlatformError::new(-1, format!("ui shader: {e}")))?;
             let lcd_program = if gl.supported_extensions().contains(LCD_EXTENSION) {
@@ -479,7 +486,7 @@ impl GlRenderer {
                 gl.draw_arrays_instanced(glow::TRIANGLE_STRIP, 0, 4, n as i32);
                 gl.bind_vertex_array(None);
             }
-            if s.reset_status.is_some_and(|status| status() != glow::NO_ERROR) {
+            if s.reset_status.as_ref().is_some_and(|status| status.lost(&s.context)) {
                 return Err(RenderError::DeviceLost);
             }
         }

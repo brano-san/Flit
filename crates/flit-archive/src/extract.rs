@@ -32,7 +32,7 @@ pub fn bomb() -> PlatformError {
 }
 
 pub fn cancelled() -> PlatformError {
-    PlatformError::new(-1, CANCELLED)
+    PlatformError::cancelled(-1, CANCELLED)
 }
 
 pub fn system_time(ticks: i64) -> Option<SystemTime> {
@@ -170,14 +170,14 @@ impl Out<'_> {
         Ok(())
     }
 
-    fn file(&mut self, item: &Item, rel: &str, declared: bool, reader: &mut dyn Read) -> Result<(), PlatformError> {
+    fn file(&mut self, item: &Item, rel: &str, declared: bool, reader: &mut dyn Read, read_failure: fn(io::Error) -> PlatformError) -> Result<(), PlatformError> {
         let Some((dest, fresh)) = self.prepare(item, rel)? else { return Ok(()) };
         let part = if fresh && declared && item.size <= DIRECT { dest.clone() } else { Self::part(&dest) };
-        let result = self.write(&part, item, declared, reader);
+        let result = self.write(&part, item, declared, reader, read_failure);
         self.commit(&part, &dest, result)
     }
 
-    fn write(&mut self, part: &Path, item: &Item, declared: bool, reader: &mut dyn Read) -> Result<(), PlatformError> {
+    fn write(&mut self, part: &Path, item: &Item, declared: bool, reader: &mut dyn Read, read_failure: fn(io::Error) -> PlatformError) -> Result<(), PlatformError> {
         let mut f = File::create_new(part).map_err(io_error)?;
         let mut buf = vec![0u8; CHUNK];
         let mut total = 0u64;
@@ -189,7 +189,7 @@ impl Out<'_> {
                 Ok(0) => break,
                 Ok(n) => n,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
-                Err(e) => return Err(read_error(e)),
+                Err(e) => return Err(read_failure(e)),
             };
             total += n as u64;
             self.written += n as u64;
@@ -236,7 +236,7 @@ fn stream(plan: &Plan<'_>, out: &mut Out<'_>, password: Option<&Secret>) -> Resu
     let last = by_ordinal.keys().copied().max().unwrap_or(0);
     let put = |out: &mut Out<'_>, i: usize, rel: &str, reader: &mut dyn Read| {
         let item = &plan.index.items[i];
-        if item.dir { out.dir(rel) } else { out.file(item, rel, plan.index.declared, reader) }
+        if item.dir { out.dir(rel) } else { out.file(item, rel, plan.index.declared, reader, read_error) }
     };
     match plan.index.format {
         Format::Zip => {
@@ -252,8 +252,8 @@ fn stream(plan: &Plan<'_>, out: &mut Out<'_>, password: Option<&Secret>) -> Resu
                 let k = if aligned { Some(item.ordinal) } else { zip.index_for_name(&item.zip_name) };
                 let Some(k) = k else { continue };
                 let mut f = zip.by_index_with_options(k, zip::ZipReadOptions::new().password(pw)).map_err(|e| zip_error(e, pw.is_some()))?;
-                let encrypted = f.encrypted();
-                out.file(item, rel, true, &mut f).map_err(|e| if encrypted && e.message.starts_with(DAMAGED) { password_error(true) } else { e })?;
+                let read_failure: fn(io::Error) -> PlatformError = if f.encrypted() { |_| password_error(true) } else { read_error };
+                out.file(item, rel, true, &mut f, read_failure)?;
             }
         }
         Format::SevenZ => {
@@ -393,7 +393,7 @@ fn no_space(need: u64, free: u64) -> PlatformError {
     let (mut a, mut b) = (String::new(), String::new());
     flit_core::fmt::size(&mut a, need);
     flit_core::fmt::size(&mut b, free);
-    PlatformError::new(112, format!("Not enough free space: the archive needs {a}, the drive has {b}"))
+    PlatformError::new(112, format!("Not enough free space: the archive needs {a}, the drive has {b}")).with_kind(flit_platform::PlatformErrorKind::NoSpace)
 }
 
 fn check(plan: &Plan<'_>, env: &Env<'_>) -> Result<(u64, u64), PlatformError> {
@@ -435,7 +435,7 @@ fn named(a: &FsPath, e: PlatformError) -> PlatformError {
     if e.code == archive::PASSWORD_CODE {
         return e;
     }
-    PlatformError::new(e.code, format!("{}: {}", flit_core::name::display(a.file_name()), e.message))
+    PlatformError::new(e.code, format!("{}: {}", flit_core::name::display(a.file_name()), e.message)).with_kind(e.kind)
 }
 
 fn roots_of(index: &Index) -> usize {

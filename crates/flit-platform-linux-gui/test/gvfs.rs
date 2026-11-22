@@ -213,14 +213,14 @@ fn fake_gvfs(address: &str, script: Script, password: &'static str) -> (Arc<Mute
             let (mut waiting, mut held) = (Vec::new(), Vec::new());
             let end = Instant::now() + Duration::from_secs(20);
             let mount = loop {
-                if let Some(m) = pump(&api, conn, &mut vec![0], &mut held, &out, end) {
+                if let Some(m) = pump(api, conn, &mut vec![0], &mut held, &out, end) {
                     break m;
                 }
                 if Instant::now() >= end {
                     return;
                 }
             };
-            let a = args(&api, mount);
+            let a = args(api, mount);
             read_spec(&a[0], &mut out.lock().unwrap());
             let Some(Arg::L(source)) = a.get(1) else { panic!("no mount source") };
             let (Arg::S(bus), Arg::S(path)) = (&source[0], &source[1]) else { panic!("bad mount source") };
@@ -228,32 +228,32 @@ fn fake_gvfs(address: &str, script: Script, password: &'static str) -> (Arc<Mute
             let ask_password = || vec![V::S("Password for ann on nas".into()), V::S("ann".into()), V::S(String::new()), V::U(ASK_PASSWORD | ASK_SAVING)];
             match script {
                 Script::Silent => {
-                    pump(&api, conn, &mut vec![0], &mut held, &out, Instant::now() + Duration::from_secs(3));
+                    pump(api, conn, &mut vec![0], &mut held, &out, Instant::now() + Duration::from_secs(3));
                 }
                 Script::Password => {
-                    waiting.push(call(&api, conn, &to, "AskPassword", &ask_password()));
-                    pump(&api, conn, &mut waiting, &mut held, &out, end);
+                    waiting.push(call(api, conn, &to, "AskPassword", &ask_password()));
+                    pump(api, conn, &mut waiting, &mut held, &out, end);
                     let reply = out.lock().unwrap().replies.last().cloned().unwrap_or_default();
                     let error = match (reply.get(1), reply.get(2)) {
                         (Some(Arg::I(1)), _) => Some((FAILED_HANDLED, "Password dialog cancelled")),
                         (_, Some(Arg::S(p))) if p == password => None,
                         _ => Some((PERMISSION, "Permission denied")),
                     };
-                    finish(&api, conn, mount, error);
+                    finish(api, conn, mount, error);
                 }
                 Script::Question => {
-                    waiting.push(call(&api, conn, &to, "AskQuestion", &[V::S("The identity of host cannot be verified".into()), V::Strs(vec!["Log In Anyway".into(), "Cancel Login".into()])]));
-                    pump(&api, conn, &mut waiting, &mut held, &out, end);
+                    waiting.push(call(api, conn, &to, "AskQuestion", &[V::S("The identity of host cannot be verified".into()), V::Strs(vec!["Log In Anyway".into(), "Cancel Login".into()])]));
+                    pump(api, conn, &mut waiting, &mut held, &out, end);
                     let reply = out.lock().unwrap().replies.last().cloned().unwrap_or_default();
                     let picked = matches!((reply.get(1), reply.get(2)), (Some(Arg::I(0)), Some(Arg::I(0))));
-                    finish(&api, conn, mount, (!picked).then_some((FAILED_HANDLED, "Login dialog cancelled")));
+                    finish(api, conn, mount, (!picked).then_some((FAILED_HANDLED, "Login dialog cancelled")));
                 }
                 Script::AbortWhileAsking => {
-                    waiting.push(call(&api, conn, &to, "AskPassword", &ask_password()));
-                    pump(&api, conn, &mut vec![0], &mut held, &out, Instant::now() + Duration::from_millis(400));
-                    waiting.push(call(&api, conn, &to, "Aborted", &[]));
-                    pump(&api, conn, &mut waiting, &mut held, &out, end);
-                    finish(&api, conn, mount, Some((FAILED_HANDLED, "Password dialog cancelled")));
+                    waiting.push(call(api, conn, &to, "AskPassword", &ask_password()));
+                    pump(api, conn, &mut vec![0], &mut held, &out, Instant::now() + Duration::from_millis(400));
+                    waiting.push(call(api, conn, &to, "Aborted", &[]));
+                    pump(api, conn, &mut waiting, &mut held, &out, end);
+                    finish(api, conn, mount, Some((FAILED_HANDLED, "Password dialog cancelled")));
                 }
             }
             (api.unref)(mount);

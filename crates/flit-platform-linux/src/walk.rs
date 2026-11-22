@@ -205,7 +205,7 @@ pub fn walk<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree) -> Result<
 }
 
 fn walk_with<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree, throttle: Option<Throttle>) -> Result<u64, PlatformError> {
-    let fail = |e: std::io::Error| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("cannot open {}: {e}", root.display()));
+    let fail = |e: std::io::Error| PlatformError::from_io(&e, format!("cannot open {}: {e}", root.display()));
     let dir = open_dir(root).map_err(fail)?;
     let top = node_at(dir.as_raw_fd(), c".", false).map_err(fail)?;
     sink.upsert(&IndexRecord { id: top.ino, parent: top.ino, name: b".", size: 0, modified: 0, attrs: attr::DIR });

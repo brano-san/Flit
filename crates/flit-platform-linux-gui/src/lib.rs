@@ -26,6 +26,7 @@ mod preferences;
 mod player;
 mod props;
 mod svg;
+mod symbols;
 pub mod instance;
 pub mod places;
 pub mod shell;
@@ -55,6 +56,7 @@ mod temp;
 mod frame;
 
 pub use fonts::prefetch as prefetch_fonts;
+pub use thumb::decode_webp;
 pub use window::{LinuxWaker, LinuxWindow, LinuxWindows};
 
 use flit_core::atlas::Slot;

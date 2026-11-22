@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 use windows::core::{w, Interface, PCSTR, PCWSTR, PSTR};
-use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_CANCELLED, HWND, LPARAM, LRESULT, POINT, WPARAM};
+use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{ClientToScreen, GetObjectW, BITMAP, HGDIOBJ};
 use windows::Win32::System::Com::IDataObject;
 use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL, THREAD_PRIORITY_NORMAL};
@@ -530,7 +530,7 @@ impl Pidls {
             }
             let mut pidl = std::ptr::null_mut();
             let name = parse_name(p);
-            unsafe { SHParseDisplayName(PCWSTR(name.as_ptr()), None, &mut pidl, 0, None) }.map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", p.display(), crate::error_reason(&e))))?;
+            unsafe { SHParseDisplayName(PCWSTR(name.as_ptr()), None, &mut pidl, 0, None) }.map_err(|e| crate::win_error(e.code().0 as i64, format!("{}: {}", p.display(), crate::error_reason(&e))))?;
             out.abs.push(pidl);
         }
         if out.abs.is_empty() {
@@ -1026,7 +1026,7 @@ fn show(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) {
 }
 
 pub(crate) fn failure_text(what: S, e: &PlatformError) -> Option<String> {
-    (e.code != ERROR_CANCELLED.to_hresult().0 as i64).then(|| flit_core::tr_en!(what, error = e.message.trim_end()))
+    (e.kind != flit_platform::PlatformErrorKind::Cancelled).then(|| flit_core::tr_en!(what, error = e.message.trim_end()))
 }
 
 fn label(hwnd: HWND, drive: FsPath, label: String, send: &dyn Fn(Event)) {
