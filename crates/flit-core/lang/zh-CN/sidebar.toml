@@ -1,10 +1,10 @@
 move_up = "上移"
 move_down = "下移"
-library_locations = "库位置"
+library_locations = "库中的文件夹"
 restore_all = "还原所有项目"
 new_library = "新建库"
 restore_libraries = "还原默认库"
-sections = "分区"
+sections = "区段"
 compact = "紧凑侧边栏"
 only_unpinned = "只能固定尚未固定的文件夹"
 select_to_pin = "选择要固定的文件夹"
@@ -15,7 +15,7 @@ show_paths = "显示路径"
 shift_up = "上移分组"
 shift_down = "下移分组"
 restore_order = "恢复分组顺序"
-clear_recents = "清除最近使用"
+clear_recents = "清除使用记录"
 clear_bookmarks = "清除书签"
 
 [folder]
@@ -40,12 +40,12 @@ tags = "标记"
 
 [tag]
 filter = "键入以筛选标记"
-choose_action = "选择对标记执行的操作"
+choose_action = "选择标记操作"
 new_name = "新标记的名称"
 rename_to = "标记的新名称"
 filter_colors = "键入以筛选颜色"
 delete_prompt = "删除此标记？"
-open_which = "选择要打开其项目的标记"
+open_which = "选择标记以打开带有该标记的项目"
 enter_creates = "按 Enter 创建标记"
 enter_renames = "按 Enter 重命名标记"
 no_colors = "没有匹配的颜色"
@@ -55,12 +55,12 @@ none_yet = "还没有标记"
 change_color = "更改颜色"
 current = "当前"
 delete_named = "删除标记“{name}”"
-removes_from = ["将从 {n} 个项目中移除"]
+removes_from = ["将从 {n} 个项目中移除此标记"]
 none_available = "没有可用的项目带有此标记"
-opened_some = ["已打开 {n} 个带标记项目中的 {opened} 个"]
-tagged = ["已为 {n} 个项目添加标记 {tag}"]
+opened_some = ["已打开带此标记的项目：{opened} / {n}"]
+tagged = ["已为 {n} 个项目添加标记“{tag}”"]
 needs_args = "Flit -Tag 需要标记名称和要添加标记的文件"
-quick_keys = "标签 · 按 Esc 退出"
+quick_keys = "标记 · 按 Esc 退出"
 
 [drive]
 local = "本地磁盘"
@@ -93,17 +93,17 @@ login_domain = "域"
 login_password = "密码"
 login_anonymous = "匿名连接"
 login_remember = "记住密码"
-login_forget = "不记住"
+login_forget = "不保存密码"
 login_session = "直到注销"
 login_connect = "连接"
-login_answer = "回答"
+login_answer = "答复"
 login_continue = "继续"
-label_prompt = "驱动器的新卷标"
-label_enter = "按 Enter 重命名驱动器"
+label_prompt = "新卷标"
+label_enter = "按 Enter 更改卷标"
 
 [quick]
 created = "创建时间："
 subfolders = "子文件夹："
-subfiles = "包含文件："
+subfiles = "文件数："
 size = "大小："
 type = "类型："

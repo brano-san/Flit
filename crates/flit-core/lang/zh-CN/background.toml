@@ -1,3 +1,3 @@
-title = "关闭最后一个窗口后让 Flit 在后台运行"
+title = "关闭最后一个窗口后继续在后台运行 Flit"
 help = "可通过通知区域图标重新打开或退出 Flit。"
-unavailable = "桌面通知区域不支持 StatusNotifierItem 图标。"
+unavailable = "桌面环境没有可显示 StatusNotifierItem 图标的通知区域。"

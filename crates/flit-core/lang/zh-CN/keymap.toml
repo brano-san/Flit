@@ -1,6 +1,6 @@
 [status]
-assigned = "{key} 现在运行“{command}”"
-left_without = "“{command}”没有快捷键了"
+assigned = "现在可按 {key} 执行“{command}”"
+left_without = "“{command}”已无快捷键"
 keeps = "“{command}”保留 {keys}"
 no_shortcut = "“{command}”现在没有快捷键"
 removed = "已从“{command}”中删除 {key}"
@@ -8,16 +8,16 @@ restored = "“{command}”已恢复默认快捷键"
 restored_all = "所有命令已恢复默认快捷键"
 
 [capture]
-press = "按下“{command}”的新快捷键"
+press = "请按下要为“{command}”设置的快捷键"
 esc_cancels = "按 Esc 取消"
 cannot = "无法使用 {key}：{why}"
 other_keys = "请按其他键"
-already = "{key} 已在运行“{command}”"
-reassign = "将 {key} 从“{from}”重新分配给“{command}”"
+already = "{key} 已用于执行“{command}”"
+reassign = "将 {key} 的命令从“{from}”改为“{command}”"
 assign = "将 {key} 分配给“{command}”"
 remove = "删除快捷键 {key}"
 
 [editor]
 title = "“{command}”的快捷键"
 change = "更改 {key}"
-removes = "Delete 删除"
+removes = "按 Delete 删除快捷键"
