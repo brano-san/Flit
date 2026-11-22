@@ -1,3 +1,3 @@
 title = "Mantener Flit en segundo plano al cerrar la última ventana"
-help = "El icono del área de notificación permite volver a abrir Flit o salir."
-unavailable = "El escritorio no admite iconos de StatusNotifierItem en el área de notificación."
+help = "El icono del área de notificación permite volver a abrir Flit o cerrarlo por completo."
+unavailable = "El entorno de escritorio no tiene un área de notificación para los iconos StatusNotifierItem."

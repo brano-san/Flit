@@ -1,9 +1,9 @@
 [error]
 manifest = "无法读取 GitHub 上的更新信息"
 no_build = "Flit {version} 没有适用于 {platform} 的版本"
-signature = "下载的文件没有 Flit 开发者的签名"
+signature = "下载的文件未由 Flit 开发者签名"
 missing = "下载的压缩包中没有 {name}"
-off = "FLIT_NO_UPDATE 已关闭更新检查"
+off = "已通过 FLIT_NO_UPDATE 禁用更新检查"
 cancelled = "下载已取消"
 other_window = "另一个 Flit 窗口中仍有文件操作在进行"
 
@@ -14,13 +14,13 @@ check_failed = "无法检查更新：{error}"
 available = "Flit {version} 已发布：使用“检查更新”即可安装"
 failed = "无法安装更新：{error}"
 
-managed_available = "Flit {version} 已可用。请打开“检查更新”查看安装说明。"
+managed_available = "Flit {version} 已发布。选择“检查更新”可查看安装说明。"
 
 [dialog]
 title = "Flit {version} 已发布"
 installed = "已安装版本"
 new = "新版本"
-restart = "Flit 将重新启动，并重新打开相同的窗口和标签页。"
+restart = "Flit 将重新启动并恢复当前窗口和标签页。"
 install = "安装并重新启动"
 skip = "跳过此版本"
 later = "稍后"
@@ -34,7 +34,7 @@ jobs = ["仍有 {n} 个文件操作在进行。请在完成后再安装更新。
 package_manager = "请通过软件包管理器更新"
 appimage = "请从发布页面下载新的 AppImage。"
 
-microsoft_store = "此安装由 Microsoft Store 管理更新。"
+microsoft_store = "此安装的更新由 Microsoft Store 管理。"
 
 [page]
 group = "更新"

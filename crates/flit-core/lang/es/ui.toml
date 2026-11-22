@@ -1,7 +1,7 @@
 quoted = "«{name}»"
 invalid_path = "Ruta no válida: {path}"
-in_recycle_bin = "«{name}» está en la Papelera de reciclaje. Restáuralo para abrirlo."
-dropped_routes = ["Se abrió la primera {shown} de {n} ubicación", "Se abrieron las primeras {shown} de {n} de ubicaciones", "Se abrieron las primeras {shown} de {n} ubicaciones"]
+in_recycle_bin = "«{name}» está en la Papelera de reciclaje. Restáurelo para abrirlo."
+dropped_routes = ["Ubicaciones abiertas: las primeras {shown} de {n}", "Ubicaciones abiertas: las primeras {shown} de {n}", "Ubicaciones abiertas: las primeras {shown} de {n}"]
 dropped_text = "Texto soltado"
 dropped_image = "Imagen soltada"
 dropped_save_failed = "El programa del que se arrastró el archivo no pudo guardarlo"
@@ -17,14 +17,14 @@ filtered = "Ningún elemento coincide con el filtro."
 bin = "La Papelera de reciclaje está vacía."
 folder = "Esta carpeta está vacía."
 network = "No se encontraron equipos ni carpetas compartidas en la red. Presione F5 para volver a buscar."
-network_connect = "Pulsa F5 para conectar."
+network_connect = "Pulse F5 para conectar."
 network_discovery_disabled = "La detección de redes está desactivada."
-network_start_avahi = "Inicia avahi-daemon del paquete {package}."
-network_install_gvfs = "Instala el paquete {package}."
+network_start_avahi = "Inicie avahi-daemon del paquete {package}."
+network_install_gvfs = "Instale el paquete {package}."
 
 [status]
-selected = ["{n} seleccionado", "{n} de seleccionados", "{n} seleccionados"]
-unpacked = "{size} descomprimido"
+selected = ["{n} seleccionado", "{n} seleccionados", "{n} seleccionados"]
+unpacked = "Tamaño descomprimido: {size}"
 loading = "Cargando…"
 
 [button]
@@ -37,7 +37,7 @@ skip_same = "Omitir idénticos"
 replace_older = "Reemplazar más antiguos"
 cancel = "Cancelar"
 delete = "Eliminar"
-delete_permanently = "Eliminar permanentemente"
+delete_permanently = "Eliminar definitivamente"
 restore = "Restaurar"
 not_now = "Ahora no"
 open_folder = "Abrir carpeta"
@@ -46,7 +46,7 @@ open_network_settings = "Abrir configuración"
 
 [job]
 operations = "Operaciones"
-clear_completed = "Borrar completadas"
+clear_completed = "Quitar terminadas"
 none = "Aún no hay operaciones. Aquí aparecen las copias, los movimientos y las eliminaciones."
 open_destination = "Abrir destino"
 remove = "Quitar de la lista"
@@ -56,7 +56,7 @@ queued = "En cola"
 done = "Listo"
 failed = "Error"
 cancelled = "Cancelado"
-waiting_answer = "Esperando tu respuesta"
+waiting_answer = "En espera de respuesta"
 cancelling = "Cancelando…"
 paused = "En pausa"
 pause = "Pausar"
@@ -65,18 +65,18 @@ waiting_drive = "Esperando a otra operación en esta unidad"
 preparing = "Preparando…"
 bytes_of = "{done} de {total}"
 speed = "{size}/s"
-items_of = ["{done} de {n} elemento", "{done} de {n} de elementos", "{done} de {n} elementos"]
+items_of = ["{done} de {n} elemento", "{done} de {n} elementos", "{done} de {n} elementos"]
 items_speed = "{speed} elementos/s"
 completed_in = "Completado en {seconds} s"
 completed = "Completado"
-notify_done = ["{title} terminado: {n} elemento", "{title} terminado: {n} elemento", "{title} terminado: {n} elementos"]
-notify_failed = "{title} terminado con errores"
-trash_bar = ["Enviado a la papelera: {n} elemento", "Enviado a la papelera: {n} elemento", "Enviado a la papelera: {n} elementos"]
-cancelled_detail = "Se canceló antes de terminar; los elementos restantes se quedaron en su lugar"
+notify_done = ["{title} · Finalizado: {n} elemento", "{title} · Finalizado: {n} elementos", "{title} · Finalizado: {n} elementos"]
+notify_failed = "{title} · Finalizado con errores"
+trash_bar = ["Se movió {n} elemento a la papelera", "Se movieron {n} elementos a la papelera", "Se movieron {n} elementos a la papelera"]
+cancelled_detail = "Cancelado antes de terminar. Los elementos restantes siguen en su lugar"
 copy_limit = "Limitar velocidad…"
 copy_limit_title = "Límite de velocidad de copia"
 copy_limit_unit = "MB/s (0 = sin límite)"
-copy_limit_invalid = "Introduce un número entero no negativo."
+copy_limit_invalid = "Introduzca un número entero no negativo."
 copy_limit_active = "Límite {rate} MB/s"
 
 [job_title]
@@ -99,29 +99,29 @@ opening = "Abriendo {what}"
 [confirm]
 trash = "¿Mover a la Papelera de reciclaje?"
 trash_one = "{name} se moverá a la Papelera de reciclaje."
-trash_many = ["Este {n} elemento se moverá a la Papelera de reciclaje.", "Estos {n} de elementos se moverán a la Papelera de reciclaje.", "Estos {n} elementos se moverán a la Papelera de reciclaje."]
+trash_many = ["Se moverá {n} elemento a la Papelera de reciclaje.", "Se moverán {n} elementos a la Papelera de reciclaje.", "Se moverán {n} elementos a la Papelera de reciclaje."]
 delete = "¿Eliminar permanentemente?"
 delete_one = "{name} se eliminará permanentemente."
-delete_many = ["Este {n} elemento se eliminará permanentemente.", "Estos {n} de elementos se eliminarán permanentemente.", "Estos {n} elementos se eliminarán permanentemente."]
+delete_many = ["Se eliminará {n} elemento permanentemente.", "Se eliminarán {n} elementos permanentemente.", "Se eliminarán {n} elementos permanentemente."]
 restore = "¿Restaurar todos los elementos?"
-restore_one = "{name} volverá a la ubicación de la que se eliminó."
-restore_many = ["El {n} elemento de la Papelera de reciclaje volverá a la ubicación de la que se eliminó.", "Los {n} de elementos de la Papelera de reciclaje volverán a las ubicaciones de las que se eliminaron.", "Los {n} elementos de la Papelera de reciclaje volverán a las ubicaciones de las que se eliminaron."]
+restore_one = "{name} volverá a su ubicación original."
+restore_many = ["{n} elemento de la Papelera de reciclaje volverá a su ubicación original.", "Los {n} elementos de la Papelera de reciclaje volverán a sus ubicaciones originales.", "Los {n} elementos de la Papelera de reciclaje volverán a sus ubicaciones originales."]
 empty = "¿Vaciar la Papelera de reciclaje?"
 empty_text = "Todos los elementos de la Papelera de reciclaje se eliminarán permanentemente."
 note_linux_trash = "La Papelera de Linux los guarda hasta que se vacía."
 note_bin = "La Papelera de reciclaje los guarda hasta que se vacía."
 note_restore = "Ctrl+Z los devuelve a la Papelera de reciclaje."
 note_undo = "Esta acción no se puede deshacer."
-delete_instead = "Eliminar permanentemente en su lugar"
+delete_instead = "Eliminar definitivamente"
 untrashable_one = "{name} no se puede mover a la Papelera."
-untrashable_many = ["{n} elemento no se puede mover a la Papelera.", "{n} de elementos no se pueden mover a la Papelera.", "{n} elementos no se pueden mover a la Papelera."]
+untrashable_many = ["{n} elemento no se puede mover a la Papelera.", "{n} elementos no se pueden mover a la Papelera.", "{n} elementos no se pueden mover a la Papelera."]
 
 [conflict]
 title = "¿Reemplazar u omitir?"
 exists = "{name} ya existe en {folder}."
 merge = "Reemplazar combina las carpetas: los elementos con otros nombres se conservan."
 identical = "Ambos tienen el mismo tamaño y la misma fecha de modificación."
-apply_all = "Hacer esto con todos los conflictos restantes"
+apply_all = "Aplicar a los demás conflictos"
 new = "Nuevo"
 existing = "Existente"
 folder = "carpeta"
@@ -130,14 +130,14 @@ meta_modified = "{label}: {what}, modificado el {date}"
 unreadable_title = "Algunos elementos no se pueden comprimir"
 unreadable = "No se puede leer {name}."
 unreadable_hint = "Puede que otro programa lo esté usando o que leerlo requiera permisos que Flit no tiene."
-skip_all = "Omitir todos los elementos que no se pueden leer"
+skip_all = "Omitir los elementos ilegibles"
 review_title = "Revisar conflictos de nombres"
 all_files = "Todos los archivos"
 all_folders = "Todas las carpetas"
 per_item = "Por elemento"
-rename_incoming = "Renombrar entrante"
+rename_incoming = "Cambiar nombre del nuevo"
 compare = "Comparar"
-choose_actions = "Elige una acción para cada elemento."
+choose_actions = "Elija una acción para cada elemento antes de continuar."
 merge_folders = "Combinar"
 
 [export]
@@ -147,16 +147,16 @@ replace = "La exportación de la configuración sobrescribiría este archivo en 
 [session]
 restore_title = "¿Restaurar la sesión anterior?"
 crashed = "Flit no se cerró correctamente la última vez."
-crash_title = "Flit se bloqueó la última vez"
-crash_report = "Flit se bloqueó la última vez. Puedes adjuntar el informe de texto anonimizado {name} a una incidencia."
-restore = "Restaurar vuelve a abrir las ventanas y pestañas que estaban abiertas."
+crash_title = "Flit se cerró inesperadamente la última vez"
+crash_report = "Flit se cerró inesperadamente la última vez. Puede adjuntar el informe de texto anonimizado {name} a una incidencia."
+restore = "«Restaurar» vuelve a abrir las ventanas y pestañas anteriores."
 
 [ops]
 new_folder_name = "Nueva carpeta"
 new_file_name = "Nuevo archivo"
 bin_only = "Los elementos de la Papelera de reciclaje solo se pueden restaurar o eliminar"
-streams_view_only = "Los flujos de datos alternativos se muestran solo para verlos"
-open_bin = "Abre la Papelera de reciclaje para restaurar elementos"
+streams_view_only = "Los flujos de datos alternativos solo se pueden consultar"
+open_bin = "Abra la Papelera de reciclaje para restaurar elementos"
 mixed_paths = "No se pueden combinar elementos de WSL y de Windows en una misma operación"
 name_empty = "Un nombre no puede estar vacío"
 name_not_allowed = "Este nombre no está permitido"
@@ -173,25 +173,25 @@ not_in_computer = "No se pueden colocar archivos en Este equipo"
 not_in_bin = "No se pueden colocar archivos en la Papelera de reciclaje"
 not_on_home = "No se pueden colocar archivos en la página Inicio"
 library_no_folder = "Esta biblioteca no tiene ninguna carpeta donde guardar"
-select_flatten = "Selecciona las carpetas que quieres aplanar"
-select_restore = "Selecciona los elementos que quieres restaurar"
-select_share = "Selecciona los archivos que quieres compartir"
-select_paste_into = "Selecciona una carpeta en la que pegar"
-select_new_folder = "Selecciona los elementos que quieres poner en una nueva carpeta"
-select_shortcut = "Selecciona los elementos para los que quieres crear accesos directos"
-select_link = "Selecciona los elementos para los que quieres crear enlaces"
-select_stream = "Selecciona un archivo al que agregar un flujo"
-icon_hint = "Escribe la ruta completa de un icono, programa o biblioteca, seguida opcionalmente de una coma y el índice del icono"
-target_hint = "Escribe la ruta completa del archivo o carpeta al que apunta el acceso directo"
-link_target_hint = "Escribe la ruta completa del archivo o carpeta al que apunta el enlace"
-no_terminal = "Esta ubicación no se puede abrir en Terminal"
-terminals = ["Se abrió en Terminal la primera {shown} de {n} carpeta", "Se abrieron en Terminal las primeras {shown} de {n} de carpetas", "Se abrieron en Terminal las primeras {shown} de {n} carpetas"]
+select_flatten = "Seleccione las carpetas que desea aplanar"
+select_restore = "Seleccione los elementos que desea restaurar"
+select_share = "Seleccione los archivos que desea compartir"
+select_paste_into = "Seleccione una carpeta de destino"
+select_new_folder = "Seleccione los elementos para la nueva carpeta"
+select_shortcut = "Seleccione los destinos de los accesos directos"
+select_link = "Seleccione los destinos de los enlaces"
+select_stream = "Seleccione el archivo al que desea añadir un flujo"
+icon_hint = "Introduzca la ruta completa de un icono, programa o biblioteca. Puede añadir una coma y el índice del icono"
+target_hint = "Introduzca la ruta completa al destino del acceso directo (archivo o carpeta)"
+link_target_hint = "Introduzca la ruta completa al destino del enlace (archivo o carpeta)"
+no_terminal = "No se puede abrir esta ubicación en la terminal"
+terminals = ["Carpetas abiertas en la terminal: las primeras {shown} de {n}", "Carpetas abiertas en la terminal: las primeras {shown} de {n}", "Carpetas abiertas en la terminal: las primeras {shown} de {n}"]
 nothing_to_undo = "No hay nada que deshacer"
 nothing_to_redo = "No hay nada que rehacer"
 stream_created = "Se creó el flujo {name}"
 icon_changed = "Se cambió el icono de {folder}"
 icon_restored = "Se restauró el icono predeterminado de {folder}"
-extension_warning = "Si cambias la extensión de «{name}», el archivo puede quedar inutilizable."
+extension_warning = "Si cambia la extensión de «{name}», es posible que el archivo quede inutilizable."
 extension_title = "¿Cambiar la extensión del nombre de archivo?"
 undo_history_empty = "No hay operaciones de archivos en el historial"
 undo_history_undo = "Deshacer: {operation}"
@@ -204,7 +204,7 @@ undo_history_operation = "Operación de archivos"
 
 [drop]
 copy = "Copiar en %1"
-link = "Crear vínculo en %1"
+link = "Crear enlace en %1"
 move = "Mover a %1"
 open_with = "Abrir con %1"
 new_tab = "Abrir %1 en una nueva pestaña"
@@ -214,7 +214,7 @@ sidebar = "Barra lateral"
 copy_here = "Copiar aquí"
 move_here = "Mover aquí"
 shortcut_here = "Crear acceso directo aquí"
-link_here = "Crear vínculo aquí"
+link_here = "Crear enlace aquí"
 
 [app]
 elevated = "Flit se ejecuta como administrador, así que Windows bloquea los archivos arrastrados desde otros programas"
@@ -236,12 +236,12 @@ delete = "No se puede eliminar {name}"
 other = "No se puede procesar {name}"
 where = "En {folder}"
 full_title = "El destino está lleno"
-full_hint = "Libere espacio y elija Reintentar."
+full_hint = "Libere espacio y seleccione «Reintentar»."
 
 [close]
-running = ["Todavía hay {n} operación en curso", "Todavía hay {n} de operaciones en curso", "Todavía hay {n} operaciones en curso"]
+running = ["Hay {n} operación en curso", "Hay {n} operaciones en curso", "Hay {n} operaciones en curso"]
 cancel = "Cancelar y cerrar"
-keep = "Mantener abierta"
+keep = "Dejar la ventana abierta"
 
 [awake]
 reason = "Flit está copiando, moviendo o eliminando archivos"

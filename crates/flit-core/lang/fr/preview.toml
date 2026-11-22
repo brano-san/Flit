@@ -1,5 +1,5 @@
-selected = ["{n} élément sélectionné", "{n} d’éléments sélectionnés", "{n} éléments sélectionnés"]
-archived = "Dans une archive : extrayez-la pour afficher l’aperçu"
+selected = ["{n} élément sélectionné", "{n} éléments sélectionnés", "{n} éléments sélectionnés"]
+archived = "Extrayez le fichier de l’archive pour afficher son aperçu"
 cannot_play = "Impossible de lire ce fichier : {error}"
 no_player = "aucun lecteur multimédia trouvé. Installez le paquet {package}"
 properties = "Propriétés"
@@ -8,12 +8,12 @@ loading = "Chargement de l’aperçu…"
 new_tag = "+ Nouvelle balise"
 shortcut = "Raccourci vers {target}"
 too_large = "Le fichier est trop volumineux pour l’aperçu"
-online_only = "Stocké en ligne uniquement.\nL’aperçu télécharge le fichier sur cet appareil."
+online_only = "Stocké uniquement en ligne.\nL’affichage de l’aperçu télécharge le fichier sur cet appareil."
 download = "Télécharger pour l’aperçu"
 copy_image = "Copier l’image"
-truncated = ["Affichage du premier caractère ({n})", "Affichage des {n} de premiers caractères", "Affichage des {n} premiers caractères"]
-folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
-files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
+truncated = ["Caractères du début affichés : {n}", "Affichage limité aux {n} premiers caractères", "Affichage limité aux {n} premiers caractères"]
+folders = ["{n} dossier", "{n} dossiers", "{n} dossiers"]
+files = ["{n} fichier", "{n} fichiers", "{n} fichiers"]
 cannot_open = "Impossible d’ouvrir ce fichier"
 
 [field]
@@ -23,7 +23,7 @@ items = "Éléments"
 total_size = "Taille totale"
 used_space = "Espace utilisé"
 free_space = "Espace libre"
-size_bytes = ["{size} ({n} octet)", "{size} ({n} d’octets)", "{size} ({n} octets)"]
+size_bytes = ["{size} ({n} octet)", "{size} ({n} octets)", "{size} ({n} octets)"]
 modified = "Modifié le"
 created = "Créé le"
 attributes = "Attributs"
@@ -32,7 +32,7 @@ free_of = "{free} sur {total}"
 
 [attr]
 read_only = "Lecture seule"
-hidden = "Caché"
+hidden = "Masqué"
 system = "Système"
 link = "Lien"
 compressed = "Compressé"
@@ -43,23 +43,23 @@ offline = "Hors connexion"
 
 [folder]
 empty = "Ce dossier est vide."
-scanned = ["{size} dans le premier élément ({n})", "{size} dans les {n} de premiers éléments", "{size} dans les {n} premiers éléments"]
-hidden = ["{n} élément caché", "{n} d’éléments cachés", "{n} éléments cachés"]
+scanned = ["Premiers éléments : {size} ({n})", "{size} dans les {n} premiers éléments", "{size} dans les {n} premiers éléments"]
+hidden = ["{n} élément masqué", "{n} éléments masqués", "{n} éléments masqués"]
 last_change = "Dernière modification {date}"
 most_common = "Les plus fréquents : {types}"
 no_extension = "sans extension"
 
 [filter]
-lines = "Filtrer {n} lignes..."
-files = "Filtrer {n} fichiers..."
+lines = "Filtrer {n} lignes…"
+files = "Filtrer {n} fichiers…"
 
 [pretty]
-button = "Formater"
-working = "Formatage…"
+button = "Mettre en forme"
+working = "Mise en forme…"
 original = "Original"
-too_large = "Le fichier est trop volumineux pour être formaté (8 Mio maximum)."
+too_large = "Le fichier est trop volumineux pour être mis en forme (8 Mio maximum)."
 invalid = "Le fichier contient des données non valides pour ce format."
-unavailable = "Impossible de formater l’aperçu."
+unavailable = "Impossible de mettre en forme l’aperçu."
 
 [svg]
 checker = "Damier"

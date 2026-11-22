@@ -1,6 +1,6 @@
-not_json = "Le fichier de paramètres n’est pas un JSON valide ({error}), les paramètres de la dernière session sont donc conservés"
-tags = "Les balises du fichier de paramètres ne forment pas une liste, elles ont donc été ignorées"
-value = "La valeur de {key} dans le fichier de paramètres n’est pas valide, la valeur par défaut est donc utilisée"
+not_json = "Le fichier de paramètres contient du JSON non valide ({error}). Les paramètres de la dernière session sont conservés"
+tags = "Les balises du fichier de paramètres ont été ignorées, car elles ne sont pas définies sous forme de liste"
+value = "La valeur de {key} est incorrecte dans le fichier de paramètres. La valeur par défaut est utilisée"
 is_folder = "{path} est un dossier"
 
 write_failed = "Impossible d’enregistrer les paramètres : {error}"

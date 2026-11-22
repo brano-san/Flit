@@ -1,9 +1,9 @@
-no_tags = "还没有标记：在文件菜单中选择“编辑标记”即可添加"
-recent_off = "Windows 未保留最近使用的文件列表：此功能已在“设置”>“个性化”>“开始”中关闭"
+no_tags = "还没有标记。在文件菜单中选择“编辑标记”即可添加。"
+recent_off = "Windows 的最近使用记录已在“设置 › 个性化 › 开始”中关闭。"
 no_recent = "没有最近使用的文件"
-remove_from_list = "从列表中删除"
-clear_list = "清除列表"
-clear_recent = "清除最近使用的文件"
+remove_from_list = "从列表中移除"
+clear_list = "清除使用记录"
+clear_recent = "清除使用记录"
 drive_free = "{free} 可用，共 {total}"
 
 [widget]

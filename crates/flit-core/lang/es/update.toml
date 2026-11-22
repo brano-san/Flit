@@ -1,6 +1,6 @@
 [error]
 manifest = "No se puede leer la información de actualización de GitHub"
-no_build = "Flit {version} no tiene compilación para {platform}"
+no_build = "No hay una versión de Flit {version} para {platform}"
 signature = "El archivo descargado no está firmado por los desarrolladores de Flit"
 missing = "Al archivo comprimido descargado le falta {name}"
 off = "La búsqueda de actualizaciones está desactivada por FLIT_NO_UPDATE"
@@ -11,10 +11,10 @@ other_window = "Todavía hay operaciones con archivos en otra ventana de Flit"
 checking = "Buscando actualizaciones…"
 up_to_date = "Flit {version} está actualizado"
 check_failed = "No se pueden buscar actualizaciones: {error}"
-available = "Flit {version} está disponible: «Buscar actualizaciones» lo instala"
+available = "Flit {version} está disponible. Instálelo desde «Buscar actualizaciones»"
 failed = "No se puede instalar la actualización: {error}"
 
-managed_available = "Flit {version} está disponible. Busque actualizaciones para ver las instrucciones."
+managed_available = "Flit {version} está disponible. Abra «Buscar actualizaciones» para ver las instrucciones de instalación."
 
 [dialog]
 title = "Flit {version} está disponible"
@@ -29,7 +29,7 @@ downloading = "Descargando Flit {version}… {percent} %"
 downloading_plain = "Descargando Flit {version}…"
 installing = "Instalando Flit {version}…"
 read_only = "Flit no puede reemplazar sus archivos en {dir}. Descargue la nueva versión desde la página de versiones."
-jobs = ["Todavía hay {n} operación con archivos en curso. Instale la actualización cuando termine.", "Todavía hay {n} de operaciones con archivos en curso. Instale la actualización cuando terminen.", "Todavía hay {n} operaciones con archivos en curso. Instale la actualización cuando terminen."]
+jobs = ["Aún hay {n} operación con archivos en curso. Instale la actualización cuando termine.", "Aún hay {n} operaciones con archivos en curso. Instale la actualización cuando terminen.", "Aún hay {n} operaciones con archivos en curso. Instale la actualización cuando terminen."]
 
 package_manager = "Actualice mediante el gestor de paquetes"
 appimage = "Descargue la nueva AppImage desde la página de versiones."

@@ -1,6 +1,6 @@
-not_json = "Die Einstellungsdatei ist kein gültiges JSON ({error}), daher bleiben die Einstellungen der letzten Sitzung erhalten"
+not_json = "Die Einstellungsdatei enthält ungültiges JSON ({error}). Die Einstellungen der letzten Sitzung bleiben erhalten"
 tags = "Die Tags in der Einstellungsdatei sind keine Liste und wurden daher ignoriert"
-value = "Der Wert von {key} in der Einstellungsdatei ist ungültig, daher wird der Standard verwendet"
+value = "Der Wert von {key} in der Einstellungsdatei ist ungültig. Der Standardwert wird verwendet"
 is_folder = "{path} ist ein Ordner"
 
 write_failed = "Die Einstellungen konnten nicht gespeichert werden: {error}"

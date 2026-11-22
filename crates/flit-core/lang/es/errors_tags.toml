@@ -1,4 +1,4 @@
-empty = "Escribe un nombre para la etiqueta"
+empty = "Escriba un nombre para la etiqueta"
 dot = "El nombre de una etiqueta no puede empezar ni terminar en punto"
 characters = "El nombre de una etiqueta no puede contener comillas ni caracteres de control"
 too_long = "El nombre de una etiqueta puede tener 64 caracteres como máximo"

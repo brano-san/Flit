@@ -10,19 +10,19 @@ tag = "Balises"
 items = "Total des éléments"
 folders = "Dossiers"
 files = "Fichiers"
-accessed = "Date d'accès"
+accessed = "Dernier accès"
 volume = "Part du volume"
 folder_usage = "Part du dossier"
 free = "Espace libre"
 file_system = "Système de fichiers"
-percent = "Pourcentage utilisé"
+percent = "Espace utilisé (%)"
 attributes = "Attributs"
 dimensions = "Dimensions"
 duration = "Durée"
-artist = "Artistes ayant participé"
+artist = "Interprètes"
 version = "Version du fichier"
-date_taken = "Prise de vue"
-camera_model = "Modèle de l'appareil photo"
+date_taken = "Date de prise de vue"
+camera_model = "Modèle de l’appareil"
 album = "Album"
 title = "Titre"
 authors = "Auteurs"
@@ -30,7 +30,7 @@ company = "Société"
 
 [type]
 drive = "Lecteur"
-folder = "Dossier de fichiers"
+folder = "Dossier"
 file = "Fichier"
 ext_file = "Fichier {ext}"
 
@@ -48,20 +48,20 @@ last_week = "La semaine dernière"
 last_month = "Le mois dernier"
 last_year = "L'année dernière"
 long_ago = "Il y a longtemps"
-thousands = "Milliers (1000+)"
+thousands = "Milliers (1 000+)"
 hundreds = "Centaines (100 - 999)"
 dozens = "Dizaines (10 - 99)"
 few = "Quelques-uns (1 - 9)"
 no_items = "Aucun (0)"
 
 [size_group]
-empty = "Vide (0 B)"
-tiny = "Minuscule (1 B - 16 KB)"
-small = "Petit (16 KB - 1 MB)"
-medium = "Moyen (1 - 128 MB)"
-large = "Grand (128 MB - 1 GB)"
-huge = "Énorme (1 - 4 GB)"
-gigantic = "Gigantesque (4+ GB)"
+empty = "Vide (0 o)"
+tiny = "Minuscule (1 o - 16 Ko)"
+small = "Petit (16 Ko - 1 Mo)"
+medium = "Moyen (1 - 128 Mo)"
+large = "Grand (128 Mo - 1 Go)"
+huge = "Énorme (1 - 4 Go)"
+gigantic = "Gigantesque (4+ Go)"
 
 [dimensions_group]
 very_large = "Très grand (12+ MP)"
@@ -75,9 +75,9 @@ medium = "Moyen (5 - 30 min)"
 short = "Court (moins de 5 min)"
 
 [count]
-items = ["{n} élément", "{n} d’éléments", "{n} éléments"]
-folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
-files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
+items = ["{n} élément", "{n} éléments", "{n} éléments"]
+folders = ["{n} dossier", "{n} dossiers", "{n} dossiers"]
+files = ["{n} fichier", "{n} fichiers", "{n} fichiers"]
 
 [status]
 default_view = "Les nouveaux dossiers s’ouvriront avec cet affichage"

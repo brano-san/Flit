@@ -1,14 +1,14 @@
 [status]
 assigned = "{key} тепер виконує «{command}»"
-left_without = "«{command}» залишилася без сполучення клавіш"
+left_without = "Для «{command}» більше немає сполучення клавіш"
 keeps = "«{command}» зберігає {keys}"
-no_shortcut = "«{command}» тепер не має сполучення клавіш"
+no_shortcut = "Для «{command}» немає сполучення клавіш"
 removed = "{key} видалено з «{command}»"
 restored = "Для «{command}» відновлено стандартні сполучення клавіш"
 restored_all = "Для всіх команд відновлено стандартні сполучення клавіш"
 
 [capture]
-press = "Натисніть нове сполучення клавіш для «{command}»"
+press = "Натисніть клавіші нового сполучення для «{command}»"
 esc_cancels = "Esc — скасувати"
 cannot = "{key} не можна використати: {why}"
 other_keys = "Натисніть інші клавіші"
@@ -20,4 +20,4 @@ remove = "Видалити сполучення клавіш {key}"
 [editor]
 title = "Сполучення клавіш «{command}»"
 change = "Змінити {key}"
-removes = "Delete видаляє його"
+removes = "Delete видаляє сполучення клавіш"

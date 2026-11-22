@@ -11,12 +11,12 @@ results = ["{n} Ergebnis", "{n} Ergebnisse"]
 done_in = "{results} in {ms} ms"
 in = "In {name}"
 all_drives = "Alle Laufwerke"
-recent = "Letzte Suchen · Shift+Entf entfernt eine"
+recent = "Letzte Suchen · Umschalt+Entf entfernt den markierten Eintrag"
 folders = ["{n} Ordner", "{n} Ordner"]
 
 [error]
-rows_without_folders = "Der Index hat Zeilen ohne Ordner gesendet."
-invalid_rows = "Der Index hat ungültige Zeilen gesendet: {error}"
+rows_without_folders = "Der Index hat Einträge ohne Ordner geliefert."
+invalid_rows = "Der Index hat ungültige Einträge geliefert: {error}"
 unavailable = "Die Suche ist nicht verfügbar: {error}"
 cannot_start = "Die Suche kann nicht gestartet werden: {error}"
 shell = "Windows Search: {error}"
@@ -27,7 +27,7 @@ timestamps_need_folder = "Erstellungs- und Zugriffszeit sind nur bei der Ordners
 folder = "Ordner"
 
 [source]
-walk = "Live-Suche im Ordner und seinen Unterordnern"
+walk = "Direktsuche im Ordner und seinen Unterordnern"
 shell = "Windows Search"
 content = "Inhaltssuche (Tracker, Baloo oder Recoll)"
 tagged = "Dateien mit Tags"
@@ -35,26 +35,26 @@ connecting = "Verbindung zum Index wird hergestellt"
 service = "Indexdienst"
 fallback = "Lokaler Index (flit-indexd nicht verfügbar)"
 local = "Lokaler Index"
-off = "Indizierung ist in Einstellungen › Erweitert aus; Ctrl+Shift+F sucht im geöffneten Ordner"
+off = "Die Indizierung ist unter Einstellungen › Erweitert deaktiviert. Strg+Umschalt+F durchsucht den geöffneten Ordner."
 
 [index]
 default = "Index"
-ready = ["{label} {n} Datei", "{label} {n} Dateien"]
-scanning = ["{label} Indizierung {percent} % ({n} Datei)", "{label} Indizierung {percent} % ({n} Dateien)"]
-error = "{label} Fehler: {error}"
+ready = ["{label}: {n} Datei", "{label}: {n} Dateien"]
+scanning = ["{label}: Indizierung zu {percent} % abgeschlossen ({n} Datei)", "{label}: Indizierung zu {percent} % abgeschlossen ({n} Dateien)"]
+error = "{label}: Fehler: {error}"
 
 [exclude]
 action = "Von der Suche ausschließen"
 
 [explore]
 folders = "Ordner"
-within = "In aktuellen Ergebnissen suchen"
-folders_help = "Zeigt Ordner und die Anzahl ihrer Ergebnisse."
-within_help = "Schränkt die aktuelle Ergebnismenge weiter ein."
+within = "In Ergebnissen suchen"
+folders_help = "Zeigt die Ordner mit der jeweiligen Trefferzahl."
+within_help = "Grenzt die aktuellen Suchergebnisse weiter ein."
 similar = "Ähnliche Dateien finden"
-similar_help = "Sucht nach Dateityp, Änderungstag, Größe und Tags der gewählten Datei."
-facets = "Facetten"
+similar_help = "Sucht nach Dateityp, Änderungsdatum, Größe und Tags der ausgewählten Datei."
+facets = "Suchfilter"
 facets_help = "Zeigt Filter und ein Histogramm der Änderungsdaten."
 year = "Jahr"
-no_extension = "Ohne Erweiterung"
+no_extension = "Ohne Dateierweiterung"
 all = "Alle"

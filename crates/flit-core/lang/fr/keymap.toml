@@ -8,16 +8,16 @@ restored = "« {command} » retrouve ses raccourcis par défaut"
 restored_all = "Toutes les commandes retrouvent leurs raccourcis par défaut"
 
 [capture]
-press = "Appuyez sur le nouveau raccourci de « {command} »"
+press = "Appuyez sur les touches du nouveau raccourci de « {command} »"
 esc_cancels = "Échap pour annuler"
 cannot = "{key} ne peut pas être utilisé : {why}"
 other_keys = "Appuyez sur d’autres touches"
 already = "{key} exécute déjà « {command} »"
-reassign = "Réattribuer {key} de « {from} » à « {command} »"
+reassign = "Réattribuer {key} à « {command} » à la place de « {from} »"
 assign = "Attribuer {key} à « {command} »"
 remove = "Supprimer le raccourci {key}"
 
 [editor]
 title = "Raccourcis de « {command} »"
 change = "Modifier {key}"
-removes = "Suppr le retire"
+removes = "Suppr retire le raccourci"
