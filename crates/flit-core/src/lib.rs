@@ -25,6 +25,7 @@ pub mod path;
 pub mod preview;
 pub mod provider;
 pub mod quick_sync;
+pub mod query_attrs;
 pub mod recycle;
 pub mod render;
 pub mod sort;

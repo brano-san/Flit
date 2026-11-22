@@ -139,17 +139,18 @@ impl Book {
         changed
     }
 
-    fn set(&mut self, items: Vec<FsPath>, tag: usize, on: bool, out: &mut Outcome) {
+    fn set(&mut self, items: Vec<FsPath>, tag: usize, on: Option<bool>, out: &mut Outcome) {
         if tag >= self.store.tags.len() {
             out.status = Some(S::ErrorsTagsGone.en().into());
             return;
         }
         let mut refused = 0;
-        for item in items {
-            let Some(key) = (self.key_of)(&item) else {
-                refused += 1;
-                continue;
-            };
+        let resolved: Vec<_> = items.into_iter().filter_map(|item| match (self.key_of)(&item) {
+            Some(key) => Some((item, key)),
+            None => { refused += 1; None }
+        }).collect();
+        let on = on.unwrap_or_else(|| resolved.iter().any(|(_, key)| self.store.files.get(key).is_none_or(|f| f.mask & (1 << tag) == 0)));
+        for (item, key) in resolved {
             let mask = self.store.update(key, item.clone(), |m| if on { m | 1 << tag } else { m & !(1 << tag) });
             out.files.push((item, mask));
             out.changed = true;
@@ -185,7 +186,14 @@ impl Book {
         let holders: Vec<FileKey> = renamed.as_ref().map(|(k, _)| self.store.files.iter().filter(|(_, t)| t.mask & 1 << k != 0).map(|(key, _)| *key).collect()).unwrap_or_default();
         let holder_paths: Vec<FsPath> = holders.iter().filter_map(|k| self.store.files.get(k).map(|t| t.path.clone())).collect();
         match req {
-            TagRequest::Set { items, tag, on } => self.set(items, tag, on, &mut out),
+            TagRequest::Set { items, tag, on } => self.set(items, tag, Some(on), &mut out),
+            TagRequest::Toggle { items, name } => {
+                if let Some(tag) = tags::find(&self.store.tags, &name) {
+                    self.set(items, tag, None, &mut out);
+                } else {
+                    out.status = Some(S::ErrorsTagsGone.en().into());
+                }
+            }
             TagRequest::Clear(items) => {
                 for item in items {
                     if let Some(key) = (self.key_of)(&item).filter(|k| self.store.files.contains_key(k)) {
@@ -198,7 +206,7 @@ impl Book {
             TagRequest::Create { name, color, assign } => match self.store.add(&name, color) {
                 Ok(k) => {
                     out.changed = true;
-                    self.set(assign, k, true, &mut out);
+                    self.set(assign, k, Some(true), &mut out);
                 }
                 Err(e) => out.status = Some(e.into()),
             },
@@ -241,7 +249,7 @@ impl Book {
         };
         out.changed = true;
         let n = items.len();
-        self.set(items, k, true, out);
+        self.set(items, k, Some(true), out);
         if out.status.is_none() {
             out.status = Some(flit_core::trn!(flit_core::i18n::P::SidebarTagTagged, n, tag = self.store.tags[k].name));
         }
@@ -329,8 +337,14 @@ impl TagWorker {
 
 pub fn search(t: &Tags, q: &Query, sort: SearchSort) -> Result<Vec<SearchRow>, String> {
     let mut wanted: FxHashMap<&str, u32> = FxHashMap::default();
-    for term in &q.terms {
-        if let Filter::Tag(name) = &term.filter {
+    let mut names = Vec::new();
+    q.visit_filters(&mut |f| {
+        if let Filter::Tag(name) = f {
+            names.push(name.clone());
+        }
+    });
+    for name in &names {
+        {
             let bits = match tags::find(&t.defs, name) {
                 _ if name.is_empty() => u32::MAX,
                 Some(k) => 1 << k,
@@ -344,7 +358,8 @@ pub fn search(t: &Tags, q: &Query, sort: SearchSort) -> Result<Vec<SearchRow>, S
         let (path, name) = (f.path.as_bytes(), f.path.file_name());
         let (lower_path, lower_name) = (lowercase(path), lowercase(name));
         let plain = Plain { name, lower_name: &lower_name, path, lower_path: &lower_path, size: f.meta.size, modified: f.meta.modified, dir: f.meta.attrs & flit_core::attr::DIR != 0 };
-        if q.matches(&plain, &|n| wanted.get(n).is_some_and(|&b| f.mask & b != 0)) {
+        let facts = flit_search::query::Facts { attrs: f.meta.attrs, created: f.meta.created, depth: Some(f.path.components().count() as u32), ..Default::default() };
+        if q.matches_with(&plain, facts, &|n| wanted.get(n).is_some_and(|&b| f.mask & b != 0)) {
             let dir = f.path.parent().map(|p| p.as_bytes().to_vec()).unwrap_or_default();
             rows.push((lower_name, lowercase(&dir), SearchRow { name: name.to_vec(), dir, meta: f.meta }));
         }

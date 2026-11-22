@@ -31,6 +31,11 @@ type Conn<P> = <<P as Platform>::Service as Service>::Conn;
 type Connect<P> = Box<dyn Fn() -> Result<Conn<P>, PlatformError> + Send>;
 type Fallback<P> = Box<dyn Fn() -> Result<(<P as Platform>::FallbackIndex, Option<PathBuf>), PlatformError> + Send>;
 type Out = Sender<(WindowId, SearchEvent)>;
+type FacetTokens = Arc<Mutex<HashMap<WindowId, Arc<AtomicU64>>>>;
+
+fn facet_token(tokens: &FacetTokens, window: WindowId) -> Arc<AtomicU64> {
+    tokens.lock().unwrap_or_else(|e| e.into_inner()).entry(window).or_default().clone()
+}
 
 enum Cmd {
     Req(WindowId, Arc<AtomicU64>, SearchRequest),
@@ -42,6 +47,7 @@ enum Cmd {
 pub struct SearchClient {
     tx: Sender<Cmd>,
     latest: HashMap<WindowId, Arc<AtomicU64>>,
+    facets: FacetTokens,
     pub events: Receiver<(WindowId, SearchEvent)>,
 }
 
@@ -50,11 +56,12 @@ impl SearchClient {
         let (tx, rx) = unbounded();
         let (out, events) = unbounded();
         let worker = Worker::<P>::new(rx, tx.clone(), out, wake, utc_offset_min, tags);
+        let facets = worker.facets.clone();
         std::thread::Builder::new()
             .name("flit-search".into())
             .spawn(move || worker.run())
             .map_err(|e| PlatformError::new(-1, format!("cannot start flit-search: {e}")))?;
-        Ok(Self { tx, latest: HashMap::new(), events })
+        Ok(Self { tx, latest: HashMap::new(), facets, events })
     }
 
     pub fn submit(&mut self, window: WindowId, req: SearchRequest) {
@@ -62,37 +69,39 @@ impl SearchClient {
         if let SearchRequest::Query { gen, .. } = &req {
             latest.store(*gen, Ordering::Release);
         }
+        if let SearchRequest::Facets { gen, open } = &req {
+            facet_token(&self.facets, window).store(if *open { *gen } else { 0 }, Ordering::Release);
+        }
         let _ = self.tx.send(Cmd::Req(window, latest, req));
     }
 
     pub fn forget(&mut self, window: WindowId) {
         self.latest.remove(&window);
-        let _ = self.tx.send(Cmd::Forget(window));
-    }
-}
-
-fn index_text(text: &str, scope: &SearchScope) -> String {
-    match scope {
-        SearchScope::Indexed(folder) => {
-            let (shown, sep) = (folder.path().display(), folder.path().sep() as char);
-            format!("{text} path:\"{}{sep}\"", shown.trim_end_matches(sep))
+        if let Some(flag) = self.facets.lock().unwrap_or_else(|e| e.into_inner()).remove(&window) {
+            flag.store(0, Ordering::Release);
         }
-        _ => text.to_owned(),
+        let _ = self.tx.send(Cmd::Forget(window));
     }
 }
 
 pub fn to_message(req: &SearchRequest) -> Option<Message> {
     Some(match req {
-        SearchRequest::Query { gen, text, sort, scope } => {
+        SearchRequest::Query { gen, text, conditions, sort, scope, paths } => {
             let key = match sort.key {
                 SearchKey::Name => SortKey::Name,
                 SearchKey::Folder => SortKey::Path,
                 SearchKey::Size => SortKey::Size,
                 SearchKey::Modified => SortKey::Modified,
             };
-            Message::Query { gen: *gen, text: index_text(text, scope), sort: Sort { key, descending: sort.descending } }
+            let mut paths = paths.clone();
+            if let SearchScope::Indexed(folder) = scope {
+                paths.under = folder.to_windows();
+            }
+            Message::Query { gen: *gen, text: text.clone(), conditions: conditions.clone(), sort: Sort { key, descending: sort.descending }, paths }
         }
         SearchRequest::Rows { gen, from, to } => Message::GetRows { gen: *gen, from: *from, to: *to },
+        SearchRequest::Folders { gen } => Message::GetFolders { gen: *gen },
+        SearchRequest::Facets { gen, open } => Message::GetFacets { gen: *gen, open: *open },
         SearchRequest::Close | SearchRequest::Indexing(_) => return None,
     })
 }
@@ -109,8 +118,10 @@ fn volume(v: VolumeInfo) -> IndexVolume {
 
 pub fn to_event(msg: Message, backend: SearchBackend, note: &Option<String>) -> Option<SearchEvent> {
     Some(match msg {
-        Message::QueryDone { gen, total } => SearchEvent::Done { gen, total },
+        Message::QueryDone { gen, total, version } => SearchEvent::Done { gen, total, version },
         Message::Groups { gen, starts } => SearchEvent::Groups { gen, starts },
+        Message::Folders { gen, counts } => SearchEvent::Folders { gen, counts },
+        Message::Facets { gen, counts } => SearchEvent::Facets { gen, counts },
         Message::Rows { gen, from, entries, dirs } => {
             let rows = match entries.entries(true) {
                 Ok(it) if dirs.len() == entries.len() => it.zip(dirs).map(|((name, meta), dir)| SearchRow { name: name.to_vec(), dir, meta }).collect(),
@@ -121,7 +132,7 @@ pub fn to_event(msg: Message, backend: SearchBackend, note: &Option<String>) -> 
         }
         Message::IndexStatus { volumes } => SearchEvent::Status { backend, volumes: volumes.into_iter().map(volume).collect(), note: note.clone() },
         Message::Error { message } => SearchEvent::Error { message },
-        Message::Query { .. } | Message::GetRows { .. } => return None,
+        Message::Query { .. } | Message::GetRows { .. } | Message::GetFolders { .. } | Message::GetFacets { .. } => return None,
     })
 }
 
@@ -179,7 +190,7 @@ impl Hits {
         }
         send(match self.kind {
             Kind::Live(source) => SearchEvent::Found { gen, total: total as u64, folders, done, source },
-            Kind::Tags { .. } => SearchEvent::Done { gen, total: total as u64 },
+            Kind::Tags { version, .. } => SearchEvent::Done { gen, total: total as u64, version },
         });
         if let Some(starts) = starts.filter(|s| !s.is_empty()) {
             send(SearchEvent::Groups { gen, starts });
@@ -211,6 +222,7 @@ struct Worker<P: Platform> {
     latests: HashMap<WindowId, Arc<AtomicU64>>,
     tags: TagCell,
     hits: HashMap<WindowId, Hits>,
+    facets: FacetTokens,
     connect: Connect<P>,
     fallback: Fallback<P>,
 }
@@ -261,7 +273,7 @@ fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out:
 
 impl<P: Platform> Worker<P> {
     fn new(rx: Receiver<Cmd>, me: Sender<Cmd>, out: Out, wake: Wake, utc_offset_min: i32, tags: TagCell) -> Self {
-        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, failed_at: None, retry: SERVICE_RETRY, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
+        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, failed_at: None, retry: SERVICE_RETRY, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), facets: Arc::default(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
     }
 
     fn run(mut self) {
@@ -306,7 +318,7 @@ impl<P: Platform> Worker<P> {
         }
     }
 
-    fn local_link(&mut self, latest: Arc<AtomicU64>) -> Result<Link<Conn<P>>, String> {
+    fn local_link(&mut self, window: WindowId, latest: Arc<AtomicU64>) -> Result<Link<Conn<P>>, String> {
         let shared = match &self.local {
             Some(s) => s.clone(),
             None => {
@@ -317,7 +329,7 @@ impl<P: Platform> Worker<P> {
                 shared
             }
         };
-        Ok(Link::Local { session: Session::new(shared, self.utc_offset_min), latest })
+        Ok(Link::Local { session: Session::new(shared, self.utc_offset_min).with_facets(facet_token(&self.facets, window)), latest })
     }
 
     fn set_indexing(&mut self, on: bool) {
@@ -344,7 +356,7 @@ impl<P: Platform> Worker<P> {
             return;
         }
         let note = self.remote_failed.clone();
-        match self.local_link(latest) {
+        match self.local_link(window, latest) {
             Ok(link) => {
                 self.links.insert(window, link);
                 self.send(window, SearchEvent::Status { backend: SearchBackend::Fallback, volumes: Vec::new(), note });
@@ -403,7 +415,7 @@ impl<P: Platform> Worker<P> {
         }
         if req == SearchRequest::Close {
             if let Some(Link::Local { session, .. }) = self.links.get_mut(&window) {
-                *session = Session::new(self.local.clone().unwrap_or_default(), self.utc_offset_min);
+                *session = Session::new(self.local.clone().unwrap_or_default(), self.utc_offset_min).with_facets(facet_token(&self.facets, window));
             }
             return;
         }
@@ -413,7 +425,7 @@ impl<P: Platform> Worker<P> {
             self.try_service(window);
         }
         if let (false, SearchRequest::Query { gen, .. }) = (self.indexing, &req) {
-            return self.send(window, SearchEvent::Done { gen: *gen, total: 0 });
+            return self.send(window, SearchEvent::Done { gen: *gen, total: 0, version: 0 });
         }
         let Some(msg) = to_message(&req) else { return };
         let note = self.remote_failed.clone();
@@ -438,14 +450,19 @@ impl<P: Platform> Worker<P> {
 
     fn local_request(&mut self, window: WindowId, latest: &Arc<AtomicU64>, req: &SearchRequest) -> bool {
         match req {
-            SearchRequest::Query { gen, text, sort, scope } => {
+            SearchRequest::Query { gen, text, conditions, sort, scope, paths } => {
                 self.hits.remove(&window);
                 let folder = scope.folder().and_then(|f| f.to_windows());
-                if let Some(aqs) = query::shell_query(text, cfg!(windows)) {
-                    self.start_live(window, latest, *gen, *sort, SearchSource::Shell, move |keep_going, found| run_shell::<P>(folder.as_ref(), &aqs, keep_going, found));
+                let shell = conditions.is_empty().then(|| query::shell_query(text, cfg!(windows))).flatten();
+                if let Some(aqs) = shell {
+                    let paths = paths.clone();
+                    self.start_live(window, latest, *gen, *sort, SearchSource::Shell, move |keep_going, found| run_shell::<P>(folder.as_ref(), &aqs, &paths, keep_going, found));
                     return true;
                 }
-                match query::parse(text, Clock::system(self.utc_offset_min)) {
+                match query::parse_with_conditions(text, conditions, Clock::system(self.utc_offset_min)).map(|mut q| {
+                    q.paths = paths.clone();
+                    q
+                }) {
                     Ok(q) if q.has_tags() => {
                         let folder = folder.map(|f| lowercase(f.as_bytes()));
                         self.run_tags(window, *gen, q, *sort, folder);
@@ -456,10 +473,57 @@ impl<P: Platform> Worker<P> {
                             self.start_live(window, latest, *gen, *sort, SearchSource::Walk, move |keep_going, found| find::walk(&P::fs(), &root, &q, keep_going, found));
                             true
                         }
+                        (SearchScope::Indexed(_), Some(root)) if q.uses(&|f| matches!(f, query::Filter::Created(..) | query::Filter::Accessed(..))) => {
+                            self.start_live(window, latest, *gen, *sort, SearchSource::Walk, move |keep_going, found| find::walk(&P::fs(), &root, &q, keep_going, found));
+                            true
+                        }
+                        _ if q.uses(&|f| matches!(f, query::Filter::Created(..) | query::Filter::Accessed(..))) => {
+                            self.send(window, SearchEvent::Done { gen: *gen, total: 0, version: 0 });
+                            self.send(window, SearchEvent::QueryError { gen: *gen, message: S::SearchErrorTimestampsNeedFolder.t().into() });
+                            true
+                        }
                         _ => false,
                     },
-                    Err(_) => false,
+                    Err(error) => {
+                        self.send(window, SearchEvent::Done { gen: *gen, total: 0, version: 0 });
+                        self.send(window, SearchEvent::QueryError { gen: *gen, message: tr!(S::SearchErrorSyntaxPosition, position = error.position) });
+                        true
+                    },
                 }
+            }
+            SearchRequest::Facets { gen, open: true } => {
+                let flag = facet_token(&self.facets, window);
+                let current = || flag.load(Ordering::Acquire) == *gen && latest.load(Ordering::Acquire) == *gen;
+                if !current() {
+                    return true;
+                }
+                self.send_tag_facets(window, *gen, &current);
+                let Some(h) = self.hits.get(&window).filter(|h| h.gen == *gen) else { return false };
+                let f = h.found.lock().unwrap_or_else(|e| e.into_inner());
+                let mut facets = flit_core::query_attrs::FacetCounts::default();
+                for (i, hit) in f.hits.iter().enumerate() {
+                    if i.is_multiple_of(4096) && !current() { return true; }
+                    facets.add(&hit.row.name, hit.row.meta, self.utc_offset_min);
+                }
+                if current() {
+                    self.send(window, SearchEvent::Facets { gen: *gen, counts: facets.finish() });
+                }
+                true
+            }
+            SearchRequest::Facets { open: false, .. } => !matches!(self.links.get(&window), Some(Link::Remote { .. })),
+            SearchRequest::Folders { gen } => {
+                let Some(h) = self.hits.get(&window).filter(|h| h.gen == *gen) else { return false };
+                let f = h.found.lock().unwrap_or_else(|e| e.into_inner());
+                let mut counts = std::collections::HashMap::<&[u8], u64>::new();
+                for (i, h) in f.hits.iter().enumerate() {
+                    if i.is_multiple_of(4096) && latest.load(Ordering::Acquire) != *gen {
+                        return true;
+                    }
+                    *counts.entry(&h.row.dir).or_default() += 1;
+                }
+                let counts = flit_core::query_attrs::finish_folder_counts(counts.into_iter().map(|(path, n)| (path.to_vec(), n)).collect());
+                self.send(window, SearchEvent::Folders { gen: *gen, counts });
+                true
             }
             SearchRequest::Rows { gen, from, to } => {
                 let Some(h) = self.hits.get(&window).filter(|h| h.gen == *gen) else { return false };
@@ -497,7 +561,34 @@ impl<P: Platform> Worker<P> {
         if let Err(e) = spawned {
             self.hits.remove(&window);
             self.send(window, SearchEvent::Error { message: tr!(S::SearchErrorCannotStart, error = e) });
-            self.send(window, SearchEvent::Done { gen, total: 0 });
+            self.send(window, SearchEvent::Done { gen, total: 0, version: 0 });
+        }
+    }
+
+    fn send_tag_facets(&self, window: WindowId, gen: u64, current: &dyn Fn() -> bool) {
+        let Some(SearchRequest::Query { text, conditions, scope, paths, .. }) = self.last_query.get(&window) else { return };
+        let Ok(mut query) = query::parse_with_conditions(text, conditions, Clock::system(self.utc_offset_min)) else { return };
+        query.paths = paths.clone();
+        let tags = self.tags.get();
+        let folder = scope.folder().and_then(|f| f.to_windows());
+        let mut counts = vec![0u64; tags.defs.len()];
+        for (i, f) in tags.files.iter().filter(|f| f.present).enumerate() {
+            if i.is_multiple_of(512) && !current() { return; }
+            if folder.as_ref().is_some_and(|p| !f.path.is_inside(p)) {
+                continue;
+            }
+            let (name, path) = (f.path.file_name(), f.path.as_bytes());
+            let plain = query::Plain { name, lower_name: &lowercase(name), path, lower_path: &lowercase(path), size: f.meta.size, modified: f.meta.modified, dir: f.meta.attrs & flit_core::attr::DIR != 0 };
+            let facts = query::Facts { attrs: f.meta.attrs, created: f.meta.created, depth: Some(f.path.components().count() as u32), ..Default::default() };
+            if query.matches_with(&plain, facts, &|n| flit_core::tags::find(&tags.defs, n).is_some_and(|k| f.mask & (1 << k) != 0) || (n.is_empty() && f.mask != 0)) {
+                for k in flit_core::tags::bits(f.mask) {
+                    if let Some(count) = counts.get_mut(k) { *count += 1; }
+                }
+            }
+        }
+        let counts = tags.defs.iter().zip(counts).filter(|(_, n)| *n > 0).map(|(tag, n)| (tag.name.clone(), n)).collect();
+        if current() {
+            self.send(window, SearchEvent::FacetTags { gen, counts });
         }
     }
 
@@ -521,7 +612,7 @@ impl<P: Platform> Worker<P> {
             Err(message) => {
                 self.hits.remove(&window);
                 self.send(window, SearchEvent::Error { message });
-                self.send(window, SearchEvent::Done { gen, total: 0 });
+                self.send(window, SearchEvent::Done { gen, total: 0, version: 0 });
             }
         }
     }
@@ -575,10 +666,13 @@ impl<P: Platform> Worker<P> {
     }
 }
 
-fn run_shell<P: Platform>(folder: Option<&FsPath>, aqs: &str, keep_going: find::KeepGoing<'_>, found: &Mutex<Found>) {
+fn run_shell<P: Platform>(folder: Option<&FsPath>, aqs: &str, paths: &flit_core::query_attrs::SearchPaths, keep_going: find::KeepGoing<'_>, found: &Mutex<Found>) {
     let mut batch = Vec::new();
     let flush = |batch: &mut Vec<Hit>| found.lock().unwrap_or_else(|e| e.into_inner()).hits.append(batch);
     let result = P::shell_search(folder, aqs, keep_going, &mut |path, meta| {
+        if paths.rejects(path.as_bytes()) {
+            return;
+        }
         let dir = path.parent().map(|p| p.as_bytes().to_vec()).unwrap_or_default();
         batch.push(Hit::new(SearchRow { name: path.file_name().to_vec(), dir, meta }));
         if batch.len() >= FIRST_PAGE as usize {

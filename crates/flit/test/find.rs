@@ -115,7 +115,7 @@ fn bench_live_walk() {
         for _ in 0..5 {
             gen += 1;
             let t = std::time::Instant::now();
-            client.submit(1, SearchRequest::Query { gen, text: text.into(), sort: SearchSort::default(), scope: SearchScope::Walk(folder.clone()) });
+            client.submit(1, SearchRequest::Query { gen, text: text.into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::Walk(folder.clone()), paths: Default::default() });
             let mut first = None;
             loop {
                 let (_, ev) = client.events.recv_timeout(std::time::Duration::from_secs(60)).unwrap();

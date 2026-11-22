@@ -38,3 +38,7 @@ rename = "Umbenennen"
 text = "Text"
 scroll = "Blättern"
 flit = "Flit"
+command_usage = "Zuletzt und häufig verwendet"
+
+[shell]
+command = "Shell: {command}"

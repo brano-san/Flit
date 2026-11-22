@@ -60,6 +60,7 @@ none_available = "Aucun élément disponible ne porte cette balise"
 opened_some = ["{opened} élément balisé ouvert sur {n}", "{opened} éléments balisés ouverts sur {n}", "{opened} éléments balisés ouverts sur {n}"]
 tagged = ["{n} élément balisé avec {tag}", "{n} d’éléments balisés avec {tag}", "{n} éléments balisés avec {tag}"]
 needs_args = "Flit -Tag nécessite un nom de balise et les fichiers à baliser"
+quick_keys = "Étiquettes · Échap pour quitter"
 
 [drive]
 local = "Disque local"

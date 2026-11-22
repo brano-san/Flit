@@ -26,8 +26,10 @@ pub fn serve<C: Duplex>(mut conn: C, shared: Arc<SharedIndex>, utc_offset_min: i
     let (tx, rx) = bounded::<Message>(MAX_QUEUED);
     let mut writer = conn.try_clone()?;
     let worker_latest = latest.clone();
+    let facets_open = Arc::new(AtomicU64::new(0));
+    let worker_facets = facets_open.clone();
     let worker = std::thread::Builder::new().name("flit-indexd-session".into()).spawn(move || {
-        let mut session = Session::new(shared, utc_offset_min).with_access(access);
+        let mut session = Session::new(shared, utc_offset_min).with_access(access).with_facets(worker_facets);
         let mut write = |m: Message| {
             let _ = write_frame(&mut writer, &m);
         };
@@ -56,13 +58,16 @@ pub fn serve<C: Duplex>(mut conn: C, shared: Arc<SharedIndex>, utc_offset_min: i
         };
         match &msg {
             Message::Query { gen, .. } => latest.store(*gen, Ordering::Release),
-            Message::GetRows { .. } => {}
-            _ => break Err(ProtoError::Invalid("clients may only send Query and GetRows")),
+            Message::GetRows { .. } | Message::GetFolders { .. } => {}
+            Message::GetFacets { gen, open } => facets_open.store(if *open { *gen } else { 0 }, Ordering::Release),
+            _ => break Err(ProtoError::Invalid("invalid search client request")),
         }
         if tx.send(msg).is_err() {
             break Ok(());
         }
     };
+    latest.store(0, Ordering::Release);
+    facets_open.store(0, Ordering::Release);
     drop(tx);
     let _ = worker.join();
     result

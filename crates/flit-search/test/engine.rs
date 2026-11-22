@@ -77,6 +77,85 @@ fn filters_and_sorts_across_volumes() {
 }
 
 #[test]
+fn w3_review_exclusions_keep_the_permutation_and_filter_by_ancestor_and_exact_file() {
+    let e = sample();
+    let sort = Sort { key: SortKey::Name, descending: true };
+    let mut q = parse("", clock()).unwrap();
+    q.paths.exclude = [
+        r"c:\PROJECTS", r"D:\backup\report.bak", r"D:\backup\not-found", r"Q:\",
+    ].map(|p| FsPath::parse(p).unwrap()).to_vec();
+    let mut set = e.search(&q, sort, &|| false).unwrap();
+    assert!(set.streams.iter().all(|s| matches!(s.kind, Kind::Perm(Some(_)))));
+    let (batch, _) = e.rows(&mut set, 0, 10);
+    assert_eq!(set.total, 2);
+    assert_eq!(batch.entries(true).unwrap().map(|(n, _)| n).collect::<Vec<_>>(), [b"notes".as_slice(), b"backup"]);
+
+    q.terms = parse("report", clock()).unwrap().terms;
+    q.paths.exclude.pop();
+    q.paths.exclude.remove(1);
+    let mut set = e.search(&q, sort, &|| false).unwrap();
+    let (batch, _) = e.rows(&mut set, 0, 10);
+    assert_eq!(batch.entries(true).unwrap().map(|(n, _)| n).collect::<Vec<_>>(), [b"report.bak".as_slice()]);
+    q.paths.parent = Some(FsPath::parse(r"d:\BACKUP").unwrap());
+    assert_eq!(e.search(&q, sort, &|| false).unwrap().total, 1);
+    q.paths.parent = Some(FsPath::parse(r"D:\").unwrap());
+    assert_eq!(e.search(&q, sort, &|| false).unwrap().total, 0);
+
+    let mut q = parse("", clock()).unwrap();
+    q.paths.exclude = vec![FsPath::parse(r"C:\not-found").unwrap(), FsPath::parse(r"D:\").unwrap()];
+    let set = e.search(&q, sort, &|| false).unwrap();
+    assert!(matches!(&set.streams[..], [Stream { kind: Kind::Perm(None), .. }]));
+    assert_eq!(set.total, 6);
+}
+
+#[test]
+fn w3_review_indexed_folder_scope_uses_components_on_unix_mounts() {
+    let mut v = VolumeIndex::new("/mnt/data", b"/mnt/data", b'/');
+    put(&mut v, 1, 1, ".", 0, 0, true);
+    put(&mut v, 2, 1, "Docs", 0, 0, true);
+    put(&mut v, 3, 1, "Docs-other", 0, 0, true);
+    put(&mut v, 4, 2, "axb", 5, 0, false);
+    put(&mut v, 5, 3, "axb", 5, 0, false);
+    put(&mut v, 6, 2, "other", 5, 0, false);
+    v.commit();
+    let e = Engine { volumes: vec![v], version: 1 };
+    let mut q = parse("file: < other OR regex:^a.*b$ >", clock()).unwrap();
+    let sort = Sort { key: SortKey::Name, descending: false };
+    let search = |q: &Query| e.search(q, sort, &|| false).unwrap();
+    q.paths.under = Some(FsPath::parse("/mnt/data/Docs").unwrap());
+    let mut set = search(&q);
+    let (_, dirs) = e.rows(&mut set, 0, 10);
+    assert_eq!(dirs, vec![b"/mnt/data/Docs".to_vec(); 2]);
+    q.paths.under = Some(FsPath::parse("/mnt/data/docs").unwrap());
+    assert_eq!(search(&q).total, 0);
+    q.paths.under = Some(FsPath::parse("/mnt").unwrap());
+    assert_eq!(search(&q).total, 3);
+    q.paths.exclude.push(FsPath::parse("/mnt").unwrap());
+    assert_eq!(search(&q).total, 0);
+}
+
+#[test]
+fn w3_review_child_count_and_empty_share_the_column_until_the_index_changes() {
+    use std::sync::atomic::AtomicBool;
+    let mut e = sample();
+    let cancelled = AtomicBool::new(false);
+    assert!(e.volumes[0].child_counts(&|| cancelled.swap(true, Relaxed)).is_none());
+    assert_eq!(names(&e, "child-count:2", SortKey::Name, false).len(), 2);
+    let cached = e.volumes[0].clone();
+    let counts = cached.child_counts(&|| panic!("completed column should be cached")).unwrap();
+    assert!(std::sync::Arc::ptr_eq(&e.volumes[0].child_counts(&|| panic!("completed column should be cached")).unwrap(), &counts));
+    assert!(names(&e, "empty:true", SortKey::Name, false).is_empty());
+    for id in [12, 13] {
+        e.volumes[0].remove(id);
+    }
+    e.volumes[0].commit();
+    e.version += 1;
+    assert_eq!(names(&e, "empty:true", SortKey::Name, false), [r"C:\Projects\src"]);
+    assert_eq!(counts[cached.lookup(11).unwrap() as usize], 2);
+    assert_eq!(e.volumes[0].child_counts(&|| false).unwrap()[e.volumes[0].lookup(11).unwrap() as usize], 0);
+}
+
+#[test]
 fn dates_filter_on_modified_time() {
     let e = sample();
     let mut c = clock();

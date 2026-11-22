@@ -466,6 +466,14 @@ impl Window for Win32Window {
         crate::context_menu::request(self.hwnd(), ShellUi::Label(drive, label));
     }
 
+    fn palette_shell(&self, ticket: u64, menu: ShellMenu) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Palette(ticket, menu));
+    }
+
+    fn palette_shell_pick(&self, ticket: u64, command: Option<u32>) {
+        crate::context_menu::request(self.hwnd(), ShellUi::PalettePick(ticket, command));
+    }
+
     fn shell_pick(&self, cmd: Option<u32>) {
         crate::context_menu::pick_now(self.hwnd(), cmd);
     }

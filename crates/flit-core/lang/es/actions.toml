@@ -369,3 +369,6 @@
 "status.no_real_path" = "Este elemento no tiene una ubicación real en el disco."
 "status.select_program" = "Seleccione primero un archivo ejecutable."
 "app.check_updates" = "Buscar actualizaciones"
+"tags.quick" = "Etiquetas rápidas"
+"filter.save" = "Guardar filtro de carpeta"
+"filter.saved" = "Filtros de carpeta guardados"

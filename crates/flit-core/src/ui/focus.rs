@@ -58,7 +58,9 @@ impl App {
 
     pub(super) fn focus_key(&mut self, key: Key, m: Mods, now: Instant) -> bool {
         if key == Key::Tab && !m.ctrl && !m.alt && self.nav.palette.is_none() && !self.cycles_panels() {
-            self.cycle_focus(m.shift);
+            if self.focus != Focus::Filter || !self.filter_key(key, m) {
+                self.cycle_focus(m.shift);
+            }
             return true;
         }
         if !matches!(self.focus, Focus::TabBar | Focus::Nav | Focus::Preview) || m.ctrl || m.alt {

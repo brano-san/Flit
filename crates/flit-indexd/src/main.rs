@@ -98,7 +98,7 @@ fn query<P: IndexPlatform>(text: &str) -> Result<(), String> {
     conn.set_read_timeout(Some(Duration::from_secs(10)));
     handshake(&mut conn, &Hello::new(Protocol::Index, VERSION)).map_err(|e| e.to_string())?;
     let started = std::time::Instant::now();
-    write_frame(&mut conn, &Message::Query { gen: 1, text: text.into(), sort: Sort { key: SortKey::Name, descending: false } }).map_err(|e| e.to_string())?;
+    write_frame(&mut conn, &Message::Query { gen: 1, text: text.into(), conditions: Vec::new(), sort: Sort { key: SortKey::Name, descending: false }, paths: Default::default() }).map_err(|e| e.to_string())?;
     let mut buf = Vec::new();
     loop {
         match read_frame::<_, Message>(&mut conn, &mut buf).map_err(|e| e.to_string())? {

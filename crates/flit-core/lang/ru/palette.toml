@@ -38,3 +38,7 @@ rename = "Переименование"
 text = "Текст"
 scroll = "Прокрутка"
 flit = "Flit"
+command_usage = "Недавние и частые"
+
+[shell]
+command = "Оболочка: {command}"

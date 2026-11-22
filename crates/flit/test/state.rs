@@ -9,6 +9,25 @@ const AFTER_WORD: usize = GIT_LEN + DESCRIPTIONS_LEN + QUICK_LEN;
 const WORD_LEN: usize = 1 + AFTER_WORD;
 
 #[test]
+fn w3_command_usage_survives_restart_and_old_state_still_loads() {
+    use flit_core::input::{Event, Key, Mods};
+
+    let mut saved = classic();
+    let now = std::time::Instant::now();
+    let mut app = flit_core::ui::App::new(saved.persisted.clone(), Vec::new(), 0, false, 1.0, (1000, 600), now);
+    assert!(app.run_action("palette.show", now));
+    app.on_paste("Toggle Hidden Files");
+    app.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, now);
+    saved.tools.commands = app.command_usage();
+    assert_ne!(saved.tools.commands, flit_core::ui::CommandUsage::default());
+    let bytes = saved.encode().unwrap();
+    assert_eq!(Saved::decode(&bytes).unwrap().tools.commands, saved.tools.commands);
+    let record = postcard::to_stdvec(&saved.tools.commands).unwrap();
+    let old = bytes.strip_suffix(record.as_slice()).unwrap();
+    assert_eq!(Saved::decode(old).unwrap().tools.commands, flit_core::ui::CommandUsage::default());
+}
+
+#[test]
 fn repository_columns_ride_in_their_own_record() {
     let mut persisted = Persisted { path: loc(r"D:\x"), ..Default::default() };
     persisted.view.columns.toggle(Column::GitStatus);
@@ -230,7 +249,7 @@ fn the_old_dual_pane_record_stays_ninth_and_is_ignored_so_later_records_still_lo
 fn the_retired_toolbar_record_still_rides_eighth_so_old_files_keep_their_search_history() {
     use flit_core::ui::MAX_HISTORY;
     let toolbar = RetiredToolbar { visible: false, sets: [vec![RetiredTool::Button("nav.refresh".into(), RetiredShow::Both), RetiredTool::Separator], vec![RetiredTool::Button("bin.empty".into(), RetiredShow::Label)], Vec::new()] };
-    let old = Tools { toolbar, searches: vec!["report".into(), "ext:pdf".into()], streams: true };
+    let old = Tools { toolbar, searches: vec!["report".into(), "ext:pdf".into()], streams: true, ..Default::default() };
     let mut persisted = Persisted::default();
     persisted.archive.open_after = true;
     persisted.prefs.show_streams = true;

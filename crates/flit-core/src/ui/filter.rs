@@ -6,6 +6,46 @@ use crate::render::Rect;
 use crate::text::{Gfx, TextBackend};
 use crate::theme::Theme;
 
+use crate::filter::{token_ranges, ATTRIBUTE_KEYS, KIND_VALUES};
+use crate::query_attrs::Clock;
+use std::ops::Range;
+
+const MAX_SAVED: usize = 64;
+const MAX_FILTER_LEN: usize = 4096;
+
+fn filter_completions(text: &str, caret: usize, tags: &[crate::tags::Tag]) -> (Range<usize>, Vec<String>) {
+    let range = token_ranges(text).into_iter().find(|r| r.start <= caret && caret <= r.end).unwrap_or(caret..caret);
+    let raw = &text[range.start..caret];
+    let (sign, token) = raw.strip_prefix('!').map_or(("", raw), |t| ("!", t));
+    let (key, value) = token.split_once(':').unwrap_or((token, ""));
+    let prefix = value.trim_start_matches('"').to_lowercase();
+    let suggestions = if token.contains(':') {
+        let values: &[&str] = match key.to_ascii_lowercase().as_str() {
+            "ext" => &["jpg", "png", "pdf", "txt", "zip"],
+            "kind" => KIND_VALUES,
+            "size" => &[">10M", "<1M", "1M..100M"],
+            "modified" | "created" => &["today", "yesterday", "week", "month", "year"],
+            "hidden" => &["true", "false"],
+            _ => &[],
+        };
+        if key.eq_ignore_ascii_case("tag") {
+            tags.iter().filter(|tag| tag.name.to_lowercase().starts_with(&prefix)).map(|tag| {
+                format!("{sign}{key}:\"{}\"", tag.name)
+            }).take(9).collect()
+        } else {
+            values.iter().filter(|v| v.starts_with(&prefix)).map(|v| format!("{sign}{key}:{v}")).collect()
+        }
+    } else {
+        let key = key.to_ascii_lowercase();
+        let mut matches = ATTRIBUTE_KEYS.iter().filter(|k| key.len() >= 2 && k.starts_with(&key));
+        match (matches.next(), matches.next()) {
+            (Some(k), None) => vec![format!("{sign}{k}:")],
+            _ => Vec::new(),
+        }
+    };
+    (range, suggestions)
+}
+
 const BOX_W: f32 = 245.0;
 const TYPING_W: f32 = 320.0;
 pub(super) const MIN_W: f32 = 90.0;
@@ -27,14 +67,66 @@ impl Tab {
         }
     }
 
-    pub(super) fn refilter_view(&mut self) {
+    pub(super) fn refilter_view(&mut self, clock: Clock, tags: &[crate::tags::Tag]) {
         if let (Some(v), Some(f)) = (&mut self.view, &self.filter) {
-            v.set_filter(f.text());
+            v.apply_filter(crate::filter::NameFilter::with_context(f.text(), clock, tags));
         }
     }
 }
 
 impl App {
+    pub(super) fn refilter_tab(&mut self, k: usize) {
+        let clock = Clock::system(self.utc_offset_min);
+        let tags = self.tags().clone();
+        self.tabs[k].refilter_view(clock, &tags.defs);
+    }
+
+    pub(super) fn save_current_filter(&mut self) {
+        let Some(text) = self.tab().filter.as_ref().map(Field::text).filter(|t| !t.trim().is_empty() && t.len() <= MAX_FILTER_LEN) else { return };
+        let text = text.to_owned();
+        self.saved_filters.retain(|s| *s != text);
+        self.saved_filters.insert(0, text);
+        self.saved_filters.truncate(MAX_SAVED);
+        self.dirty = true;
+    }
+
+    pub(super) fn choose_saved_filter(&mut self, text: &str) {
+        self.open_filter();
+        self.tab_mut().filter.as_mut().unwrap().edit.set(text);
+        self.filter_changed();
+    }
+
+    pub(super) fn open_saved_filters(&mut self) {
+        let items = self.saved_filters.iter().map(|s| (s.clone(), String::new())).collect();
+        self.open_pick(super::palette::Palette::new(super::palette::Pick::SavedFilters, items, ""));
+    }
+
+    pub(super) fn remove_saved_filter(&mut self, text: &str) {
+        self.saved_filters.retain(|s| s != text);
+    }
+
+    pub(super) fn set_saved_filters(&mut self, mut items: Vec<String>) {
+        let mut seen = crate::hash::FxHashSet::default();
+        items.retain(|s| !s.trim().is_empty() && s.len() <= MAX_FILTER_LEN && seen.insert(s.clone()));
+        items.truncate(MAX_SAVED);
+        self.saved_filters = items;
+    }
+
+    fn complete_filter(&mut self) -> bool {
+        let Some(f) = self.tab().filter.as_ref() else { return false };
+        let (range, suggestions) = filter_completions(f.text(), f.edit.caret, self.tag_defs());
+        let Some(mut hint) = suggestions.into_iter().find(|s| *s != f.text()[range.clone()]) else { return false };
+        if !hint.ends_with(':') {
+            hint.push(' ');
+        }
+        if let Some(f) = self.tab_mut().filter.as_mut() {
+            f.edit.move_to(range.start, false);
+            f.edit.move_to(range.end, true);
+            f.insert(&hint);
+        }
+        self.filter_changed();
+        true
+    }
     pub(super) fn open_filter(&mut self) {
         self.tab_mut().filter.get_or_insert_with(Field::default).edit.select_all();
         self.focus = Focus::Filter;
@@ -53,14 +145,17 @@ impl App {
     }
 
     fn filter_changed(&mut self) {
+        self.refilter_tab(self.cur);
         let t = self.tab_mut();
-        t.refilter_view();
         t.scroll = 0.0;
         t.scroll_target = 0.0;
         self.dirty = true;
     }
 
     pub(super) fn filter_key(&mut self, key: Key, m: Mods) -> bool {
+        if key == Key::Tab && m == Mods::default() && self.complete_filter() {
+            return true;
+        }
         let Some(f) = self.tabs[self.cur].filter.as_mut() else {
             self.focus = Focus::List;
             return false;
@@ -178,6 +273,20 @@ impl App {
             centered(g, close, G_CLOSE, self.icon_font(8.0), t.text_dim);
         }
         let placeholder = self.filter_placeholder();
+        if let Some(f) = self.tab().filter.as_ref().filter(|_| focused && self.nav.palette.is_none()) {
+            let (_, suggestions) = filter_completions(f.text(), f.edit.caret, self.tag_defs());
+            if !suggestions.is_empty() {
+                let text = crate::tr!(crate::i18n::S::FilterCompletions, choices = suggestions.join("  "));
+                let room = (self.size.0 - field.x - self.s(8.0)).max(0.0);
+                let width = (g.measure(&text, font) + self.s(16.0)).min(room);
+                let r = Rect::new(field.x, field.y - self.s(27.0), width, self.s(24.0));
+                g.dl.round_rect(r, t.input_bg, s4);
+                g.dl.outline(r, t.input_border, s4, 1.0);
+                let m = g.metrics(font);
+                let y = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
+                g.text(r.x + self.s(8.0), y, &text, font, t.text, (r.w - self.s(16.0)).max(0.0));
+            }
+        }
         match self.tabs[self.cur].filter.as_mut() {
             Some(f) => f.draw(g, t, inner, font, focused, &placeholder, scale, Some(&self.preedit)),
             None => {

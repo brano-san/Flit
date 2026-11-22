@@ -75,6 +75,8 @@ about = "Info"
 "updates.skipped" = "Übersprungene Version"
 "advanced.indexing" = "Dateien für die Suche indizieren"
 "keys" = "Tastenkombinationen"
+"general.mru_tabs" = "Strg+Tab nach letzter Verwendung"
+"advanced.search_exclusions" = "Von der Suche ausgeschlossene Pfade"
 
 [help]
 "general.language" = "Die Sprache von Menüs, Dialogen, Meldungen und Datumsangaben; Protokolle bleiben auf Englisch"
@@ -150,6 +152,8 @@ about = "Info"
 "advanced.indexing" = "Flit hält eine Liste der Namen auf allen Laufwerken, damit die Suche Dateien überall in Millisekunden findet. Ist es aus, liest Flit die Laufwerke nicht im Hintergrund und gibt den Speicher des Index frei; die Suche im geöffneten Ordner (Ctrl+Shift+F) funktioniert weiter, indem sie diesen Ordner liest"
 "keys" = "Tastenkombinationen, die vom Standard abweichen, nach Befehls-ID"
 "area_color" = "„Standard“ folgt der Hintergrundfarbe; Text auf einer benutzerdefinierten Farbe passt sich an, um lesbar zu bleiben"
+"general.mru_tabs" = "Mit Strg+Tab durch zuletzt verwendete Tabs wechseln. Ohne diese Option gilt die Reihenfolge der Tableiste."
+"advanced.search_exclusions" = "Blendet diese Pfade und ihre Inhalte in Suchergebnissen aus."
 
 [choice]
 "language.system" = "Wie im System"

@@ -207,7 +207,9 @@ enum Done {
 }
 
 fn tools(app: &App) -> Tools {
-    Tools::new(app.search_history().to_vec())
+    let mut tools = Tools::new(app.search_history().to_vec());
+    tools.commands = app.command_usage();
+    tools
 }
 
 fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
@@ -408,6 +410,7 @@ struct Handler<P: Platform> {
     previews: Sender<PreviewJob>,
     done: Receiver<Done>,
     saved: Saved,
+    command_usage: Arc<Mutex<flit_core::ui::CommandUsage>>,
     metrics: Option<Metrics>,
     graphics: Graphics<Device<P>>,
     injection: Option<(Instant, Event)>,
@@ -572,6 +575,7 @@ impl<P: Platform> Handler<P> {
         app.set_nav_prefs(self.saved.side.clone());
         app.set_pane_state(self.saved.pane);
         app.set_search_history(self.saved.tools.searches.clone());
+        app.share_command_usage(self.command_usage.clone());
         app.set_places(self.places.current());
         app.share_typed(self.typed.clone());
         app.set_tags(self.tags.current());
@@ -974,6 +978,8 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::ShellPick(cmd) => window.shell_pick(cmd),
+                Effect::PaletteShell { ticket, menu } => window.palette_shell(ticket, menu),
+                Effect::PaletteShellPick { ticket, command } => window.palette_shell_pick(ticket, command),
                 Effect::ShellPrefetch(menu) => window.shell_prefetch(menu),
                 Effect::ShellWarm(menus) => window.shell_warm(menus),
                 Effect::Layout(cmd) => self.layout_cmd(id, cmd),
@@ -2067,6 +2073,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         previews,
         done,
         saved: saved.clone(),
+        command_usage: Arc::new(Mutex::new(saved.tools.commands.clone().sanitized())),
         metrics: metrics.map(|m| Metrics::new(m, started, P::refresh_period())),
         places: PlacesWorker::new::<P>(wake.clone(), P::cache_dir().map(|d| d.join(PLACES_FILE))),
         quick: crate::quick_sync::QuickSyncWorker::new::<P>(integrate, wake.clone()),

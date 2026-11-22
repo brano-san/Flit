@@ -1,6 +1,7 @@
 use crate::engine::{order_of, Engine, ResultSet, Visibility};
 use crate::proto::{Message, Sort, VolumeInfo};
 use crate::query::{self, Clock, Query};
+use flit_core::query_attrs::{Facets, FolderCounts};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::{Duration, Instant};
@@ -73,12 +74,15 @@ struct Current {
     sort: Sort,
     version: u64,
     set: Option<ResultSet>,
+    facets: Option<Facets>,
+    folders: Option<FolderCounts>,
 }
 
 pub struct Session {
     shared: Arc<SharedIndex>,
     utc_offset_min: i32,
-    current: Option<Current>,
+    facets_open: Arc<AtomicU64>,
+    current: Option<Box<Current>>,
     access: Option<Arc<dyn Visibility>>,
     status_seen: u64,
     refreshed: Instant,
@@ -86,7 +90,12 @@ pub struct Session {
 
 impl Session {
     pub fn new(shared: Arc<SharedIndex>, utc_offset_min: i32) -> Self {
-        Self { shared, utc_offset_min, current: None, access: None, status_seen: 0, refreshed: Instant::now() }
+        Self { shared, utc_offset_min, facets_open: Arc::default(), current: None, access: None, status_seen: 0, refreshed: Instant::now() }
+    }
+
+    pub fn with_facets(mut self, facets_open: Arc<AtomicU64>) -> Self {
+        self.facets_open = facets_open;
+        self
     }
 
     pub fn with_access(mut self, access: Option<Arc<dyn Visibility>>) -> Self {
@@ -96,19 +105,55 @@ impl Session {
 
     pub fn handle(&mut self, msg: Message, latest: &AtomicU64, out: &mut dyn FnMut(Message)) {
         match msg {
-            Message::Query { gen, text, sort } => {
+            Message::Query { gen, text, conditions, sort, paths } => {
                 if latest.load(Ordering::Acquire) != gen {
                     return;
                 }
-                let query = query::parse(&text, Clock::system(self.utc_offset_min));
+                let query = query::parse_with_conditions(&text, &conditions, Clock::system(self.utc_offset_min)).map(|mut q| {
+                    q.paths = paths;
+                    q
+                }).map_err(|error| error.to_string());
                 if let Err(message) = &query {
                     out(Message::Error { message: message.clone() });
                 }
-                self.current = Some(Current { gen, query, sort, version: 0, set: None });
+                self.current = Some(Box::new(Current { gen, query, sort, version: 0, set: None, facets: None, folders: None }));
                 let shared = self.shared.clone();
                 let engine = shared.read_sorted(sort);
                 if self.run(&engine, latest, out) {
                     self.send_rows(&engine, gen, 0, FIRST_PAGE, out);
+                }
+            }
+            Message::GetFacets { gen, open: true } => {
+                let facets_open = &self.facets_open;
+                let cancel = || latest.load(Ordering::Acquire) != gen || facets_open.load(Ordering::Acquire) != gen;
+                if cancel() {
+                    return;
+                }
+                let shared = self.shared.clone();
+                let engine = shared.read();
+                if let Some(c) = self.current.as_mut().filter(|c| c.gen == gen && c.version == engine.version) {
+                    if c.facets.is_none() {
+                        c.facets = c.set.as_ref().and_then(|set| engine.result_facets(set, self.utc_offset_min, &cancel));
+                    }
+                    if let Some(counts) = c.facets.as_ref().filter(|_| !cancel()) {
+                        out(Message::Facets { gen, counts: counts.clone() });
+                    }
+                }
+            }
+            Message::GetFolders { gen } => {
+                let cancel = || latest.load(Ordering::Acquire) != gen;
+                if cancel() {
+                    return;
+                }
+                let shared = self.shared.clone();
+                let engine = shared.read();
+                if let Some(c) = self.current.as_mut().filter(|c| c.gen == gen && c.version == engine.version) {
+                    if c.folders.is_none() {
+                        c.folders = c.set.as_ref().and_then(|set| engine.result_folders(set, &cancel));
+                    }
+                    if let Some(counts) = c.folders.as_ref().filter(|_| !cancel()) {
+                        out(Message::Folders { gen, counts: counts.clone() });
+                    }
                 }
             }
             Message::GetRows { gen, from, to } => {
@@ -145,20 +190,25 @@ impl Session {
         let Some(c) = &mut self.current else { return false };
         let gen = c.gen;
         self.refreshed = Instant::now();
-        c.version = engine.version;
         let cancel = || latest.load(Ordering::Acquire) != gen;
-        c.set = match &c.query {
+        let set = match &c.query {
             Ok(q) => engine.search_as(q, c.sort, self.access.as_deref(), &cancel),
             Err(_) => None,
         };
+        if c.version != engine.version || c.set.as_ref().map(|s| s.total) != set.as_ref().map(|s| s.total) {
+            c.facets = None;
+            c.folders = None;
+        }
+        c.version = engine.version;
+        c.set = set;
         match &mut c.set {
             Some(set) => {
-                out(Message::QueryDone { gen, total: set.total });
+                out(Message::QueryDone { gen, total: set.total, version: engine.version });
                 if let Some(starts) = engine.groups(set) {
                     out(Message::Groups { gen, starts });
                 }
             }
-            None if c.query.is_err() => out(Message::QueryDone { gen, total: 0 }),
+            None if c.query.is_err() => out(Message::QueryDone { gen, total: 0, version: engine.version }),
             None => return false,
         }
         c.set.is_some()

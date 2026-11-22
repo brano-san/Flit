@@ -76,10 +76,20 @@ impl App {
     pub fn on_tags(&mut self, ev: TagEvent, now: Instant) {
         match ev {
             TagEvent::Changed { tags, files, dropped } => {
+                let defs_changed = self.tag_defs() != tags.defs.as_slice();
                 if let Some(k) = dropped {
                     self.drop_tag_bit(k);
                 }
                 self.set_tags(tags);
+                if defs_changed {
+                    let clock = crate::query_attrs::Clock::system(self.utc_offset_min);
+                    let tags = self.tags().clone();
+                    for tab in self.tabs.iter_mut().chain(self.panels.list.iter_mut().flat_map(|p| &mut p.tabs)) {
+                        if tab.filter.as_ref().is_some_and(|f| crate::tags::has_tag_term(f.text())) {
+                            tab.refilter_view(clock, &tags.defs);
+                        }
+                    }
+                }
                 self.tag_fixes.extend(files.into_iter().map(|(path, mask)| (path, mask, now + FIX_WINDOW)));
                 self.apply_tag_fixes(now);
             }
@@ -100,6 +110,45 @@ impl App {
         let Some(items) = self.tag_items() else { return };
         let on = self.selection_tags().1 & (1 << k) == 0;
         self.effects.push(Effect::Tags(TagRequest::Set { items, tag: k, on }));
+    }
+
+    pub(super) fn toggle_quick_tags(&mut self) {
+        if self.quick_tags {
+            self.quick_tags = false;
+        } else if self.tag_defs().is_empty() {
+            self.status(S::SidebarTagNoneYet.t());
+        } else if self.tag_items().is_some() {
+            self.quick_tags = true;
+            self.tab_mut().error = None;
+            self.focus = super::Focus::List;
+        }
+        self.dirty = true;
+    }
+
+    pub(super) fn quick_tag_key(&mut self, key: crate::input::Key, mods: crate::input::Mods) -> bool {
+        use crate::input::{Key, Mods};
+        if !self.quick_tags || mods != Mods::default() {
+            return false;
+        }
+        match key {
+            Key::Escape => self.quick_tags = false,
+            Key::Char(c @ '1'..='9') => {
+                if let Some(name) = self.tag_defs().get(c as usize - '1' as usize).map(|t| t.name.clone()) {
+                    if let Some(items) = self.tag_items() {
+                        self.effects.push(Effect::Tags(TagRequest::Toggle { items, name }));
+                    }
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    pub(super) fn quick_tag_hint(&self, text: &mut impl std::fmt::Write) {
+        let _ = write!(text, "{}", S::SidebarTagQuickKeys.t());
+        for (i, tag) in self.tag_defs().iter().take(9).enumerate() {
+            let _ = write!(text, "  {} {}", i + 1, tag.name);
+        }
     }
 
     pub fn remove_tags(&mut self) {

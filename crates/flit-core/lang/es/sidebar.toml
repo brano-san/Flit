@@ -60,6 +60,7 @@ none_available = "Ningún elemento disponible tiene esta etiqueta"
 opened_some = ["Se abrieron {opened} de {n} elemento etiquetado", "Se abrieron {opened} de {n} de elementos etiquetados", "Se abrieron {opened} de {n} elementos etiquetados"]
 tagged = ["Se etiquetó {n} elemento con {tag}", "Se etiquetaron {n} de elementos con {tag}", "Se etiquetaron {n} elementos con {tag}"]
 needs_args = "Flit -Tag necesita un nombre de etiqueta y los archivos que se van a etiquetar"
+quick_keys = "Etiquetas · Esc para salir"
 
 [drive]
 local = "Disco local"

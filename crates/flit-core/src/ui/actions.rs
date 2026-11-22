@@ -78,6 +78,7 @@ pub enum Group {
     Text,
     Scroll,
     Flit,
+    CommandUsage,
 }
 
 impl Group {
@@ -100,6 +101,7 @@ impl Group {
             Group::Text => S::PaletteGroupText,
             Group::Scroll => S::PaletteGroupScroll,
             Group::Flit => S::PaletteGroupFlit,
+            Group::CommandUsage => S::PaletteGroupCommandUsage,
         }
     }
 
@@ -120,6 +122,7 @@ impl Group {
             Group::Text => "\u{E8D2}",
             Group::Scroll => "\u{E70E}",
             Group::Flit => "\u{E7B8}",
+            Group::CommandUsage => "\u{E81C}",
         }
     }
 }
@@ -438,6 +441,10 @@ pub static ACTIONS: &[Action] = &[
     Action::new("search.group_folder", G::Flit, S::ActionsSearchGroupFolder, S::DescribeSearchGroupFolder, &[], |a, _| a.toggle_search_groups()),
     Action::new("search.clear_history", G::Flit, S::ActionsSearchClearHistory, S::DescribeSearchClearHistory, &[], |a, _| a.clear_search_history()),
     Action::new("search.reveal", G::Flit, S::ActionsSearchReveal, S::DescribeSearchReveal, &[], |a, now| a.reveal_search_focus(now)),
+    Action::new("search.folders", G::Flit, S::SearchExploreFolders, S::SearchExploreFoldersHelp, &[], |a, _| a.toggle_search_folders()),
+    Action::new("search.within_results", G::Flit, S::SearchExploreWithin, S::SearchExploreWithinHelp, &[], |a, now| a.toggle_within_results(now)),
+    Action::new("search.similar", G::Flit, S::SearchExploreSimilar, S::SearchExploreSimilarHelp, &[], |a, _| a.find_similar()),
+    Action::new("search.facets", G::Flit, S::SearchExploreFacets, S::SearchExploreFacetsHelp, &[], |a, _| a.toggle_facets()),
     Action::new("nav.home", G::Flit, S::ActionsNavHome, S::DescribeNavHome, &[], |a, now| a.go_known(KnownFolder::Home, now)).on_unix(&[alt(Key::Home)]),
     Action::new("nav.home_page", G::Flit, S::ActionsNavHomePage, S::DescribeNavHomePage, &[], |a, now| a.go_home_page(false, now)),
     Action::new("nav.computer", G::Flit, S::ActionsNavComputer, S::DescribeNavComputer, &[], |a, now| a.navigate(Location::computer(), now)),
@@ -526,6 +533,9 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tags.new", G::Flit, S::ActionsTagsNew, S::DescribeTagsNew, &[], |a, _| a.new_tag(true)),
     Action::new("tags.remove", G::Flit, S::ActionsTagsRemove, S::DescribeTagsRemove, &[], |a, _| a.remove_tags()),
     Action::new("tags.manage", G::Flit, S::ActionsTagsManage, S::DescribeTagsManage, &[], |a, _| a.open_tag_pick(TagPick::Manage, "")),
+    Action::new("tags.quick", G::Flit, S::ActionsTagsQuick, S::DescribeTagsQuick, &[ctrl_shift(c('G'))], |a, _| a.toggle_quick_tags()),
+    Action::new("filter.save", G::Flit, S::ActionsFilterSave, S::DescribeFilterSave, &[], |a, _| a.save_current_filter()),
+    Action::new("filter.saved", G::Flit, S::ActionsFilterSaved, S::DescribeFilterSaved, &[], |a, _| a.open_saved_filters()),
     Action::new("tags.open_all", G::Flit, S::ActionsTagsOpenAll, S::DescribeTagsOpenAll, &[], |a, _| a.open_tag_pick(TagPick::OpenAll, "")),
     Action::new("tags.settings", G::Flit, S::ActionsTagsSettings, S::DescribeTagsSettings, &[], |a, _| a.open_settings(Some(Page::Tags))),
     Action::new("settings.export", G::Flit, S::ActionsSettingsExport, S::DescribeSettingsExport, &[], |a, _| a.ask_export_settings()),
@@ -676,14 +686,24 @@ impl App {
         let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.supports(ACTIONS[i].id)) else {
             return self.focus == super::Focus::List && self.nav.palette.is_none() && !self.jobs.modal() && self.user_shortcut(key, mods);
         };
-        if let Some(run) = ACTIONS[i].run {
-            run(self, now);
+        let id = ACTIONS[i].id;
+        if self.mru_tabs && key == Key::Tab && mods.ctrl && !mods.alt
+            && matches!((id, mods.shift), ("tab.next", false) | ("tab.previous", true))
+        {
+            self.cycle_recent_tabs(mods.shift);
+        } else {
+            self.invoke_action(i, now);
         }
         true
     }
 
     pub fn run_action(&mut self, id: &str, now: Instant) -> bool {
-        let Some(run) = ACTIONS.iter().find(|a| a.id == id && self.supports(id)).and_then(|a| a.run) else { return false };
+        index(id).filter(|_| self.supports(id)).is_some_and(|i| self.invoke_action(i, now))
+    }
+
+    pub(super) fn invoke_action(&mut self, i: usize, now: Instant) -> bool {
+        let action = &ACTIONS[i];
+        let Some(run) = action.run else { return false };
         self.dirty = true;
         run(self, now);
         true
@@ -718,13 +738,17 @@ impl App {
             _ if id == "home.clear_recent" => true,
             _ if id == "layout.load" => !self.opts.layouts.is_empty(),
             _ if id.starts_with("tab.select_") => id == "tab.select_last" || id.trim_start_matches("tab.select_").parse::<usize>().is_ok_and(|n| n <= self.tabs.len()),
+            "filter" if id == "filter.save" => !no_files && self.tab().filter.as_ref().is_some_and(|f| !f.text().trim().is_empty()),
+            "filter" => !no_files,
             "bin" => bin,
             "home" => home,
             "library" => library,
             "panel" => self.panel_available(id),
+            "tags" if id == "tags.quick" => self.quick_tags || (self.taggable_here() && !self.tag_defs().is_empty() && !self.selected_items().is_empty()),
             "inspector" => self.inspector_available(id),
-            "search" if id == "search.group_folder" => self.search.active,
+            "search" if matches!(id, "search.group_folder" | "search.folders" | "search.within_results" | "search.facets") => self.search.active,
             "search" if id == "search.folder" => !no_files,
+            "search" if id == "search.similar" => !no_files && self.similar_item().is_some(),
             "search" if id == "search.clear_history" => !self.search_history().is_empty(),
             "file" | "archive" => !no_files,
             "view" | "select" | "item" | "list" => !home,

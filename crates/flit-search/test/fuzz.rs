@@ -39,7 +39,7 @@ proptest! {
     #[test]
     fn query_messages_round_trip(gen in any::<u64>(), text in any::<String>(), from in any::<u64>(), to in any::<u64>()) {
         let sort = Sort { key: SortKey::Path, descending: true };
-        for msg in [Message::Query { gen, text: text.clone(), sort }, Message::GetRows { gen, from, to }] {
+        for msg in [Message::Query { gen, text: text.clone(), conditions: Vec::new(), sort, paths: Default::default() }, Message::GetRows { gen, from, to }] {
             let mut out = Vec::new();
             encode(&msg, &mut out).unwrap();
             let back: Message = read_frame_limited(&mut out.as_slice(), &mut Vec::new(), out.len()).unwrap();

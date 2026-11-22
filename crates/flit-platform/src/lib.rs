@@ -215,6 +215,8 @@ pub trait Window {
     fn share(&self, _paths: Vec<FsPath>) {}
     fn set_volume_label(&self, _drive: FsPath, _label: String) {}
     fn shell_pick(&self, _cmd: Option<u32>) {}
+    fn palette_shell(&self, _ticket: u64, _menu: ShellMenu) {}
+    fn palette_shell_pick(&self, _ticket: u64, _command: Option<u32>) {}
     fn shell_prefetch(&self, _menu: Option<ShellMenu>) {}
     fn shell_warm(&self, _menus: Vec<ShellMenu>) {}
 }

@@ -20,6 +20,8 @@ invalid_rows = "Індекс надіслав недійсні рядки: {erro
 unavailable = "Пошук недоступний: {error}"
 cannot_start = "Не вдається почати пошук: {error}"
 shell = "Windows Search: {error}"
+syntax_position = "Помилка запиту в позиції {position}"
+timestamps_need_folder = "Дати створення і доступу доступні в пошуку за текою."
 
 [column]
 folder = "Папка"
@@ -40,3 +42,19 @@ default = "індекс"
 ready = ["{label} {n} файл", "{label} {n} файли", "{label} {n} файлів"]
 scanning = ["{label} індексування {percent}% ({n} файл)", "{label} індексування {percent}% ({n} файли)", "{label} індексування {percent}% ({n} файлів)"]
 error = "{label} помилка: {error}"
+
+[exclude]
+action = "Виключити з пошуку"
+
+[explore]
+folders = "Теки"
+within = "Шукати в поточних результатах"
+folders_help = "Показує теки й кількість результатів у них."
+within_help = "Додає умову до поточних результатів."
+similar = "Знайти схожі"
+similar_help = "Шукає за типом, днем зміни, розміром і тегами вибраного файлу."
+facets = "Фасети"
+facets_help = "Показує фільтри й гістограму дат зміни."
+year = "Рік"
+no_extension = "Без розширення"
+all = "Усі"

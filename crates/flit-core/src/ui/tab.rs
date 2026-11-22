@@ -93,12 +93,14 @@ pub struct Tab {
     pub(super) hidden_types: FxHashSet<u64>,
     pub(super) retain_filter: bool,
     pub(super) sizing: (u64, FxHashSet<u32>),
+    pub(super) last_used: u64,
 }
 
 impl Tab {
     pub(super) fn new(id: TabId, at: Location, view_spec: ViewSpec) -> Self {
         Self {
             id,
+            last_used: 0,
             view_loc: at.clone(),
             trail: at.clone(),
             ghosts: Vec::new(),
@@ -235,7 +237,7 @@ impl Tab {
         }
     }
 
-    pub(super) fn on_snapshot(&mut self, snap: Arc<DirSnapshot>) -> bool {
+    pub(super) fn on_snapshot(&mut self, snap: Arc<DirSnapshot>, clock: crate::query_attrs::Clock, tags: &[crate::tags::Tag]) -> bool {
         if snap.gen != self.gen {
             return false;
         }
@@ -263,7 +265,7 @@ impl Tab {
                 self.view_loc = self.location().clone();
                 self.scroll = 0.0;
                 self.scroll_target = 0.0;
-                self.refilter_view();
+                self.refilter_view(clock, tags);
                 self.tree.loaded.clear();
                 self.apply_shape();
             }

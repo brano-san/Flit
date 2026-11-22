@@ -20,6 +20,8 @@ invalid_rows = "El índice envió filas no válidas: {error}"
 unavailable = "La búsqueda no está disponible: {error}"
 cannot_start = "No se puede iniciar la búsqueda: {error}"
 shell = "Windows Search: {error}"
+syntax_position = "Consulta de búsqueda no válida en la posición {position}"
+timestamps_need_folder = "Las fechas de creación y acceso están disponibles en la búsqueda de carpetas."
 
 [column]
 folder = "Carpeta"
@@ -40,3 +42,19 @@ default = "índice"
 ready = ["{label} {n} archivo", "{label} {n} de archivos", "{label} {n} archivos"]
 scanning = ["{label} indexando {percent}% ({n} archivo)", "{label} indexando {percent}% ({n} de archivos)", "{label} indexando {percent}% ({n} archivos)"]
 error = "{label} error: {error}"
+
+[exclude]
+action = "Excluir de la búsqueda"
+
+[explore]
+folders = "Carpetas"
+within = "Buscar en los resultados"
+folders_help = "Muestra las carpetas y el número de resultados."
+within_help = "Acota el conjunto de resultados actual."
+similar = "Buscar similares"
+similar_help = "Busca por tipo, fecha de modificación, tamaño y etiquetas del archivo seleccionado."
+facets = "Facetas"
+facets_help = "Muestra filtros y un histograma de fechas de modificación."
+year = "Año"
+no_extension = "Sin extensión"
+all = "Todos"

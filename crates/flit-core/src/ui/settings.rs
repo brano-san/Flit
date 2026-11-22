@@ -438,6 +438,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.sizes_network", Page::Data, S::OptionsTitleSizesNetwork, S::OptionsHelpSizesNetwork, |a| a.opts.sizes_network, |a, on| a.set_sizes_allowed(2, on)),
     toggle("files.git_integration", Page::Data, S::GitCloneIntegration, S::GitCloneIntegrationHelp, |a| a.prefs.git_integration, |a, on| a.set_git_integration(on)),
     toggle("advanced.indexing", Page::Data, S::SettingsTitleAdvancedIndexing, S::SettingsHelpAdvancedIndexing, |a| a.indexing, |a, on| a.set_indexing(on)),
+    Setting { id: "advanced.search_exclusions", page: Page::Data, title: S::SettingsTitleAdvancedSearchExclusions, help: S::SettingsHelpAdvancedSearchExclusions, kind: Kind::Paths(|a| a.search_exclusions.clone(), |a, paths| a.set_search_exclusions(paths)) },
     toggle("input.act_on_press", Page::Input, S::OptionsTitleActOnPress, S::OptionsHelpActOnPress, |a| a.opts.act_on_press, |a, on| a.opts.act_on_press = on),
     toggle(CHECKBOXES, Page::Input, S::OptionsTitleSelectionBoxes, S::OptionsHelpSelectionBoxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
     toggle("input.single_click", Page::Input, S::OptionsTitleSingleClick, S::OptionsHelpSingleClick, |a| a.single_click_files == ClickOpen::Always && a.single_click_folders == ClickOpen::Always, |a, on| {
@@ -463,6 +464,8 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.select_previous", Page::Input, S::SettingsTitleFilesSelectPrevious, S::SettingsHelpFilesSelectPrevious, |a| a.select_previous, |a, on| a.select_previous = on),
     toggle("general.smooth_scroll", Page::Input, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::Input, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
+    toggle("general.mru_tabs", Page::Input, S::SettingsTitleGeneralMruTabs, S::SettingsHelpGeneralMruTabs, |a| a.mru_tabs, |a, on| { a.finish_tab_cycle(); a.mru_tabs = on; }),
+    Setting { id: "files.saved_filters", page: Page::Input, title: S::ActionsFilterSaved, help: S::DescribeFilterSaved, kind: Kind::Strings(|a| a.saved_filters.clone(), |a, v| a.set_saved_filters(v)) },
     choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.opts.inspector_at), |a, i| a.opts.inspector_at = INSPECTORS[i]),
     choice("windows.svg_background", Page::Windows, S::PreviewSvgBackground, S::PreviewSvgBackgroundHelp, SVG_BACKGROUNDS, |a| a.opts.svg_background as usize, |a, i| a.opts.svg_background = crate::preview::SvgBackground::ALL[i]),
     choice("general.startup", Page::Windows, S::OptionsTitleLoadOnStartup, S::OptionsHelpLoadOnStartup, STARTUP, |a| match a.startup {

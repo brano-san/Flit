@@ -91,7 +91,8 @@ fn every_toggle_and_choice_reads_back_what_was_set() {
                 assert!(!s.set(&mut a, Value::Number(max + 1)));
             }
             Kind::Paths(..) => {
-                let pages = vec![Location::home_page(), Location::parse(r"D:\Projects").unwrap()];
+                let home = if s.id == "advanced.search_exclusions" { Location::parse(r"D:\Cache").unwrap() } else { Location::home_page() };
+                let pages = vec![home, Location::parse(r"D:\Projects").unwrap()];
                 assert!(s.set(&mut a, Value::Paths(pages.clone())));
                 assert_eq!(s.get(&a), Value::Paths(pages));
             }

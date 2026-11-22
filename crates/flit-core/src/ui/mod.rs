@@ -75,6 +75,7 @@ mod pointer;
 mod touch;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, TemplateNames, SHELL_VERBS};
+pub use palette::CommandUsage;
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
 pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, QuickPrefs, SavedServer, Section};
 pub use home::{Recent, Widget};
@@ -457,6 +458,8 @@ pub enum Effect {
     SetVolumeLabel { drive: FsPath, label: String },
     Git(crate::git::GitRequest),
     ShellPick(Option<u32>),
+    PaletteShell { ticket: u64, menu: ShellMenu },
+    PaletteShellPick { ticket: u64, command: Option<u32> },
     Layout(LayoutCmd),
     Update(crate::update::UpdateRequest),
     NetworkDiscovery { tab: TabId, gen: u64 },
@@ -693,6 +696,9 @@ pub struct App {
     pub menu_hidden: Vec<&'static str>,
     git_branches: Vec<crate::git::Branch>,
     pub tab_wheel_reversed: bool,
+    pub mru_tabs: bool,
+    command_usage: Arc<std::sync::Mutex<CommandUsage>>,
+    palette_shell_id: u64,
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
     pub double_click_up: bool,
@@ -754,6 +760,11 @@ pub struct App {
 
     tabs: Vec<Tab>,
     cur: usize,
+    tab_use: u64,
+    tab_cycle: bool,
+    quick_tags: bool,
+    saved_filters: Vec<String>,
+    search_exclusions: Vec<Location>,
     next_tab: TabId,
     next_gen: u64,
     timer_at: Option<Instant>,
@@ -840,6 +851,9 @@ impl App {
             menu_hidden: Vec::new(),
             git_branches: Vec::new(),
             tab_wheel_reversed: false,
+            mru_tabs: true,
+            command_usage: Arc::default(),
+            palette_shell_id: 0,
             tab_actions_button: true,
             folders_in_new_tab: false,
             double_click_up: true,
@@ -903,6 +917,11 @@ impl App {
             active: true,
             tabs: Vec::new(),
             cur: 0,
+            tab_use: 0,
+            tab_cycle: false,
+            quick_tags: false,
+            saved_filters: Vec::new(),
+            search_exclusions: Vec::new(),
             next_tab: tab_base + 1,
             next_gen: 0,
             timer_at: None,
@@ -1270,6 +1289,40 @@ impl App {
     }
 
     fn after_tab_change(&mut self) {
+        self.tab_cycle = false;
+        self.record_tab_use();
+        self.show_selected_tab();
+    }
+
+    fn record_tab_use(&mut self) {
+        self.tab_use += 1;
+        self.tab_mut().last_used = self.tab_use;
+    }
+
+    fn finish_tab_cycle(&mut self) {
+        if std::mem::take(&mut self.tab_cycle) {
+            self.record_tab_use();
+        }
+    }
+
+    fn cycle_recent_tabs(&mut self, backward: bool) {
+        if self.tabs.len() < 2 {
+            return;
+        }
+        if !self.tab_cycle {
+            self.record_tab_use();
+            self.tab_cycle = true;
+        }
+        let mut order: Vec<usize> = (0..self.tabs.len()).collect();
+        order.sort_by_key(|&i| (std::cmp::Reverse(self.tabs[i].last_used), i));
+        let at = order.iter().position(|&i| i == self.cur).unwrap_or(0);
+        let step = if backward { order.len() - 1 } else { 1 };
+        self.cur = order[(at + step) % order.len()];
+        self.show_selected_tab();
+    }
+
+    fn show_selected_tab(&mut self) {
+        self.quick_tags = false;
         self.focus = Focus::List;
         self.wake_tab();
         self.effects.push(Effect::Title(self.window_title()));
@@ -1456,7 +1509,9 @@ impl App {
         if loaded {
             self.check_discovery(k, &snap);
         }
-        let resort = self.tabs[k].on_snapshot(snap);
+        let clock = crate::query_attrs::Clock::system(self.utc_offset_min);
+        let tags = self.tags().clone();
+        let resort = self.tabs[k].on_snapshot(snap, clock, &tags.defs);
         if current {
             self.apply_pick_filter(k);
         }
@@ -1942,6 +1997,16 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if self.tab_cycle && match ev {
+            Event::Key { key, mods, pressed } => !mods.ctrl || (*pressed && *key != Key::Tab && *key != Key::Other),
+            Event::Focus(false) | Event::MouseDown { .. } | Event::Wheel { .. } => true,
+            _ => false,
+        } {
+            self.finish_tab_cycle();
+        }
+        if matches!(ev, Event::Focus(false)) {
+            self.quick_tags = false;
+        }
         if self.picker_event(ev, now) {
             return;
         }
@@ -2083,6 +2148,7 @@ impl App {
             Event::ShellError(message) => self.status(message.as_str()),
             Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::ShowMenu { .. } | Event::ShellItems { .. } => {}
+            Event::PaletteShell { ticket, items, shell } => self.receive_palette_shell(*ticket, items, shell),
             Event::DevicesChanged => {
                 self.effects.push(Effect::RefreshPlaces);
                 self.each_pane(|a, k| {
@@ -2530,6 +2596,9 @@ impl App {
         if self.field_menu_key(key, m) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
             return;
         }
+        if self.nav.palette.is_none() && self.focus == Focus::List && self.quick_tag_key(key, m) {
+            return;
+        }
         if self.focus_key(key, m, now) {
             return;
         }
@@ -2555,6 +2624,9 @@ impl App {
             return;
         }
         if self.nav_insert(c.encode_utf8(&mut [0; 4])) {
+            return;
+        }
+        if self.quick_tags && self.focus == Focus::List && ('1'..='9').contains(&c) && self.mods == Mods::default() {
             return;
         }
         if self.mods.ctrl != self.mods.alt {

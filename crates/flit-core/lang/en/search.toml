@@ -20,6 +20,8 @@ invalid_rows = "The index sent invalid rows: {error}"
 unavailable = "Search is unavailable: {error}"
 cannot_start = "Cannot start the search: {error}"
 shell = "Windows Search: {error}"
+syntax_position = "Invalid search query at position {position}"
+timestamps_need_folder = "Creation and access times are available in folder search."
 
 [column]
 folder = "Folder"
@@ -40,3 +42,19 @@ default = "index"
 ready = ["{label} {n} file", "{label} {n} files"]
 scanning = ["{label} indexing {percent}% ({n} file)", "{label} indexing {percent}% ({n} files)"]
 error = "{label} error: {error}"
+
+[exclude]
+action = "Exclude from search"
+
+[explore]
+folders = "Folders"
+within = "Search within results"
+folders_help = "Show folders and their result counts."
+within_help = "Refine the current set of search results."
+similar = "Find similar"
+similar_help = "Search by the selected file’s type, modification date, size and tags."
+facets = "Facets"
+facets_help = "Show filters and a histogram of modification dates."
+year = "Year"
+no_extension = "No extension"
+all = "All"

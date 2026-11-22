@@ -20,6 +20,8 @@ invalid_rows = "L’index a envoyé des lignes non valides : {error}"
 unavailable = "La recherche n’est pas disponible : {error}"
 cannot_start = "Impossible de lancer la recherche : {error}"
 shell = "Windows Search : {error}"
+syntax_position = "Requête de recherche invalide à la position {position}"
+timestamps_need_folder = "Les dates de création et d’accès sont disponibles dans la recherche par dossier."
 
 [column]
 folder = "Dossier"
@@ -40,3 +42,19 @@ default = "index"
 ready = ["{label} {n} fichier", "{label} {n} de fichiers", "{label} {n} fichiers"]
 scanning = ["{label} indexation {percent} % ({n} fichier)", "{label} indexation {percent} % ({n} de fichiers)", "{label} indexation {percent} % ({n} fichiers)"]
 error = "{label} erreur : {error}"
+
+[exclude]
+action = "Exclure de la recherche"
+
+[explore]
+folders = "Dossiers"
+within = "Chercher dans les résultats"
+folders_help = "Affiche les dossiers et leur nombre de résultats."
+within_help = "Affinez les résultats de recherche actuels."
+similar = "Trouver des fichiers similaires"
+similar_help = "Recherche par type, date de modification, taille et étiquettes du fichier sélectionné."
+facets = "Facettes"
+facets_help = "Affiche les filtres et un histogramme des dates de modification."
+year = "Année"
+no_extension = "Sans extension"
+all = "Tous"

@@ -118,6 +118,7 @@ pub(super) enum Cmd {
     Action(&'static str),
     NewItem(usize),
     Search { action: &'static str, location: crate::location::Location, folder: bool },
+    SearchFacet { category: usize, expression: Option<String> },
     Go(usize),
     Jump(isize),
     Place(super::sidebar::PlaceCmd),
@@ -412,6 +413,7 @@ impl App {
                         ("copy", S::MenuCopy, ""),
                         ("path", if a.caps.unix_paths { S::MenuCopyPath } else { S::MenuCopyAsPath }, "Ctrl+Shift+C"),
                         ("quoted", S::ActionsItemCopyQuotedPath, ""),
+                        ("exclude", S::SearchExcludeAction, ""),
                     ] {
                         m.command(Cmd::Search { action, location: location.clone(), folder }, label.t(), keys.into(), false);
                     }
@@ -419,6 +421,9 @@ impl App {
                 m.separator();
             }
             m.check("search.group_folder", S::MenuGroupByFolder.t(), a.search.group_folder);
+            m.action("search.folders", S::SearchExploreFolders.t());
+            m.action("search.within_results", S::SearchExploreWithin.t());
+            m.action("search.facets", S::SearchExploreFacets.t());
         })
     }
 
@@ -689,6 +694,7 @@ impl App {
                 self.archive_menu(m);
             }
             if count == 1 && folders == 0 {
+                m.action("search.similar", S::SearchExploreSimilar.t());
                 m.action("file.hashes", S::MenuHashes.t());
             }
         }
@@ -791,6 +797,7 @@ impl App {
             }
             Some(Cmd::NewItem(n)) => self.new_item(n),
             Some(Cmd::Search { action, location, folder }) => self.search_command(action, location, folder, now),
+            Some(Cmd::SearchFacet { category, expression }) => self.choose_search_facet(category, expression, now),
             Some(Cmd::Go(k)) => self.go_target(k, now),
             Some(Cmd::Jump(n)) => self.jump_history(n, now),
             Some(Cmd::Place(c)) => self.place_command(c, now),

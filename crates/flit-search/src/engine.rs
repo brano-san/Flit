@@ -1,7 +1,7 @@
-use crate::index::{Order, VolumeIndex, KEPT_ATTRS, MAX_DEPTH, NONE, ROOT};
+use crate::index::{lowercase, Order, VolumeIndex, KEPT_ATTRS, MAX_DEPTH, NONE, ROOT};
 use crate::proto::{Sort, SortKey};
 use crate::query::{glob, Filter, Pattern, Query, Scope};
-use flit_core::{attr, Meta};
+use flit_core::{attr, query_attrs::SearchPaths, FsPath, Meta};
 use flit_proto::listing::EntryBatch;
 use memchr::memmem::Finder;
 use rayon::prelude::*;
@@ -59,6 +59,176 @@ fn has_ext(name: &[u8], list: &[Vec<u8>]) -> bool {
 
 fn columnar(f: &Filter) -> bool {
     matches!(f, Filter::Size(..) | Filter::Modified(..))
+}
+
+struct FilterMemo<'a> {
+    paths: &'a [Vec<AtomicU8>],
+    scope: &'a PathScope,
+    children: &'a [u32],
+    depth: bool,
+}
+
+enum Parent {
+    Any,
+    Root,
+    Exact(Vec<u32>),
+}
+
+struct PathScope {
+    parent: Parent,
+    under: Option<Ancestors>,
+    excluded: Ancestors,
+}
+
+#[derive(Default)]
+struct Ancestors(Vec<AtomicU8>);
+
+fn same_path(path: &FsPath, left: &[u8], right: &[u8]) -> bool {
+    if path.case_sensitive() { left == right } else { left.eq_ignore_ascii_case(right) }
+}
+
+fn on_volume(v: &VolumeIndex, path: &FsPath) -> bool {
+    let root = v.root.strip_suffix(&[v.sep]).unwrap_or(&v.root);
+    path.sep() == v.sep && path.as_bytes().get(..root.len()).is_some_and(|prefix| {
+        same_path(path, root, prefix) && path.as_bytes().get(root.len()).is_none_or(|&b| b == v.sep)
+    })
+}
+
+fn at_volume_root(v: &VolumeIndex, path: &FsPath) -> bool {
+    let root = v.root.strip_suffix(&[v.sep]).unwrap_or(&v.root);
+    let bytes = path.as_bytes();
+    path.sep() == v.sep && same_path(path, root, bytes.strip_suffix(&[v.sep]).unwrap_or(bytes))
+}
+
+fn path_ids(v: &VolumeIndex, path: &FsPath, cancel: Cancel<'_>) -> Option<Vec<u32>> {
+    let name = lowercase(path.file_name());
+    let perm = &v.perms[Order::Name as usize];
+    let start = perm.partition_point(|&i| v.lower_name(i) < name.as_slice());
+    let root = v.root.strip_suffix(&[v.sep]).unwrap_or(&v.root);
+    let components: Vec<_> = path.as_bytes()[root.len()..].rsplit(|&b| b == v.sep).filter(|c| !c.is_empty()).collect();
+    let matches = |mut i| {
+        for component in &components {
+            if at_root(v, i) || !same_path(path, v.name(i), component) {
+                return false;
+            }
+            i = v.parents[i as usize];
+        }
+        at_root(v, i)
+    };
+    let mut ids = Vec::new();
+    for (n, &i) in perm[start..].iter().take_while(|&&i| v.lower_name(i) == name).enumerate() {
+        if n.is_multiple_of(MIN_CHUNK) && cancel() {
+            return None;
+        }
+        if matches(i) {
+            ids.push(i);
+        }
+    }
+    Some(ids)
+}
+
+impl PathScope {
+    fn resolve(v: &VolumeIndex, paths: &SearchPaths, cancel: Cancel<'_>) -> Option<Self> {
+        let skipped = || Self { parent: Parent::Exact(Vec::new()), under: None, excluded: Ancestors::default() };
+        if paths.excludes_branch(&v.root) {
+            return Some(skipped());
+        }
+        let parent = match &paths.parent {
+            None => Parent::Any,
+            Some(path) if !on_volume(v, path) => return Some(skipped()),
+            Some(path) if at_volume_root(v, path) => Parent::Root,
+            Some(path) => Parent::Exact(path_ids(v, path, cancel)?),
+        };
+        if matches!(&parent, Parent::Exact(ids) if ids.is_empty()) {
+            return Some(skipped());
+        }
+        let under = if let Some(path) = &paths.under {
+            if at_volume_root(v, path) || FsPath::parse_exact(&v.root).is_some_and(|root| root.is_inside(path)) {
+                None
+            } else {
+                if !on_volume(v, path) {
+                    return Some(skipped());
+                }
+                let ids = path_ids(v, path, cancel)?;
+                if ids.is_empty() {
+                    return Some(skipped());
+                }
+                Some(Ancestors::new(v.len(), ids))
+            }
+        } else {
+            None
+        };
+        let mut ids = Vec::new();
+        for path in paths.exclude.iter().filter(|path| on_volume(v, path)) {
+            ids.extend(path_ids(v, path, cancel)?);
+        }
+        Some(Self { parent, under, excluded: Ancestors::new(v.len(), ids) })
+    }
+
+    fn skips_volume(&self) -> bool {
+        matches!(&self.parent, Parent::Exact(ids) if ids.is_empty())
+    }
+
+    fn is_empty(&self) -> bool {
+        matches!(self.parent, Parent::Any) && self.under.is_none() && self.excluded.0.is_empty()
+    }
+
+    fn rejects(&self, v: &VolumeIndex, i: u32) -> bool {
+        let parent = v.parents[i as usize];
+        match &self.parent {
+            Parent::Any => {}
+            Parent::Root if at_root(v, parent) => {}
+            Parent::Exact(ids) if ids.contains(&parent) => {}
+            _ => return true,
+        }
+        self.under.as_ref().is_some_and(|scope| !scope.contains(v, parent)) || self.excluded.contains(v, i)
+    }
+}
+
+fn at_root(v: &VolumeIndex, i: u32) -> bool {
+    i == NONE || v.attrs[i as usize] & ROOT != 0
+}
+
+impl Ancestors {
+    fn new(len: usize, ids: Vec<u32>) -> Self {
+        if ids.is_empty() {
+            return Self::default();
+        }
+        let state: Vec<_> = (0..len).map(|_| AtomicU8::new(UNKNOWN)).collect();
+        for i in ids {
+            state[i as usize].store(KNOWN | HIT, Relaxed);
+        }
+        Self(state)
+    }
+
+    fn contains(&self, v: &VolumeIndex, i: u32) -> bool {
+        if self.0.is_empty() {
+            return false;
+        }
+        let mut ancestor = i;
+        let mut state = UNKNOWN;
+        for _ in 0..MAX_DEPTH {
+            if at_root(v, ancestor) {
+                state = KNOWN;
+                break;
+            }
+            state = self.0[ancestor as usize].load(Relaxed);
+            if state != UNKNOWN {
+                break;
+            }
+            ancestor = v.parents[ancestor as usize];
+        }
+        if state != UNKNOWN {
+            let mut cur = i;
+            while cur != ancestor {
+                if v.is_dir(cur) {
+                    self.0[cur as usize].store(state, Relaxed);
+                }
+                cur = v.parents[cur as usize];
+            }
+        }
+        state & HIT != 0
+    }
 }
 
 struct Prepared<'q> {
@@ -167,7 +337,7 @@ impl<'q> Prepared<'q> {
             .collect()
     }
 
-    fn filter_range(&self, v: &VolumeIndex, a: usize, b: usize, memo: &[Vec<AtomicU8>], sc: &mut Scratch) -> Vec<u32> {
+    fn filter_range(&self, v: &VolumeIndex, a: usize, b: usize, memo: &FilterMemo<'_>, sc: &mut Scratch) -> Vec<u32> {
         let attrs = &v.attrs[a..b];
         sc.keep.clear();
         sc.keep.extend(attrs.iter().map(|&x| x & (attr::DELETED | ROOT) == 0));
@@ -186,7 +356,7 @@ impl<'q> Prepared<'q> {
                 _ => {}
             }
         }
-        let rest = self.query.terms.iter().any(|t| !columnar(&t.filter));
+        let rest = !memo.scope.is_empty() || self.query.terms.iter().any(|t| !columnar(&t.filter));
         let mut out = vec![0u32; b - a];
         let mut n = 0;
         if rest {
@@ -209,7 +379,10 @@ impl<'q> Prepared<'q> {
         out
     }
 
-    fn matches(&self, v: &VolumeIndex, i: u32, skip: Option<usize>, columns_done: bool, memo: &[Vec<AtomicU8>], sc: &mut Scratch) -> bool {
+    fn matches(&self, v: &VolumeIndex, i: u32, skip: Option<usize>, columns_done: bool, memo: &FilterMemo<'_>, sc: &mut Scratch) -> bool {
+        if !memo.scope.is_empty() && memo.scope.rejects(v, i) {
+            return false;
+        }
         let (mut lower_built, mut path_built) = (false, false);
         let k_ = i as usize;
         for (k, t) in self.query.terms.iter().enumerate() {
@@ -218,7 +391,7 @@ impl<'q> Prepared<'q> {
             }
             let ok = match &t.filter {
                 Filter::Match(Scope::Name, p) => self.pattern(k, p, v.lower_name(i), v.name(i)),
-                Filter::Match(Scope::Path, Pattern::Text(_)) => self.path_state(k, v, i, &memo[k], false, sc) & HIT != 0,
+                Filter::Match(Scope::Path, Pattern::Text(_)) => self.path_state(k, v, i, &memo.paths[k], false, sc) & HIT != 0,
                 Filter::Match(Scope::Path, p) => {
                     if matches!(p, Pattern::Regex(_)) {
                         if !path_built {
@@ -237,6 +410,28 @@ impl<'q> Prepared<'q> {
                 Filter::Size(lo, hi) => !v.is_dir(i) && (*lo..*hi).contains(&v.sizes[k_]),
                 Filter::Modified(lo, hi) => (*lo..*hi).contains(&v.modified[k_]),
                 Filter::Tag(_) => false,
+                Filter::Directory(dir) => v.is_dir(i) == *dir,
+                Filter::Attributes(mask) => v.attrs[k_] & mask == *mask,
+                Filter::Children(lo, hi) => v.is_dir(i) && memo.children.get(k_).is_some_and(|&n| (*lo..*hi).contains(&u64::from(n))),
+                Filter::Depth(lo, hi) => (*lo..*hi).contains(&u64::from(depth(v, i))),
+                Filter::Created(..) | Filter::Accessed(..) => false,
+                Filter::Any(queries) => {
+                    if queries.iter().any(Query::needs_path) {
+                        if !lower_built {
+                            sc.lower_path.clear();
+                            v.path_into(i, true, &mut sc.chain, &mut sc.lower_path);
+                            lower_built = true;
+                        }
+                        if !path_built {
+                            sc.path.clear();
+                            v.path_into(i, false, &mut sc.chain, &mut sc.path);
+                            path_built = true;
+                        }
+                    }
+                    let plain = crate::query::Plain { name: v.name(i), lower_name: v.lower_name(i), path: &sc.path, lower_path: &sc.lower_path, size: v.sizes[k_], modified: v.modified[k_], dir: v.is_dir(i) };
+                    let facts = crate::query::Facts { attrs: v.attrs[k_], children: memo.children.get(k_).copied(), depth: memo.depth.then(|| depth(v, i)), ..Default::default() };
+                    queries.iter().any(|q| q.matches_with(&plain, facts, &|_| false))
+                }
             };
             if ok == t.negate {
                 return false;
@@ -278,11 +473,22 @@ fn mark(part: Vec<u32>, rank: &[u32], bits: &[AtomicU64]) -> (Vec<u32>, u32, u32
     (part, lo, hi)
 }
 
-fn scan(v: &VolumeIndex, p: &Prepared<'_>, rank: &[u32], access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<Found> {
+fn depth(v: &VolumeIndex, mut i: u32) -> u32 {
+    let mut n = 0;
+    while i != NONE && v.attrs[i as usize] & ROOT == 0 && n < MAX_DEPTH as u32 {
+        i = v.parents[i as usize];
+        n += 1;
+    }
+    n
+}
+
+fn scan(v: &VolumeIndex, p: &Prepared<'_>, scope: &PathScope, rank: &[u32], access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<Found> {
     let bits: Vec<AtomicU64> = (0..v.len().div_ceil(64)).map(|_| AtomicU64::new(0)).collect();
     let visible = |i: u32| access.is_none_or(|a| a.can_list(v, v.parents[i as usize]));
-    let memo = p.path_memo(v);
-    let memo = memo.as_slice();
+    let paths = p.path_memo(v);
+    let children = if p.query.uses(&|f| matches!(f, Filter::Children(..))) { Some(v.child_counts(cancel)?) } else { None };
+    let children = children.as_deref().map_or(&[][..], Vec::as_slice);
+    let memo = &FilterMemo { paths: &paths, scope, children, depth: p.query.uses(&|f| matches!(f, Filter::Depth(..))) };
     let parts: Vec<Option<(Vec<u32>, u32, u32)>> = match &p.driver {
         Some((k, finder, exact)) => {
             let skip = exact.then_some(*k);
@@ -443,12 +649,31 @@ impl Engine {
         let mut total = 0u64;
         let p = Prepared::new(query);
         for (vol, v) in self.volumes.iter().enumerate() {
+            let scope = PathScope::resolve(v, &query.paths, cancel)?;
+            if scope.skips_volume() {
+                continue;
+            }
             let (kind, pos) = if query.terms.is_empty() && access.is_none() {
-                total += v.perms[order as usize].len() as u64;
-                (Kind::Perm(None), 0)
+                let perm = &v.perms[order as usize];
+                if scope.is_empty() {
+                    total += perm.len() as u64;
+                    (Kind::Perm(None), 0)
+                } else {
+                    let mut bits = vec![0; v.len().div_ceil(64)];
+                    for (n, &i) in perm.iter().enumerate() {
+                        if n.is_multiple_of(MIN_CHUNK) && cancel() {
+                            return None;
+                        }
+                        if !scope.rejects(v, i) {
+                            bits[i as usize / 64] |= 1 << (i % 64);
+                            total += 1;
+                        }
+                    }
+                    (Kind::Perm(Some(bits)), 0)
+                }
             } else {
                 let rank = &v.ranks[order as usize];
-                let Found { mut hits, bits, ranks } = scan(v, &p, rank, access, cancel)?;
+                let Found { mut hits, bits, ranks } = scan(v, &p, &scope, rank, access, cancel)?;
                 total += hits.len() as u64;
                 if hits.len() <= SMALL {
                     hits.par_sort_unstable_by_key(|&i| rank[i as usize]);
@@ -495,6 +720,69 @@ impl Engine {
             dirs.push(dir);
         }
         (batch, dirs)
+    }
+
+    pub fn result_folders(&self, rs: &ResultSet, cancel: Cancel<'_>) -> Option<flit_core::query_attrs::FolderCounts> {
+        let mut counts = std::collections::HashMap::<(usize, u32), (u32, u64)>::new();
+        for stream in &rs.streams {
+            let v = &self.volumes[stream.vol];
+            let visit = |(at, i): (usize, u32)| {
+                if at.is_multiple_of(4096) && cancel() {
+                    return None;
+                }
+                let parent = v.parents[i as usize];
+                counts.entry((stream.vol, parent)).or_insert((i, 0)).1 += 1;
+                Some(())
+            };
+            match &stream.kind {
+                Kind::List(list) => list.iter().copied().enumerate().try_for_each(visit)?,
+                Kind::Perm(bits) => v.perms[order_of(rs.sort.key) as usize].iter().copied()
+                    .enumerate().try_for_each(|(at, i)| {
+                        if at.is_multiple_of(4096) && cancel() { return None; }
+                        if bits.as_ref().is_none_or(|b| b.get(i as usize / 64).is_some_and(|w| w & (1 << (i % 64)) != 0)) {
+                            counts.entry((stream.vol, v.parents[i as usize])).or_insert((i, 0)).1 += 1;
+                        }
+                        Some(())
+                    })?,
+            }
+        }
+        let mut chain = Vec::new();
+        let mut counts: Vec<_> = counts.into_iter().collect();
+        counts.sort_unstable_by_key(|&((vol, parent), (_, count))| (std::cmp::Reverse(count), vol, parent));
+        let folders = counts.into_iter().take(256).map(|((vol, _), (i, count))| {
+            let mut path = Vec::new();
+            self.volumes[vol].dir_into(i, &mut chain, &mut path);
+            (path, count)
+        }).collect();
+        Some(flit_core::query_attrs::finish_folder_counts(folders))
+    }
+
+    pub fn result_facets(&self, rs: &ResultSet, offset: i32, cancel: Cancel<'_>) -> Option<flit_core::query_attrs::Facets> {
+        let mut facets = flit_core::query_attrs::FacetCounts::default();
+        for stream in &rs.streams {
+            let v = &self.volumes[stream.vol];
+            let mut add = |i: u32| {
+                let k = i as usize;
+                facets.add(v.name(i), Meta { size: v.sizes[k], modified: v.modified[k], attrs: v.attrs[k], created: 0 }, offset);
+            };
+            match &stream.kind {
+                Kind::List(ids) => {
+                    for (n, &i) in ids.iter().enumerate() {
+                        if n.is_multiple_of(4096) && cancel() { return None; }
+                        add(i);
+                    }
+                }
+                Kind::Perm(bits) => {
+                    for (n, &i) in v.perms[order_of(rs.sort.key) as usize].iter().enumerate() {
+                        if n.is_multiple_of(4096) && cancel() { return None; }
+                        if bits.as_ref().is_none_or(|b| b.get(i as usize / 64).is_some_and(|w| w & (1 << (i % 64)) != 0)) {
+                            add(i);
+                        }
+                    }
+                }
+            }
+        }
+        (!cancel()).then(|| facets.finish())
     }
 
     pub fn groups(&self, rs: &mut ResultSet) -> Option<Vec<u64>> {

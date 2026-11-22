@@ -245,6 +245,7 @@ impl TagCell {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum TagRequest {
+    Toggle { items: Vec<FsPath>, name: String },
     Set { items: Vec<FsPath>, tag: usize, on: bool },
     Clear(Vec<FsPath>),
     Create { name: String, color: u32, assign: Vec<FsPath> },

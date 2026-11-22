@@ -75,6 +75,8 @@ about = "Acerca de"
 "updates.skipped" = "Versión omitida"
 "advanced.indexing" = "Indexar archivos para la búsqueda"
 "keys" = "Métodos abreviados de teclado"
+"general.mru_tabs" = "Ctrl+Tab por orden de uso reciente"
+"advanced.search_exclusions" = "Rutas excluidas de la búsqueda"
 
 [help]
 "general.language" = "El idioma de los menús, cuadros de diálogo, mensajes y fechas; los registros siguen en inglés"
@@ -150,6 +152,8 @@ about = "Acerca de"
 "advanced.indexing" = "Flit mantiene una lista de los nombres de todas las unidades para que la búsqueda encuentre archivos en cualquier lugar en milisegundos. Si se desactiva, Flit no lee las unidades en segundo plano y libera la memoria del índice; la búsqueda en la carpeta abierta (Ctrl+Shift+F) sigue funcionando leyendo esa carpeta"
 "keys" = "Métodos abreviados distintos de los predeterminados, por id de comando"
 "area_color" = "Predeterminado sigue el color de fondo; el texto sobre un color personalizado se ajusta para seguir siendo legible"
+"general.mru_tabs" = "Recorre las pestañas por su último uso con Ctrl+Tab. Desactívalo para seguir el orden de la barra."
+"advanced.search_exclusions" = "Oculta estas rutas y su contenido de los resultados."
 
 [choice]
 "language.system" = "Como en el sistema"
