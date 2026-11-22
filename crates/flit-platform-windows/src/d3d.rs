@@ -6,6 +6,7 @@ use flit_core::thumbs::THUMB_ATLAS;
 use flit_core::ui::Bitmap;
 use flit_platform::{PlatformError, RenderError, Renderer, Window};
 use std::cell::Cell;
+use std::path::Path;
 use std::rc::Rc;
 use std::thread::ThreadId;
 use windows::core::{Interface, HRESULT, PCSTR};
@@ -83,9 +84,7 @@ impl Composition {
 
 pub struct D3dRenderer {
     dev: Gpu,
-    waitable: Waitable,
-    swap: IDXGISwapChain2,
-    shown: bool,
+    present: Option<Presentation>,
     rtv: Option<ID3D11RenderTargetView>,
     instances: ID3D11Buffer,
     capacity: usize,
@@ -96,6 +95,12 @@ pub struct D3dRenderer {
     preview: Option<ID3D11ShaderResourceView>,
     backdrop: Option<ID3D11ShaderResourceView>,
     size: (u32, u32),
+}
+
+struct Presentation {
+    waitable: Waitable,
+    swap: IDXGISwapChain2,
+    shown: bool,
     sync: Rc<FrameSync>,
 }
 
@@ -243,6 +248,36 @@ fn device_lost(code: HRESULT) -> bool {
 }
 
 impl D3dRenderer {
+    fn with_target(
+        dev: &D3dDevice, size: (u32, u32), atlas_size: u32, present: Option<Presentation>, rtv: Option<ID3D11RenderTargetView>,
+    ) -> Result<Self, PlatformError> {
+        let device = &dev.gpu.device;
+        let capacity = 16 * 1024;
+        let instances = buffer(device, capacity * size_of::<Instance>(), D3D11_BIND_VERTEX_BUFFER)?;
+        let globals = buffer(device, size_of::<Globals>(), D3D11_BIND_CONSTANT_BUFFER)?;
+        let (atlas, atlas_srv) = texture(device, atlas_size)?;
+        if let Some(present) = &present {
+            present.sync.waitable.set(present.waitable.0);
+            present.sync.waited.set(false);
+        }
+        tracing::info!(warp = dev.warp, "renderer ready");
+        Ok(Self {
+            dev: dev.gpu.clone(), present, rtv, instances, capacity, globals, atlas, atlas_srv,
+            thumbs: None, preview: None, backdrop: None, size,
+        })
+    }
+
+    pub fn offscreen(dev: &D3dDevice, (w, h): (u32, u32), atlas_size: u32) -> Result<Self, PlatformError> {
+        dev.bind_to_current_thread()?;
+        let size = (w.max(1), h.max(1));
+        let target = offscreen_target(&dev.gpu.device, size)?;
+        Self::with_target(dev, size, atlas_size, None, Some(target))
+    }
+
+    pub fn render_capture(&mut self, list: &DrawList, path: &Path) -> Result<(), RenderError> {
+        self.draw(list, Some(path)).map_err(|e| self.classify(e))
+    }
+
     fn write<T>(&self, buf: &ID3D11Buffer, data: &[T]) -> Result<(), PlatformError> {
         unsafe {
             let mut m = D3D11_MAPPED_SUBRESOURCE::default();
@@ -261,14 +296,16 @@ impl D3dRenderer {
         }
     }
 
-    fn draw(&mut self, list: &DrawList) -> Result<(), PlatformError> {
+    fn draw(&mut self, list: &DrawList, capture: Option<&Path>) -> Result<(), PlatformError> {
         unsafe {
-            let waitable = self.sync.waitable.get();
-            if !self.sync.waited.replace(false) && !waitable.is_invalid() {
-                WaitForSingleObjectEx(waitable, 100, true);
+            if let Some(present) = &self.present {
+                let waitable = present.sync.waitable.get();
+                if !present.sync.waited.replace(false) && !waitable.is_invalid() {
+                    WaitForSingleObjectEx(waitable, 100, true);
+                }
             }
             if self.rtv.is_none() {
-                let back: ID3D11Texture2D = self.swap.GetBuffer(0).map_err(err)?;
+                let back: ID3D11Texture2D = self.present.as_ref().unwrap().swap.GetBuffer(0).map_err(err)?;
                 let mut rtv = None;
                 self.dev.device.CreateRenderTargetView(&back, None, Some(&mut rtv)).map_err(err)?;
                 self.rtv = rtv;
@@ -304,30 +341,24 @@ impl D3dRenderer {
             if n > 0 {
                 ctx.DrawInstanced(4, n as u32, 0, 0);
             }
-            if let Some(path) = capture_path() {
+            if let Some(path) = capture {
                 self.capture(path)?;
             }
-            self.swap.Present(1, DXGI_PRESENT(0)).ok().map_err(err)?;
-            if !self.shown {
-                if let Some(c) = self.sync.composition.borrow().as_ref() {
-                    c.show(&self.swap)?;
+            if let Some(present) = &mut self.present {
+                present.swap.Present(1, DXGI_PRESENT(0)).ok().map_err(err)?;
+                if !present.shown {
+                    if let Some(c) = present.sync.composition.borrow().as_ref() {
+                        c.show(&present.swap)?;
+                    }
+                    present.shown = true;
                 }
-                self.shown = true;
             }
             Ok(())
         }
     }
 
-    unsafe fn capture(&self, path: &std::path::Path) -> Result<(), PlatformError> {
-        static EXIT: std::sync::Once = std::sync::Once::new();
-        EXIT.call_once(|| {
-            let ms = std::env::var("FLIT_CAPTURE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(4000);
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(ms));
-                std::process::exit(0);
-            });
-        });
-        let back: ID3D11Texture2D = self.swap.GetBuffer(0).map_err(err)?;
+    unsafe fn capture(&self, path: &Path) -> Result<(), PlatformError> {
+        let back: ID3D11Texture2D = self.rtv.as_ref().unwrap().GetResource().map_err(err)?.cast().map_err(err)?;
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         back.GetDesc(&mut desc);
         desc.Usage = D3D11_USAGE_STAGING;
@@ -336,7 +367,7 @@ impl D3dRenderer {
         desc.MiscFlags = 0;
         let mut staging = None;
         self.dev.device.CreateTexture2D(&desc, None, Some(&mut staging)).map_err(err)?;
-        let Some(staging) = staging else { return Ok(()) };
+        let staging = staging.ok_or_else(|| PlatformError::new(-1, "no capture staging texture"))?;
         self.dev.ctx.CopyResource(&staging, &back);
         let mut map = D3D11_MAPPED_SUBRESOURCE::default();
         self.dev.ctx.Map(&staging, 0, D3D11_MAP_READ, 0, Some(&mut map)).map_err(err)?;
@@ -349,9 +380,41 @@ impl D3dRenderer {
         }
         self.dev.ctx.Unmap(&staging, 0);
         let tmp = path.with_extension("tmp");
-        let _ = std::fs::write(&tmp, png(w as u32, h as u32, &raw)).and_then(|_| std::fs::rename(&tmp, path));
-        Ok(())
+        std::fs::write(&tmp, png(w as u32, h as u32, &raw)).and_then(|_| std::fs::rename(&tmp, path))
+            .map_err(|error| PlatformError::new(-1, format!("{}: {error}", path.display())))
     }
+}
+
+fn offscreen_target(device: &ID3D11Device, (width, height): (u32, u32)) -> Result<ID3D11RenderTargetView, PlatformError> {
+    let desc = D3D11_TEXTURE2D_DESC {
+        Width: width,
+        Height: height,
+        MipLevels: 1,
+        ArraySize: 1,
+        Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+        Usage: D3D11_USAGE_DEFAULT,
+        BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32,
+        ..Default::default()
+    };
+    let (mut texture, mut view) = (None, None);
+    unsafe {
+        device.CreateTexture2D(&desc, None, Some(&mut texture)).map_err(err)?;
+        let texture = texture.ok_or_else(|| PlatformError::new(-1, "no offscreen texture"))?;
+        device.CreateRenderTargetView(&texture, None, Some(&mut view)).map_err(err)?;
+    }
+    view.ok_or_else(|| PlatformError::new(-1, "no offscreen render target"))
+}
+
+fn schedule_capture_exit() {
+    static EXIT: std::sync::Once = std::sync::Once::new();
+    EXIT.call_once(|| {
+        let ms = std::env::var("FLIT_CAPTURE_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(4000);
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+            std::process::exit(0);
+        });
+    });
 }
 
 pub fn capture_path() -> Option<&'static std::path::Path> {
@@ -390,7 +453,7 @@ fn png(w: u32, h: u32, raw: &[u8]) -> Vec<u8> {
     out
 }
 
-impl Drop for D3dRenderer {
+impl Drop for Presentation {
     fn drop(&mut self) {
         if self.sync.waitable.get() == self.waitable.0 {
             self.sync.waitable.set(HANDLE::default());
@@ -436,31 +499,8 @@ impl Renderer for D3dRenderer {
                 *window.sync.composition.borrow_mut() = Some(Composition::new(window.hwnd())?);
             }
 
-            let capacity = 16 * 1024;
-            let instances = buffer(device, capacity * size_of::<Instance>(), D3D11_BIND_VERTEX_BUFFER)?;
-            let globals = buffer(device, size_of::<Globals>(), D3D11_BIND_CONSTANT_BUFFER)?;
-            let (atlas, atlas_srv) = texture(device, atlas_size)?;
-
-            window.sync.waitable.set(waitable.0);
-            window.sync.waited.set(false);
-            tracing::info!(warp = dev.warp, "renderer ready");
-            Ok(Self {
-                dev: dev.gpu.clone(),
-                waitable,
-                swap,
-                shown: false,
-                rtv: None,
-                instances,
-                capacity,
-                globals,
-                atlas,
-                atlas_srv,
-                thumbs: None,
-                preview: None,
-                backdrop: None,
-                size: (w.max(1), h.max(1)),
-                sync: window.sync.clone(),
-            })
+            let present = Presentation { waitable, swap, shown: false, sync: window.sync.clone() };
+            Self::with_target(dev, (w.max(1), h.max(1)), atlas_size, Some(present), None)
         }
     }
 
@@ -469,12 +509,22 @@ impl Renderer for D3dRenderer {
         if (width, height) == self.size {
             return;
         }
+        let Some(present) = &self.present else {
+            match offscreen_target(&self.dev.device, (width, height)) {
+                Ok(target) => {
+                    self.rtv = Some(target);
+                    self.size = (width, height);
+                }
+                Err(error) => tracing::warn!("offscreen resize: {error}"),
+            }
+            return;
+        };
         self.size = (width, height);
         self.rtv = None;
         unsafe {
             self.dev.ctx.OMSetRenderTargets(None, None);
             self.dev.ctx.Flush();
-            if let Err(e) = self.swap.ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, SWAP_FLAGS) {
+            if let Err(e) = present.swap.ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, SWAP_FLAGS) {
                 tracing::warn!("ResizeBuffers: {e}");
             }
         }
@@ -506,7 +556,11 @@ impl Renderer for D3dRenderer {
 
     fn render(&mut self, list: &DrawList) -> Result<(), RenderError> {
         let _span = tracing::trace_span!("render", n = list.instances.len()).entered();
-        self.draw(list).map_err(|e| self.classify(e))
+        let capture = self.present.as_ref().and(capture_path());
+        if capture.is_some() {
+            schedule_capture_exit();
+        }
+        self.draw(list, capture).map_err(|e| self.classify(e))
     }
 }
 

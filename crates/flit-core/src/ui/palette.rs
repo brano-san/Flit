@@ -1,4 +1,5 @@
 use super::actions::{Group, ACTIONS};
+use super::a11y::LEAF;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::fuzzy::fuzzy;
@@ -7,6 +8,8 @@ use super::settings_page::SettingPick;
 use super::tags::TagPick;
 use super::widgets::{baseline, Button, Ghost, Paint};
 use super::{App, Effect, Glide, Hit, G_CLOSE, G_SORT_DOWN, G_SORT_UP, TAB_H, TOOL_H};
+use crate::a11y::{Role, Tree};
+use crate::hash;
 use crate::i18n::S;
 use crate::input::{Key, Mods};
 use crate::path::FsPath;
@@ -34,6 +37,10 @@ const G_DESCRIBE: &str = "\u{E8A5}";
 const G_SHORTCUTS: &str = "\u{E8AC}";
 const CHIP: f32 = 24.0;
 const SUGGESTED_COMMANDS: usize = 3;
+const PALETTE_DIALOG: u64 = 18;
+const COMMAND_QUERY: u64 = 19;
+const COMMAND_RESULTS: u64 = 20;
+const ADDRESS_EDIT: u64 = 21;
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommandUsage(Vec<(String, u32)>);
@@ -431,6 +438,28 @@ impl Palette {
         }
     }
 
+    fn accessible_command(&self, row: usize) -> Option<(u64, &Line, Rect)> {
+        let bounds = *self.rows.get(row.checked_sub(self.first)?)?;
+        let top = bounds.y.max(self.list.y);
+        let height = bounds.bottom().min(self.list.bottom()) - top;
+        if height <= 0.0 || bounds.w <= 0.0 {
+            return None;
+        }
+        let c = self.commands.as_ref()?;
+        let index = *self.matches.get(row)?;
+        let line = c.lines.get(index)?;
+        let id = match line {
+            Line::Header(group) => hash::hash(&("palette-group", *group as u8)),
+            Line::Item(k, ..) => {
+                let suggested = index <= c.suggested.len() && matches!(c.lines.first(), Some(Line::Header(Group::CommandUsage)))
+                    && !c.collapsed.contains(&Group::CommandUsage);
+                hash::hash(&("palette-command", ACTIONS[self.ids[*k]].id, suggested))
+            }
+            Line::Shell(command, _) => hash::hash(&("palette-shell", c.shell.as_ref()?.0, command)),
+        };
+        Some((id | LEAF, line, Rect::new(bounds.x, top, bounds.w, height)))
+    }
+
     fn rebinds(&self, i: usize) -> Option<usize> {
         self.row_action(i).filter(|&a| ACTIONS[a].rebindable())
     }
@@ -753,6 +782,40 @@ impl App {
 
     pub(super) fn palette_field(&self) -> Option<Rect> {
         self.nav.palette.as_ref().map(|p| p.field_rect)
+    }
+
+    pub(super) fn palette_accessibility(&self, t: &mut Tree, targets: &mut Vec<(u64, Hit)>) -> Option<usize> {
+        let p = self.nav.palette.as_ref().filter(|p| !self.search.active && p.field_rect.w > 0.0)?;
+        if p.pick == Pick::GoTo {
+            let field = t.add(0, ADDRESS_EDIT, Role::Edit, S::A11yRegionAddress.t(), p.field_rect);
+            t.nodes[field].value = crate::redact::passwords(p.field.text()).into_owned();
+            return Some(field);
+        }
+
+        let c = p.commands.as_ref()?;
+        let dialog = t.add(0, PALETTE_DIALOG, Role::Dialog, S::ActionsPaletteShow.t(), p.rect);
+        let field = t.add(dialog, COMMAND_QUERY, Role::Edit, p.pick.placeholder(), p.field_rect);
+        t.nodes[field].value = crate::redact::passwords(p.field.text()).into_owned();
+        let list = t.add(dialog, COMMAND_RESULTS, Role::List, S::ActionsPaletteShow.t(), p.list);
+        for row in p.first..p.first + p.rows.len() {
+            let Some((id, line, bounds)) = p.accessible_command(row) else { continue };
+            let (role, name, help, enabled) = match line {
+                Line::Header(group) => (Role::Button, group.title().t(), "", true),
+                Line::Item(k, ..) => (Role::ListItem, p.titles[*k].as_str(), c.shown[*k], c.live[*k]),
+                Line::Shell(_, label) => (Role::ListItem, label.as_str(), "", true),
+            };
+            let item = t.add(list, id, role, name, bounds);
+            t.nodes[item].help = help.to_owned();
+            t.nodes[item].enabled = enabled;
+            t.nodes[item].selected = row == p.sel;
+            targets.push((id, Hit::PaletteRow(row)));
+        }
+        Some(field)
+    }
+
+    pub(super) fn palette_has_accessible_command(&self, row: usize, id: u64) -> bool {
+        !self.search.active && !self.jobs.modal()
+            && self.nav.palette.as_ref().and_then(|p| p.accessible_command(row)).is_some_and(|(current, _, _)| current == id)
     }
 
     pub(super) fn palette_click(&mut self, x: f32, clicks: u8, extend: bool) {

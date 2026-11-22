@@ -7,15 +7,7 @@ const SIDE: u32 = 48;
 const ATLAS: u32 = 64;
 
 pub(crate) fn read(r: &GlRenderer) -> Vec<u8> {
-    let (w, h) = r.size;
-    let Target::Offscreen(fbo, _) = r.target else { panic!("offscreen only") };
-    let gl = &r.shared.gl;
-    let mut px = vec![0u8; (w * h * 4) as usize];
-    unsafe {
-        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-        gl.read_pixels(0, 0, w as i32, h as i32, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut px)));
-    }
-    px.chunks_exact((w * 4) as usize).rev().flatten().copied().collect()
+    r.read_rgba().unwrap()
 }
 
 fn pixel(px: &[u8], x: u32, y: u32) -> [u8; 4] {

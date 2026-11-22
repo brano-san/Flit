@@ -45,7 +45,7 @@ weston)
     ;;
 esac
 server_pid=$!
-trap 'kill $server_pid 2>/dev/null; rm -rf "$sandbox"' EXIT
+trap 'kill "$server_pid" 2>/dev/null || true; rm -rf "$sandbox"' EXIT
 sleep 1
 if ! kill -0 "$server_pid" 2>/dev/null; then
     printf 'Could not start %s. See %s/server.log\n' "$server" "$out" >&2
@@ -64,11 +64,22 @@ printf '| folder | %s |\n' "$(echo $keys | sed 's/ / | /g')"
 for folder in flat_10k flat_100k; do
     for i in $(seq "$runs"); do
         sample=$out/$folder-$i
-        if ! timeout 120 "$target/$profile/flit" --metrics "$sample.json" "$data/$folder" >"$sample.log" 2>&1 ||
-            ! grep -q '"start_to_first_frame_ms":[0-9]' "$sample.json"; then
-            printf 'No completed Flit measurement under %s: %s.log\n' "$server" "$sample" >&2
-            exit 1
+        if timeout 120 "$target/$profile/flit" --metrics "$sample.json" "$data/$folder" >"$sample.log" 2>&1; then
+            if grep -qs '"start_to_first_frame_ms":[0-9]' "$sample.json"; then
+                continue
+            fi
+            printf '%s metrics for %s run %s produced no complete report\n' "$server" "$folder" "$i" >&2
+            status=1
+        else
+            status=$?
+            printf '%s metrics for %s run %s exited with status %s\n' "$server" "$folder" "$i" "$status" >&2
         fi
+        cat "$out/server.log" "$sample.log" >&2
+        app_log=$XDG_STATE_HOME/flit/logs/flit.log
+        if [ -f "$app_log" ]; then
+            cat "$app_log" >&2
+        fi
+        exit "$status"
     done
     row="| $folder |"
     for k in $keys; do

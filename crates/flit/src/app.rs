@@ -994,10 +994,22 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::ShellPick(cmd) => window.shell_pick(cmd),
-                Effect::PaletteShell { ticket, menu } => window.palette_shell(ticket, menu),
+                Effect::PaletteShell { ticket, menu } => {
+                    if !flit_platform::isolated_gui_test() {
+                        window.palette_shell(ticket, menu);
+                    }
+                }
                 Effect::PaletteShellPick { ticket, command } => window.palette_shell_pick(ticket, command),
-                Effect::ShellPrefetch(menu) => window.shell_prefetch(menu),
-                Effect::ShellWarm(menus) => window.shell_warm(menus),
+                Effect::ShellPrefetch(menu) => {
+                    if !flit_platform::isolated_gui_test() {
+                        window.shell_prefetch(menu);
+                    }
+                }
+                Effect::ShellWarm(menus) => {
+                    if !flit_platform::isolated_gui_test() {
+                        window.shell_warm(menus);
+                    }
+                }
                 Effect::Layout(cmd) => self.layout_cmd(id, cmd),
                 Effect::Properties(paths) => window.properties(paths),
                 Effect::Share(paths) => window.share(paths),
@@ -2063,7 +2075,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
     let pseudo = flit_core::i18n::lang() == flit_core::i18n::Lang::Pseudo;
-    let integrate = !picking && metrics.is_none() && !pseudo && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
+    let headless = picking || metrics.is_some() || pseudo || flit_platform::isolated_gui_test();
+    let capture = std::env::var_os("FLIT_HIDDEN_CAPTURE").is_some();
+    let integrate = !headless && !capture;
     let about = About {
         file: settings_file.clone().and_then(fs_path),
         logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path),
@@ -2098,7 +2112,6 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let restore = StartupRestore { previous, allowed: !picking && (!crashed || restore_crash), dump };
     let h_wake = wake.clone();
     let update_wake = wake.clone();
-    let headless = picking || metrics.is_some() || pseudo;
     let (pick_request, picker_result) = picker.map_or((None, None), |(request, result)| (Some(request), Some(result)));
     let tray = integrate.then(|| flit_platform::tray::Tray::new(wake.clone()));
     let mut h = Handler::<P> {

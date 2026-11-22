@@ -98,3 +98,10 @@ flit-platform-linux.workspace = true
 [[test]]
 name = "parser_process"
 path = "test/parser_process.rs"
+
+[dev-dependencies]
+png = { version = "0.18", default-features = false }
+
+[[test]]
+name = "gui_snapshots"
+path = "test/gui_snapshots.rs"

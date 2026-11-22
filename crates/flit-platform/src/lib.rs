@@ -241,6 +241,11 @@ pub enum Idle {
     Open(WindowOptions),
 }
 
+pub fn isolated_gui_test() -> bool {
+    static ISOLATED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ISOLATED.get_or_init(|| std::env::var_os("FLIT_GUI_TEST").is_some_and(|value| value == "1"))
+}
+
 pub trait WindowHandler<W: WindowSystem> {
     fn created(&mut self, window: &W::Window);
     fn event(&mut self, window: &W::Window, event: Event);

@@ -1,6 +1,6 @@
 use super::*;
 use crate::a11y::Role;
-use crate::input::Event;
+use crate::input::{Event, Key, Mods};
 use crate::ui::harness::{app, frame};
 
 #[test]
@@ -168,4 +168,96 @@ fn a_collapsed_section_header_keeps_the_sidebar_focus_and_the_old_item_is_not_re
     let t = a.accessibility();
     let node = t.by_name(section.title()).unwrap_or_else(|| panic!("the header {} is in the tree", section.title()));
     assert_eq!(t.nodes[t.focus.unwrap()].id, node.id, "the focused node is the section header, not a stale item");
+}
+
+fn press_key(a: &mut App, key: Key, mods: Mods) {
+    a.on_event(&Event::Key { key, mods, pressed: true }, Instant::now());
+    a.on_event(&Event::Key { key, mods: Mods::default(), pressed: false }, Instant::now());
+    frame(a);
+}
+
+fn type_text(a: &mut App, text: &str) {
+    for c in text.chars() {
+        a.on_event(&Event::Char(c), Instant::now());
+    }
+    frame(a);
+}
+
+fn edit_id(t: &Tree, label: S, value: &str) -> u64 {
+    let edit = t.nodes.iter().find(|n| n.role == Role::Edit && n.name == label.t()).expect("the active editor is in the accessibility tree");
+    assert_eq!(edit.value, value);
+    assert!(edit.bounds.w > 0.0 && edit.bounds.h > 0.0);
+    assert_eq!(t.focus.map(|k| t.nodes[k].id), Some(edit.id));
+    edit.id
+}
+
+#[test]
+fn the_address_editor_exposes_its_value_and_disappears_on_escape() {
+    let mut a = app(&["alpha.txt"]);
+    press_key(&mut a, Key::Char('L'), Mods { ctrl: true, ..Mods::default() });
+    let id = edit_id(&a.accessibility(), S::A11yRegionAddress, "C:\\Work\\");
+    type_text(&mut a, "C:\\Target");
+    assert_eq!(edit_id(&a.accessibility(), S::A11yRegionAddress, "C:\\Target"), id);
+    press_key(&mut a, Key::Escape, Mods::default());
+    assert!(a.accessibility().find(id).is_none());
+    assert_eq!(a.tab().location().display(), "C:\\Work");
+}
+
+#[test]
+fn accessibility_redacts_passwords_in_address_values() {
+    let mut a = app(&["alpha.txt"]);
+    press_key(&mut a, Key::Char('L'), Mods { ctrl: true, ..Mods::default() });
+    type_text(&mut a, "ftp://guest:private@example.test/");
+    edit_id(&a.accessibility(), S::A11yRegionAddress, "ftp://guest:***@example.test/");
+}
+
+#[test]
+fn the_rename_editor_exposes_its_draft_until_it_is_cancelled() {
+    let mut a = app(&["alpha.txt", "beta.txt"]);
+    let row = a.accessibility().by_name("alpha.txt").unwrap().id;
+    a.on_event(&Event::A11ySelect(row), Instant::now());
+    press_key(&mut a, Key::F(2), Mods::default());
+    let id = edit_id(&a.accessibility(), S::ActionsFileRename, "alpha.txt");
+    type_text(&mut a, "renamed");
+    assert_eq!(edit_id(&a.accessibility(), S::ActionsFileRename, "renamed.txt"), id);
+    press_key(&mut a, Key::Escape, Mods::default());
+    let t = a.accessibility();
+    assert!(t.find(id).is_none());
+    assert_eq!(t.focus.map(|k| t.nodes[k].id), Some(row));
+    assert!(t.by_name("renamed.txt").is_none());
+}
+
+#[test]
+fn the_command_palette_exposes_the_query_and_invokes_a_visible_result() {
+    let mut a = app(&["alpha.txt"]);
+    press_key(&mut a, Key::Char('P'), Mods { ctrl: true, shift: true, alt: false });
+    let query = edit_id(&a.accessibility(), S::PalettePlaceholderCommands, "");
+    type_text(&mut a, "Toggle Hidden Files");
+    let t = a.accessibility();
+    assert_eq!(edit_id(&t, S::PalettePlaceholderCommands, "Toggle Hidden Files"), query);
+    let result = t.by_name(S::ActionsViewHidden.t()).expect("the matching command is in the accessibility tree");
+    assert_eq!(result.role, Role::ListItem);
+    assert!(result.enabled && result.selected);
+    let visible_before = a.tab().view_spec.show_hidden;
+    a.on_event(&Event::Invoke(result.id), Instant::now());
+    frame(&mut a);
+    assert_ne!(a.tab().view_spec.show_hidden, visible_before);
+    let t = a.accessibility();
+    assert!(t.find(query).is_none() && t.find(result.id).is_none());
+}
+
+#[test]
+fn a_command_removed_by_filtering_cannot_invoke_a_different_result() {
+    let mut a = app(&["alpha.txt"]);
+    let ctrl = Mods { ctrl: true, ..Mods::default() };
+    press_key(&mut a, Key::Char('P'), Mods { shift: true, ..ctrl });
+    type_text(&mut a, "Toggle Hidden Files");
+    let hidden = a.accessibility().by_name(S::ActionsViewHidden.t()).expect("the matching command is in the accessibility tree").id;
+    press_key(&mut a, Key::Char('A'), ctrl);
+    type_text(&mut a, "New Tab");
+    a.on_event(&Event::Invoke(hidden), Instant::now());
+    assert_eq!(a.tabs.len(), 1);
+    let t = a.accessibility();
+    assert!(t.find(hidden).is_none());
+    edit_id(&t, S::PalettePlaceholderCommands, "New Tab");
 }

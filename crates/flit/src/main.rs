@@ -166,18 +166,22 @@ fn main() {
     }
     let cwd = std::env::current_dir().ok().map(|d| wtf8(d.as_os_str()));
     let open = link.unwrap_or_else(|| parse_args(&args, cwd));
+    let gui_test = flit_platform::isolated_gui_test();
     #[cfg(windows)]
-    if !system_link::handles(&open) && hand_to_explorer(&open) {
+    if !gui_test && !system_link::handles(&open) && hand_to_explorer(&open) {
         return;
     }
-    update::on_start::<P>();
+    if !gui_test {
+        update::on_start::<P>();
+    }
     let mut standalone = None;
     let pseudo = i18n::lang() == Lang::Pseudo;
-    let background = background && open.is_empty() && open.tag.is_none() && metrics.is_none() && !activated && !pseudo;
-    let instance = match metrics {
-        Some(_) => None,
-        None if pseudo => None,
-        None => match if background { <P as Platform>::Instance::acquire_background() } else { <P as Platform>::Instance::acquire(&open) } {
+    let headless = metrics.is_some() || gui_test;
+    let background = background && open.is_empty() && open.tag.is_none() && !headless && !activated && !pseudo;
+    let instance = if headless || pseudo {
+        None
+    } else {
+        match if background { <P as Platform>::Instance::acquire_background() } else { <P as Platform>::Instance::acquire(&open) } {
             Instance::Forwarded => {
                 if std::env::var_os("FLIT_TIMING").is_some() {
                     eprintln!("forwarded in {:?}", started.elapsed());
@@ -189,10 +193,10 @@ fn main() {
                 standalone = Some(e);
                 None
             }
-        },
+        }
     };
     #[cfg(windows)]
-    let identity = flit_platform_windows::aumid::adopt();
+    let identity = (!gui_test).then(flit_platform_windows::aumid::adopt);
     let logs_dir = <P as Platform>::state_dir().map(|d| d.join("logs"));
     #[cfg(windows)]
     if let Some(dir) = &logs_dir {
@@ -200,18 +204,17 @@ fn main() {
     }
     logs::init(logs_dir, std::env::var_os("FLIT_LOG").is_some());
     #[cfg(windows)]
-    if metrics.is_none() && !pseudo {
+    if !headless && !pseudo {
         flit_platform_windows::crash::register_restart(RESTARTED_BY_WINDOWS);
     }
     tracing::info!("Flit {} started, process {}", env!("CARGO_PKG_VERSION"), std::process::id());
     #[cfg(windows)]
-    if let Err(e) = &identity {
+    if let Some(Err(e)) = &identity {
         tracing::warn!("cannot set the application identity of the process: {e}");
     }
     let system = flit_core::i18n::Lang::from_code(&std::env::var("FLIT_LANG").unwrap_or_else(|_| <P as Platform>::ui_language())).unwrap_or_default();
     flit_core::i18n::set_system_lang(system);
     flit_core::i18n::set_lang(system);
-    let headless = metrics.is_some();
     if let Some(e) = standalone {
         tracing::warn!("running without single-instance forwarding: {e}");
     }
@@ -226,7 +229,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     flit_platform_linux_gui::prefetch_fonts();
     #[cfg(windows)]
-    if identity.is_ok() && !headless && !pseudo {
+    if matches!(identity, Some(Ok(()))) && !headless && !pseudo {
         flit_platform_windows::aumid::fix_shortcuts_in_background();
     }
     let _ = std::thread::Builder::new().name("flit-sweep".into()).spawn(|| {
@@ -252,6 +255,8 @@ fn main() {
         std::process::exit(1);
     }
     tracing::info!("Flit exits");
-    update::relaunch_if_installed();
+    if !gui_test {
+        update::relaunch_if_installed();
+    }
     logs::flush();
 }

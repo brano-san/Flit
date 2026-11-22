@@ -98,6 +98,14 @@ pub struct DWriteText {
 
 impl DWriteText {
     pub fn new() -> Result<Self, PlatformError> {
+        Self::with_fonts(false)
+    }
+
+    pub fn for_capture() -> Result<Self, PlatformError> {
+        Self::with_fonts(true)
+    }
+
+    fn with_fonts(fixed: bool) -> Result<Self, PlatformError> {
         unsafe {
             let factory: IDWriteFactory2 = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED).map_err(err)?;
             let mut collection = None;
@@ -107,9 +115,12 @@ impl DWriteText {
                 let (mut i, mut exists) = (0u32, BOOL(0));
                 collection.FindFamilyName(name, &mut i, &mut exists).is_ok() && exists.as_bool()
             };
-            let default_ui = if has(w!("Segoe UI Variable Text")) { w!("Segoe UI Variable Text") } else { w!("Segoe UI") };
-            let icon_family = if has(w!("Segoe Fluent Icons")) { w!("Segoe Fluent Icons") } else { w!("Segoe MDL2 Assets") };
-            let mono_family = if has(w!("Cascadia Mono")) { w!("Cascadia Mono") } else { w!("Consolas") };
+            let default_ui = if !fixed && has(w!("Segoe UI Variable Text")) { w!("Segoe UI Variable Text") } else { w!("Segoe UI") };
+            let icon_family = if !fixed && has(w!("Segoe Fluent Icons")) { w!("Segoe Fluent Icons") } else { w!("Segoe MDL2 Assets") };
+            let mono_family = if !fixed && has(w!("Cascadia Mono")) { w!("Cascadia Mono") } else { w!("Consolas") };
+            if fixed && ![default_ui, icon_family, mono_family].into_iter().all(has) {
+                return Err(PlatformError::new(-1, "capture requires Segoe UI, Segoe MDL2 Assets and Consolas"));
+            }
             let collector = ComObject::new(Collector { runs: RefCell::default() });
             let renderer: IDWriteTextRenderer = collector.to_interface();
             Ok(Self {
