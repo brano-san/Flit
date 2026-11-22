@@ -226,6 +226,71 @@ fn returning_to_a_pretty_preview_keeps_the_formatted_document_and_its_original()
 }
 
 #[test]
+fn svg_background_changes_without_loading_another_preview() {
+    let mut a = app((520, 790));
+    a.animations = false;
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    add_file(&mut a, "icon.svg");
+    select(&mut a, "icon.svg");
+    frame(&mut a);
+    let req = requests(&mut a).pop().unwrap();
+    assert_eq!(req.kind, preview::kind_of(b"icon.svg"));
+    assert_ne!(req.kind, Kind::Image);
+    assert!(super::super::has_thumbnail(b"SVG"));
+    assert!(super::super::has_thumbnail(b"SVGZ"));
+    assert!(super::super::has_thumbnail(b"DNG"));
+    a.on_preview(req.gen, PreviewData::Image(Bitmap { width: 8, height: 8, rgba: vec![0; 256] }));
+    frame(&mut a);
+    assert!(a.preview_rect(PaneHit::SvgBackground).is_none());
+    let body = a.preview.r.body;
+    mouse(&mut a, (body.x + 5.0, body.y + 5.0), MouseButton::Left, 1);
+    frame(&mut a);
+    let rev = a.preview_image().0;
+    for bg in [preview::SvgBackground::White, preview::SvgBackground::Black, preview::SvgBackground::Checker] {
+        let r = a.preview_rect(PaneHit::SvgBackground).unwrap();
+        mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
+        frame(&mut a);
+        assert_eq!(a.opts.svg_background, bg);
+        assert_eq!(a.preview_image().0, rev);
+        assert!(requests(&mut a).is_empty());
+    }
+}
+
+#[test]
+fn review_preview_controls_follow_the_animated_inspector_footer() {
+    for (name, image) in [("test.json", false), ("test.yaml", false), ("test.toml", false), ("test.xml", false), ("test.svg", true)] {
+        let mut a = app((600, 790));
+        a.animations = true;
+        a.set_pane_state(PaneState { visible: true, ..Default::default() });
+        add_file(&mut a, name);
+        select(&mut a, name);
+        frame(&mut a);
+        let req = requests(&mut a).pop().unwrap();
+        let data = if image { PreviewData::Image(Bitmap { width: 4, height: 4, rgba: vec![255; 64] }) }
+            else { PreviewData::Doc(preview::text_doc("root", None)) };
+        let hit = if image { PaneHit::SvgBackground } else { PaneHit::Pretty };
+        a.on_preview(req.gen, data);
+
+        let mut g = Gfx::new(Mono, 2048);
+        let start = Instant::now() + Duration::from_secs(1);
+        a.frame(&mut g, start);
+        assert!(a.preview_rect(hit).is_none(), "{name}");
+        a.focus = Focus::Preview;
+        a.frame(&mut g, start);
+        let span = crate::ui::panels::SPLIT;
+        assert_eq!(a.preview.foot_slide.value(start, span), 0.0, "{name}");
+        assert!(a.preview.foot_slide.target() > 0.0, "{name}");
+        a.frame(&mut g, start + span);
+        assert!(a.preview_rect(hit).is_some(), "{name}");
+        a.focus = Focus::List;
+        a.frame(&mut g, start + span);
+        assert!(a.preview.foot_slide.value(start + span, span) > 0.0, "{name}");
+        a.frame(&mut g, start + span * 2);
+        assert!(a.preview_rect(hit).is_none(), "{name}");
+    }
+}
+
+#[test]
 fn properties_card_details_and_many_items() {
     let mut a = app((1200, 700));
     press(&mut a, Key::Space, NO);

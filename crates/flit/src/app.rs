@@ -147,17 +147,18 @@ fn locked(c: &Mutex<ThumbCache>) -> std::sync::MutexGuard<'_, ThumbCache> {
     c.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &IconRequest) -> IconResult {
+fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &IconRequest, current: impl Fn() -> bool) -> IconResult {
     if let Some(b) = cache.and_then(|c| locked(c).get(req.key)) {
         return IconResult::Ready(b);
     }
-    match shell.thumbnail(req) {
+    match crate::preview::thumbnail(shell, req, &current) {
         Some(b) => {
             if let Some(c) = cache {
                 locked(c).put(req.key, &b);
             }
             IconResult::Ready(b)
         }
+        None if !current() => IconResult::Skipped,
         None => IconResult::Failed,
     }
 }
@@ -249,7 +250,8 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
         spawn(&format!("flit-thumb-{k}"), move || {
             let Ok(mut shell) = P::Shell::new() else { return };
             for ThumbJob { window, req, visible } in rx {
-                let result = if visible.wants(&req) { thumbnail(&mut shell, cache.as_deref(), &req) } else { IconResult::Skipped };
+                let current = || visible.wants(&req);
+                let result = if current() { thumbnail(&mut shell, cache.as_deref(), &req, current) } else { IconResult::Skipped };
                 if tx.send(Done::Thumb { window, key: req.key, result }).is_err() {
                     return;
                 }

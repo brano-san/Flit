@@ -59,3 +59,10 @@ original = "原文"
 too_large = "文件过大，无法格式化（上限为 8 MiB）。"
 invalid = "文件包含不符合此格式的数据。"
 unavailable = "无法格式化预览。"
+
+[svg]
+checker = "棋盘格"
+white = "白色"
+black = "黑色"
+background = "SVG 背景"
+background_help = "透明 SVG 预览所用的背景。"

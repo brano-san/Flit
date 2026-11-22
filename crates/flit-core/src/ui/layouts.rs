@@ -36,8 +36,8 @@ const CARD_LINE: f32 = 18.0;
 const MEDIA_SHARE: (usize, usize) = (3, 5);
 const ADAPTIVE_CAP: usize = 4096;
 
-const IMAGES: [&[u8]; 20] = [
-    b"jpg", b"jpeg", b"jpe", b"jfif", b"png", b"gif", b"bmp", b"webp", b"heic", b"heif", b"avif", b"jxl", b"tif", b"tiff", b"ico", b"dng", b"cr2", b"cr3", b"nef", b"arw",
+const IMAGES: [&[u8]; 21] = [
+    b"jpg", b"jpeg", b"jpe", b"jfif", b"png", b"gif", b"bmp", b"webp", b"heic", b"heif", b"avif", b"jxl", b"tif", b"tiff", b"ico", b"dng", b"cr2", b"cr3", b"nef", b"arw", b"svg",
 ];
 const VIDEOS: [&[u8]; 14] = [b"mp4", b"m4v", b"mkv", b"avi", b"mov", b"wmv", b"webm", b"mpg", b"mpeg", b"3gp", b"flv", b"ts", b"m2ts", b"mts"];
 const DOCUMENTS: [&[u8]; 5] = [b"pdf", b"docx", b"xlsx", b"pptx", b"psd"];

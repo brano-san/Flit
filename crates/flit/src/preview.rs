@@ -1,4 +1,5 @@
 pub(crate) mod pretty;
+pub(crate) mod svg;
 mod child;
 
 use flit_core::preview::{self, FolderSummary, Kind, Note, PreviewData, PreviewRequest, FOLDER_SCAN, IMAGE_FILE_LIMIT, POSTER_PX, RTF_BYTES, SNIFF_LIMIT, TEXT_BYTES};
@@ -92,6 +93,20 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
     }
     let ext = req.path.file_name();
     let ext = &ext[ext.len() - flit_core::name::ext_len(ext)..];
+    if preview::is_svg(ext) && req.kind != Kind::Folder {
+        let result = svg::load(&req.path, req.px, || req.cancel.is_current(req.gen));
+        if !req.cancel.is_current(req.gen) {
+            return None;
+        }
+        let fallback = || {
+            let kind = preview::syntax::by_ext("xml").map_or(Kind::Text, Kind::Code);
+            match head(&req.path, TEXT_BYTES) {
+                Some(bytes) if !preview::looks_binary(&bytes) => PreviewData::Doc(preview::build(kind, &bytes)),
+                _ => PreviewData::Basic { poster: None, note: None },
+            }
+        };
+        return Some(result.map_or_else(fallback, PreviewData::Image));
+    }
     match req.kind {
         Kind::Folder => folder(req).map(PreviewData::Folder),
         Kind::Image if req.size > IMAGE_FILE_LIMIT => Some(basic(shell, req, Some(Note::TooLarge))),
@@ -110,6 +125,15 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
         }
         Kind::Other => other(shell, req, ext),
     }
+}
+
+pub(crate) fn thumbnail<S: Shell>(shell: &mut S, req: &flit_core::ui::IconRequest, current: impl Fn() -> bool) -> Option<flit_core::ui::Bitmap> {
+    let file = req.path.file_name();
+    let ext = &file[file.len() - flit_core::name::ext_len(file)..];
+    if preview::is_svg(ext) {
+        return svg::load(&req.path, req.size, current);
+    }
+    if current() { shell.thumbnail(req) } else { None }
 }
 
 #[cfg(test)]

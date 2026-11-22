@@ -78,6 +78,109 @@ fn pretty_refuses_invalid_formats_and_files_over_its_read_limit() {
 }
 
 #[test]
+fn svg_renders_shapes_but_never_loads_a_local_image_href() {
+    let d = temp();
+    let outside = d.0.join("outside.svg");
+    std::fs::write(&outside, r#"<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="red"/></svg>"#).unwrap();
+    let source = d.0.join("source.svg");
+    let href = quick_xml::escape::escape(outside.to_string_lossy());
+    std::fs::write(&source, format!(r#"<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="32" height="32"><image xlink:href="{href}" width="32" height="32"/><rect width="4" height="4" fill="lime"/></svg>"#)).unwrap();
+    let image = super::svg::render_file(&source, 32).unwrap();
+    assert_eq!((image.width, image.height), (32, 32));
+    assert_eq!(&image.rgba[..4], &[0, 255, 0, 255]);
+    assert_eq!(&image.rgba[(16 * 32 + 16) * 4..][..4], &[0, 0, 0, 0]);
+}
+
+#[test]
+fn svg_refuses_an_oversized_source_and_caps_the_raster_dimensions() {
+    let d = temp();
+    let source = d.0.join("source.svg");
+    std::fs::write(&source, r#"<svg xmlns="http://www.w3.org/2000/svg" width="10000" height="1000"><rect width="10000" height="1000"/></svg>"#).unwrap();
+    let image = super::svg::render_file(&source, 200).unwrap();
+    assert_eq!((image.width, image.height), (200, 20));
+    std::fs::write(&source, r#"<svg xmlns="http://www.w3.org/2000/svg" width="2082" height="100"><rect width="2082" height="100"/></svg>"#).unwrap();
+    assert_eq!(super::svg::render_file(&source, 1600).unwrap().width, 1600);
+    std::fs::File::options().write(true).open(&source).unwrap().set_len(3 << 20).unwrap();
+    assert!(super::svg::render_file(&source, 200).is_none());
+}
+
+#[test]
+fn review_svg_rasterizes_a_small_icon_at_each_requested_size() {
+    let d = temp();
+    let path = d.0.join("icon.svg");
+    std::fs::write(&path, r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="8"><rect width="16" height="8" fill="red"/></svg>"#).unwrap();
+    for (px, expected) in [(256, (256, 128)), (1024, (1024, 512)), (u32::MAX, (1600, 800))] {
+        let image = super::svg::render_file(&path, px).unwrap();
+        assert_eq!((image.width, image.height), expected);
+        assert_eq!(&image.rgba[image.rgba.len() - 4..], &[255, 0, 0, 255]);
+    }
+}
+
+#[test]
+fn review_svg_gzip_enforces_the_expanded_limit_and_loads_fonts() {
+    use std::io::Write;
+    let d = temp();
+    let path = d.0.join("drawing.svgz");
+    let compress = |svg: &[u8]| {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::fast());
+        encoder.write_all(svg).unwrap();
+        let bytes = encoder.finish().unwrap();
+        assert!(bytes.len() < 2 << 20);
+        std::fs::write(&path, bytes).unwrap();
+    };
+    let mut svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="32"><rect width="2" height="2" fill="red"/>"#.to_vec();
+    svg.resize(16 << 20, b' ');
+    svg.extend_from_slice(b"</svg>");
+    compress(&svg);
+    assert!(super::svg::render_file(&path, 80).is_none());
+    svg.truncate((16 << 20) - b"</svg>".len());
+    svg.extend_from_slice(b"</svg>");
+    compress(&svg);
+    assert!(super::svg::render_file(&path, 80).is_some());
+
+    let text = br#"<svg xmlns="http://www.w3.org/2000/svg" width="80" height="32"><text x="2" y="28" font-size="26">Flit</text></svg>"#;
+    let plain = d.0.join("drawing.svg");
+    std::fs::write(&plain, text).unwrap();
+    compress(text);
+    let rendered = super::svg::render_file(&plain, 80).unwrap();
+    assert!(rendered.rgba.chunks_exact(4).any(|p| p[3] != 0));
+    assert_eq!(super::svg::render_file(&path, 80).unwrap().rgba, rendered.rgba);
+    std::fs::write(&path, b"\x1f\x8b\x08").unwrap();
+    assert!(super::svg::render_file(&path, 80).is_none());
+}
+
+#[cfg(windows)]
+#[test]
+fn review_svg_worker_job_enforces_a_per_process_memory_limit() {
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        JobObjectExtendedLimitInformation, QueryInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+    };
+
+    let bytes = 256 << 20;
+    let job = super::child::memory_job(bytes).unwrap();
+    let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+    unsafe {
+        QueryInformationJobObject(Some(HANDLE(job.as_raw_handle())), JobObjectExtendedLimitInformation, (&raw mut info).cast(), size_of_val(&info) as u32, None).unwrap();
+    }
+    assert_eq!(info.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOB_OBJECT_LIMIT_PROCESS_MEMORY);
+    assert_eq!(info.ProcessMemoryLimit, bytes);
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn review_svg_worker_limits_its_linux_address_space_before_exec() {
+    let mut child = std::process::Command::new("sh");
+    child.args(["-c", "ulimit -v"]);
+    let bytes = 256 << 20;
+    super::child::limit_address_space(&mut child, bytes);
+    let output = child.output().unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout).unwrap().trim().parse::<usize>().unwrap() <= bytes / 1024);
+}
+
+#[test]
 fn loads_by_kind_within_limits() {
     let d = temp();
     std::fs::write(d.0.join("a.rs"), "fn main() {}\n").unwrap();

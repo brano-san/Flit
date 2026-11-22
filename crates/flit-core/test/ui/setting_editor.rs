@@ -96,9 +96,11 @@ fn the_background_image_editor_checks_the_path_and_type_and_browses() {
     assert_eq!(rows.contains(&S::SettingsPageRowBrowse.t().to_owned()), cfg!(any(windows, target_os = "linux")), "{rows:?}");
     typed(&mut a, "wallpaper");
     assert_eq!(verdict(&a), Tone::Bad, "a bare name is not a full path");
-    typed(&mut a, r"C:\x\notes.txt");
-    assert_eq!(verdict(&a), Tone::Bad);
-    assert_eq!(notes(&a).last().unwrap().text, S::SettingsPageGuideImageType.t());
+    for path in [r"C:\x\notes.txt", r"C:\x\drawing.svg", r"C:\x\photo.dng"] {
+        typed(&mut a, path);
+        assert_eq!(verdict(&a), Tone::Bad, "{path}");
+        assert_eq!(notes(&a).last().unwrap().text, S::SettingsPageGuideImageType.t());
+    }
     typed(&mut a, r"C:\x\wall.PNG");
     assert_eq!(verdict(&a), Tone::Good);
     key(&mut a, Key::Enter);
@@ -110,6 +112,7 @@ fn the_background_image_editor_checks_the_path_and_type_and_browses() {
     let browse = a.drain_effects().find_map(|e| if let Effect::Settings(SettingsCmd::Browse { exts, folder, start }) = e { Some((exts, folder, start)) } else { None });
     let (exts, folder, start) = browse.expect("the browse row asks the platform for a file");
     assert!(exts.contains(&"jpg") && !folder);
+    assert!(!exts.contains(&"svg") && !exts.contains(&"dng"));
     assert_eq!(start, FsPath::parse(r"C:\x"), "the dialog starts where the current image is");
     a.on_browsed(FsPath::parse(r"C:\x\sea.jpg"));
     assert_eq!(a.look.backdrop_path, r"C:\x\sea.jpg");

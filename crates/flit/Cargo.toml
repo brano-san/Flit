@@ -26,6 +26,8 @@ tracing-tracy = { workspace = true, optional = true }
 quick-xml = { version = "0.41", default-features = false }
 toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 pretty_yaml = { version = "0.6", default-features = false }
+resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts"] }
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 
 [package.metadata.deb]
 name = "flit"
@@ -77,7 +79,6 @@ zip = { version = "7.3", default-features = false, features = ["deflate-flate2-z
 flit-platform-linux-gui.workspace = true
 libc.workspace = true
 tar = { version = "0.4", default-features = false }
-flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 
 [target.'cfg(not(windows))'.dev-dependencies]
 flit-platform-linux.workspace = true

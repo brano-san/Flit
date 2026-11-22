@@ -71,6 +71,8 @@ fn main() {
     while let Some(a) = it.next() {
         if a == preview::pretty::COMMAND {
             std::process::exit(preview::pretty::serve(it.next().as_deref()));
+        } else if a == preview::svg::COMMAND {
+            std::process::exit(preview::svg::serve(it.next().as_deref(), it.next().as_deref()));
         } else if a == "--diagnose" {
             #[cfg(windows)]
             flit_platform_windows::diagnose::attach_console();

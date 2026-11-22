@@ -251,6 +251,7 @@ const CHARS: [CharKey; 2] = [CharKey::Filter, CharKey::Select];
 const CHAR_CHOICES: Choices = &[("filter", S::OptionsChoiceCharFilter), ("select", S::OptionsChoiceCharSelect)];
 const INSPECTORS: [InspectorAt; 3] = [InspectorAt::Auto, InspectorAt::Right, InspectorAt::Below];
 const INSPECTOR_CHOICES: Choices = &[("auto", S::OptionsChoiceInspectorAuto), ("right", S::OptionsChoiceInspectorRight), ("below", S::OptionsChoiceInspectorBelow)];
+const SVG_BACKGROUNDS: Choices = &[("checker", S::PreviewSvgChecker), ("white", S::PreviewSvgWhite), ("black", S::PreviewSvgBlack)];
 const NEW_TABS: [NewTabShow; 3] = [NewTabShow::Current, NewTabShow::Root, NewTabShow::Home];
 const NEW_TAB_CHOICES: Choices = &[("current", S::OptionsChoiceNewTabCurrent), ("root", S::OptionsChoiceNewTabRoot), ("home", S::OptionsChoiceNewTabHome)];
 const OPS_CHOICES: Choices = &[("during", S::SettingsChoiceOpsDuring), ("always", S::SettingsChoiceOpsAlways)];
@@ -428,6 +429,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.smooth_scroll", Page::Input, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::Input, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
     choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.opts.inspector_at), |a, i| a.opts.inspector_at = INSPECTORS[i]),
+    choice("windows.svg_background", Page::Windows, S::PreviewSvgBackground, S::PreviewSvgBackgroundHelp, SVG_BACKGROUNDS, |a| a.opts.svg_background as usize, |a, i| a.opts.svg_background = crate::preview::SvgBackground::ALL[i]),
     choice("general.startup", Page::Windows, S::OptionsTitleLoadOnStartup, S::OptionsHelpLoadOnStartup, STARTUP, |a| match a.startup {
         Startup::Continue => 0,
         Startup::NewTab => 1,

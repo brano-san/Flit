@@ -123,6 +123,7 @@ pub enum PaneHit {
     NewTag,
     Download,
     Pretty,
+    SvgBackground,
     Body,
 }
 
@@ -738,7 +739,8 @@ impl App {
         let shown = self.preview.state.visible;
         match id {
             "inspector.wrap" | "inspector.line_numbers" | "inspector.whitespace" => shown && self.shows_doc(),
-            "inspector.grid" | "inspector.scale" => shown && self.shows_image(),
+            "inspector.grid" => shown && self.shows_image() && !self.preview_is_svg(),
+            "inspector.scale" => shown && self.shows_image(),
             "inspector.filter" => shown && (self.shows_doc() || self.shows_folder()),
             "inspector.zoom_in" | "inspector.zoom_out" => shown && (self.shows_doc() || self.shows_image()),
             _ => true,
@@ -1275,6 +1277,10 @@ impl App {
                 p.download = std::mem::take(&mut p.key);
             }
             PaneHit::Pretty => self.toggle_pretty(),
+            PaneHit::SvgBackground => {
+                use preview::SvgBackground as Bg;
+                self.opts.svg_background = Bg::ALL[(self.opts.svg_background as usize + 1) % Bg::ALL.len()];
+            }
             PaneHit::Play => {
                 let p = &mut self.preview;
                 p.media.playing = !p.media.playing;
@@ -1732,7 +1738,7 @@ impl App {
         }
         x += self.s(8.0);
         let look = self.preview.look;
-        let tools: Vec<(&str, PaneHit, bool)> = match &self.preview.content {
+        let mut tools: Vec<(&str, PaneHit, bool)> = match &self.preview.content {
             Content::Doc(d) => {
                 let wrap = self.preview.effective_wrap(d);
                 let mut v = vec![(G_WRAP, PaneHit::Tool(PaneTool::Wrap), wrap)];
@@ -1750,6 +1756,9 @@ impl App {
             ],
             _ => Vec::new(),
         };
+        if self.preview_is_svg() {
+            tools.retain(|(_, hit, _)| *hit != PaneHit::Tool(PaneTool::Grid));
+        }
         if !tools.is_empty() {
             g.dl.rect(Rect::new(x - self.s(4.0), y + self.s(5.0), 1.0, bw - self.s(10.0)), t.separator);
         }
@@ -1812,7 +1821,11 @@ impl App {
                 let Some((w, h)) = self.preview.image.as_ref().map(|i| (i.width as f32, i.height as f32)) else { return (Vec::new(), None) };
                 let b = self.preview.r.body;
                 let k = image_factor(self.preview.look.scale, self.preview.look.zoom, (w, h), (b.w, b.h));
-                (vec![("", format!("{}%", (k * 100.0).round()), Some(PaneHit::Size)), ("", format!("{} \u{D7} {}", w as u32, h as u32), None)], None)
+                let mut blocks = vec![("", format!("{}%", (k * 100.0).round()), Some(PaneHit::Size)), ("", format!("{} \u{D7} {}", w as u32, h as u32), None)];
+                if self.preview_is_svg() {
+                    blocks.insert(0, ("", self.opts.svg_background.label().t().to_owned(), Some(PaneHit::SvgBackground)));
+                }
+                (blocks, None)
             }
             Content::Folder(f) => (vec![(super::G_FILE, super::thousands(f.files), None), (super::G_FOLDER, super::thousands(f.dirs), None)], Some((S::PreviewFilterFiles, self.folder_rows(f).len()))),
             _ => (Vec::new(), None),
@@ -2237,7 +2250,12 @@ impl App {
         y
     }
 
+    fn preview_is_svg(&self) -> bool {
+        self.preview.subject.as_ref().is_some_and(|s| preview::is_svg(&s.ext))
+    }
+
     fn draw_image<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, w: f32, h: f32) -> f32 {
+        use preview::SvgBackground as Bg;
         let b = self.preview.r.body;
         let look = self.preview.look;
         let k = image_factor(look.scale, look.zoom, (w, h), (b.w, b.h));
@@ -2246,7 +2264,11 @@ impl App {
         self.preview.hmax = (dw - b.w).max(0.0);
         let x0 = if dw <= b.w { (b.x + (b.w - dw) / 2.0).round() } else { (b.x - self.preview.hscroll.min(self.preview.hmax)).round() };
         let r = Rect::new(x0, y0, dw, dh);
-        if look.grid {
+        let background = if self.preview_is_svg() { Some(self.opts.svg_background) } else { look.grid.then_some(Bg::Checker) };
+        if let Some(Bg::Black | Bg::White) = background {
+            g.dl.rect(r, Color::rgb(if background == Some(Bg::Black) { 0 } else { 0xFFFFFF }));
+        }
+        if background == Some(Bg::Checker) {
             let cell = self.s(CHECKER).max(4.0);
             let visible = Rect::new(r.x.max(b.x), r.y.max(b.y), (r.right().min(b.right()) - r.x.max(b.x)).max(0.0), (r.bottom().min(b.bottom()) - r.y.max(b.y)).max(0.0));
             g.dl.rect(visible, Color::rgb(if self.dark { 0x3A3A3A } else { 0xFFFFFF }));
