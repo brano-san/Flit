@@ -192,7 +192,17 @@ fn core_icon_code_points() -> Vec<char> {
             files.extend(std::fs::read_dir(&p).unwrap().map(|e| e.unwrap().path()));
             continue;
         }
-        let text = std::fs::read_to_string(&p).unwrap().lines().filter(|l| !l.trim_start().starts_with("#[cfg(windows)]")).collect::<Vec<_>>().join("\n");
+        let source = std::fs::read_to_string(&p).unwrap();
+        let mut windows_only = false;
+        let mut kept = Vec::new();
+        for line in source.lines() {
+            let attribute = line.trim_start().starts_with("#[cfg(windows)]");
+            if !attribute && !windows_only {
+                kept.push(line);
+            }
+            windows_only = attribute && line.trim_end().ends_with(']');
+        }
+        let text = kept.join("\n");
         for (i, _) in text.match_indices("\\u{E") {
             let hex: String = text[i + 3..].chars().take_while(|c| c.is_ascii_hexdigit()).collect();
             if hex.len() == 4 {
