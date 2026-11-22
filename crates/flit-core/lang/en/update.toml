@@ -14,6 +14,8 @@ check_failed = "Cannot check for updates: {error}"
 available = "Flit {version} is available: Check for updates installs it"
 failed = "Cannot install the update: {error}"
 
+managed_available = "Flit {version} is available. Open Check for updates for installation instructions."
+
 [dialog]
 title = "Flit {version} is available"
 installed = "Installed version"
@@ -28,6 +30,11 @@ downloading_plain = "Downloading Flit {version}…"
 installing = "Installing Flit {version}…"
 read_only = "Flit cannot replace its files in {dir}. Download the new version from the releases page."
 jobs = ["{n} file operation is still running. Install the update after it finishes.", "{n} file operations are still running. Install the update after they finish."]
+
+package_manager = "Update through your package manager"
+appimage = "Download the new AppImage from the releases page."
+
+microsoft_store = "Updates for this installation are managed by Microsoft Store."
 
 [page]
 group = "Updates"

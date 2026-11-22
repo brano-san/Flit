@@ -123,10 +123,12 @@ pub(super) enum Btn {
     Up,
     MenuReset,
     CheckUpdates,
+    UndoSystemChanges,
+    RegisterArchive,
 }
 
 impl Btn {
-    const ALL: [Btn; 26] = [
+    const ALL: [Btn; 28] = [
         Btn::AddHome,
         Btn::AddCurrent,
         Btn::AddTyped,
@@ -153,6 +155,8 @@ impl Btn {
         Btn::Up,
         Btn::MenuReset,
         Btn::CheckUpdates,
+        Btn::UndoSystemChanges,
+        Btn::RegisterArchive,
     ];
 
     fn label(self) -> &'static str {
@@ -183,6 +187,8 @@ impl Btn {
             Btn::Up => S::UserMenuUp.t(),
             Btn::MenuReset => S::MenuEditorReset.t(),
             Btn::CheckUpdates => S::UpdatePageCheck.t(),
+            Btn::UndoSystemChanges => S::SettingsPageSystemUndoAll.t(),
+            Btn::RegisterArchive => S::SettingsPageSystemRegisterAgain.t(),
         }
     }
 }
@@ -310,6 +316,7 @@ pub(super) enum SettingPick {
     Import,
     Reset,
     ResetKeys,
+    RegisterArchive,
     Capture { action: usize, old: Option<Chord>, chord: Option<Chord> },
     Color(usize),
     Font(usize),
@@ -324,6 +331,7 @@ impl SettingPick {
             SettingPick::Import => S::SettingsPagePickImport.t(),
             SettingPick::Reset => S::SettingsPagePickReset.t(),
             SettingPick::ResetKeys => S::SettingsPagePickResetKeys.t(),
+            SettingPick::RegisterArchive => S::SettingsPageSystemArchive.t(),
             SettingPick::Capture { .. } => S::SettingsPagePickCapture.t(),
             SettingPick::Color(_) => S::SettingsPagePickColor.t(),
             SettingPick::Font(_) => S::SettingsPagePickFont.t(),
@@ -336,16 +344,18 @@ impl SettingPick {
             SettingPick::AddPath(_) => S::SettingsPageHintAddPath.t(),
             SettingPick::Export => S::SettingsPageHintExport.t(),
             SettingPick::Import => S::SettingsPageHintImport.t(),
-            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } => "",
+            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::RegisterArchive | SettingPick::Capture { .. } => "",
             SettingPick::Color(_) => S::SettingsPageHintColor.t(),
             SettingPick::Font(_) => S::SettingsPageHintFont.t(),
         }
     }
 
     pub(super) fn is_input(&self) -> bool {
-        !matches!(self, SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } | SettingPick::Font(_))
+        !matches!(self, SettingPick::Reset | SettingPick::ResetKeys | SettingPick::RegisterArchive | SettingPick::Capture { .. } | SettingPick::Font(_))
     }
 }
+
+pub type SystemChanges = Result<Vec<(S, String)>, String>;
 
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct About {
@@ -354,6 +364,9 @@ pub struct About {
     pub cache_bytes: Option<u64>,
     pub logs: Option<FsPath>,
     pub missing: Vec<MissingTool>,
+    pub system_changes: Option<SystemChanges>,
+    pub store_managed: bool,
+    pub system_integration_unavailable: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -714,6 +727,7 @@ impl App {
             ui.focus = usize::MAX;
         }
         self.effects.push(Effect::Settings(SettingsCmd::CacheSize));
+        self.effects.push(Effect::Settings(SettingsCmd::RefreshSystemChanges));
         self.layout();
         self.dirty = true;
     }
@@ -817,9 +831,27 @@ impl App {
         match pick {
             SettingPick::Reset if id == 0 => self.reset_settings(),
             SettingPick::ResetKeys if id == 0 => self.restore_all_keys(),
+            SettingPick::RegisterArchive if id == 0 => self.effects.push(Effect::Settings(SettingsCmd::RegisterArchive)),
             SettingPick::Capture { action, old, chord } => self.capture_choose(action, old, chord, id),
             SettingPick::Font(i) => self.choose_font(i, id),
             _ => {}
+        }
+    }
+
+    pub fn offer_archive_registration(&mut self) {
+        self.archive_offer_pending = true;
+        self.dirty = true;
+    }
+
+    pub(super) fn show_pending_archive_offer(&mut self) {
+        if self.archive_offer_pending && self.jobs.form.is_none() && self.nav.palette.is_none() {
+            self.archive_offer_pending = false;
+            let items = vec![
+                (S::SettingsPageSystemArchivePrompt.t().to_owned(), S::SettingsPageSystemArchivePromptNote.t().to_owned()),
+                (S::SettingsPageDialogCancel.t().to_owned(), String::new()),
+            ];
+            self.open_pick(Palette::new(Pick::Setting(SettingPick::RegisterArchive), items, ""));
+            self.effects.push(Effect::Settings(SettingsCmd::ArchiveOfferShown));
         }
     }
 
@@ -845,7 +877,7 @@ impl App {
                 Some(path) => self.effects.push(Effect::Settings(SettingsCmd::Import(path))),
                 None => self.status(S::SettingsPageStatusBadFile.t()),
             },
-            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::Capture { .. } | SettingPick::Font(_) => {}
+            SettingPick::Reset | SettingPick::ResetKeys | SettingPick::RegisterArchive | SettingPick::Capture { .. } | SettingPick::Font(_) => {}
         }
     }
 
@@ -874,20 +906,40 @@ impl App {
                 }
                 out.push(Line::Info(S::SettingsPageLineFolder.t(), self.about.logs.as_ref().map_or_else(|| S::SettingsPageLineNone.t().to_owned(), |f| f.display().into_owned())));
                 out.push(Line::Buttons(None, LOG_BUTTONS));
+                out.push(Line::Group(S::SettingsPageSystemTitle.t()));
+                match (self.about.system_integration_unavailable, &self.about.system_changes) {
+                    (true, _) => out.push(Line::Note(S::SettingsPageSystemUnavailable.t())),
+                    (false, Some(Ok(changes))) if changes.is_empty() => out.push(Line::Note(S::SettingsPageSystemEmpty.t())),
+                    (false, Some(Ok(changes))) => {
+                        out.extend(changes.iter().map(|(kind, target)| Line::Info(kind.t(), target.clone())));
+                        out.push(Line::Buttons(None, &[Btn::UndoSystemChanges]));
+                    }
+                    (false, Some(Err(error))) => out.push(Line::Info(S::SettingsPageSystemReadFailed.t(), error.clone())),
+                    (false, None) => out.push(Line::Note(S::SettingsPageSystemLoading.t())),
+                }
             }
             Page::About => {
                 out.push(Line::Info(S::SettingsPageLineVersion.t(), format!("Flit {}", env!("CARGO_PKG_VERSION"))));
                 out.push(Line::Info(OS_NAME, if self.about.os.is_empty() { S::SettingsPageLineUnknown.t().into() } else { self.about.os.clone() }));
                 out.push(Line::Buttons(None, &[Btn::CopyAbout]));
+                if self.about.system_integration_unavailable {
+                    out.push(Line::Note(S::SettingsPageSystemUnavailable.t()));
+                } else if self.can_register_archives() {
+                    out.push(Line::Buttons(None, &[Btn::RegisterArchive]));
+                }
                 if !self.about.missing.is_empty() {
                     out.push(Line::Group(S::SettingsPageToolMissing.t()));
                     out.extend(self.about.missing.iter().map(|m| Line::Info(m.tool, crate::tr!(S::SettingsPageToolInstall, what = m.purpose.t(), package = m.package))));
                 }
                 out.push(Line::Group(S::UpdatePageGroup.t()));
-                if let Some(i) = settings::index(settings::CHECK_UPDATES) {
-                    self.setting_lines(i, out);
+                if self.about.store_managed {
+                    out.push(Line::Note(S::UpdateDialogMicrosoftStore.t()));
+                } else {
+                    if let Some(i) = settings::index(settings::CHECK_UPDATES) {
+                        self.setting_lines(i, out);
+                    }
+                    out.push(Line::Buttons(None, &[Btn::CheckUpdates]));
                 }
-                out.push(Line::Buttons(None, &[Btn::CheckUpdates]));
                 out.push(Line::Group(S::SettingsPageLineHelp.t()));
                 out.push(Line::Buttons(None, HELP_BUTTONS));
                 out.push(Line::Buttons(None, LINK_BUTTONS));
@@ -919,7 +971,14 @@ impl App {
         }
     }
 
+    fn can_register_archives(&self) -> bool {
+        !self.caps.unix_paths && !self.about.store_managed && !self.about.system_integration_unavailable
+    }
+
     fn setting_lines(&self, i: usize, out: &mut Vec<Line>) {
+        if self.about.store_managed && matches!(SETTINGS[i].id, settings::AUTOSTART | settings::CHECK_UPDATES) {
+            return;
+        }
         if let Kind::Keys(..) | Kind::Strings(..) | Kind::Menu(..) = SETTINGS[i].kind {
             return;
         }
@@ -945,6 +1004,8 @@ impl App {
             let extra: &[&'static [Btn]] = match page {
                 Page::Tags => &[&[Btn::NewTag]],
                 Page::Advanced => &[&[Btn::ClearCache], FILE_BUTTONS, &[Btn::Reset], LOG_BUTTONS],
+                Page::About if self.about.store_managed => &[&[Btn::CopyAbout], HELP_BUTTONS, LINK_BUTTONS],
+                Page::About if self.can_register_archives() => &[&[Btn::CopyAbout], &[Btn::CheckUpdates], HELP_BUTTONS, LINK_BUTTONS, &[Btn::RegisterArchive]],
                 Page::About => &[&[Btn::CopyAbout], &[Btn::CheckUpdates], HELP_BUTTONS, LINK_BUTTONS],
                 _ => &[],
             };
@@ -1505,6 +1566,8 @@ impl App {
             (Btn::Reset, ..) => self.ask_reset_settings(),
             (Btn::MenuReset, ..) => self.reset_menu(),
             (Btn::CheckUpdates, ..) => self.check_updates(true),
+            (Btn::UndoSystemChanges, ..) => self.effects.push(Effect::Settings(SettingsCmd::UndoSystemChanges)),
+            (Btn::RegisterArchive, ..) => self.effects.push(Effect::Settings(SettingsCmd::RegisterArchive)),
             (Btn::CopyAbout, ..) => {
                 let text = format!("Flit {}\r\n{}", env!("CARGO_PKG_VERSION"), self.about.os);
                 self.effects.push(Effect::SetClipboard(text));
@@ -1753,6 +1816,7 @@ impl App {
 
     fn setting_help(&self, line: &Line) -> std::borrow::Cow<'static, str> {
         match line {
+            Line::Off(i) if self.about.system_integration_unavailable && matches!(SETTINGS[*i].id, settings::AUTOSTART | settings::PROTOCOL_LINKS) => S::SettingsPageSystemUnavailable.t().into(),
             Line::Off(i) if settings::NEEDS_BUILTIN_ARCHIVES.contains(&SETTINGS[*i].id) => format!("{} {}", S::SettingsPageLineNeedsBuiltinArchives.t(), SETTINGS[*i].help.t()).into(),
             Line::Off(i) => SETTINGS[*i].help.t().into(),
             Line::Setting(i) => SETTINGS[*i].help.t().into(),

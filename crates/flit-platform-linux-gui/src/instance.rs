@@ -120,7 +120,7 @@ impl Drop for ClientSlot {
     }
 }
 
-fn lock(path: &Path) -> io::Result<Option<File>> {
+pub fn try_file_lock(path: &Path) -> io::Result<Option<File>> {
     let file = OpenOptions::new().read(true).write(true).create(true).truncate(false).mode(0o600).open(path)?;
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
         return Ok(Some(file));
@@ -141,7 +141,7 @@ impl SocketInstance {
 
     fn lock_or_forward(runtime: &Path, open: &Open) -> Instance<Self> {
         let (lock_path, socket) = endpoints(runtime);
-        match lock(&lock_path) {
+        match try_file_lock(&lock_path) {
             Ok(Some(file)) => {
                 let _ = std::fs::remove_file(&socket);
                 match UnixListener::bind(&socket) {

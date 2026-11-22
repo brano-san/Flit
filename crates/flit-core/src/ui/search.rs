@@ -478,6 +478,14 @@ impl App {
         self.dirty |= self.search.active;
     }
 
+    pub fn open_saved_search(&mut self, text: &str) -> bool {
+        if !self.search.history.iter().any(|query| query == text) {
+            return false;
+        }
+        self.search_for(text);
+        true
+    }
+
     pub(super) fn search_for(&mut self, text: &str) {
         self.search.edit.set(text);
         let fresh = self.search.gen == 0 || self.search.within != self.library_within();

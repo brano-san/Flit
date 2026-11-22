@@ -832,6 +832,10 @@ impl<P: Platform> Handler<P> {
                 Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
                 Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
                 Effect::Settings(SettingsCmd::RaiseWatchLimit) => self.settings.send(Job::RaiseWatchLimit(P::raise_watch_limit)),
+                Effect::Settings(SettingsCmd::RefreshSystemChanges) => self.settings.send(Job::SystemChanges(crate::system_changes::Action::Refresh)),
+                Effect::Settings(SettingsCmd::UndoSystemChanges) => self.settings.send(Job::SystemChanges(crate::system_changes::Action::Undo)),
+                Effect::Settings(SettingsCmd::RegisterArchive) => self.settings.send(Job::SystemChanges(crate::system_changes::Action::RegisterArchive { startup: false })),
+                Effect::Settings(SettingsCmd::ArchiveOfferShown) => self.settings.send(Job::SystemChanges(crate::system_changes::Action::ArchiveOfferShown)),
                 Effect::Settings(SettingsCmd::Fonts) => {
                     if let Some(st) = self.windows.get_mut(&id) {
                         let t = Instant::now();
@@ -958,6 +962,11 @@ impl<P: Platform> Handler<P> {
                     }
                     self.dates = dates;
                 }
+                settings::Reply::ResolvedLink(target, link) => {
+                    if let Some(st) = self.windows.get_mut(&target) {
+                        crate::system_link::open_in(&mut st.app, link);
+                    }
+                }
                 settings::Reply::WatchLimit(outcome) => {
                     let now = Instant::now();
                     for app in self.windows.values_mut().map(|st| &mut st.app) {
@@ -969,6 +978,34 @@ impl<P: Platform> Handler<P> {
                     self.share_about();
                 }
                 settings::Reply::Changed(text) => self.reload_settings(id, &text),
+                settings::Reply::SystemChangesUnavailable { notify } => {
+                    self.about.system_integration_unavailable = true;
+                    self.share_about();
+                    if notify {
+                        self.status(id, S::SettingsPageSystemUnavailable.t().to_owned());
+                    }
+                }
+                settings::Reply::SystemChanges(reply) => {
+                    if reply.disabled_autostart {
+                        self.clear_system_settings(&[flit_core::ui::settings::AUTOSTART]);
+                    }
+                    if reply.disabled_protocol {
+                        self.clear_system_settings(&[flit_core::ui::settings::PROTOCOL_LINKS]);
+                    }
+                    self.about.system_changes = Some(reply.changes);
+                    self.share_about();
+                    if let Err(error) = reply.result {
+                        self.status(id, flit_core::tr!(S::SettingsPageSystemWriteFailed, error = error));
+                    } else if reply.undone {
+                        self.status(id, S::SettingsPageSystemUndone.t().to_owned());
+                    } else if reply.archive_registered {
+                        self.status(id, S::SettingsPageSystemRegistered.t().to_owned());
+                    } else if reply.offer_archives {
+                        if let Some(st) = self.windows.get_mut(&id) {
+                            st.app.offer_archive_registration();
+                        }
+                    }
+                }
                 settings::Reply::SaveFailed(e) => {
                     tracing::warn!("cannot save the settings: {e}");
                     self.status(id, flit_core::tr!(S::ErrorsSettingsWriteFailed, error = flit_core::i18n::localize(&e)));
@@ -1006,6 +1043,23 @@ impl<P: Platform> Handler<P> {
                 }
             }
         }
+    }
+
+    fn clear_system_settings(&mut self, keys: &[&str]) {
+        let changes: Vec<_> = keys.iter().filter_map(|key| {
+            let k = flit_core::ui::settings::index(key)?;
+            (self.settings.values.get(k) == Some(&Value::Bool(true))).then_some((k, Value::Bool(false)))
+        }).collect();
+        if changes.is_empty() {
+            return;
+        }
+        for (k, value) in &changes {
+            self.settings.values[*k] = value.clone();
+        }
+        for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
+            app.apply_settings(&changes);
+        }
+        self.settings.save();
     }
 
     fn share_about(&mut self) {
@@ -1185,6 +1239,10 @@ impl<P: Platform> Handler<P> {
 
     fn take_opens(&mut self) {
         for o in self.opens.try_iter() {
+            if crate::system_link::handles(&o) {
+                self.queued_opens.push(o);
+                continue;
+            }
             match &o.tag {
                 Some(name) => self.tags.submit(self.active, TagRequest::Command { name: name.clone(), items: tags::command_items::<P>(&o) }),
                 None => self.queued_opens.push(o),
@@ -1213,6 +1271,14 @@ impl<P: Platform> Handler<P> {
         let Some(st) = self.windows.get_mut(&window.id()).filter(|_| !mine.is_empty()) else { return };
         let now = Instant::now();
         for mut o in mine {
+            if crate::system_link::handles(&o) {
+                if st.app.protocol_links {
+                    self.settings.send(Job::ResolveLink(window.id(), o));
+                } else {
+                    st.app.status(S::SettingsPageSystemLinkDisabled.t());
+                }
+                continue;
+            }
             if o.is_empty() {
                 // A bare Linux launcher activation raises the existing session.
                 if P::caps().unix_paths && o.target == OpenTarget::Default {
@@ -1592,15 +1658,27 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let (shell, thumbs, sorter, previews, overlays, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
-    let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path), missing: Vec::new() };
     let integrate = metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
+    let about = About {
+        file: settings_file.clone().and_then(fs_path),
+        logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path),
+        store_managed: update::store_managed(),
+        system_integration_unavailable: !integrate,
+        ..Default::default()
+    };
     let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), integrate, wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let open = if activated { opens.recv_timeout(ACTIVATION_WAIT).unwrap_or(open) } else { open };
     let unix = P::caps().unix_paths;
     let (servers, plain): (Vec<_>, Vec<_>) = open.paths.iter().cloned().partition(|p| unix && std::str::from_utf8(p).ok().and_then(flit_core::ui::server_uri).is_some());
-    let queued: Vec<Open> = (!servers.is_empty()).then(|| Open { paths: servers, ..Default::default() }).into_iter().collect();
+    let mut queued: Vec<Open> = (!servers.is_empty()).then(|| Open { paths: servers, ..Default::default() }).into_iter().collect();
     let open = Open { paths: plain, ..open };
+    let open = if crate::system_link::handles(&open) {
+        queued.push(open);
+        Open::default()
+    } else {
+        open
+    };
     let new_window = open.target == OpenTarget::NewWindow;
     let files = if metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none() { Files::of::<P>() } else { None };
     let crashed = files.as_ref().is_some_and(Files::crashed);

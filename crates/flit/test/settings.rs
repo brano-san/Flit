@@ -19,7 +19,7 @@ fn worker(path: &Path, first: &str) -> (Sender<Job>, Receiver<Reply>, JoinHandle
     let (jobs, rx) = unbounded();
     let (tx, replies) = unbounded();
     let (path, first) = (path.to_path_buf(), first.to_owned());
-    let thread = std::thread::spawn(move || work(Some(path), None, None, first, rx, tx, Arc::new(|| {})));
+    let thread = std::thread::spawn(move || work::<crate::P>(Some(path), None, None, first, rx, tx, Arc::new(|| {})));
     (jobs, replies, thread)
 }
 
@@ -165,7 +165,7 @@ fn fake(on: bool) -> Result<(), PlatformError> {
 fn the_worker_reports_integration_failures() {
     let (jobs, rx) = unbounded();
     let (tx, replies) = unbounded();
-    let thread = std::thread::spawn(move || work(None, None, Some(fake), String::new(), rx, tx, Arc::new(|| {})));
+    let thread = std::thread::spawn(move || work::<crate::P>(None, None, Some(fake), String::new(), rx, tx, Arc::new(|| {})));
     jobs.send(Job::Integrate(false)).unwrap();
     jobs.send(Job::Integrate(true)).unwrap();
     drop(jobs);
@@ -191,4 +191,22 @@ fn a_failed_write_reaches_the_window_and_changes_are_not_silently_lost() {
     drop(jobs);
     thread.join().unwrap();
     assert!(replies.try_recv().is_err());
+}
+
+#[test]
+fn system_changes_reply_when_integration_is_disabled() {
+    use crate::system_changes::Action;
+    let d = temp("system-unavailable");
+    let (jobs, replies, thread) = worker(&d.0.join("settings.json"), "");
+    for action in [Action::Refresh, Action::Autostart { on: true, startup: false }, Action::Protocol { on: true, startup: false }] {
+        jobs.send(Job::SystemChanges(action)).unwrap();
+    }
+    drop(jobs);
+    thread.join().unwrap();
+    assert!(matches!(replies.try_recv().unwrap(), Reply::SystemChangesUnavailable { notify: false }));
+    for _ in 0..2 {
+        assert!(matches!(replies.try_recv().unwrap(), Reply::SystemChangesUnavailable { notify: true }));
+    }
+    assert!(replies.try_recv().is_err());
+    assert!(!d.0.exists());
 }

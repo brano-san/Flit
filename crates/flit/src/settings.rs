@@ -18,6 +18,8 @@ pub enum Job {
     CacheLimit(u32),
     Integrate(bool),
     RaiseWatchLimit(fn() -> WatchLimit),
+    SystemChanges(crate::system_changes::Action),
+    ResolveLink(flit_platform::WindowId, flit_core::open::Open),
 }
 
 pub enum Reply {
@@ -30,6 +32,9 @@ pub enum Reply {
     CacheUsed(u64),
     IntegrationFailed(bool, String),
     WatchLimit(WatchLimit),
+    SystemChanges(crate::system_changes::Reply),
+    SystemChangesUnavailable { notify: bool },
+    ResolvedLink(flit_platform::WindowId, Option<crate::system_link::Link>),
 }
 
 pub type Integrate = fn(bool) -> Result<(), PlatformError>;
@@ -72,7 +77,7 @@ fn locked(c: &Mutex<ThumbCache>) -> std::sync::MutexGuard<'_, ThumbCache> {
     c.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: Option<Integrate>, first: String, jobs: Receiver<Job>, replies: Sender<Reply>, wake: Wake) {
+fn work<P: Platform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: Option<Integrate>, first: String, jobs: Receiver<Job>, replies: Sender<Reply>, wake: Wake) {
     let mut last = first;
     let reply = |r: Reply| {
         let _ = replies.send(r);
@@ -131,6 +136,17 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate:
                         reply(Reply::WatchLimit(WatchLimit::Failed(e.to_string())));
                     }
                 }
+                Job::ResolveLink(id, open) => reply(Reply::ResolvedLink(id, crate::system_link::resolve(&open))),
+                Job::SystemChanges(action) => {
+                    if integrate.is_some() {
+                        reply(Reply::SystemChanges(crate::system_changes::run::<P>(action)));
+                    } else {
+                        use crate::system_changes::Action;
+                        let notify = matches!(action, Action::Undo | Action::Autostart { startup: false, .. }
+                            | Action::Protocol { startup: false, .. } | Action::RegisterArchive { startup: false });
+                        reply(Reply::SystemChangesUnavailable { notify });
+                    }
+                }
                 Job::CacheLimit(mb) => {
                     if let Some(c) = &cache {
                         locked(c).set_limit(mb);
@@ -163,8 +179,11 @@ impl Settings {
                 wake();
                 if integrate.is_some() {
                     P::tidy_integration();
+                    #[cfg(windows)]
+                    let _ = tx.send(Reply::SystemChanges(crate::system_changes::run::<P>(crate::system_changes::Action::RegisterArchive { startup: true })));
+                    wake();
                 }
-                work(path, cache, integrate, first, rx, tx, wake)
+                work::<P>(path, cache, integrate, first, rx, tx, wake)
             })
             .ok();
         Self { values: Vec::new(), unknown: Map::new(), replies, read_only: false, jobs: thread.as_ref().map(|_| jobs), thread }
@@ -195,6 +214,18 @@ impl Settings {
         }
         if let Some(on) = integration_change(&self.values, &values) {
             self.send(Job::Integrate(on));
+        }
+        if let Some(on) = flag(&values, settings::AUTOSTART) {
+            let previous = flag(&self.values, settings::AUTOSTART);
+            if previous.map_or(on, |was| was != on) {
+                self.send(Job::SystemChanges(crate::system_changes::Action::Autostart { on, startup: previous.is_none() }));
+            }
+        }
+        if let Some(on) = flag(&values, settings::PROTOCOL_LINKS) {
+            let previous = flag(&self.values, settings::PROTOCOL_LINKS);
+            if previous.map_or(on, |was| was != on) {
+                self.send(Job::SystemChanges(crate::system_changes::Action::Protocol { on, startup: previous.is_none() }));
+            }
         }
         if let Some(level) = log_level(&values) {
             crate::logs::set_level(level);

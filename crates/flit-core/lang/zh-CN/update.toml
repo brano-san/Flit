@@ -14,6 +14,8 @@ check_failed = "无法检查更新：{error}"
 available = "Flit {version} 已发布：使用“检查更新”即可安装"
 failed = "无法安装更新：{error}"
 
+managed_available = "Flit {version} 已可用。请打开“检查更新”查看安装说明。"
+
 [dialog]
 title = "Flit {version} 已发布"
 installed = "已安装版本"
@@ -28,6 +30,11 @@ downloading_plain = "正在下载 Flit {version}…"
 installing = "正在安装 Flit {version}…"
 read_only = "Flit 无法替换 {dir} 中的文件。请从发布页面下载新版本。"
 jobs = ["仍有 {n} 个文件操作在进行。请在完成后再安装更新。"]
+
+package_manager = "请通过软件包管理器更新"
+appimage = "请从发布页面下载新的 AppImage。"
+
+microsoft_store = "此安装由 Microsoft Store 管理更新。"
 
 [page]
 group = "更新"

@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:uap3="http://schemas.microsoft.com/appx/manifest/uap/windows10/3"
+         xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap uap3 desktop rescap">
+  <Identity Name="Flit" Publisher="CN=FlitDev" Version="0.0.0.0" ProcessorArchitecture="x64" />
+  <Properties>
+    <DisplayName>Flit</DisplayName>
+    <PublisherDisplayName>Flit</PublisherDisplayName>
+    <Logo>Images\StoreLogo.png</Logo>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="Flit" Executable="flit.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Flit" Description="Flit"
+                          Square150x150Logo="Images\Square150x150Logo.png"
+                          Square44x44Logo="Images\Square44x44Logo.png"
+                          BackgroundColor="transparent" />
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap3:FileTypeAssociation Name="flit-archive" Parameters="&quot;%1&quot;">
+            <uap:DisplayName>Flit</uap:DisplayName>
+            <uap:SupportedFileTypes>
+              <uap:FileType>.zip</uap:FileType>
+              <uap:FileType>.7z</uap:FileType>
+              <uap:FileType>.rar</uap:FileType>
+              <uap:FileType>.tar</uap:FileType>
+              <uap:FileType>.tgz</uap:FileType>
+              <uap:FileType>.gz</uap:FileType>
+              <uap:FileType>.lzh</uap:FileType>
+              <uap:FileType>.jar</uap:FileType>
+            </uap:SupportedFileTypes>
+          </uap3:FileTypeAssociation>
+        </uap:Extension>
+        <uap3:Extension Category="windows.protocol">
+          <uap3:Protocol Name="flit" Parameters="--flit-link &quot;%1&quot;">
+            <uap:DisplayName>Flit</uap:DisplayName>
+          </uap3:Protocol>
+        </uap3:Extension>
+        <desktop:Extension Category="windows.startupTask" Executable="flit.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="FlitStartup" Enabled="false" DisplayName="Flit" />
+        </desktop:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>
+

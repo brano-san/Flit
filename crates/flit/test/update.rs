@@ -315,3 +315,27 @@ fn contents_or_dirs(dir: &Path) -> Vec<String> {
     all.sort();
     all
 }
+
+#[test]
+fn a_package_manager_is_only_reported_after_a_successful_new_version_check() {
+    let message = checked(true, Ok(None), || panic!("no newer version"));
+    assert_eq!(message, UpdateEvent::Checked { manual: true, found: Ok(None) });
+    let release = Release { version: "9.0.0".into(), notes: String::new(), url: String::new(), signature: String::new() };
+    let installation = ManagedInstallation::Package("sudo apt install --only-upgrade flit".into());
+    assert_eq!(
+        checked(true, Ok(Some(release.clone())), || Some(installation.clone())),
+        UpdateEvent::Managed { manual: true, release, installation }
+    );
+}
+
+#[test]
+fn store_identity_disables_automatic_and_manual_manifest_fetches() {
+    for status in [0, 122] {
+        let packaged = has_package_identity(status);
+        assert_eq!(check_request(false, packaged, || panic!("unexpected manifest fetch")), None);
+        assert_eq!(check_request(true, packaged, || panic!("unexpected manifest fetch")), Some(UpdateEvent::StoreManaged));
+    }
+    let unpackaged = has_package_identity(15700);
+    let current = UpdateEvent::Checked { manual: true, found: Ok(None) };
+    assert_eq!(check_request(true, unpackaged, || current.clone()), Some(current));
+}

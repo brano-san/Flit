@@ -1,7 +1,7 @@
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use ed25519_compact::{PublicKey, Signature};
 use flit_core::i18n::S;
-use flit_core::update::{base64_decode, newer, parse_manifest_since, percent, Release, UpdateEvent, UpdateRequest, CURRENT, MANIFEST_URL, PLATFORM};
+use flit_core::update::{base64_decode, newer, parse_manifest_since, percent, ManagedInstallation, Release, UpdateEvent, UpdateRequest, CURRENT, MANIFEST_URL, PLATFORM};
 use flit_platform::{Platform, PlatformError, Wake};
 use std::fs;
 use std::io;
@@ -33,6 +33,25 @@ pub enum Reply {
 pub enum Failure {
     ReadOnly(String),
     Failed(String),
+}
+
+#[cfg(any(windows, test))]
+fn has_package_identity(status: u32) -> bool {
+    matches!(status, 0 | 122)
+}
+
+pub fn store_managed() -> bool {
+    #[cfg(windows)]
+    {
+        static PACKAGED: OnceLock<bool> = OnceLock::new();
+        *PACKAGED.get_or_init(|| {
+            use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+            let mut length = 0;
+            has_package_identity(unsafe { GetCurrentPackageFullName(&mut length, None) }.0)
+        })
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 pub fn network_allowed(metrics: bool) -> bool {
@@ -246,8 +265,16 @@ fn delete_at_reboot(path: &Path) {
 fn delete_at_reboot(_: &Path) {}
 
 pub fn install_from_command_line(archive: Option<std::ffi::OsString>, signature: Option<std::ffi::OsString>) -> i32 {
+    if store_managed() {
+        return 2;
+    }
     let (Some(archive), Some(signature)) = (archive.map(PathBuf::from), signature) else { return 2 };
-    let result = running_exe().and_then(|exe| install_elevated(&archive, &signature.to_string_lossy(), PUBLIC_KEY, &exe, &mut delete_at_reboot));
+    let result = running_exe().and_then(|exe| {
+        if let Some(installation) = managed(&exe) {
+            return Err(managed_message(&installation));
+        }
+        install_elevated(&archive, &signature.to_string_lossy(), PUBLIC_KEY, &exe, &mut delete_at_reboot)
+    });
     match result {
         Ok(()) => 0,
         Err(e) => {
@@ -295,6 +322,40 @@ fn check<P: Platform>(metrics: bool) -> Result<Option<Release>, String> {
     decide(&manifest, PLATFORM, CURRENT)
 }
 
+fn managed(_exe: &Path) -> Option<ManagedInstallation> {
+    #[cfg(not(windows))]
+    {
+        crate::install_format::managed(_exe)
+    }
+    #[cfg(windows)]
+    None
+}
+
+fn managed_message(installation: &ManagedInstallation) -> String {
+    match installation {
+        ManagedInstallation::Package(command) => format!("{}\n{command}", S::UpdateDialogPackageManager.t()),
+        ManagedInstallation::AppImage => S::UpdateDialogAppimage.t().to_owned(),
+    }
+}
+
+fn checked(manual: bool, found: Result<Option<Release>, String>, managed: impl FnOnce() -> Option<ManagedInstallation>) -> UpdateEvent {
+    match (found, managed) {
+        (Ok(Some(release)), get) => match get() {
+            Some(installation) => UpdateEvent::Managed { manual, release, installation },
+            None => UpdateEvent::Checked { manual, found: Ok(Some(release)) },
+        },
+        (found, _) => UpdateEvent::Checked { manual, found },
+    }
+}
+
+fn check_request(manual: bool, packaged: bool, check: impl FnOnce() -> UpdateEvent) -> Option<UpdateEvent> {
+    match (packaged, manual) {
+        (true, true) => Some(UpdateEvent::StoreManaged),
+        (true, false) => None,
+        (false, _) => Some(check()),
+    }
+}
+
 fn running_exe() -> Result<PathBuf, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     Ok(fs::canonicalize(&exe).unwrap_or(exe))
@@ -306,13 +367,22 @@ fn run<P: Platform>(jobs: Receiver<UpdateRequest>, tx: Sender<Reply>, wake: Wake
         let _ = tx.send(r);
         wake();
     };
+    let packaged = store_managed();
     for job in jobs {
         let UpdateRequest::Install(release) = job else {
             if let UpdateRequest::Check { manual } = job {
-                send(Reply::Ui(UpdateEvent::Checked { manual, found: check::<P>(metrics) }));
+                if let Some(event) = check_request(manual, packaged, || {
+                    checked(manual, check::<P>(metrics), || running_exe().ok().and_then(|exe| managed(&exe)))
+                }) {
+                    send(Reply::Ui(event));
+                }
             }
             continue;
         };
+        if packaged {
+            send(Reply::Ui(UpdateEvent::StoreManaged));
+            continue;
+        }
         cancel.store(false, Ordering::Release);
         let mut shown = None;
         let mut download = |url: &str| {
@@ -331,6 +401,10 @@ fn run<P: Platform>(jobs: Receiver<UpdateRequest>, tx: Sender<Reply>, wake: Wake
         };
         let result = match running_exe() {
             Ok(exe) => {
+                if let Some(installation) = managed(&exe) {
+                    send(Reply::Ui(UpdateEvent::Managed { manual: true, release, installation }));
+                    continue;
+                }
                 let mut elevate = elevated::<P>;
                 install(&release, &exe, PUBLIC_KEY, &mut download, &mut || send(Reply::Ui(UpdateEvent::Installing)), cfg!(windows).then_some(&mut elevate as Elevate)).map(|()| exe)
             }
@@ -386,8 +460,10 @@ pub fn on_start<P: Platform>() {
         }
         RESTARTED.store(true, Ordering::Release);
     }
-    if let Ok(exe) = running_exe() {
-        remove_old(&exe);
+    if !store_managed() {
+        if let Ok(exe) = running_exe() {
+            remove_old(&exe);
+        }
     }
 }
 

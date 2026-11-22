@@ -336,6 +336,7 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
     let row = |a: &App, b: Btn| ui(a).lines.iter().position(|l| l.buttons().contains(&b)).unwrap();
     let press = |a: &mut App, b: Btn| {
         let k = row(a, b);
+        reveal(a, k);
         let l = ui(a).lines[k].clone();
         let at = l.buttons().iter().position(|x| *x == b).unwrap();
         let r = button_rects(&l, rect(a, k), &ui(a).fit, s)[at];
@@ -358,7 +359,7 @@ fn advanced_page_exports_imports_resets_and_clears_the_cache() {
     press(&mut a, Btn::Reset);
     key(&mut a, Key::Enter, NO);
     assert_eq!(a.single_click_files, crate::ui::settings::ClickOpen::Never);
-    a.set_about(About { os: "Windows 11".into(), file: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\settings.json"), cache_bytes: Some(3 << 20), logs: None, missing: Vec::new() });
+    a.set_about(About { os: "Windows 11".into(), file: FsPath::parse(r"C:\Users\me\AppData\Local\Flit\settings.json"), cache_bytes: Some(3 << 20), ..Default::default() });
     assert!(a.settings_lines().contains(&"Thumbnail cache in use: 3.0 MB".to_owned()));
     press(&mut a, Btn::OpenFile);
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } if path.display().ends_with("settings.json"))));
@@ -403,13 +404,14 @@ fn tags_page_lists_tags_and_runs_their_commands() {
 #[test]
 fn about_page_shows_versions_and_no_libraries() {
     let mut a = app();
-    a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), file: None, cache_bytes: None, logs: None, missing: Vec::new() });
+    a.set_about(About { os: "Windows 11 Pro 24H2 (build 26100.1)".into(), ..Default::default() });
     a.open_settings(Some(Page::About));
     let lines = page(&a, Page::About);
     assert!(lines[0].starts_with("Version: Flit ") && lines[1] == format!("{OS_NAME}: Windows 11 Pro 24H2 (build 26100.1)"));
     assert!(!lines.iter().any(|l| l.starts_with("serde_json")), "{lines:?}");
-    assert_eq!(lines[3..6], ["Updates", crate::ui::settings::CHECK_UPDATES, "Check for updates"]);
-    assert_eq!(lines[6..10], ["Help","Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
+    assert_eq!(lines[3], S::SettingsPageSystemRegisterAgain.t());
+    assert_eq!(lines[4..7], ["Updates", crate::ui::settings::CHECK_UPDATES, "Check for updates"]);
+    assert_eq!(lines[7..11], ["Help","Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
     reveal(&mut a, k);
     let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), &ui(&a).fit, s)[1];
@@ -426,7 +428,7 @@ fn advanced_page_groups_the_log_level_folder_and_buttons() {
     a.open_settings(Some(Page::Advanced));
     let lines = page(&a, Page::Advanced);
     let at = lines.iter().position(|l| l == "Log file").expect("a Log file group");
-    assert_eq!(lines[at..], ["Log file", settings::LOG_LEVEL, r"Folder: C:\Users\me\AppData\Local\Flit\logs", "Open the log file | Open the log folder"]);
+    assert_eq!(lines[at..at + 4], ["Log file", settings::LOG_LEVEL, r"Folder: C:\Users\me\AppData\Local\Flit\logs", "Open the log file | Open the log folder"]);
     assert_eq!(lines.iter().filter(|l| *l == settings::LOG_LEVEL).count(), 1);
     assert_eq!(a.log_level, settings::LOG_DEFAULT);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::OpenLogs)).unwrap();
@@ -1346,4 +1348,57 @@ fn a_finger_scrolls_the_settings_page_a_flick_glides_on_and_a_tap_still_toggles(
     a.touch_swipe(c, (c.0, c.1 - 60.0), end + Duration::from_secs(11));
     assert_ne!(SETTINGS[i].get(&a), before, "a drag that starts on a switch scrolls and leaves it alone");
     assert!(ui(&a).scroll.pos > pos);
+}
+
+#[test]
+fn w3_sys_journal_lists_changes_and_undoes_them_from_a_narrow_settings_window() {
+    let mut a = app();
+    a.on_event(&Event::Resized { width: 760, height: 520 }, Instant::now());
+    a.open_settings(Some(Page::Advanced));
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Settings(SettingsCmd::RefreshSystemChanges))));
+    a.set_about(About { system_changes: Some(Ok(vec![(S::SettingsPageSystemAutostart, "HKCU\\Run\\Flit".into())])), ..Default::default() });
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert!(a.settings_lines().iter().any(|line| line.contains("HKCU\\Run\\Flit")));
+    let line = ui(&a).lines.iter().find(|line| line.buttons() == [Btn::UndoSystemChanges]).cloned().unwrap();
+    a.press_button(&line, 0);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::Settings(SettingsCmd::UndoSystemChanges))));
+    a.set_about(About { system_changes: Some(Err("broken".into())), ..Default::default() });
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert!(a.settings_lines().iter().any(|line| line.contains("broken")));
+    assert!(ui(&a).lines.iter().all(|line| !line.buttons().contains(&Btn::UndoSystemChanges)));
+}
+
+#[test]
+fn archive_offer_waits_behind_an_existing_palette() {
+    let now = Instant::now();
+    let mut a = app();
+    let mut gfx = Gfx::new(Mono, 1024);
+    a.ask_reset_settings();
+    a.offer_archive_registration();
+    a.frame(&mut gfx, now);
+    assert!(matches!(a.nav.palette.as_ref().unwrap().pick, Pick::Setting(SettingPick::Reset)));
+    assert!(!a.drain_effects().any(|effect| matches!(effect, Effect::Settings(SettingsCmd::ArchiveOfferShown))));
+    a.close_palette();
+    a.frame(&mut gfx, now);
+    assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Setting(SettingPick::RegisterArchive))));
+    assert!(a.drain_effects().any(|effect| matches!(effect, Effect::Settings(SettingsCmd::ArchiveOfferShown))));
+    a.close_palette();
+    a.frame(&mut gfx, now);
+    assert!(a.nav.palette.is_none());
+}
+
+#[test]
+fn unavailable_system_integration_disables_settings_and_explains_the_missing_journal() {
+    let mut a = app();
+    a.set_about(About { system_integration_unavailable: true, ..Default::default() });
+    a.open_settings(Some(Page::Advanced));
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let lines = a.settings_lines();
+    assert!(lines.iter().any(|line| line == S::SettingsPageSystemUnavailable.t()));
+    assert!(!lines.iter().any(|line| line == S::SettingsPageSystemLoading.t()));
+    assert!(lines.contains(&format!("off {}", settings::AUTOSTART)));
+    assert!(lines.contains(&format!("off {}", settings::PROTOCOL_LINKS)));
+    a.open_settings(Some(Page::About));
+    assert!(a.settings_lines().iter().any(|line| line == S::SettingsPageSystemUnavailable.t()));
+    assert!(!ui(&a).lines.iter().any(|line| line.buttons().contains(&Btn::RegisterArchive)));
 }

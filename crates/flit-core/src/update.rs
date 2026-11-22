@@ -25,12 +25,20 @@ pub enum UpdateRequest {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ManagedInstallation {
+    Package(String),
+    AppImage,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum UpdateEvent {
     Checked { manual: bool, found: Result<Option<Release>, String> },
     Progress { received: u64, total: Option<u64> },
     Installing,
     Failed(String),
     ReadOnly(String),
+    Managed { manual: bool, release: Release, installation: ManagedInstallation },
+    StoreManaged,
 }
 
 pub fn parse_manifest(text: &str, platform: &str) -> Result<Release, String> {

@@ -93,7 +93,7 @@ pub use bottom::WatchLimit;
 pub use address::Typed;
 pub use tabbar::{MovedTab, Startup, WindowSession};
 pub use settings::{ConfirmDelete, Doc, Page, Setting, Value, SETTINGS};
-pub use settings_page::{About, MissingTool, LOG_FILE};
+pub use settings_page::{About, MissingTool, SystemChanges, LOG_FILE};
 pub use keymap::{set_unix_defaults, Keymap};
 pub use tooltip::TipText;
 pub use panels::{PanelsSession, Shape};
@@ -469,6 +469,10 @@ pub enum SettingsCmd {
     Fonts,
     Browse { exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
     RaiseWatchLimit,
+    RefreshSystemChanges,
+    UndoSystemChanges,
+    RegisterArchive,
+    ArchiveOfferShown,
 }
 
 pub enum IconResult {
@@ -705,8 +709,11 @@ pub struct App {
     pub startup: Startup,
     pub startup_pages: Vec<Location>,
     pub about: About,
+    archive_offer_pending: bool,
     pub log_level: usize,
     pub default_manager: bool,
+    pub autostart: bool,
+    pub protocol_links: bool,
     pub quick_access_sync: bool,
     pub updates: update::UpdatePrefs,
     pub language: usize,
@@ -848,8 +855,11 @@ impl App {
             },
             startup: state.startup,
             about: About::default(),
+            archive_offer_pending: false,
             log_level: settings::LOG_DEFAULT,
             default_manager: false,
+            autostart: false,
+            protocol_links: false,
             quick_access_sync: false,
             updates: update::UpdatePrefs::default(),
             language: 0,
@@ -2579,6 +2589,7 @@ impl App {
         self.last_frame = Some(now);
         self.pump_shell_props(now);
         self.poll();
+        self.show_pending_archive_offer();
         self.dirty = false;
         self.expire_error(now);
         self.expire_undo_bar(now);

@@ -591,3 +591,18 @@ fn gzip_and_tar_gz_compress_in_parallel_chunks_and_extract_intact() {
 
 #[path = "add.rs"]
 mod add;
+
+#[test]
+fn archive_cli_route_reads_the_zip_as_a_folder() {
+    let dir = Temp::new("archive-cli");
+    dir.write("entry.txt", b"inside");
+    let zip = dir.fs("archive.zip");
+    compress(vec![dir.fs("entry.txt")], zip, Format::Zip, None);
+    let args = vec![b"archive.zip".to_vec()];
+    let command = flit_core::open::parse_args(&args, Some(dir.fs("").as_bytes().to_vec()));
+    let (routes, errors) = flit_core::open::routes_for(&command, &|_| None, cfg!(unix));
+    assert!(errors.is_empty());
+    assert_eq!(routes.len(), 1);
+    assert_eq!(names(routes[0].folder.path()).unwrap(), vec![("entry.txt".into(), 6, false)]);
+    assert!(flit_core::archive::browsable(b"entry.txt").is_none());
+}

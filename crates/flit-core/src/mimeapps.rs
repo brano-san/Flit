@@ -17,6 +17,26 @@ fn key_of<'a>(line: &'a str, mime: &str) -> Option<&'a str> {
     (k.trim() == mime).then(|| v.trim())
 }
 
+pub fn desktop_exec(exe: &str) -> Option<String> {
+    if exe.contains('=') || exe.chars().any(char::is_control) {
+        return None;
+    }
+    let mut quoted = String::from("\"");
+    for c in exe.chars() {
+        match c {
+            '"' | '`' | '$' => {
+                quoted.push_str("\\\\");
+                quoted.push(c);
+            }
+            '\\' => quoted.push_str("\\\\\\\\"),
+            '%' => quoted.push_str("%%"),
+            _ => quoted.push(c),
+        }
+    }
+    quoted.push('"');
+    Some(quoted)
+}
+
 pub fn default_app(text: &str, mime: &str) -> Option<String> {
     value_in(text, DEFAULTS, mime).map(str::to_owned)
 }

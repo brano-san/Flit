@@ -20,6 +20,11 @@ mod state;
 mod tags;
 mod update;
 mod thumbs;
+mod system_changes;
+mod system_journal;
+mod system_link;
+#[cfg(any(not(windows), test))]
+mod install_format;
 
 #[cfg(not(target_os = "linux"))]
 use flit_core::open::parse_args;
@@ -67,7 +72,18 @@ fn main() {
     let mut args: Vec<Vec<u8>> = Vec::new();
     let mut metrics: Option<PathBuf> = None;
     let mut activated = false;
-    let mut it = std::env::args_os().skip(1);
+    let raw: Vec<_> = std::env::args_os().skip(1).collect();
+    let link = match system_link::cli(&raw) {
+        Some(Ok(open)) => Some(open),
+        Some(Err(error)) => {
+            let lang = std::env::var("FLIT_LANG").unwrap_or_else(|_| P::ui_language());
+            flit_core::i18n::set_lang(flit_core::i18n::Lang::from_code(&lang).unwrap_or_default());
+            P::fatal_error(error.t());
+            std::process::exit(2);
+        }
+        None => None,
+    };
+    let mut it = if link.is_some() { Vec::new() } else { raw }.into_iter();
     while let Some(a) = it.next() {
         if a == "--diagnose" {
             #[cfg(windows)]
@@ -97,14 +113,16 @@ fn main() {
             metrics = it.next().map(PathBuf::from);
         } else if a == RESTARTED_BY_WINDOWS {
             update::resume_session();
+        } else if a == "--unregister" {
+            std::process::exit(system_changes::unregister::<P>());
         } else {
             args.push(wtf8(&a));
         }
     }
     let cwd = std::env::current_dir().ok().map(|d| wtf8(d.as_os_str()));
-    let open = parse_args(&args, cwd);
+    let open = link.unwrap_or_else(|| parse_args(&args, cwd));
     #[cfg(windows)]
-    if hand_to_explorer(&open) {
+    if !system_link::handles(&open) && hand_to_explorer(&open) {
         return;
     }
     update::on_start::<P>();

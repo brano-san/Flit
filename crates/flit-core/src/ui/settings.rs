@@ -34,6 +34,8 @@ pub const CACHE: &str = "advanced.thumb_cache_mb";
 pub const LONG_PATHS: &str = "files.long_paths";
 pub const BUILTIN_ARCHIVES: &str = "files.builtin_archives";
 pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.archives_as_folders", "files.archive_format"];
+pub const PROTOCOL_LINKS: &str = "advanced.protocol_links";
+pub const AUTOSTART: &str = "advanced.autostart";
 pub const QUICK_ACCESS_SYNC: &str = "advanced.quick_access_sync";
 pub const WINDOWS_ONLY: [&str; 6] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
 pub const WINDOW_TITLE: &str = "appearance.window_title";
@@ -461,6 +463,8 @@ pub static SETTINGS: &[Setting] = &[
     menu_list("menu.seen_folder", |a| a.opts.menu.seen[1].clone(), |a, v| a.opts.menu.seen[1] = v),
     menu_list("menu.seen_background", |a| a.opts.menu.seen[2].clone(), |a, v| a.opts.menu.seen[2] = v),
     Setting { id: "menu.custom", page: Page::Menu, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
+    toggle(AUTOSTART, Page::Advanced, S::SettingsPageSystemAutostart, S::SettingsPageSystemAutostartHelp, |a| a.autostart, |a, on| a.autostart = on),
+    toggle(PROTOCOL_LINKS, Page::Advanced, S::SettingsPageSystemProtocol, S::SettingsPageSystemProtocolHelp, |a| a.protocol_links, |a, on| a.protocol_links = on),
 ];
 
 impl Setting {
@@ -470,6 +474,7 @@ impl Setting {
 
     pub fn enabled(&self, a: &App) -> bool {
         self.id != LONG_PATHS && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id)) && (self.id != WINDOW_TITLE || a.server_frames != Some(false))
+            && (!a.about.system_integration_unavailable || !matches!(self.id, AUTOSTART | PROTOCOL_LINKS))
     }
 
     pub fn get(&self, a: &App) -> Value {
