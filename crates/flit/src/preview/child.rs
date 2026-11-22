@@ -1,7 +1,6 @@
 use std::ffi::OsStr;
-use std::io::Read;
-use std::process::{Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
+use std::process::{Child, Command, ExitStatus, Stdio};
+use std::time::Duration;
 
 pub(super) fn run(
     mode: &str,
@@ -15,7 +14,7 @@ pub(super) fn run(
         return None;
     }
     let mut cmd = Command::new(std::env::current_exe().ok()?);
-    cmd.arg(mode).args(args).stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped());
+    cmd.arg(mode).args(args).stdin(Stdio::null());
     #[cfg(target_os = "linux")]
     if let Some(limit) = max_memory {
         limit_address_space(&mut cmd, limit);
@@ -28,47 +27,13 @@ pub(super) fn run(
         }
         None => None,
     };
+    #[cfg(windows)]
+    let started = |child: &mut Child| job.as_ref().is_none_or(|job| start_limited(child, job));
+    #[cfg(not(windows))]
+    let started = |_: &mut Child| true;
     #[cfg(not(any(windows, target_os = "linux")))]
     let _ = max_memory;
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        use windows::Win32::System::Threading::CREATE_NO_WINDOW;
-        cmd.creation_flags(CREATE_NO_WINDOW.0);
-    }
-    let mut child = cmd.spawn().ok()?;
-    #[cfg(windows)]
-    if let Some(job) = &job {
-        if !start_limited(&mut child, job) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return None;
-        }
-    }
-    let reader = child.stdout.take().and_then(|out| {
-        std::thread::Builder::new().name("flit-preview-output".into()).spawn(move || {
-            let mut bytes = Vec::new();
-            out.take(max_output + 1).read_to_end(&mut bytes).ok()?;
-            (bytes.len() as u64 <= max_output).then_some(bytes)
-        }).ok()
-    });
-    let end = Instant::now() + timeout;
-    if let Some(reader) = reader {
-        while current() && Instant::now() < end {
-            match child.try_wait() {
-                Ok(Some(status)) => return Some((status, reader.join().ok()??)),
-                Ok(None) => std::thread::sleep(Duration::from_millis(4)),
-                Err(_) => break,
-            }
-        }
-        let _ = child.kill();
-        let _ = child.wait();
-        let _ = reader.join();
-    } else {
-        let _ = child.kill();
-        let _ = child.wait();
-    }
-    None
+    flit_platform::parse_process::bounded(&mut cmd, usize::try_from(max_output).ok()?, timeout, &current, started).ok()
 }
 
 #[cfg(target_os = "linux")]
