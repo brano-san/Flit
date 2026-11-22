@@ -15,9 +15,11 @@ const LANES: [u64; 4] = [K, K ^ 1, K ^ 2, K ^ 3];
 const CHUNK: usize = 1 << 20;
 
 fn mix_blocks(lanes: &mut [u64; 4], bytes: &[u8]) {
-    for b in bytes.chunks_exact(32) {
-        for (k, lane) in lanes.iter_mut().enumerate() {
-            let w = u64::from_le_bytes(b[k * 8..k * 8 + 8].try_into().unwrap());
+    for block in bytes.chunks_exact(32) {
+        for (lane, chunk) in lanes.iter_mut().zip(block.chunks_exact(8)) {
+            let mut word = [0; 8];
+            word.copy_from_slice(chunk);
+            let w = u64::from_le_bytes(word);
             *lane = (*lane ^ w).wrapping_mul(K).rotate_left(29);
         }
     }
@@ -114,28 +116,32 @@ pub fn save_to<W: Write>(v: &VolumeIndex, cp: Checkpoint, w: W) -> io::Result<W>
 }
 
 struct Reader<'a> {
-    buf: &'a [u8],
-    at: usize,
+    rest: &'a [u8],
 }
 
 impl<'a> Reader<'a> {
     fn take(&mut self, n: usize) -> Result<&'a [u8], String> {
-        let end = self.at.checked_add(n).filter(|&e| e <= self.buf.len()).ok_or("the snapshot is truncated")?;
-        let s = &self.buf[self.at..end];
-        self.at = end;
+        let (s, rest) = self.rest.split_at_checked(n).ok_or("the snapshot is truncated")?;
+        self.rest = rest;
         Ok(s)
     }
 
+    fn array<const N: usize>(&mut self) -> Result<[u8; N], String> {
+        let (a, rest) = self.rest.split_first_chunk().ok_or("the snapshot is truncated")?;
+        self.rest = rest;
+        Ok(*a)
+    }
+
     fn u64(&mut self) -> Result<u64, String> {
-        Ok(u64::from_le_bytes(self.take(8)?.try_into().unwrap()))
+        Ok(u64::from_le_bytes(self.array()?))
     }
 
     fn u32(&mut self) -> Result<u32, String> {
-        Ok(u32::from_le_bytes(self.take(4)?.try_into().unwrap()))
+        Ok(u32::from_le_bytes(self.array()?))
     }
 
     fn bytes(&mut self) -> Result<&'a [u8], String> {
-        let n = u16::from_le_bytes(self.take(2)?.try_into().unwrap()) as usize;
+        let n = u16::from_le_bytes(self.array()?) as usize;
         self.take(n)
     }
 }
@@ -145,25 +151,23 @@ pub fn load(bytes: &[u8]) -> Result<(VolumeIndex, Checkpoint), String> {
 }
 
 fn load_with(bytes: &[u8], bulk: bool) -> Result<(VolumeIndex, Checkpoint), String> {
-    if bytes.len() < MAGIC.len() + 8 {
-        return Err("the snapshot is truncated".into());
-    }
-    let (body, sum) = bytes.split_at(bytes.len() - 8);
-    if body.get(..8) != Some(MAGIC) {
+    let (body, sum) = bytes.split_last_chunk().ok_or("the snapshot is truncated")?;
+    let (magic, rest) = body.split_first_chunk().ok_or("the snapshot is truncated")?;
+    if magic != MAGIC {
         return Err("not a Flit index snapshot".into());
     }
-    let mut r = Reader { buf: body, at: 8 };
+    let mut r = Reader { rest };
     let version = r.u32()?;
     if version != VERSION && version != 1 {
         return Err(format!("snapshot version {version} is not supported"));
     }
-    if u64::from_le_bytes(sum.try_into().unwrap()) != checksum(version, body) {
+    if u64::from_le_bytes(*sum) != checksum(version, body) {
         return Err("the snapshot checksum does not match".into());
     }
     let cp = Checkpoint { journal: r.u64()?, next: r.u64()? as i64 };
     let id = String::from_utf8(r.bytes()?.to_vec()).map_err(|_| "the snapshot volume id is not UTF-8")?;
     let root = r.bytes()?.to_vec();
-    let sep = r.take(1)?[0];
+    let [sep] = r.array()?;
     let count = r.u64()?;
     if count > (body.len() / RECORD_FIXED) as u64 {
         return Err("the snapshot record count is impossible".into());
@@ -177,7 +181,7 @@ fn load_with(bytes: &[u8], bulk: bool) -> Result<(VolumeIndex, Checkpoint), Stri
         }
         records.push(IndexRecord { id, parent, name, size, modified, attrs });
     }
-    if r.at != body.len() {
+    if !r.rest.is_empty() {
         return Err("the snapshot has trailing bytes".into());
     }
     let mut v = VolumeIndex::new(&id, &root, sep);

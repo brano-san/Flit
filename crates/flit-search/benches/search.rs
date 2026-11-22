@@ -9,6 +9,11 @@ use std::time::{Duration, Instant};
 
 const NOW: i64 = 133_700_000_000_000_000;
 
+fn failed(message: &str) -> ! {
+    eprintln!("search benchmark: {message}");
+    std::process::exit(1)
+}
+
 pub fn synthetic(n: usize) -> VolumeIndex {
     let mut seed = 0x2545F4914F6CDD1Du64;
     let mut rnd = move || {
@@ -69,11 +74,11 @@ fn bench_size(c: &mut Criterion, n: usize, label: &str) {
     ];
     for key in [SortKey::Name, SortKey::Size] {
         for q in queries {
-            let query = parse(q, clock).unwrap();
+            let query = parse(q, clock).unwrap_or_else(|error| failed(&format!("invalid query {q:?}: {error}")));
             let sort = Sort { key, descending: false };
             g.bench_function(format!("{key:?}/{q}"), |b| {
                 b.iter(|| {
-                    let mut rs = engine.search(black_box(&query), sort, &never).unwrap();
+                    let mut rs = engine.search(black_box(&query), sort, &never).unwrap_or_else(|| failed("search unexpectedly cancelled"));
                     black_box(engine.rows(&mut rs, 0, 64));
                 })
             });
@@ -112,7 +117,7 @@ fn bench_maintenance(c: &mut Criterion) {
     flit_search::snapshot::save(&v, Default::default(), &mut bytes);
     g.bench_function("snapshot_save", |b| b.iter(|| flit_search::snapshot::save(black_box(&v), Default::default(), &mut bytes)));
     g.sample_size(10).measurement_time(Duration::from_secs(8));
-    g.bench_function("snapshot_load", |b| b.iter(|| black_box(flit_search::snapshot::load(black_box(&bytes)).unwrap())));
+    g.bench_function("snapshot_load", |b| b.iter(|| black_box(flit_search::snapshot::load(black_box(&bytes)).unwrap_or_else(|error| failed(&error)))));
     g.finish();
 }
 

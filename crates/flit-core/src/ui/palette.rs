@@ -480,9 +480,10 @@ impl App {
             self.palette_shell_id += 1;
             let ticket = self.palette_shell_id;
             if let Some(p) = &mut self.nav.palette {
+                let Some(commands) = &mut p.commands else { return };
                 menu.x = p.rect.x;
                 menu.y = p.rect.bottom();
-                p.commands.as_mut().unwrap().shell = Some((ticket, Vec::new()));
+                commands.shell = Some((ticket, Vec::new()));
                 p.refresh();
             }
             self.effects.push(Effect::PaletteShell { ticket, menu });

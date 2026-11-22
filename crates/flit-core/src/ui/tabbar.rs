@@ -736,7 +736,7 @@ impl App {
         if t.view_loc.is_recycle_bin() {
             return false;
         }
-        let folder = t.entry_location(i);
+        let Some(folder) = t.entry_location(i) else { return false };
         self.open_entries_in_tabs(vec![Route { folder, select: None }], now);
         true
     }
@@ -778,7 +778,7 @@ impl App {
         let t = self.tab();
         let Some(v) = &t.view else { return };
         let (dirs, files): (Vec<u32>, Vec<u32>) = v.selected().partition(|&i| v.listing().entries[i as usize].is_dir() || self.browses_as_folder(v.listing().name(i)));
-        let routes: Vec<Route> = dirs.into_iter().map(|i| Route { folder: t.entry_location(i), select: None }).collect();
+        let routes: Vec<Route> = dirs.into_iter().filter_map(|i| t.entry_location(i)).map(|folder| Route { folder, select: None }).collect();
         for i in files.into_iter().take(super::MAX_OPEN) {
             self.open_entry(i, now);
         }

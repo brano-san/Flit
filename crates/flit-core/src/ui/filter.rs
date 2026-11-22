@@ -92,8 +92,10 @@ impl App {
 
     pub(super) fn choose_saved_filter(&mut self, text: &str) {
         self.open_filter();
-        self.tab_mut().filter.as_mut().unwrap().edit.set(text);
-        self.filter_changed();
+        if let Some(filter) = &mut self.tab_mut().filter {
+            filter.edit.set(text);
+            self.filter_changed();
+        }
     }
 
     pub(super) fn open_saved_filters(&mut self) {

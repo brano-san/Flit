@@ -7,6 +7,9 @@ mod security;
 pub mod zone;
 
 pub use index::{days_from_civil, dos_ticks};
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub use index::fuzz_archive_headers;
 pub use names::{decode, detect, safe_path};
 
 use flit_core::archive::{self, ArchiveOp, PASSWORD_CODE};

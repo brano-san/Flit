@@ -83,22 +83,22 @@ fn probe(dev: (u32, u32), mount: Option<&Mount>) -> bool {
 }
 
 impl Volumes {
-    fn device(&mut self, dev: u64) -> &mut Device {
-        self.devices.entry(dev).or_insert_with(|| {
-            let mounts = self.mounts.get_or_insert_with(|| crate::mounts::read().unwrap_or_default());
+    fn device(&mut self, dev: u64) -> (&[Mount], &mut Device) {
+        let mounts = self.mounts.get_or_insert_with(|| crate::mounts::read().unwrap_or_default());
+        let device = self.devices.entry(dev).or_insert_with(|| {
             let fs = super::file_system(mounts, dev);
             Device { fs, through: None, sync: None }
-        })
+        });
+        (mounts, device)
     }
 
     pub fn file_system(&mut self, dev: u64) -> Option<String> {
-        self.device(dev).fs.clone()
+        self.device(dev).1.fs.clone()
     }
 
     pub fn open(&mut self, dev: u64, dir: BorrowedFd<'_>, dest: &FsPath, bytes: u64) -> io::Result<CopyMode> {
-        self.device(dev);
-        let device = self.devices.get_mut(&dev).unwrap();
-        let through = *device.through.get_or_insert_with(|| slow(self.mounts.as_deref().unwrap_or_default(), device_numbers(dev), probe));
+        let (mounts, device) = self.device(dev);
+        let through = *device.through.get_or_insert_with(|| slow(mounts, device_numbers(dev), probe));
         if !through {
             return Ok(CopyMode::Buffered);
         }
@@ -109,13 +109,13 @@ impl Volumes {
     }
 
     pub fn adjust(&mut self, dev: u64, window: Option<usize>) {
-        if let Some(volume) = self.device(dev).sync.as_mut() {
+        if let Some(volume) = self.device(dev).1.sync.as_mut() {
             volume.window = window;
         }
     }
 
     pub fn defer(&mut self, dev: u64, bytes: u64) {
-        if let Some(volume) = self.device(dev).sync.as_mut() {
+        if let Some(volume) = self.device(dev).1.sync.as_mut() {
             volume.deferred += bytes;
         }
     }

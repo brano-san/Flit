@@ -17,7 +17,7 @@ impl App {
         if view.listing().entries[i as usize].is_dir() || tab.view_loc.provider() != ProviderId::Local || tab.view_loc.is_recycle_bin() || self.archive_view().is_some() {
             return self.status(S::PortableMetaSelect.t());
         }
-        let Some(path) = tab.entry_location(i).to_windows().filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unix)) else {
+        let Some(path) = tab.entry_location(i).and_then(|item| item.to_windows()).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unix)) else {
             return self.status(S::PortableMetaSelect.t());
         };
         let Some(sidecar) = xmp_path(&path) else { return self.status(S::PortableMetaSelect.t()); };

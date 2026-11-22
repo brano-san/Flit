@@ -10,7 +10,7 @@ enum Entry {
     Forms(Vec<String>),
 }
 
-fn unescape(s: &str, at: &str) -> String {
+fn unescape(s: &str, at: &str) -> Result<String, String> {
     let mut out = String::new();
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
@@ -25,30 +25,33 @@ fn unescape(s: &str, at: &str) -> String {
             Some('t') => out.push('\t'),
             Some('u') => {
                 let hex: String = chars.by_ref().take(4).collect();
-                out.push(u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32).unwrap_or_else(|| panic!("{at}: bad \\u escape")));
+                let c = u32::from_str_radix(&hex, 16).ok().and_then(char::from_u32).ok_or_else(|| format!("{at}: bad \\u escape"))?;
+                out.push(c);
             }
-            other => panic!("{at}: unknown escape \\{other:?}"),
+            other => return Err(format!("{at}: unknown escape \\{other:?}")),
         }
     }
-    out
+    Ok(out)
 }
 
-fn string_at(s: &str, at: &str) -> (String, usize) {
-    assert!(s.starts_with('"'), "{at}: expected a string");
+fn string_at(s: &str, at: &str) -> Result<(String, usize), String> {
+    if !s.starts_with('"') {
+        return Err(format!("{at}: expected a string"));
+    }
     let bytes = s.as_bytes();
     let mut i = 1;
     while i < bytes.len() {
         match bytes[i] {
             b'\\' => i += 2,
-            b'"' => return (unescape(&s[1..i], at), i + 1),
+            b'"' => return Ok((unescape(&s[1..i], at)?, i + 1)),
             _ => i += 1,
         }
     }
-    panic!("{at}: unterminated string");
+    Err(format!("{at}: unterminated string"))
 }
 
-fn parse(path: &Path, prefix: &str, out: &mut Vec<(String, Entry)>) {
-    let text = std::fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+fn parse(path: &Path, prefix: &str, out: &mut Vec<(String, Entry)>) -> Result<(), String> {
+    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut section = String::new();
     for (n, line) in text.lines().enumerate() {
         let at = format!("{}:{}", path.display(), n + 1);
@@ -61,47 +64,61 @@ fn parse(path: &Path, prefix: &str, out: &mut Vec<(String, Entry)>) {
             continue;
         }
         let (key, value) = if line.starts_with('"') {
-            let (k, used) = string_at(line, &at);
-            let rest = line[used..].trim_start().strip_prefix('=').unwrap_or_else(|| panic!("{at}: expected key = value"));
+            let (k, used) = string_at(line, &at)?;
+            let rest = line[used..].trim_start().strip_prefix('=').ok_or_else(|| format!("{at}: expected key = value"))?;
             (k, rest)
         } else {
-            let (k, v) = line.split_once('=').unwrap_or_else(|| panic!("{at}: expected key = value"));
+            let (k, v) = line.split_once('=').ok_or_else(|| format!("{at}: expected key = value"))?;
             (k.trim().to_owned(), v)
         };
         let key = key.as_str();
-        assert!(!key.is_empty() && key.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')), "{at}: bad key {key}");
+        if key.is_empty() || !key.split('.').all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')) {
+            return Err(format!("{at}: bad key {key}"));
+        }
         let full = [prefix, section.as_str(), key].iter().filter(|p| !p.is_empty()).copied().collect::<Vec<_>>().join(".");
         let value = value.trim();
         let entry = if let Some(list) = value.strip_prefix('[') {
             let mut rest = list.trim_start();
             let mut forms = Vec::new();
             while !rest.starts_with(']') {
-                let (s, used) = string_at(rest, &at);
+                let (s, used) = string_at(rest, &at)?;
                 forms.push(s);
                 rest = rest[used..].trim_start();
                 rest = rest.strip_prefix(',').unwrap_or(rest).trim_start();
             }
-            assert!(rest[1..].trim().is_empty(), "{at}: text after the list");
+            if !rest[1..].trim().is_empty() {
+                return Err(format!("{at}: text after the list"));
+            }
             Entry::Forms(forms)
         } else {
-            let (s, used) = string_at(value, &at);
-            assert!(value[used..].trim().is_empty(), "{at}: text after the string");
+            let (s, used) = string_at(value, &at)?;
+            if !value[used..].trim().is_empty() {
+                return Err(format!("{at}: text after the string"));
+            }
             Entry::One(s)
         };
         out.push((full, entry));
     }
+    Ok(())
 }
 
-fn load(dir: &Path) -> Vec<(String, Entry)> {
-    let mut files: Vec<_> = std::fs::read_dir(dir).unwrap_or_else(|e| panic!("{}: {e}", dir.display())).map(|e| e.unwrap().path()).filter(|p| p.extension().is_some_and(|x| x == "toml")).collect();
+fn load(dir: &Path) -> Result<Vec<(String, Entry)>, String> {
+    let error = |e| format!("{}: {e}", dir.display());
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).map_err(error)? {
+        let path = entry.map_err(error)?.path();
+        if path.extension().is_some_and(|x| x == "toml") {
+            files.push(path);
+        }
+    }
     files.sort();
     let mut out = Vec::new();
     for f in files {
         println!("cargo:rerun-if-changed={}", f.display());
-        let stem = f.file_stem().unwrap().to_str().unwrap().to_owned();
-        parse(&f, &stem, &mut out);
+        let stem = f.file_stem().and_then(|s| s.to_str()).ok_or_else(|| format!("{}: invalid catalog name", f.display()))?;
+        parse(&f, stem, &mut out)?;
     }
-    out
+    Ok(out)
 }
 
 fn ident(key: &str) -> String {
@@ -115,19 +132,19 @@ fn lit(s: &str) -> String {
     format!("{s:?}")
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("lang");
     println!("cargo:rerun-if-changed={}", root.display());
-    let langs: Vec<Vec<(String, Entry)>> = LANGS.iter().map(|l| {
+    let langs: Vec<_> = LANGS.iter().map(|l| {
         let dir = root.join(l);
         println!("cargo:rerun-if-changed={}", dir.display());
         load(&dir)
-    }).collect();
+    }).collect::<Result<_, _>>()?;
     let source = &langs[0];
     let mut seen = BTreeMap::new();
     for (k, _) in source {
         if let Some(prev) = seen.insert(ident(k), k.clone()) {
-            panic!("keys {prev} and {k} map to the same name");
+            return Err(format!("keys {prev} and {k} map to the same name").into());
         }
     }
     let singles: Vec<&(String, Entry)> = source.iter().filter(|(_, e)| matches!(e, Entry::One(_))).collect();
@@ -199,6 +216,7 @@ fn main() {
     let _ = writeln!(code, "pub static MISSING: &[&str] = &[{}];", list(&missing));
     let _ = writeln!(code, "pub static EXTRA: &[&str] = &[{}];", list(&extra));
     let _ = writeln!(code, "pub static MISMATCHED: &[&str] = &[{}];", list(&mismatched));
-    let out = Path::new(&std::env::var("OUT_DIR").unwrap()).join("strings.rs");
-    std::fs::write(out, code).unwrap();
+    let out = Path::new(&std::env::var("OUT_DIR")?).join("strings.rs");
+    std::fs::write(out, code)?;
+    Ok(())
 }

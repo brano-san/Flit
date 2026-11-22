@@ -68,7 +68,10 @@ pub(super) fn run(mut cmd: Command, ctl: &OpCtl, mut progress: impl FnMut(GitPro
     }
     cmd.stdout(Stdio::null()).stderr(Stdio::piped());
     let mut task = Tree::spawn(cmd).map_err(|e| RunError::Failed(super::spawn_error(&e)))?;
-    let mut stderr = task.child.stderr.take().expect("stderr piped");
+    let Some(mut stderr) = task.child.stderr.take() else {
+        task.stop();
+        return Err(RunError::Failed(S::GitErrorUnknown.t().into()));
+    };
     let (send, receive) = crossbeam_channel::bounded(8);
     if let Err(e) = std::thread::Builder::new().name("flit-git-stderr".into()).spawn(move || {
         let mut buffer = [0; 8192];

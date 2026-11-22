@@ -63,7 +63,7 @@ impl History {
 
     pub fn back(&mut self, keep: Option<Restore>) -> Option<&Location> {
         let prev = self.back.pop()?;
-        let saved = self.back_views.pop().unwrap();
+        let saved = self.back_views.pop().flatten();
         let from = std::mem::replace(&mut self.cur, prev);
         self.fwd.push(from);
         self.fwd_views.push(keep);
@@ -73,7 +73,7 @@ impl History {
 
     pub fn forward(&mut self, keep: Option<Restore>) -> Option<&Location> {
         let next = self.fwd.pop()?;
-        let saved = self.fwd_views.pop().unwrap();
+        let saved = self.fwd_views.pop().flatten();
         let from = std::mem::replace(&mut self.cur, next);
         self.back.push(from);
         self.back_views.push(keep);

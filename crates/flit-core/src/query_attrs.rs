@@ -234,8 +234,7 @@ impl FacetCounts {
         extensions.truncate(128);
         let mut dates = Vec::new();
         let mut years = std::collections::BTreeMap::<i64, u64>::new();
-        if let Some((&first, _)) = self.days.first_key_value() {
-            let last = *self.days.last_key_value().unwrap().0;
+        if let Some(((&first, _), (&last, _))) = self.days.first_key_value().zip(self.days.last_key_value()) {
             let span = last - first + 1;
             let step = (span + 47) / 48;
             for i in 0..((span + step - 1) / step) {

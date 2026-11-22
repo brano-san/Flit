@@ -15,12 +15,12 @@ impl FxHasher {
 
 impl Hasher for FxHasher {
     #[inline]
-    fn write(&mut self, bytes: &[u8]) {
-        let mut chunks = bytes.chunks_exact(8);
-        for c in &mut chunks {
-            self.add(u64::from_le_bytes(c.try_into().unwrap()));
+    fn write(&mut self, mut bytes: &[u8]) {
+        while let Some((chunk, rest)) = bytes.split_first_chunk::<8>() {
+            self.add(u64::from_le_bytes(*chunk));
+            bytes = rest;
         }
-        for &b in chunks.remainder() {
+        for &b in bytes {
             self.add(b as u64);
         }
     }

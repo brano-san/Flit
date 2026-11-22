@@ -1,21 +1,22 @@
 use std::{env, fs, path::PathBuf};
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     for shader in ["ui", "hdr"] {
         println!("cargo:rerun-if-changed=shaders/{shader}.hlsl");
     }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
+        return Ok(());
     }
-    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let out = PathBuf::from(env::var("OUT_DIR")?);
     for shader in ["ui", "hdr"] {
         let path = format!("shaders/{shader}.hlsl");
-        let src = fs::read_to_string(&path).unwrap();
+        let src = fs::read_to_string(&path)?;
         for (entry, stage, target) in [("vs_main", "vs", "vs_5_0"), ("ps_main", "ps", "ps_5_0")] {
-            let code = compile(&src, &path, entry, target).unwrap_or_else(|e| panic!("{path} {entry}: {e}"));
-            fs::write(out.join(format!("{shader}_{stage}.cso")), code).unwrap();
+            let code = compile(&src, &path, entry, target).map_err(|e| format!("{path} {entry}: {e}"))?;
+            fs::write(out.join(format!("{shader}_{stage}.cso")), code)?;
         }
     }
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -52,7 +53,8 @@ fn compile(src: &str, name: &str, entry: &str, target: &str) -> Result<Vec<u8>, 
         v
     }
     const OPTIMIZATION_LEVEL3: u32 = 1 << 15;
-    let (name, entry, target) = (CString::new(name).unwrap(), CString::new(entry).unwrap(), CString::new(target).unwrap());
+    let cstring = |s| CString::new(s).map_err(|e| e.to_string());
+    let (name, entry, target) = (cstring(name)?, cstring(entry)?, cstring(target)?);
     let (mut code, mut errors) = (std::ptr::null_mut(), std::ptr::null_mut());
     unsafe {
         let hr = D3DCompile(

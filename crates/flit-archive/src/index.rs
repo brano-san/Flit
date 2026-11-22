@@ -82,7 +82,7 @@ fn le64(b: &[u8], at: usize) -> u64 {
     b.get(at..at + 8).map_or(0, |s| u64::from_le_bytes(s.try_into().unwrap_or([0; 8])))
 }
 
-fn read_at(f: &mut File, at: u64, len: usize) -> std::io::Result<Vec<u8>> {
+fn read_at(f: &mut (impl Read + Seek), at: u64, len: usize) -> std::io::Result<Vec<u8>> {
     let mut buf = Vec::new();
     f.seek(SeekFrom::Start(at))?;
     f.take(len as u64).read_to_end(&mut buf)?;
@@ -92,7 +92,7 @@ fn read_at(f: &mut File, at: u64, len: usize) -> std::io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn zip_entries(f: &mut File, len: u64, offset_min: i32) -> Result<Vec<Raw>, PlatformError> {
+fn zip_entries(f: &mut (impl Read + Seek), len: u64, offset_min: i32) -> Result<Vec<Raw>, PlatformError> {
     let bad = || corrupt("The ZIP central directory is damaged");
     let tail_len = len.min(22 + 65_535 + 20) as usize;
     let tail = read_at(f, len - tail_len as u64, tail_len).map_err(io_error)?;
@@ -216,7 +216,7 @@ fn gz_head(b: &[u8]) -> Option<GzHead> {
     Some(GzHead { name, modified: unix_ticks(le32(b, 4) as i64) })
 }
 
-fn gz_has_tar(f: &mut File) -> bool {
+fn gz_has_tar(f: &mut (impl Read + Seek)) -> bool {
     let mut head = [0u8; 512];
     let _ = f.seek(SeekFrom::Start(0));
     let ok = flate2::read::MultiGzDecoder::new(BufReader::new(&mut *f)).read_exact(&mut head).is_ok();
@@ -225,13 +225,17 @@ fn gz_has_tar(f: &mut File) -> bool {
 
 pub fn sniff(path: &Path, name: &[u8]) -> Result<Format, PlatformError> {
     let mut f = File::open(path).map_err(io_error)?;
+    sniff_reader(&mut f, name)
+}
+
+fn sniff_reader(f: &mut (impl Read + Seek), name: &[u8]) -> Result<Format, PlatformError> {
     let mut head = [0u8; 512];
     let n = f.read(&mut head).map_err(io_error)?;
     let head = &head[..n];
     Ok(match head {
         [b'7', b'z', 0xBC, 0xAF, 0x27, 0x1C, ..] => Format::SevenZ,
         [b'R', b'a', b'r', b'!', 0x1A, 0x07, ..] => Format::Rar,
-        [0x1f, 0x8b, ..] if archive::format_of(name) == Some(Format::TarGz) || gz_has_tar(&mut f) => Format::TarGz,
+        [0x1f, 0x8b, ..] if archive::format_of(name) == Some(Format::TarGz) || gz_has_tar(f) => Format::TarGz,
         [0x1f, 0x8b, ..] => Format::Gz,
         _ if head.len() >= 262 && &head[257..262] == b"ustar" => Format::Tar,
         [b'P', b'K', ..] => Format::Zip,
@@ -242,6 +246,18 @@ pub fn sniff(path: &Path, name: &[u8]) -> Result<Format, PlatformError> {
             _ => return Err(corrupt("This file is not an archive Flit can open")),
         },
     })
+}
+
+#[cfg(feature = "fuzzing")]
+pub fn fuzz_archive_headers(bytes: &[u8]) -> Result<(Format, Vec<Vec<u8>>), PlatformError> {
+    let mut reader = std::io::Cursor::new(bytes);
+    let format = sniff_reader(&mut reader, b"")?;
+    let names = match format {
+        Format::Zip => zip_entries(&mut reader, bytes.len() as u64, 0)?.into_iter().map(|entry| entry.name).collect(),
+        Format::Gz | Format::TarGz => gz_head(bytes).ok_or_else(|| corrupt("The GZip header is damaged"))?.name.into_iter().collect(),
+        _ => Vec::new(),
+    };
+    Ok((format, names))
 }
 
 fn rar_index(path: &Path, password: Option<&Secret>, offset_min: i32) -> Result<Vec<Raw>, PlatformError> {

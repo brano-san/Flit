@@ -262,7 +262,7 @@ impl<'a, B: TextBackend> Paint<'a, B> {
 
     pub fn frame(&mut self, r: Rect) {
         let radius = self.px(RADIUS);
-        self.g.dl.shadow(Rect::new(r.x, r.y + self.px(2.0), r.w, r.h), Color::rgba(0x0000_0050), radius, self.px(10.0));
+        self.g.dl.shadow(Rect::new(r.x, r.y + self.px(2.0), r.w, r.h), crate::theme::POPUP_SHADOW, radius, self.px(10.0));
         self.g.dl.round_rect(r, self.t.popup, radius);
         self.g.dl.outline(r, self.t.popup_border, radius, 1.0);
     }
@@ -442,7 +442,7 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.g.dl.round_rect(r, crate::theme::mix(track, ink_on(track), 0.12 * hot), r.h / 2.0);
         let kx = (r.x + pad + (r.w - 2.0 * pad - knob) * pos).round();
         let k = Rect::new(kx, r.y + pad, knob, knob);
-        self.g.dl.circle(k, Color::rgb(0xFFFFFF));
+        self.g.dl.circle(k, crate::theme::WHITE);
         let mark = if pos >= 0.5 { (G_CHECK_MARK, self.t.accent_fill) } else { (G_CROSS, self.t.text_dim) };
         self.centered(k, mark.0, icons, faded(mark.1, (2.0 * pos - 1.0).abs()));
     }
@@ -462,7 +462,7 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.g.dl.round_rect(fill, self.t.accent_fill, thick / 2.0);
         let knob = self.px(14.0 + 2.0 * hot);
         let k = Rect::new(center.0 - knob / 2.0, center.1 - knob / 2.0, knob, knob);
-        self.g.dl.circle(k, Color::rgb(0xFFFFFF));
+        self.g.dl.circle(k, crate::theme::WHITE);
         self.g.dl.ring(k, self.t.accent_fill, self.px(2.0));
     }
 

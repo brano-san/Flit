@@ -109,8 +109,8 @@ fn build_agent(root: &Path, target: &str) -> Option<PathBuf> {
     }
 }
 
-fn embed_agents() {
-    let root = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
+fn embed_agents(out: &Path) -> std::io::Result<()> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let windows = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows");
     let mut code = String::from("pub const AGENTS: flit_platform::AgentImages = flit_platform::AgentImages {\n");
     for (arch, var, target) in AGENTS {
@@ -124,23 +124,26 @@ fn embed_agents() {
         }
     }
     code += "};\n";
-    std::fs::write(Path::new(&std::env::var("OUT_DIR").unwrap()).join("wsl_agent.rs"), code).unwrap();
+    std::fs::write(out.join("wsl_agent.rs"), code)
 }
 
-fn main() {
-    embed_agents();
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let out = std::env::var("OUT_DIR")?;
+    let out = Path::new(&out);
+    embed_agents(out)?;
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         for dll in ["d3d11", "dcomp", "dwrite", "dwmapi", "imm32", "ole32", "oleaut32", "shell32", "combase"] {
             println!("cargo:rustc-link-arg-bins=/DELAYLOAD:{dll}.dll");
         }
         println!("cargo:rustc-link-arg-bins=delayimp.lib");
         println!("cargo:rustc-link-arg-bins=/IGNORE:4199");
-        let ico = Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../assets/icon/flit.ico");
+        let ico = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/icon/flit.ico");
         println!("cargo:rerun-if-changed={}", ico.display());
-        let res = Path::new(&std::env::var("OUT_DIR").unwrap()).join("flit.res");
-        let mut resources = icon_res(&std::fs::read(&ico).unwrap());
+        let res = out.join("flit.res");
+        let mut resources = icon_res(&std::fs::read(&ico)?);
         version_res(&mut resources);
-        std::fs::write(&res, resources).unwrap();
+        std::fs::write(&res, resources)?;
         println!("cargo:rustc-link-arg-bins={}", res.display());
     }
+    Ok(())
 }

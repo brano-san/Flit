@@ -1,0 +1,5 @@
+[Desktop Entry]
+Type=Application
+Name=App
+Name[sr_RS@latin]=Latin\sApp
+Exec=example

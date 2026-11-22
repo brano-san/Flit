@@ -1,0 +1,6 @@
+max_width = 270
+use_small_heuristics = "Max"
+newline_style = "Unix"
+reorder_imports = false
+reorder_modules = false
+merge_derives = false

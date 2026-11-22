@@ -340,7 +340,14 @@ pub fn icon_location(text: &str) -> Option<(FsPath, i32)> {
 }
 
 pub fn unique_name(base: &str, taken: impl Fn(&str) -> bool) -> String {
-    (1..).map(|k| if k == 1 { base.to_owned() } else { format!("{base} ({k})") }).find(|n| !taken(n)).unwrap()
+    let mut k = 1;
+    loop {
+        let name = if k == 1 { base.to_owned() } else { format!("{base} ({k})") };
+        if !taken(&name) {
+            return name;
+        }
+        k += 1;
+    }
 }
 
 pub fn base_name_len(name: &str, dir: bool) -> usize {
@@ -553,7 +560,7 @@ impl App {
         };
         match plain {
             Some((l, dir)) => Ok(items.iter().map(|&i| dir.join(l.name(i))).collect()),
-            None => items.iter().map(|&i| t.entry_location(i).to_windows()).collect::<Option<Vec<_>>>().ok_or(S::UiOpsNamesNotShell.t()),
+            None => items.iter().map(|&i| t.entry_location(i)?.to_windows()).collect::<Option<Vec<_>>>().ok_or(S::UiOpsNamesNotShell.t()),
         }
     }
 
@@ -706,7 +713,8 @@ impl App {
         }
         let t = self.tab();
         let paths = match &t.view_loc {
-            Location::Wsl { .. } | Location::Admin(_) => Ok((t.view_loc.provider(), items.iter().map(|&i| t.entry_location(i).path().clone()).collect())),
+            Location::Wsl { .. } | Location::Admin(_) => items.iter().map(|&i| t.entry_location(i).map(|item| item.path().clone()))
+                .collect::<Option<Vec<_>>>().map(|paths| (t.view_loc.provider(), paths)).ok_or(S::UiOpsNamesNotShell.t()),
             _ => self.item_paths(&items).map(|p| (ProviderId::Local, p)),
         };
         let permanent = permanent || t.view_loc.is_admin();
@@ -1074,7 +1082,7 @@ impl App {
         };
         let t = self.tab();
         let focused = t.view.as_ref().and_then(|v| v.focus.filter(|&f| v.is_selected(f)));
-        let target = focused.and_then(|i| t.entry_location(i).to_windows()).map(|p| p.display().into_owned()).unwrap_or_default();
+        let target = focused.and_then(|i| t.entry_location(i)?.to_windows()).map(|p| p.display().into_owned()).unwrap_or_default();
         self.open_pick(Palette::new(Pick::Shortcut(dir), Vec::new(), &target));
     }
 
@@ -1957,7 +1965,8 @@ impl App {
         let t = self.tab();
         if self.caps.unix_paths && t.view_loc.path().is_network() {
             if !right {
-                self.ops.network_drag = items.into_iter().map(|i| Route { folder: t.entry_location(i), select: None }).filter(|r| super::network::network_address(r.folder.path()).is_some()).collect();
+                self.ops.network_drag = items.into_iter().filter_map(|i| t.entry_location(i))
+                    .filter(|p| super::network::network_address(p.path()).is_some()).map(|folder| Route { folder, select: None }).collect();
                 if !self.ops.network_drag.is_empty() {
                     self.drag = Drag::Network;
                     self.pressed = Hit::None;
@@ -2238,9 +2247,9 @@ impl App {
                 let i = *v.rows().get(row)?;
                 let runnable = self.takes_dropped_files(v.listing(), i);
                 if v.listing().entries[i as usize].is_dir() || archive::browsable(v.listing().name(i)).is_some_and(Format::can_add) {
-                    into(&t.entry_location(i), Spot::Row(row))
+                    into(&t.entry_location(i)?, Spot::Row(row))
                 } else if runnable {
-                    t.entry_location(i).to_windows().map(|program| Target::Run { program, spot: Spot::Row(row) })
+                    t.entry_location(i)?.to_windows().map(|program| Target::Run { program, spot: Spot::Row(row) })
                 } else {
                     here()
                 }
@@ -2415,7 +2424,7 @@ impl App {
             Some(Spot::SideHeader(s)) => return self.toggle_section(s),
             Some(Spot::Side(i)) => self.nav.sidebar.items.get(i).map(|it| it.loc.clone()),
             Some(Spot::Crumb(i)) => t.crumb(i).map(|c| c.1.clone()),
-            Some(Spot::Row(row)) => t.view.as_ref().and_then(|v| v.rows().get(row).map(|&i| t.entry_location(i))),
+            Some(Spot::Row(row)) => t.view.as_ref().and_then(|v| t.entry_location(*v.rows().get(row)?)),
             _ => None,
         };
         if let Some(folder) = folder {
@@ -2446,7 +2455,7 @@ impl App {
         if l.entries[i as usize].is_dir() || runnable || archive::browsable(l.name(i)).is_some_and(Format::can_add) {
             return None;
         }
-        t.entry_location(i).to_windows().filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc))
+        t.entry_location(i)?.to_windows().filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unc))
     }
 
     pub fn drop_onto(&self) -> Option<FsPath> {

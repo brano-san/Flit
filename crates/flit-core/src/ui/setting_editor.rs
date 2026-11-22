@@ -19,7 +19,7 @@ const NOTE_LINE_H: f32 = 20.0;
 const SWATCH: f32 = 14.0;
 const G_WARNING: &str = "\u{E7BA}";
 const MONO_WORDS: [&str; 5] = ["mono", "consol", "code", "courier", "fixed"];
-const EXAMPLE_COLOR: &str = "#3A7BD5";
+use crate::theme::COLOR_INPUT_EXAMPLE as EXAMPLE_COLOR;
 const JSON: [&str; 1] = ["json"];
 
 #[cfg(windows)]
@@ -184,7 +184,7 @@ impl App {
     fn focused_file(&self) -> Option<FsPath> {
         let t = self.tab();
         let i = t.view.as_ref()?.focus?;
-        t.entry_location(i).to_windows().filter(|p| self.caps.is_native(p))
+        t.entry_location(i)?.to_windows().filter(|p| self.caps.is_native(p))
     }
 
     pub(super) fn setting_notes(&self, pick: &SettingPick, text: &str) -> Vec<Note> {

@@ -131,8 +131,8 @@ impl App {
         if view.snap().gen != t.gen || !view.is_visible(i) {
             return true;
         }
+        let Some(location) = t.entry_location(i) else { return true };
         let entry = view.listing().entries[i as usize];
-        let location = t.entry_location(i);
         if entry.is_dir() {
             self.dispatch(vec![Route { folder: location, select: None }], OpenTarget::CurrentTab, now);
         } else if let Some(path) = pick::local_path(&location) {
@@ -162,7 +162,7 @@ impl App {
         let paths: Vec<_> = view.into_iter().flat_map(|view| {
             view.selected().filter(|&i| view.listing().entries[i as usize].is_dir() == directories)
         }).take(if multiple { max } else { 1 })
-            .filter_map(|i| pick::local_path(&t.entry_location(i)).cloned()).collect();
+            .filter_map(|i| pick::local_path(&t.entry_location(i)?).cloned()).collect();
         if directories && paths.is_empty() { current.into_iter().cloned().collect() } else { paths }
     }
 
@@ -170,7 +170,7 @@ impl App {
         match control {
             Control::Name => {}
             Control::Filter => {
-                let picker = self.picker.as_mut().unwrap();
+                let Some(picker) = &mut self.picker else { return };
                 picker.request.filter = (picker.request.filter + 1) % picker.filters.len();
                 for tab in 0..self.tabs.len() {
                     self.apply_pick_filter(tab);
@@ -178,14 +178,15 @@ impl App {
                 self.reveal_focus(false);
             }
             Control::Choice(i) => {
-                let choice = &mut self.picker.as_mut().unwrap().request.choices[i];
+                let Some(choice) = self.picker.as_mut().and_then(|p| p.request.choices.get_mut(i)) else { return };
                 choice.selected = (choice.selected + 1) % choice.values.len();
             }
             Control::Cancel => self.close_window(now),
             Control::Accept => {
+                let Some(picker) = &self.picker else { return };
                 let paths = self.picker_paths(usize::MAX);
                 if let Some(path) = paths.first() {
-                    if matches!(self.picker.as_ref().unwrap().request.mode, Mode::Save(_)) {
+                    if matches!(picker.request.mode, Mode::Save(_)) {
                         if let Some(directory) = self.picker_existing(path.file_name()) {
                             if !directory {
                                 let anchor = self.picker_rects().into_iter().find(|(c, _)| *c == Control::Accept).map_or_else(Rect::default, |(_, r)| r);
@@ -195,7 +196,7 @@ impl App {
                             return;
                         }
                     }
-                    self.effects.push(self.picker.as_ref().unwrap().picked(paths));
+                    self.effects.push(picker.picked(paths));
                 }
             }
         }
@@ -311,16 +312,15 @@ impl App {
     }
 
     pub(super) fn picker_event(&mut self, event: &Event, now: Instant) -> bool {
-        if self.picker.is_none() || self.confirm.is_some() {
+        if self.confirm.is_some() {
             return false;
         }
+        let Some(picker) = &mut self.picker else { return false };
         match *event {
             Event::A11yFocus(id) | Event::Invoke(id) => {
-                let Some(control) = self.picker.as_ref().unwrap().controls().find(|c| c.id() == id) else {
-                    self.picker.as_mut().unwrap().focused = None;
-                    return false;
-                };
-                self.picker.as_mut().unwrap().focused = Some(control);
+                let control = picker.controls().find(|c| c.id() == id);
+                picker.focused = control;
+                let Some(control) = control else { return false };
                 self.focus = Focus::List;
                 if matches!(event, Event::Invoke(_)) {
                     self.picker_activate(control, now);
@@ -329,25 +329,26 @@ impl App {
             }
             Event::Key { key: Key::Escape, pressed: true, .. } => self.picker_activate(Control::Cancel, now),
             Event::Key { key: Key::Tab, mods, pressed: true } if !mods.ctrl && !mods.alt && self.focus == Focus::List => {
-                let picker = self.picker.as_mut().unwrap();
                 let controls: Vec<_> = picker.controls().map(Some).chain(std::iter::once(None)).collect();
                 let at = controls.iter().position(|c| *c == picker.focused).unwrap_or(controls.len() - 1);
                 picker.focused = controls[(at + if mods.shift { controls.len() - 1 } else { 1 }) % controls.len()];
                 self.dirty = true;
             }
             Event::Key { key: Key::Enter, pressed: true, .. } if self.focus == Focus::List => {
-                let focused = self.picker.as_ref().unwrap().focused;
+                let focused = picker.focused;
                 if focused.is_none() && self.picker_paths(1).is_empty() {
                     return false;
                 }
                 self.picker_activate(focused.filter(|c| *c != Control::Name).unwrap_or(Control::Accept), now);
             }
-            Event::Key { key: Key::Space, pressed: true, .. } if self.picker.as_ref().unwrap().focused.is_some_and(|c| c != Control::Name) => {
-                self.picker_activate(self.picker.as_ref().unwrap().focused.unwrap(), now);
+            Event::Key { key: Key::Space, pressed: true, .. } if picker.focused.is_some_and(|c| c != Control::Name) => {
+                if let Some(control) = picker.focused {
+                    self.picker_activate(control, now);
+                }
             }
             Event::MouseDown { x, y, button: MouseButton::Left, clicks } => {
                 let target = self.picker_rects().into_iter().find(|(_, r)| r.contains(x, y));
-                let picker = self.picker.as_mut().unwrap();
+                let Some(picker) = &mut self.picker else { return false };
                 picker.focused = target.map(|(control, _)| control);
                 picker.pressed = picker.focused;
                 picker.preedit = None;
@@ -359,14 +360,16 @@ impl App {
                 self.dirty = true;
             }
             Event::MouseUp { x, y, button: MouseButton::Left } => {
-                let Some(pressed) = self.picker.as_mut().unwrap().pressed.take() else { return false };
+                let Some(pressed) = picker.pressed.take() else { return false };
                 if self.picker_rects().iter().any(|(c, r)| *c == pressed && r.contains(x, y)) {
                     self.picker_activate(pressed, now);
                 }
             }
             Event::MouseDown { button: MouseButton::Right, .. } | Event::ShowMenu { .. } | Event::DroppedFiles(_) => {}
             _ => {
-                let Some(picker) = self.picker.as_mut().filter(|p| p.focused == Some(Control::Name)) else { return false };
+                if picker.focused != Some(Control::Name) {
+                    return false;
+                }
                 match event {
                     Event::Char(c) if !c.is_control() => picker.name.insert(c.encode_utf8(&mut [0; 4])),
                     Event::Pasted(text) => picker.name.insert(text),

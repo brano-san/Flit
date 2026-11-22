@@ -45,8 +45,7 @@ impl Markdown {
     }
 
     fn para(&mut self, block: Block) {
-        self.doc.para(block);
-        self.doc.paras.last_mut().unwrap().quote_depth = self.quotes.min(6) as u8;
+        self.doc.para_with_quote_depth(block, self.quotes.min(6) as u8);
     }
 
     fn code(&mut self, text: &str, lang: Option<u8>) {
@@ -209,7 +208,7 @@ fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, no
                 md.table = Some(Table { align, rows: Vec::new() });
             }
             Event::Start(Tag::TableRow | Tag::TableHead) => {
-                let table = md.table.as_mut().unwrap();
+                let Some(table) = &mut md.table else { continue };
                 md.table_head = table.rows.is_empty();
                 if !md.table_head {
                     md.doc.text.push('\n');
@@ -217,21 +216,23 @@ fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, no
                 table.rows.push(Vec::with_capacity(table.align.len()));
             }
             Event::Start(Tag::TableCell) => {
-                let row = md.table.as_ref().unwrap().rows.last().unwrap();
+                let Some(row) = md.table.as_ref().and_then(|t| t.rows.last()) else { continue };
                 if !row.is_empty() {
                     md.doc.text.push('\t');
                 }
                 md.cell_start = md.doc.runs.len() as u32;
             }
             Event::End(TagEnd::TableCell) => {
-                let row = md.table.as_mut().unwrap().rows.last_mut().unwrap();
+                let Some(row) = md.table.as_mut().and_then(|t| t.rows.last_mut()) else { continue };
                 row.push(md.cell_start..md.doc.runs.len() as u32);
                 inline.end_block();
             }
             Event::End(TagEnd::Table) => {
-                let index = md.doc.tables.len();
-                md.doc.tables.push(md.table.take().unwrap());
-                md.para(Block::Table(index));
+                if let Some(table) = md.table.take() {
+                    let index = md.doc.tables.len();
+                    md.doc.tables.push(table);
+                    md.para(Block::Table(index));
+                }
                 md.table_head = false;
             }
             _ => {

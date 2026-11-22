@@ -79,7 +79,7 @@ fn classify(e: glutin::error::Error) -> RenderError {
 }
 
 fn size(v: u32) -> NonZeroU32 {
-    NonZeroU32::new(v.max(1)).unwrap()
+    NonZeroU32::new(v).unwrap_or(NonZeroU32::MIN)
 }
 
 pub(crate) const LCD_EXTENSION: &str = "GL_EXT_blend_func_extended";
@@ -139,7 +139,8 @@ unsafe fn cleared_texture(gl: &glow::Context, side: u32) -> Result<glow::Texture
     let fbo = gl.create_framebuffer().map_err(err)?;
     gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
     gl.framebuffer_texture_2d(glow::FRAMEBUFFER, glow::COLOR_ATTACHMENT0, glow::TEXTURE_2D, Some(t), 0);
-    gl.clear_color(0.0, 0.0, 0.0, 0.0);
+    let [r, g, b, a] = flit_core::theme::TRANSPARENT.to_f32();
+    gl.clear_color(r, g, b, a);
     gl.clear(glow::COLOR_BUFFER_BIT);
     gl.bind_framebuffer(glow::FRAMEBUFFER, None);
     gl.delete_framebuffer(fbo);

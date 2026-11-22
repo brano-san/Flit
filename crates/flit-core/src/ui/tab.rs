@@ -270,7 +270,7 @@ impl Tab {
                 self.apply_shape();
             }
         }
-        let v = self.view.as_mut().unwrap();
+        let Some(v) = &mut self.view else { return false };
         if self.view_spec.sort.field == crate::sort::SortField::GitHash {
             v.set_git(self.git.clone());
         }
@@ -393,17 +393,18 @@ impl Tab {
         Some(crate::nav::Restore::capped(select, focus, self.scroll, self.scroll_target))
     }
 
-    pub(super) fn entry_location(&self, i: u32) -> Location {
-        let l = self.view.as_ref().unwrap().listing();
+    pub(super) fn entry_location(&self, i: u32) -> Option<Location> {
+        let l = self.view.as_ref()?.listing();
+        l.entries.get(i as usize)?;
         if self.view_loc.path().is_network() {
             if let Some(location) = super::network::network_entry(l.name(i)) {
-                return location;
+                return Some(location);
             }
         }
-        match self.view_loc.is_recycle_bin() {
+        Some(match self.view_loc.is_recycle_bin() {
             true => recycle::original(l, i).map_or_else(|| self.view_loc.clone(), Location::from_local),
             false => self.entry_dir(i).join(l.name(i)),
-        }
+        })
     }
 
     pub(super) fn entry_dir(&self, i: u32) -> Location {
@@ -451,7 +452,7 @@ impl Tab {
         if n == 0 {
             return false;
         }
-        let first = self.type_ahead.chars().next().unwrap();
+        let first = self.type_ahead.chars().next().unwrap_or(c);
         let count = self.type_ahead.chars().count();
         let repeated = count > 1 && self.type_ahead.chars().all(|c| c == first);
         let cur = v.focus.and_then(|f| v.row_of(f));

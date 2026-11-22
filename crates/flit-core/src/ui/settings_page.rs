@@ -817,7 +817,7 @@ impl App {
 
     pub(super) fn ask_import_settings(&mut self) {
         let t = self.tab();
-        let focused = t.view.as_ref().and_then(|v| v.focus).map(|i| t.entry_location(i)).filter(|l| l.file_name().to_ascii_lowercase().ends_with(b".json"));
+        let focused = t.view.as_ref().and_then(|v| v.focus).and_then(|i| t.entry_location(i)).filter(|l| l.file_name().to_ascii_lowercase().ends_with(b".json"));
         let text = focused.and_then(|l| l.to_windows()).map(|p| p.display().into_owned()).or_else(|| self.export_path()).unwrap_or_default();
         self.open_setting_editor(SettingPick::Import, &text);
     }

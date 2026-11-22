@@ -224,24 +224,26 @@ impl<W: Write + Seek> Out<W> {
             self.entries.push(Entry { name, dir: s.dir, time: at.timepart(), date: at.datepart(), method, zip64: !s.dir && s.size >= BIG, offset: self.pos, crc, csize: 0, size: 0 });
         }
         let body = if self.method == 0 || s.dir { &p.data } else { &p.out };
-        let e = self.entries.last_mut().expect("an entry started by its first piece");
+        let e = self.entries.last_mut().ok_or_else(|| corrupt("ZIP piece has no entry"))?;
         e.crc.combine(&p.crc);
         e.csize += body.len() as u64;
         e.size += p.data.len() as u64;
         if p.last && !e.zip64 && e.csize.max(e.size) >= FULL {
             return Err(corrupt("a file grew past 4 GB while it was being compressed"));
         }
-        if p.first {
+        let patch = if p.first {
             let head = e.local();
             self.emit(&head)?;
-        }
+            None
+        } else {
+            p.last.then(|| (e.offset, e.local()))
+        };
         self.emit(body)?;
         job.update(|q| q.bytes += p.data.len() as u64);
         if p.last {
-            if !p.first {
-                let e = self.entries.last().expect("an entry started by its first piece");
-                self.w.seek(SeekFrom::Start(e.offset)).map_err(write_error)?;
-                self.w.write_all(&e.local()).map_err(write_error)?;
+            if let Some((offset, head)) = patch {
+                self.w.seek(SeekFrom::Start(offset)).map_err(write_error)?;
+                self.w.write_all(&head).map_err(write_error)?;
                 self.w.seek(SeekFrom::Start(self.pos)).map_err(write_error)?;
             }
             job.update(|q| q.items += 1);

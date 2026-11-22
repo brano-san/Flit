@@ -65,7 +65,8 @@ impl App {
         let t = self.tab();
         let Some(v) = t.view.as_ref().filter(|v| t.view_loc.path().kind() == PathKind::Computer && v.selected_count() == 1) else { return };
         let Some(i) = v.selected().next() else { return };
-        let path = t.entry_location(i).path().clone();
+        let Some(location) = t.entry_location(i) else { return };
+        let path = location.path().clone();
         if self.drive_at(&path).is_some_and(|d| d.removable && !d.unmounted && d.path.kind() == PathKind::Unix) {
             m.place(S::MenuEject.t(), PlaceCmd::Eject(path.clone()), false);
         }

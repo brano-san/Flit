@@ -29,7 +29,7 @@ impl App {
     pub(super) fn open_admin(&mut self, now: Instant) {
         let t = self.tab();
         let folders: Vec<Location> = match &t.view {
-            Some(v) => self.selected_items().into_iter().filter(|&i| v.listing().entries[i as usize].is_dir()).map(|i| t.entry_location(i)).collect(),
+            Some(v) => self.selected_items().into_iter().filter(|&i| v.listing().entries[i as usize].is_dir()).filter_map(|i| t.entry_location(i)).collect(),
             None => Vec::new(),
         };
         let picked = if folders.is_empty() { vec![t.location().clone()] } else { folders };

@@ -161,10 +161,9 @@ impl Pool {
             } else {
                 return;
             };
-            let lane = self.lanes.get_mut(&key).unwrap();
-            let (_, task) = lane.waiting[priority].pop().unwrap();
+            let (Some(lane), Some(worker)) = (self.lanes.get_mut(&key), self.workers.get_mut(&id)) else { return };
+            let Some((_, task)) = lane.waiting[priority].pop() else { return };
             lane.running += 1;
-            let worker = self.workers.get_mut(&id).unwrap();
             worker.running = Some(Running { key, label: task.label, since: Instant::now(), progress: task.progress, logged: false, retiring: false });
             if worker.tasks.send(task.work).is_err() {
                 self.completed(id);

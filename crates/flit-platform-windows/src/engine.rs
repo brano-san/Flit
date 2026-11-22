@@ -171,18 +171,19 @@ fn children(dir: &FsPath) -> Result<Listing, flit_core::FsError> {
 fn numbered(dest: &FsPath, name: &[u8], dir: bool, suffix: &[u8], plain: bool) -> FsPath {
     let ext = if dir { 0 } else { flit_core::name::ext_len(name) };
     let (stem, ext) = if ext == 0 || ext + 1 >= name.len() { (name, &b""[..]) } else { name.split_at(name.len() - ext - 1) };
-    (1u32..)
-        .filter(|&k| k > 1 || plain)
-        .map(|k| {
-            let mut n = [stem, suffix].concat();
-            if k > 1 {
-                n.extend_from_slice(format!(" ({k})").as_bytes());
-            }
-            n.extend_from_slice(ext);
-            dest.join(&n)
-        })
-        .find(|p| !exists(p))
-        .unwrap()
+    let mut k = if plain { 1u32 } else { 2 };
+    loop {
+        let mut n = [stem, suffix].concat();
+        if k > 1 {
+            n.extend_from_slice(format!(" ({k})").as_bytes());
+        }
+        n.extend_from_slice(ext);
+        let path = dest.join(&n);
+        if !exists(&path) {
+            return path;
+        }
+        k += 1;
+    }
 }
 
 pub(crate) fn free_name(taken: &FsPath, dir: bool) -> FsPath {

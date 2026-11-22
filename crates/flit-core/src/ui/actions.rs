@@ -821,7 +821,7 @@ impl App {
         }
         let t = self.tab();
         let Some(i) = t.view.as_ref().and_then(|v| v.focus.filter(|&f| v.is_visible(f)).or_else(|| v.selected().next())) else { return };
-        let item = t.entry_location(i);
+        let Some(item) = t.entry_location(i) else { return };
         let Some(folder) = item.parent() else { return };
         self.dispatch(vec![Route { folder, select: Some(item.file_name().to_vec()) }], target, now);
     }
@@ -831,7 +831,7 @@ impl App {
         let Some(i) = t.view.as_ref().and_then(|v| v.focus.filter(|&f| v.is_visible(f) && v.is_selected(f)).or_else(|| v.selected().next())) else {
             return self.status(S::ActionsStatusSelectItem.t());
         };
-        let item = t.entry_location(i);
+        let Some(item) = t.entry_location(i) else { return self.status(S::ActionsStatusSelectItem.t()) };
         match item.to_windows().filter(|_| !t.view_loc.is_recycle_bin() && self.archive_view().is_none()) {
             Some(path) => self.launch(crate::provider::Launch::Reveal { item: path, new_tab }),
             None => self.status(S::ActionsStatusNoRealPath.t()),
@@ -911,7 +911,7 @@ impl App {
         };
         let sel: Vec<u32> = t.view.as_ref().map(|v| v.selected().collect()).unwrap_or_default();
         let line_break = if self.caps.unix_paths { "\n" } else { "\r\n" };
-        let text = if sel.is_empty() { text(t.location()) } else { sel.iter().map(|&i| text(&t.entry_location(i))).collect::<Vec<_>>().join(line_break) };
+        let text = if sel.is_empty() { text(t.location()) } else { sel.iter().filter_map(|&i| t.entry_location(i).map(|item| text(&item))).collect::<Vec<_>>().join(line_break) };
         self.effects.push(Effect::SetClipboard(text));
     }
 

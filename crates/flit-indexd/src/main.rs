@@ -139,10 +139,12 @@ fn main() {
             "--walk" => cfg.walk = Some(Vec::new()),
             "--query" => cfg.query = Some(args.next().unwrap_or_default()),
             "--snapshots" => cfg.snapshots = args.next().map(Into::into),
-            root if !root.starts_with("--") && cfg.walk.is_some() => cfg.walk.as_mut().unwrap().push(root.to_owned()),
             other => {
-                eprintln!("flit-indexd: unknown option {other}\n{USAGE}");
-                std::process::exit(2);
+                let Some(walk) = cfg.walk.as_mut().filter(|_| !other.starts_with("--")) else {
+                    eprintln!("flit-indexd: unknown option {other}\n{USAGE}");
+                    std::process::exit(2);
+                };
+                walk.push(other.to_owned());
             }
         }
     }

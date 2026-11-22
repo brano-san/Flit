@@ -1,3 +1,4 @@
+use crate::d3d::com_output;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use windows::core::{Error, Interface, Result};
@@ -33,7 +34,7 @@ impl Planes {
         };
         let mut texture = None;
         device.CreateTexture2D(&desc, None, Some(&mut texture))?;
-        let texture = texture.unwrap();
+        let texture = com_output(texture)?;
         let mut views = [None, None];
         for (slot, format) in views.iter_mut().zip([DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM]) {
             let view = D3D11_SHADER_RESOURCE_VIEW_DESC {
@@ -92,28 +93,27 @@ impl ToneMapper {
             Ok(Self {
                 device: device.clone(),
                 immediate: device.GetImmediateContext()?,
-                deferred: deferred.unwrap(),
+                deferred: com_output(deferred)?,
                 multithread: device.cast()?,
-                vs: vs.unwrap(),
-                ps: ps.unwrap(),
-                constants: constants.unwrap(),
-                sampler: sampler.unwrap(),
+                vs: com_output(vs)?,
+                ps: com_output(ps)?,
+                constants: com_output(constants)?,
+                sampler: com_output(sampler)?,
                 planes: None,
                 targets: HashMap::new(),
             })
         }
     }
 
-    unsafe fn prepare_planes(&mut self, width: u32, height: u32) -> Result<()> {
-        if self.planes.as_ref().is_none_or(|p| p.size != (width, height)) {
-            self.planes = Some(Planes::new(&self.device, width, height)?);
+    unsafe fn prepare_planes<'a>(planes: &'a mut Option<Planes>, device: &ID3D11Device, width: u32, height: u32) -> Result<&'a Planes> {
+        if planes.as_ref().is_none_or(|p| p.size != (width, height)) {
+            return Ok(planes.insert(Planes::new(device, width, height)?));
         }
-        Ok(())
+        com_output(planes.as_ref())
     }
 
     pub(crate) unsafe fn upload(&mut self, width: u32, height: u32, data: *const c_void, stride: u32) -> Result<ID3D11Texture2D> {
-        self.prepare_planes(width, height)?;
-        let texture = &self.planes.as_ref().unwrap().texture;
+        let texture = &Self::prepare_planes(&mut self.planes, &self.device, width, height)?.texture;
         self.multithread.Enter();
         self.immediate.UpdateSubresource(texture, 0, None, data, stride, 0);
         self.multithread.Leave();
@@ -135,7 +135,7 @@ impl ToneMapper {
         };
         let mut target = None;
         self.device.CreateRenderTargetView(output, (desc.ArraySize > 1).then_some(&array_view as *const _), Some(&mut target))?;
-        let target = target.ok_or_else(Error::empty)?;
+        let target = com_output(target)?;
         if self.targets.len() == OUTPUT_POOL_LIMIT as usize {
             self.targets.clear();
         }
@@ -153,8 +153,7 @@ impl ToneMapper {
                 return Err(Error::from_hresult(E_INVALIDARG));
             }
             let target = self.target_view(output, slice, &dst)?;
-            self.prepare_planes(src.Width, src.Height)?;
-            let planes = self.planes.as_ref().unwrap();
+            let planes = Self::prepare_planes(&mut self.planes, &self.device, src.Width, src.Height)?;
             let ctx = &self.deferred;
             let color = [u32::from(hlg) as f32, (peak_nits / 100.0).clamp(1.0, 100.0), u32::from(full_range) as f32, 0.0];
             ctx.UpdateSubresource(&self.constants, 0, None, color.as_ptr().cast(), 0, 0);
@@ -172,8 +171,9 @@ impl ToneMapper {
             ctx.Draw(3, 0);
             let mut list = None;
             ctx.FinishCommandList(false, Some(&mut list))?;
+            let list = com_output(list)?;
             self.multithread.Enter();
-            self.immediate.ExecuteCommandList(list.as_ref().unwrap(), true);
+            self.immediate.ExecuteCommandList(&list, true);
             self.multithread.Leave();
             Ok(())
         }

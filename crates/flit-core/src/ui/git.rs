@@ -7,7 +7,7 @@ use crate::i18n::S;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, TabId};
-use crate::render::{Color, Rect};
+use crate::render::Rect;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -18,14 +18,6 @@ fn sequence_labels(sequence: Sequence) -> [S; 2] {
         Sequence::Merge => [S::GitSequenceMerge, S::GitSequenceAbortMerge],
         Sequence::Rebase => [S::GitSequenceRebase, S::GitSequenceAbortRebase],
         Sequence::CherryPick => [S::GitSequenceCherryPick, S::GitSequenceAbortCherryPick],
-    }
-}
-
-pub(super) fn status_color(s: GitStatus) -> Color {
-    match s {
-        GitStatus::Modified | GitStatus::Renamed => Color::rgb(0xD0_8A_1E),
-        GitStatus::Added | GitStatus::Untracked => Color::rgb(0x3F_A3_4D),
-        GitStatus::Deleted | GitStatus::Conflict => Color::rgb(0xD1_3B_3B),
     }
 }
 

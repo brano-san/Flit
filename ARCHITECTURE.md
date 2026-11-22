@@ -19,14 +19,24 @@
 | `flit-archive` | архивы как папки (ZIP, 7z, TAR, GZip, RAR): индекс, безопасная распаковка, сжатие, добавление в ZIP, кодировки имён | `flit-core`, `flit-platform` |
 | `flit-platform-windows` | реализация трейтов на Win32, D3D11 + DirectComposition, DirectWrite, NT API, Shell COM, CNG, именованных каналах | `flit-core`, `flit-proto`, `flit-search`, `flit-platform`, `flit-archive` |
 | `flit-platform-linux` | весь крейт под `#![cfg(target_os = "linux")]`: `LinuxFs` (`statx`, `getdents64`, размеры папок), `Inotify`, корзина freedesktop `Trash`, сервер агента `agent::serve` и бинарник `flit-wsl-agent` (фича `agent`); окно, отрисовка и шрифты — заглушки | `flit-core`, `flit-proto`, `flit-search`, `flit-platform` |
+| `flit-platform-linux-gui` | окна, отрисовка, шрифты и интеграция с окружением рабочего стола Linux | `flit-core`, `flit-proto`, `flit-platform`, `flit-platform-linux`, `flit-archive` |
 | `flit` | приложение: обработчик окон, рабочие потоки, клиент поиска с запасным индексом, сохранение состояния, сценарий метрик | `flit-core`, `flit-platform`, `flit-proto`, `flit-search`, платформа по `cfg` |
 | `flit-indexd` | служба индексации: канал `\\.\pipe\flit-indexd`, консольный режим, служба Windows | `flit-core`, `flit-platform`, `flit-proto`, `flit-search`, платформа по `cfg` |
 | `tools/flit-gen` | генератор тестовых папок | только `std` |
 | `tools/flit-sign` | ключи и подписи обновлений, сборка `latest.json` для CI | `flit-core`, `ed25519-compact` |
+| `tools/xtask` | проверка слоёв крейтов, изоляции от `windows*` и палитры | внешние крейты для разбора метаданных Cargo и Rust |
 
 Слои сверху вниз: бинарники (`flit`, `flit-indexd`) → платформа (`flit-platform-windows` или `flit-platform-linux`) → `flit-platform` → `flit-core` / `flit-search` / `flit-proto`.
 
-**Правило:** `flit-core`, `flit-proto`, `flit-search` и `flit-platform` никогда не зависят от крейтов `windows*` — ни напрямую, ни транзитивно. Код ОС есть только в `flit-platform-windows` (весь крейт под `#![cfg(windows)]`) и `flit-platform-linux` (под `#![cfg(target_os = "linux")]`). Бинарники выбирают платформу одной строкой (`type P = flit_platform_windows::Windows` или `flit_platform_linux::Linux`), весь остальной код обобщён по `P: Platform`. CI проверяет правило задачей `deps-isolation`: для каждого из четырёх крейтов строится `cargo tree -p <крейт> -e normal,build --target all`, и сборка падает, если в дереве есть пакет, имя которого начинается с `windows`. Кроме того, Linux-задача CI собирает весь workspace и гоняет тесты ОС-независимых крейтов.
+Таблица слоёв находится в `tools/xtask/src/layers.rs`. Крейты `flit` и `flit-indexd` на верхнем слое, `flit-core` на нижнем. Крейты одного слоя могут зависеть друг от друга. `cargo run -p xtask --locked` читает `cargo metadata` и отклоняет незарегистрированных участников, локальные зависимости вне таблицы и зависимости от более высокого слоя, включая таргетные, опциональные, сборочные и тестовые.
+
+**Правило:** `flit-core`, `flit-proto`, `flit-search` и `flit-platform` никогда не зависят от крейтов `windows*` — ни напрямую, ни транзитивно. Код ОС есть только в `flit-platform-windows` (весь крейт под `#![cfg(windows)]`) и `flit-platform-linux` (под `#![cfg(target_os = "linux")]`). Бинарники выбирают платформу одной строкой (`type P = flit_platform_windows::Windows` или `flit_platform_linux::Linux`), весь остальной код обобщён по `P: Platform`. CI проверяет правило тем же `xtask` в задаче `quality`: он обходит обычные и сборочные зависимости этих четырёх крейтов во всех таргетах и падает, если среди них есть пакет, имя которого начинается с `windows`. Кроме того, Linux-задача CI собирает весь workspace и гоняет тесты ОС-независимых крейтов.
+
+`xtask` разбирает AST Rust в `src/` каждого крейта. Литералы аргументов `Color::rgb`, `Color::rgba` и `Color(...)`, значения палитр, CSS-строки вида `#RRGGBB` и числовые аргументы OpenGL и X11 принадлежат `flit-core/src/theme.rs`. Проверка обходит выражения в обычных списках аргументов макросов и учитывает алиасы импорта `render::Color`. Преобразования цветов из пользовательских настроек или системы проходят проверку как вычисления. Тестовые данные с ожидаемыми цветами хранятся в `test/`.
+
+CI проверяет форматирование workspace, лицензии, источники и advisories зависимостей. Clippy запрещает `unwrap`, `expect` и `panic` в рабочем коде, а тесты могут использовать эти вызовы для проверки ожиданий. Linux также тестирует `flit-archive`.
+
+`fuzz/` использует те же байтовые парсеры, что и приложение. Маленькие корпуса воспроизводятся обычным тестом на Windows. После push в `master` Linux-задача запускает все цели через cargo-fuzz на nightly, по 60 секунд на цель.
 
 ## Потоки
 

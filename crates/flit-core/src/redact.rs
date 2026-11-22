@@ -2,11 +2,16 @@ use regex::Regex;
 use std::borrow::Cow;
 use std::sync::LazyLock;
 
+#[allow(clippy::expect_used)]
+fn redaction_pattern(pattern: &'static str) -> Regex {
+    Regex::new(pattern).expect("invalid built-in redaction pattern")
+}
+
 static USERINFO: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)([a-z][a-z0-9+.-]*://[^/\\:@?#\s<>"]*:)[^/\\\s<>"]+@"#).unwrap()
+    redaction_pattern(r#"(?i)([a-z][a-z0-9+.-]*://[^/\\:@?#\s<>"]*:)[^/\\\s<>"]+@"#)
 });
 static PASSWORD_PARAM: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r##"(?i)(\bpassword[ \t]*=[ \t]*)(?:\\"[^\r\n]*?\\"|"(?:\\.|[^"\\\r\n])*"?|'[^'\r\n]*'?|[^\s&<>"#]+)"##).unwrap()
+    redaction_pattern(r##"(?i)(\bpassword[ \t]*=[ \t]*)(?:\\"[^\r\n]*?\\"|"(?:\\.|[^"\\\r\n])*"?|'[^'\r\n]*'?|[^\s&<>"#]+)"##)
 });
 
 pub fn passwords(text: &str) -> Cow<'_, str> {
@@ -26,13 +31,13 @@ pub fn passwords(text: &str) -> Cow<'_, str> {
 }
 
 static EMAIL: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?i)\w[\w.!#$%&'*+/=?^{}|~\-]*@\w(?:[\w.-]*\w)?").unwrap()
+    redaction_pattern(r"(?i)\w[\w.!#$%&'*+/=?^{}|~\-]*@\w(?:[\w.-]*\w)?")
 });
 static UNC_HOST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(^|[\s"'(=\[]|\w{2}:)(\\{2,4}(?:\?\\{1,2}UNC\\{1,2})?)[\w.-]+"#).unwrap()
+    redaction_pattern(r#"(?i)(^|[\s"'(=\[]|\w{2}:)(\\{2,4}(?:\?\\{1,2}UNC\\{1,2})?)[\w.-]+"#)
 });
 static FORWARD_UNC_HOST: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(^|[\s"'(=\[])(//)[\w.-]+"#).unwrap()
+    redaction_pattern(r#"(^|[\s"'(=\[])(//)[\w.-]+"#)
 });
 
 fn path_end(rest: &str) -> bool {
@@ -51,7 +56,7 @@ pub fn crash_text(text: &str, home: &str, user: &str, windows: bool) -> String {
         };
         if let Ok(home) = Regex::new(&pattern) {
             text = home.replace_all(&text, |caps: &regex::Captures<'_>| {
-                let matched = caps.get(0).unwrap();
+                let Some(matched) = caps.get(0) else { return String::new() };
                 if path_end(&text[matched.end()..]) { "~".to_owned() } else { matched.as_str().to_owned() }
             }).into_owned();
         }
@@ -66,7 +71,7 @@ pub fn crash_text(text: &str, home: &str, user: &str, windows: bool) -> String {
     let pattern = format!(r"{case}([\\/]){}", regex::escape(user));
     Regex::new(&pattern).map_or_else(|_| text.to_string(), |user| {
         user.replace_all(&text, |caps: &regex::Captures<'_>| {
-            let matched = caps.get(0).unwrap();
+            let Some(matched) = caps.get(0) else { return String::new() };
             if path_end(&text[matched.end()..]) { format!("{}<user>", &caps[1]) } else { matched.as_str().to_owned() }
         }).into_owned()
     })

@@ -197,10 +197,11 @@ fn shell_properties(path: &FsPath) -> Vec<PropGroup> {
             let text = PSFormatForDisplayAlloc(&key, &value, PDFF_DEFAULT).ok().and_then(|p: PWSTR| take_pwstr(p)).map(|w| String::from_utf16_lossy(&w));
             let _ = PropVariantClear(&mut value);
             let Some(text) = text.filter(|t| !t.trim().is_empty()) else { continue };
-            if groups.is_empty() {
-                groups.push(PropGroup::default());
+            let row = (label, text.replace(['\u{200E}', '\u{200F}'], ""));
+            match groups.last_mut() {
+                Some(group) => group.rows.push(row),
+                None => groups.push(PropGroup { rows: vec![row], ..Default::default() }),
             }
-            groups.last_mut().unwrap().rows.push((label, text.replace(['\u{200E}', '\u{200F}'], "")));
             rows += 1;
             if rows == MAX_PROPS {
                 break;

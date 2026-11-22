@@ -81,8 +81,9 @@ impl ThumbCache {
         let mut r = BufReader::new(f);
         let (mut at, mut head) = (0u64, [0u8; HEAD as usize]);
         while at + HEAD <= total && r.read_exact(&mut head).is_ok() {
-            let word = |k: usize| u32::from_le_bytes(head[k..k + 4].try_into().unwrap());
-            let (key, w, h) = (u64::from_le_bytes(head[..8].try_into().unwrap()), word(8), word(12));
+            let Some((key, dimensions)) = head.split_first_chunk() else { break };
+            let (Some(w), Some(h)) = (dimensions.first_chunk(), dimensions.last_chunk()) else { break };
+            let (key, w, h) = (u64::from_le_bytes(*key), u32::from_le_bytes(*w), u32::from_le_bytes(*h));
             let len = w as u64 * h as u64 * 4;
             if !sane(w, h) || at + HEAD + len > total || r.seek_relative(len as i64).is_err() {
                 break;

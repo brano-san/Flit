@@ -149,7 +149,7 @@ fn write_mixed(dir: &Path, n: u64) -> io::Result<u64> {
             eprint!("\r{done}/{n} files, {:.0} per second, {:.1} GB      ", rate, bytes.load(Ordering::Relaxed) as f64 / 1e9);
         }
         eprintln!();
-        workers.into_iter().try_for_each(|w| w.join().expect("writer thread panicked"))
+        workers.into_iter().map(join_writer).fold(Ok(()), Result::and)
     })?;
     Ok(bytes.into_inner())
 }
@@ -213,13 +213,25 @@ impl Plan {
                     })
                 })
                 .collect();
-            workers.into_iter().map(|w| w.join().expect("writer thread panicked")).sum()
+            let mut total = 0;
+            let mut error = None;
+            for worker in workers {
+                match join_writer(worker) {
+                    Ok(bytes) => total += bytes,
+                    Err(e) => { error.get_or_insert(e); }
+                }
+            }
+            error.map_or(Ok(total), Err)
         })
     }
 }
 
 fn at(path: &Path, e: io::Error) -> io::Error {
     io::Error::new(e.kind(), format!("{}: {e}", path.display()))
+}
+
+fn join_writer<T>(worker: thread::ScopedJoinHandle<'_, io::Result<T>>) -> io::Result<T> {
+    worker.join().map_err(|_| io::Error::other("writer thread panicked"))?
 }
 
 fn count(dir: &Path) -> io::Result<usize> {

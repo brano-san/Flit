@@ -55,7 +55,7 @@ fn a_library_lists_its_folders_and_saves_into_the_default_location() {
     assert_eq!(app.tab().title(), "Documents");
     let t = app.tab();
     let v = t.view.as_ref().unwrap();
-    let names: Vec<Location> = v.rows().iter().map(|&i| t.entry_location(i)).collect();
+    let names: Vec<Location> = v.rows().iter().map(|&i| t.entry_location(i).unwrap()).collect();
     assert_eq!(names, [Location::Local(p(r"D:\Docs\Taxes")), Location::Local(p(r"C:\Users\u\Documents\cv.docx"))]);
     assert_eq!(app.shell_dir(), Ok(p(r"C:\Users\u\Documents")));
     app.set_places(places(documents(r"D:\Docs")));
@@ -78,6 +78,14 @@ fn entries_belong_to_their_own_folder() {
     assert_eq!(app.shell_dir(), Ok(p(r"C:\Users\u\Documents")), "without a default the first folder takes new files");
     app.set_places(places(Library { save: None, folders: Vec::new(), ..documents(r"C:\x") }));
     assert!(app.shell_dir().is_err(), "a library without folders has nowhere to save");
+}
+
+#[test]
+fn a_stale_library_row_is_ignored_when_opening_an_entry() {
+    let mut app = library_app();
+    app.open_entry(u32::MAX, Instant::now());
+    assert_eq!(app.current_location(), &Location::Local(p(LIB)));
+    assert_eq!(app.drain_effects().count(), 0);
 }
 
 #[test]

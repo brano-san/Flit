@@ -1,5 +1,7 @@
+use crate::git::GitStatus;
 use crate::i18n::S;
 use crate::listing::attr;
+use crate::preview::Tone;
 use crate::render::Color;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -321,8 +323,8 @@ fn surface(c: Color) -> Theme {
     Theme { chrome: c, header: c, ..derive(c) }
 }
 
-const WHITE: Color = Color::rgb(0xFFFFFF);
-const BLACK: Color = Color::rgb(0x000000);
+pub(crate) const WHITE: Color = Color::rgb(0xFFFFFF);
+pub(crate) const BLACK: Color = Color::rgb(0x000000);
 
 fn alpha(c: Color) -> u8 {
     (c.0 >> 24) as u8
@@ -413,3 +415,68 @@ impl Palette {
 #[cfg(test)]
 #[path = "../test/theme.rs"]
 mod tests;
+
+pub(crate) const POPUP_SHADOW: Color = Color::rgba(0x0000_0050);
+pub(crate) const COLOR_INPUT_EXAMPLE: &str = "#3A7BD5";
+pub const DRAG_BADGE_COLOR: [u8; 4] = [0x35, 0x84, 0xe4, 255];
+pub const DRAG_FOLDER_COLOR: [u8; 4] = [240, 188, 72, 255];
+pub const DRAG_LABEL_COLOR: [u8; 4] = [255, 255, 255, 255];
+pub const DRAG_GHOST_BACKGROUND: [u8; 3] = [0xf4; 3];
+pub const DRAG_GHOST_BACKGROUND_PIXEL: u32 = 0xf4f4f4;
+pub const DRAG_GHOST_BORDER_PIXEL: u32 = 0x808080;
+pub const DRAG_GHOST_FOLDER_PIXEL: u32 = 0xf0bc48;
+pub const CLEAR_PIXEL: [u8; 4] = [0; 4];
+pub const TRANSPARENT: Color = Color::rgba(0);
+
+pub const CONTRAST_PREVIEW: SystemColors = SystemColors {
+    window: BLACK,
+    window_text: WHITE,
+    highlight: Color::rgb(0x1AEBFF),
+    highlight_text: BLACK,
+    hotlight: Color::rgb(0x75E9FC),
+    gray_text: Color::rgb(0x3FF23F),
+    btn_face: BLACK,
+};
+
+pub(crate) fn preview_checker(dark: bool) -> (Color, Color) {
+    if dark {
+        (Color::rgb(0x3A3A3A), Color::rgb(0x2A2A2A))
+    } else {
+        (WHITE, Color::rgb(0xE4E4E4))
+    }
+}
+
+pub const TAG_COLORS: [(S, u32); 10] = [
+    (S::ThemeTagColorRed, 0xE81123),
+    (S::ThemeTagColorOrange, 0xF7630C),
+    (S::ThemeTagColorYellow, 0xFFB900),
+    (S::ThemeTagColorGreen, 0x16C60C),
+    (S::ThemeTagColorTeal, 0x00B7C3),
+    (S::ThemeTagColorBlue, 0x0078D4),
+    (S::ThemeTagColorPurple, 0x8764B8),
+    (S::ThemeTagColorPink, 0xE3008C),
+    (S::ThemeTagColorBrown, 0x8E562E),
+    (S::ThemeTagColorGray, 0x7A7574),
+];
+
+pub(crate) fn git_status_color(s: GitStatus) -> Color {
+    match s {
+        GitStatus::Modified | GitStatus::Renamed => Color::rgb(0xD0_8A_1E),
+        GitStatus::Added | GitStatus::Untracked => Color::rgb(0x3F_A3_4D),
+        GitStatus::Deleted | GitStatus::Conflict => Color::rgb(0xD1_3B_3B),
+    }
+}
+
+pub(crate) fn tone_color(t: &Theme, dark: bool, tone: Tone) -> Color {
+    let pick = |d: u32, l: u32| Color::rgb(if dark { d } else { l });
+    match tone {
+        Tone::Plain => t.text,
+        Tone::Dim | Tone::Comment => t.text_dim,
+        Tone::Keyword => pick(0x569CD6, 0x0033B3),
+        Tone::String => pick(0xCE9178, 0xA31515),
+        Tone::Number => pick(0xB5CEA8, 0x098658),
+        Tone::Link => t.accent,
+        Tone::Added => pick(0x6A9955, 0x22863A),
+        Tone::Removed => t.error,
+    }
+}

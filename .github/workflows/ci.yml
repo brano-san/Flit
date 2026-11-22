@@ -19,7 +19,10 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --workspace --release
       - run: cargo test --workspace
-      - run: cargo clippy --workspace
+      - name: Replay parser corpora
+        run: cargo test --manifest-path fuzz/Cargo.toml --locked --lib -- --test-threads=2
+      - name: Clippy with warnings denied
+        run: cargo clippy --workspace --all-targets -- -D warnings
       - if: startsWith(github.ref, 'refs/tags/v')
         shell: pwsh
         run: |
@@ -42,7 +45,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --workspace
       - run: sh scripts/test-install-linux.sh
-      - run: cargo test -p flit-core -p flit-search -p flit-platform -p flit-proto -p flit-platform-linux -p flit-indexd
+      - name: Test portable and Linux crates
+        run: cargo test -p flit-core -p flit-search -p flit-platform -p flit-proto -p flit-platform-linux -p flit-indexd -p flit-archive
 
   linux-gui:
     runs-on: ubuntu-22.04
@@ -53,7 +57,8 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-x11-0 libegl1 libgles2 libgl1-mesa-dri xvfb weston imagemagick fonts-noto-cjk
-      - run: cargo clippy --release -p flit -p flit-indexd -p flit-platform-linux -p flit-platform-linux-gui --all-targets -- -D warnings
+      - name: Clippy with warnings denied
+        run: cargo clippy --release --workspace --all-targets --features flit-platform-linux/agent -- -D warnings
       - run: cargo test --release -p flit -p flit-platform-linux -p flit-platform-linux-gui
         env:
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -69,27 +74,51 @@ jobs:
           name: flit-linux
           path: target/packages/*.tar.gz
 
-  deps-isolation:
+  quality:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - run: |
+        with:
+          components: rustfmt
+      - name: Audit dependencies
+        uses: EmbarkStudios/cargo-deny-action@v2.1.1
+        with:
+          arguments: --all-features --locked
+          command-arguments: -D license-exception-not-encountered
+          rust-version: stable
+      - name: Test architecture checks
+        run: cargo test -p xtask --locked
+      - name: Check dependency layers and theme colors
+        run: cargo run -p xtask --locked
+      - name: Check workspace formatting
+        run: cargo fmt --all --check
+
+  fuzz:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@nightly
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: fuzz -> target
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --version 0.13.2 --locked
+      - name: Fuzz each parser for 60 seconds
+        shell: bash
+        run: |
+          targets=$(cargo +nightly fuzz list)
+          test -n "$targets"
           status=0
-          for crate in flit-core flit-proto flit-search flit-platform; do
-            tree=$(cargo tree -p "$crate" -e normal,build --target all --prefix none)
-            if grep '^windows' <<< "$tree"; then
-              echo "::error::$crate depends on a windows crate"
-              status=1
-            else
-              echo "$crate: no windows crates"
-            fi
-          done
+          while IFS= read -r target; do
+            cargo +nightly fuzz run --features fuzzing "$target" -- -max_total_time=60 -max_len=65536 -timeout=10 || status=$?
+          done <<< "$targets"
           exit "$status"
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, linux, linux-gui, deps-isolation]
+    needs: [windows, linux, linux-gui, quality]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
