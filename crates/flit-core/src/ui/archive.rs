@@ -77,6 +77,8 @@ pub(super) enum Kind {
     ConnectServer,
     RenameServer(String),
     MountQuestion(super::network::Question),
+    SettingsImport(super::settings::ImportPlan),
+    SettingsImportDone(super::settings_import::AppliedImport),
 }
 
 impl Kind {
@@ -102,6 +104,8 @@ impl Kind {
             Kind::ConnectServer => "connect_server",
             Kind::RenameServer(_) => "rename_server",
             Kind::MountQuestion(_) => "mount_question",
+            Kind::SettingsImport(_) => "settings_import",
+            Kind::SettingsImportDone(_) => "settings_import_done",
         }
     }
 }
@@ -771,6 +775,14 @@ impl App {
             Kind::ConnectServer => self.submit_server(f),
             Kind::RenameServer(_) => self.submit_server_name(f),
             Kind::MountQuestion(_) => self.submit_mount_question(f),
+            Kind::SettingsImport(plan) => {
+                self.approve_settings_import(plan);
+                None
+            }
+            Kind::SettingsImportDone(undo) => {
+                self.undo_settings_import(undo);
+                None
+            }
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;

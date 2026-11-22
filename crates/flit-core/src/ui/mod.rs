@@ -37,6 +37,7 @@ mod volumes;
 pub mod palette;
 mod preview_pane;
 pub mod settings;
+mod settings_import;
 mod settings_page;
 mod setting_editor;
 pub mod sidebar;
@@ -469,6 +470,7 @@ pub enum SettingsCmd {
     Fonts,
     Browse { exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
     RaiseWatchLimit,
+    ConfirmImport(Box<settings::ImportPlan>),
 }
 
 pub enum IconResult {

@@ -219,6 +219,17 @@ impl Book {
             }
             TagRequest::Moved { pairs, copy } => self.moved(pairs, copy, &mut out),
             TagRequest::Command { name, items } => self.command(&name, items, &mut out),
+            TagRequest::ChangeImport { before, after } => {
+                let keep = before.len().min(after.len());
+                let removed = self.store.files.values().any(|f| u64::from(f.mask) >> after.len().min(tags::MAX_TAGS) != 0);
+                let same_names = before[..keep].iter().zip(&after[..keep]).all(|(a, b)| a.name == b.name);
+                if before == self.store.tags && after.len() <= tags::MAX_TAGS && same_names && !removed {
+                    self.store.tags = after;
+                    out.changed = true;
+                } else {
+                    out.status = Some(S::SettingsPageImportStale.en().into());
+                }
+            }
         }
         if out.changed {
             let gone: Vec<String> = renamed.map(|(_, name)| name).into_iter().collect();

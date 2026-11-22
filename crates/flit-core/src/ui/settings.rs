@@ -1,3 +1,4 @@
+pub use super::settings_import::ImportPlan;
 use super::home::Widget;
 use super::user_menu::{self, UserEntry};
 use super::layouts::LAYOUTS;
@@ -12,7 +13,7 @@ use crate::path::{is_label, PathKind, COMPUTER_LABEL, HOME_LABEL, RECYCLE_BIN_LA
 use crate::open::OpenTarget;
 use crate::provider::Resolve;
 use crate::sort::{Folders, GroupField, SortField};
-use crate::tags::{self, Tag, TagRequest, MAX_TAGS};
+use crate::tags::Tag;
 use super::keymap::{self, Keymap};
 use crate::theme::{Area, Mode};
 use serde_json::{Map, Value as Json};
@@ -737,7 +738,7 @@ impl App {
         self.report_problems(&doc.problems);
     }
 
-    fn report_problems(&mut self, problems: &[String]) {
+    pub(super) fn report_problems(&mut self, problems: &[String]) {
         match problems {
             [] => {}
             [one] => self.status(i18n::localize(one).into_owned()),
@@ -755,37 +756,7 @@ impl App {
         render(&self.setting_values(), &Map::new(), Some(self.tag_defs()))
     }
 
-    pub fn import_settings(&mut self, text: &str) {
-        let doc = parse(text);
-        if doc.broken {
-            return self.report_problems(&doc.problems);
-        }
-        let applied = self.apply_settings(&doc.values);
-        let mut defs = self.tag_defs().to_vec();
-        let mut tagged = 0;
-        for t in &doc.tags {
-            match tags::find(&defs, &t.name) {
-                Some(k) if defs[k].color != t.color => {
-                    self.effects.push(Effect::Tags(TagRequest::Recolor { tag: k, color: t.color }));
-                    defs[k].color = t.color;
-                    tagged += 1;
-                }
-                Some(_) => {}
-                None if defs.len() < MAX_TAGS && tags::validate_name(&defs, &t.name, None).is_ok() => {
-                    self.effects.push(Effect::Tags(TagRequest::Create { name: t.name.clone(), color: t.color, assign: Vec::new() }));
-                    defs.push(t.clone());
-                    tagged += 1;
-                }
-                None => {}
-            }
-        }
-        match doc.problems.first() {
-            Some(p) => self.status(format!("{}; {}", self.imported(applied, tagged), i18n::localize(p))),
-            None => self.status(self.imported(applied, tagged)),
-        }
-    }
-
-    fn imported(&self, applied: usize, tagged: usize) -> String {
+    pub(super) fn imported(&self, applied: usize, tagged: usize) -> String {
         crate::tr!(S::SettingsStatusImported, settings = crate::trn!(P::SettingsCountSettings, applied), tags = crate::trn!(P::SettingsCountTags, tagged))
     }
 

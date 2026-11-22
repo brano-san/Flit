@@ -2,7 +2,7 @@ use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::ui::settings::{self, Doc};
 use flit_core::ui::{Value, WatchLimit, SETTINGS};
-use flit_platform::{Platform, PlatformError, Wake};
+use flit_platform::{Platform, PlatformError, Wake, WindowId};
 use serde_json::{Map, Value as Json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -13,7 +13,8 @@ pub enum Job {
     Backup,
     Check,
     Export(PathBuf, String, bool),
-    Import(PathBuf),
+    Import(WindowId, PathBuf),
+    BackupImport(WindowId, Box<settings::ImportPlan>, String),
     CacheSize,
     CacheLimit(u32),
     Integrate(bool),
@@ -24,7 +25,8 @@ pub enum Reply {
     System { os: String, dates: (String, String), missing: Vec<flit_core::ui::MissingTool> },
     Changed(String),
     SaveFailed(String),
-    Imported(Result<String, String>),
+    Imported(WindowId, Result<Doc, String>),
+    ImportBackedUp(WindowId, Box<settings::ImportPlan>, Result<PathBuf, String>),
     Exported(Result<PathBuf, String>),
     ExportExists { path: PathBuf, size: u64, modified: i64 },
     CacheUsed(u64),
@@ -62,6 +64,36 @@ fn export(to: PathBuf, text: &str, replace: bool) -> Reply {
         }
         _ => Reply::Exported(write_atomic(&to, text.as_bytes()).map(|_| to).map_err(|e| e.to_string())),
     }
+}
+
+fn read_import(from: &Path) -> Result<Doc, String> {
+    use std::io::Read;
+    const MAX_IMPORT: u64 = 4 * 1024 * 1024;
+    let mut text = String::new();
+    let file = std::fs::File::open(from).map_err(|e| e.to_string())?;
+    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err(flit_core::i18n::S::SettingsPageImportUnavailable.en().into());
+    }
+    let count = file.take(MAX_IMPORT + 1).read_to_string(&mut text).map_err(|e| e.to_string())?;
+    if count as u64 > MAX_IMPORT {
+        return Err(flit_core::i18n::S::SettingsPageImportTooLarge.en().into());
+    }
+    Ok(settings::parse(&text))
+}
+
+fn backup_import(path: Option<&Path>, last: &str, text: &str) -> Result<PathBuf, String> {
+    use flit_core::i18n::S;
+    let path = path.ok_or_else(|| S::SettingsPageImportUnavailable.en().to_owned())?;
+    match std::fs::read_to_string(path) {
+        Ok(current) if current == last => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && last.is_empty() => {}
+        Ok(_) => return Err(S::SettingsPageImportStale.en().into()),
+        Err(e) => return Err(e.to_string()),
+    }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
+    let backup = path.with_file_name(format!("settings.before-import-{}-{}.json", std::process::id(), stamp.as_nanos()));
+    write_atomic(&backup, text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(backup)
 }
 
 fn backup_path(path: &Path) -> PathBuf {
@@ -108,7 +140,8 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate:
                     }
                 }
                 Job::Export(to, text, replace) => reply(export(to, &text, replace)),
-                Job::Import(from) => reply(Reply::Imported(std::fs::read_to_string(&from).map_err(|e| e.to_string()))),
+                Job::Import(id, from) => reply(Reply::Imported(id, read_import(&from))),
+                Job::BackupImport(id, plan, text) => reply(Reply::ImportBackedUp(id, plan, backup_import(path.as_deref(), &last, &text))),
                 Job::CacheSize => {
                     if let Some(c) = &cache {
                         let used = locked(c).used();

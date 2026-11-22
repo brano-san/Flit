@@ -829,7 +829,15 @@ impl<P: Platform> Handler<P> {
                 Effect::Tags(req) => self.tags.submit(Some(id), req),
                 Effect::Git(req) => self.git.submit(req),
                 Effect::Settings(SettingsCmd::Export { path, text, replace }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text, replace)),
-                Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
+                Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(id, crate::preview::std_path(&path))),
+                Effect::Settings(SettingsCmd::ConfirmImport(plan)) => {
+                    if self.settings.read_only {
+                        self.status(id, S::SettingsPageImportNewer.t().to_owned());
+                    } else {
+                        let text = plan.backup(&self.settings.unknown);
+                        self.settings.send(Job::BackupImport(id, plan, text));
+                    }
+                }
                 Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
                 Effect::Settings(SettingsCmd::RaiseWatchLimit) => self.settings.send(Job::RaiseWatchLimit(P::raise_watch_limit)),
                 Effect::Settings(SettingsCmd::Fonts) => {
@@ -985,14 +993,22 @@ impl<P: Platform> Handler<P> {
                     }
                     self.settings.save();
                 }
-                settings::Reply::Imported(Ok(text)) => {
-                    if let Some(st) = self.windows.get_mut(&id) {
-                        st.app.import_settings(&text);
+                settings::Reply::Imported(target, Ok(doc)) => {
+                    if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.preview_settings_import(doc);
                     }
                 }
-                settings::Reply::Imported(Err(e)) => {
+                settings::Reply::Imported(target, Err(e)) | settings::Reply::ImportBackedUp(target, _, Err(e)) => {
                     tracing::warn!("cannot import settings: {e}");
-                    self.status(id, flit_core::tr!(S::UiAppImportFailed, error = flit_core::i18n::localize(&e.to_string())));
+                    self.status(target, flit_core::tr!(S::UiAppImportFailed, error = flit_core::i18n::localize(&e)));
+                }
+                settings::Reply::ImportBackedUp(target, plan, Ok(path)) => {
+                    if self.settings.read_only {
+                        self.status(target, S::SettingsPageImportNewer.t().to_owned());
+                    } else if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.apply_confirmed_settings_import(*plan, path.to_string_lossy().into_owned());
+                        self.sync_settings(target);
+                    }
                 }
                 settings::Reply::Exported(Ok(path)) => self.status(id, flit_core::tr!(S::UiAppExported, path = path.display())),
                 settings::Reply::Exported(Err(e)) => {
