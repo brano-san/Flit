@@ -38,6 +38,7 @@ pub mod palette;
 mod preview_pane;
 pub mod settings;
 mod settings_import;
+mod segments;
 mod settings_page;
 mod setting_editor;
 pub mod sidebar;
@@ -1521,6 +1522,12 @@ impl App {
             ProviderEvent::Measured { id, totals, file_system, done, .. } => {
                 if !self.quick_measured(id, totals, done) {
                     self.measured(id, totals, file_system, done);
+                }
+            }
+            ProviderEvent::OpNotice { tab, text } => {
+                if let Some(k) = self.tabs.iter().position(|t| t.id == tab) {
+                    self.tabs[k].error = Some(crate::i18n::localize(&text).into_owned());
+                    self.dirty |= k == self.cur;
                 }
             }
             ProviderEvent::Status { tab, gen, text } => {

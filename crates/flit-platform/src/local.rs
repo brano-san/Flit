@@ -136,7 +136,7 @@ fn transfer_volume(fs: &dyn Fs, op: &FileOp) -> Option<Vec<u8>> {
     let volume = |p: &FsPath| fs.volume_key(p);
     let crosses = |a: &FsPath, b: &FsPath| volume(a) != volume(b);
     match op {
-        FileOp::Copy { dest, .. } => Some(volume(dest)),
+        FileOp::Copy { dest, .. } | FileOp::Segments { dest, .. } => Some(volume(dest)),
         FileOp::Move { items, dest } if items.iter().any(|i| crosses(i, dest)) => Some(volume(dest)),
         FileOp::MoveTo(pairs) if pairs.iter().any(|(a, b)| crosses(a, b)) => pairs.first().map(|(_, b)| volume(b)),
         FileOp::Archive(ArchiveOp::Compress { archive, .. }) => Some(volume(archive)),
@@ -304,6 +304,9 @@ impl LocalProvider {
                     };
                     drop(turn);
                     reply.finish(result);
+                    if let Some(notice) = job.take_notice() {
+                        reply.send(ProviderEvent::OpNotice { tab: reply.tab, text: notice.en().into() });
+                    }
                     running.fetch_sub(1, Ordering::AcqRel);
                 });
                 if let Err(e) = started {
@@ -470,7 +473,10 @@ fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> Finished
     if matches!(&op, FileOp::Move { items, .. } if items.is_empty()) {
         return (None, Some(OpReport { op, items: Vec::new() }), Vec::new());
     }
-    let out = sh.file_op(&op, job);
+    let out = match &op {
+        FileOp::Segments { source, dest, part_size } => crate::segments::run(sh, source, dest, *part_size, job),
+        _ => sh.file_op(&op, job),
+    };
     if cut && out.error.is_none() {
         sh.clear_clipboard();
     }

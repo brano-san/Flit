@@ -860,6 +860,15 @@ impl Shell for LinuxShell {
 }
 
 impl FileOps for LinuxShell {
+    fn rename_local_noreplace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
+        flit_platform_linux::rename_local_noreplace(from, to)
+            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))
+    }
+
+    fn file_identity(&mut self, path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        flit_platform_linux::file_key(path)
+    }
+
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         let free_space = |p: &Path| p.ancestors().find_map(flit_platform_linux::mounts::space).map(|s| s.1);
         let env = flit_archive::Env { utc_offset: <crate::Linux as flit_platform::Platform>::utc_offset_minutes(), free_space: &free_space };

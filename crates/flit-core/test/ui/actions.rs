@@ -76,6 +76,8 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Open Left Folder Dropdown", "Alt+Left"),
         ("Open Right Folder Dropdown", "Alt+Right"),
         ("Open Types Dropdown", "Alt+T"),
+        ("Split file…", ""),
+        ("Join parts…", ""),
     ]),
     ("View", &[
         ("Zoom In Content", "Ctrl+MouseWheelUp, Ctrl+=, Ctrl+Shift+="),

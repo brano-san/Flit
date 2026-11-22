@@ -528,6 +528,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tags.manage", G::Flit, S::ActionsTagsManage, S::DescribeTagsManage, &[], |a, _| a.open_tag_pick(TagPick::Manage, "")),
     Action::new("tags.open_all", G::Flit, S::ActionsTagsOpenAll, S::DescribeTagsOpenAll, &[], |a, _| a.open_tag_pick(TagPick::OpenAll, "")),
     Action::new("tags.settings", G::Flit, S::ActionsTagsSettings, S::DescribeTagsSettings, &[], |a, _| a.open_settings(Some(Page::Tags))),
+    Action::new("file.split", G::Folder, S::SegmentsSplit, S::SegmentsDescribeSplit, &[], |a, _| a.segments_dialog(true)),
+    Action::new("file.join", G::Folder, S::SegmentsJoin, S::SegmentsDescribeJoin, &[], |a, _| a.segments_dialog(false)),
     Action::new("settings.export", G::Flit, S::ActionsSettingsExport, S::DescribeSettingsExport, &[], |a, _| a.ask_export_settings()),
     Action::new("settings.import", G::Flit, S::ActionsSettingsImport, S::DescribeSettingsImport, &[], |a, _| a.ask_import_settings()),
     Action::new("settings.reset", G::Flit, S::ActionsSettingsReset, S::DescribeSettingsReset, &[], |a, _| a.ask_reset_settings()),

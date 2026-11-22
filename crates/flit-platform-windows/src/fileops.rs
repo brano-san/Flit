@@ -155,6 +155,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::MoveTo(pairs) | FileOp::Restore(pairs) => pairs.iter().flat_map(|(a, b)| [a, b]).collect(),
         FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteLinkAs { dest, .. } | FileOp::PasteDropped { dest, .. } => vec![dest],
         FileOp::Archive(_) => Vec::new(),
+        FileOp::Segments { source, dest, .. } => vec![source, dest],
         FileOp::InstallFonts(v) => v.iter().collect(),
         FileOp::LockScreen(p) | FileOp::GrantAccess(p) => vec![p],
         FileOp::SetAccess { items, .. } | FileOp::SetAttributes { items, .. } => items.iter().collect(),
@@ -284,7 +285,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::LinkAs { .. } | FileOp::PasteLinkAs { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::LinkAs { .. } | FileOp::PasteLinkAs { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) | FileOp::Segments { .. } => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -401,13 +402,11 @@ fn delete_file(p: &FsPath) {
     let _ = unsafe { DeleteFileW(PCWSTR(p.to_wide(true).as_ptr())) };
 }
 
-fn direct_move(from: &FsPath, to: &FsPath) -> bool {
+pub(crate) fn rename_local_noreplace(from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
     let (src, dst) = (from.to_wide(true), to.to_wide(true));
-    let moved = unsafe { MoveFileExW(PCWSTR(src.as_ptr()), PCWSTR(dst.as_ptr()), MOVE_FILE_FLAGS(0)) }.is_ok();
-    if moved {
-        notify(if is_dir(to) { SHCNE_RENAMEFOLDER } else { SHCNE_RENAMEITEM }, from, Some(to));
-    }
-    moved
+    unsafe { MoveFileExW(PCWSTR(src.as_ptr()), PCWSTR(dst.as_ptr()), MOVE_FILE_FLAGS(0)) }.map_err(err)?;
+    notify(if is_dir(to) { SHCNE_RENAMEFOLDER } else { SHCNE_RENAMEITEM }, from, Some(to));
+    Ok(())
 }
 
 fn create_new(path: &Path, data: &[u8]) -> std::io::Result<()> {
@@ -447,7 +446,7 @@ fn folder_icon(folder: &FsPath, icon: Option<&FsPath>, index: i32) -> OpOutcome 
 
 fn direct_restore(recycled: &FsPath, original: &FsPath) -> bool {
     let Some(info) = info_file(recycled) else { return false };
-    if !direct_move(recycled, original) {
+    if rename_local_noreplace(recycled, original).is_err() {
         return false;
     }
     delete_file(&info);
@@ -574,6 +573,23 @@ fn device_op(op: &FileOp, job: &Job) -> OpOutcome {
 }
 
 impl FileOps for ShellCom {
+    fn decode_local_ansi(&self, bytes: &[u8]) -> Option<String> {
+        use windows::Win32::Globalization::{CP_ACP, MB_ERR_INVALID_CHARS, MultiByteToWideChar};
+        let size = unsafe { MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, None) };
+        if size <= 0 { return None; }
+        let mut wide = vec![0; size as usize];
+        let decoded = unsafe { MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, Some(&mut wide)) };
+        (decoded == size).then(|| String::from_utf16_lossy(&wide))
+    }
+
+    fn rename_local_noreplace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
+        rename_local_noreplace(from, to)
+    }
+
+    fn file_identity(&mut self, path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        crate::tags::file_key(path)
+    }
+
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         if !op.all_paths(|p| p.kind() != flit_core::path::PathKind::Shell) {
             return device_op(op, job);

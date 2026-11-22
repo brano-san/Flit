@@ -79,6 +79,7 @@ pub(super) enum Kind {
     MountQuestion(super::network::Question),
     SettingsImport(super::settings::ImportPlan),
     SettingsImportDone(super::settings_import::AppliedImport),
+    Segments { source: FsPath, split: bool },
 }
 
 impl Kind {
@@ -106,6 +107,7 @@ impl Kind {
             Kind::MountQuestion(_) => "mount_question",
             Kind::SettingsImport(_) => "settings_import",
             Kind::SettingsImportDone(_) => "settings_import_done",
+            Kind::Segments { .. } => "segments",
         }
     }
 }
@@ -775,6 +777,7 @@ impl App {
             Kind::ConnectServer => self.submit_server(f),
             Kind::RenameServer(_) => self.submit_server_name(f),
             Kind::MountQuestion(_) => self.submit_mount_question(f),
+            Kind::Segments { .. } => self.submit_segments(f),
             Kind::SettingsImport(plan) => {
                 self.approve_settings_import(plan);
                 None

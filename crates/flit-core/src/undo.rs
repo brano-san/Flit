@@ -30,6 +30,7 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
         FileOp::LinkAs { .. } => FileOp::Delete(items.iter().map(|(_, to)| to.clone()).collect()),
         FileOp::Link { .. } if items.iter().all(|(_, to)| to.kind() == PathKind::Unix) => FileOp::Delete(items.iter().map(|(_, to)| to.clone()).collect()),
         FileOp::Copy { .. } | FileOp::Link { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::Restore(_) | FileOp::Archive(_) => created(),
+        FileOp::Segments { .. } => created(),
         FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_) => FileOp::MoveTo(items.iter().map(|(from, to)| (to.clone(), from.clone())).collect()),
         FileOp::Rename { .. } => {
             let (old, new) = &items[0];

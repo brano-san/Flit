@@ -673,6 +673,7 @@ impl App {
             }
             if count == 1 && folders == 0 {
                 m.action("file.hashes", S::MenuHashes.t());
+                self.segments_menu(m);
             }
         }
         m.separator();

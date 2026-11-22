@@ -27,6 +27,7 @@ pub mod quick_sync;
 pub mod recycle;
 pub mod render;
 pub mod sort;
+pub mod segments;
 pub mod tags;
 pub mod text;
 pub mod theme;

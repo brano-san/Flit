@@ -207,6 +207,7 @@ pub enum FileOp {
     GrantAccess(FsPath),
     LinkAs { items: Vec<FsPath>, dest: FsPath, kind: LinkKind },
     PasteLinkAs { dest: FsPath, kind: LinkKind },
+    Segments { source: FsPath, dest: FsPath, part_size: Option<u64> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -315,6 +316,7 @@ impl FileOp {
             FileOp::GrantAccess(dir) => FileOp::GrantAccess(f(dir)?),
             FileOp::LinkAs { items, dest, kind } => FileOp::LinkAs { items: all(items)?, dest: f(dest)?, kind: *kind },
             FileOp::PasteLinkAs { dest, kind } => FileOp::PasteLinkAs { dest: f(dest)?, kind: *kind },
+            FileOp::Segments { source, dest, part_size } => FileOp::Segments { source: f(source)?, dest: f(dest)?, part_size: *part_size },
         })
     }
 }
@@ -667,6 +669,7 @@ pub enum ProviderEvent {
     SizesSkipped { tab: TabId, gen: u64, items: Vec<u32> },
     OpDone { tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport> },
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
+    OpNotice { tab: TabId, text: String },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     OpFailure { tab: TabId, id: OpId, failure: Failure },
     Untrashable { tab: TabId, id: OpId, items: Vec<FsPath> },

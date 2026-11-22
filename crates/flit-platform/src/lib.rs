@@ -1,6 +1,7 @@
 mod digest;
 mod indexer;
 mod local;
+mod segments;
 pub mod walk;
 mod wsl;
 
@@ -401,6 +402,7 @@ struct JobState {
     failure: Option<Sink<Failure>>,
     now: std::sync::Mutex<Shown>,
     performed: std::sync::Mutex<Option<FileOp>>,
+    notice: std::sync::Mutex<Option<flit_core::i18n::S>>,
 }
 
 #[derive(Clone)]
@@ -408,15 +410,23 @@ pub struct Job(Arc<JobState>);
 
 impl Job {
     pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default(), notice: Default::default() }))
     }
 
     pub fn asking(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default(), notice: Default::default() }))
     }
 
     pub fn performed(&self, op: FileOp) {
         *self.0.performed.lock().unwrap_or_else(|e| e.into_inner()) = Some(op);
+    }
+
+    fn notice(&self, message: flit_core::i18n::S) {
+        *self.0.notice.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
+    }
+
+    fn take_notice(&self) -> Option<flit_core::i18n::S> {
+        self.0.notice.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
 
     pub fn take_performed(&self) -> Option<FileOp> {
@@ -536,6 +546,11 @@ impl Pasted {
 }
 
 pub trait FileOps {
+    fn file_identity(&mut self, _path: &FsPath) -> Option<flit_core::tags::FileKey> { None }
+    fn decode_local_ansi(&self, _bytes: &[u8]) -> Option<String> { None }
+    fn rename_local_noreplace(&mut self, _from: &FsPath, _to: &FsPath) -> Result<(), PlatformError> {
+        Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineBadName.en()))
+    }
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);

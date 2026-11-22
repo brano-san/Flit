@@ -112,6 +112,15 @@ pub fn host(p: &FsPath) -> Option<&Path> {
     (p.kind() == PathKind::Unix).then(|| Path::new(OsStr::from_bytes(p.as_bytes())))
 }
 
+pub fn rename_local_noreplace(from: &FsPath, to: &FsPath) -> io::Result<()> {
+    let host_bytes = |path: &FsPath| cstring(host(path).ok_or(io::ErrorKind::InvalidInput)?.as_os_str().as_bytes());
+    let (from, to) = (host_bytes(from)?, host_bytes(to)?);
+    let result = unsafe {
+        libc::syscall(libc::SYS_renameat2, libc::AT_FDCWD, from.as_ptr(), libc::AT_FDCWD, to.as_ptr(), libc::RENAME_NOREPLACE)
+    };
+    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
 pub fn fs_error(e: &io::Error) -> FsError {
     let code = e.raw_os_error().unwrap_or(-1);
     let kind = match code {
