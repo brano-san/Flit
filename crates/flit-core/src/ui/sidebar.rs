@@ -753,6 +753,9 @@ impl App {
         let old = std::mem::replace(&mut self.nav.sidebar.places, places);
         self.nav.sidebar.rebuild();
         self.places_changed(&old, Instant::now());
+        if self.opts.view_rules.location_rules() {
+            self.refresh_view_rules();
+        }
         self.go_refresh();
         self.layout();
         self.dirty = true;

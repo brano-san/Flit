@@ -98,6 +98,7 @@ fn list(archive: &FsPath, inner: &str, out: &mut ListingBuilder<'_>, utc_offset:
     if !found {
         return Err(FsError { kind: FsErrorKind::NotFound, code: 3 });
     }
+    out.listing.archived = true;
     let known = if index.declared { attr::SIZE_KNOWN } else { 0 };
     for c in children {
         let attrs = attr::ARCHIVED | known | if c.dir { attr::DIR | attr::SIZE_KNOWN } else { 0 };

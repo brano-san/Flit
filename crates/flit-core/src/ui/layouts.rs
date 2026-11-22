@@ -177,7 +177,11 @@ fn ext_in(ext: &[u8], set: &[&[u8]]) -> bool {
 }
 
 pub fn is_media(ext: &[u8]) -> bool {
-    ext_in(ext, &IMAGES) || ext_in(ext, &VIDEOS)
+    is_picture(ext) || ext_in(ext, &VIDEOS)
+}
+
+pub(super) fn is_picture(ext: &[u8]) -> bool {
+    ext_in(ext, &IMAGES) || crate::preview::is_raw(ext) || crate::preview::is_svg(ext)
 }
 
 pub fn has_thumbnail(ext: &[u8]) -> bool {
@@ -601,9 +605,13 @@ impl App {
     }
 
     pub(super) fn settle_look(&mut self, k: usize, fresh: bool, done: bool) {
+        if let Some(layout) = self.rule_layout(k, done) {
+            self.tabs[k].look = layout;
+            return;
+        }
         let t = &self.tabs[k];
         let (Some(v), LayoutMode::Adaptive) = (&t.view, t.mode) else {
-            if fresh {
+            if fresh || done {
                 self.tabs[k].look = self.tabs[k].mode;
             }
             return;

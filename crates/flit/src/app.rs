@@ -163,12 +163,9 @@ fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &I
     }
 }
 
-struct SortJob {
-    window: WindowId,
-    tab: TabId,
-    gen: u64,
-    snap: Arc<DirSnapshot>,
-    view: ViewSpec,
+enum SortJob {
+    Rows { window: WindowId, tab: TabId, gen: u64, snap: Arc<DirSnapshot>, view: ViewSpec },
+    Pictures { window: WindowId, tab: TabId, ask: u64, snap: Arc<DirSnapshot>, cancel: flit_core::provider::GenToken },
 }
 
 enum PreviewJob {
@@ -189,6 +186,7 @@ enum Done {
     TypeName(Vec<u8>, Option<String>),
     LinkChoices { window: WindowId, generation: u64, choices: flit_core::provider::LinkChoices },
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
+    PictureShare { window: WindowId, tab: TabId, ask: u64, share: flit_core::ui::PictureShare },
     Preview { window: WindowId, gen: u64, data: PreviewData },
     Pretty { window: WindowId, gen: u64, result: Result<flit_core::preview::Doc, flit_core::preview::PrettyError> },
     PdfPage { window: WindowId, gen: u64, page: u32, image: Option<flit_core::ui::Bitmap> },
@@ -307,11 +305,18 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
     let (sort_tx, sort_rx) = unbounded::<SortJob>();
     spawn("flit-sort", move || {
         for job in sort_rx {
-            let t = Instant::now();
-            let mut order = Vec::new();
-            sort::sort(&job.snap.listing, &job.snap.keys, job.view, &mut order);
-            let ms = t.elapsed().as_secs_f64() * 1e3;
-            let done = Done::Sorted { window: job.window, tab: job.tab, gen: job.gen, view: job.view, base_len: job.snap.listing.len(), order, ms };
+            let done = match job {
+                SortJob::Rows { window, tab, gen, snap, view } => {
+                    let t = Instant::now();
+                    let mut order = Vec::new();
+                    sort::sort(&snap.listing, &snap.keys, view, &mut order);
+                    Done::Sorted { window, tab, gen, view, base_len: snap.listing.len(), order, ms: t.elapsed().as_secs_f64() * 1e3 }
+                }
+                SortJob::Pictures { window, tab, ask, snap, cancel } => {
+                    let Some(share) = flit_core::ui::count_pictures(&snap.listing, &cancel, ask) else { continue };
+                    Done::PictureShare { window, tab, ask, share }
+                }
+            };
             if done_tx.send(done).is_err() {
                 return;
             }
@@ -679,7 +684,10 @@ impl<P: Platform> Handler<P> {
                 Effect::Icon(req) if batched::<P::Shell>(&req) => folders.push(req),
                 Effect::Provider { provider, req } => self.submit(provider, req),
                 Effect::Resort { tab, gen, snap, view } => {
-                    let _ = self.sorter.send(SortJob { window: id, tab, gen, snap, view });
+                    let _ = self.sorter.send(SortJob::Rows { window: id, tab, gen, snap, view });
+                }
+                Effect::ViewPictures { tab, ask, snap, cancel } => {
+                    let _ = self.sorter.send(SortJob::Pictures { window: id, tab, ask, snap, cancel });
                 }
                 Effect::Icon(req) => {
                     let visible = self.windows[&id].visible.clone();
@@ -1154,6 +1162,11 @@ impl<P: Platform> Handler<P> {
                     }
                     if let Some(m) = &mut self.metrics {
                         m.on_sorted(ms);
+                    }
+                }
+                Done::PictureShare { window, tab, ask, share } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_picture_share(tab, ask, share);
                     }
                 }
             }
