@@ -66,6 +66,7 @@ impl CommandUsage {
 pub(super) enum Line {
     Header(Group),
     Item(usize, Vec<Range<usize>>, Vec<Range<usize>>),
+    Shell(u32, String),
 }
 
 #[derive(Default)]
@@ -75,6 +76,7 @@ pub(super) struct Commands {
     pub descriptions: bool,
     groups: Vec<Group>,
     suggested: Vec<usize>,
+    shell: Option<(u64, Vec<(u32, String)>)>,
     shown: Vec<&'static str>,
     caps: Vec<Vec<String>>,
     pub live: Vec<bool>,
@@ -320,7 +322,10 @@ impl Palette {
         let query = self.field.text().to_owned();
         let Some(c) = &mut self.commands else { return };
         c.lines.clear();
-        if query.trim().is_empty() {
+        if let Some((_, commands)) = &c.shell {
+            let query = query.trim_start().get(5..).unwrap_or_default().trim();
+            c.lines.extend(commands.iter().filter(|(_, label)| fuzzy(query, label).is_some()).map(|(id, label)| Line::Shell(*id, label.clone())));
+        } else if query.trim().is_empty() {
             if !c.suggested.is_empty() {
                 c.lines.push(Line::Header(Group::CommandUsage));
                 if !c.collapsed.contains(&Group::CommandUsage) {
@@ -422,7 +427,7 @@ impl Palette {
         let c = self.commands.as_ref()?;
         match c.lines.get(*self.matches.get(i)?)? {
             Line::Item(k, ..) => self.ids.get(*k).copied(),
-            Line::Header(_) => None,
+            Line::Header(_) | Line::Shell(..) => None,
         }
     }
 
@@ -440,6 +445,74 @@ impl Palette {
 }
 
 impl App {
+    fn cancel_palette_shell(&mut self) {
+        if let Some((ticket, _)) = self.nav.palette.as_mut().and_then(|p| p.commands.as_mut()).and_then(|p| p.shell.take()) {
+            self.effects.push(Effect::PaletteShellPick { ticket, command: None });
+        }
+    }
+
+    fn update_palette_shell(&mut self) {
+        let Some(p) = self.nav.palette.as_ref().filter(|p| p.commands.is_some()) else { return };
+        let text = p.field.text().trim_start();
+        let wanted = !self.caps.unix_paths && text.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("shell"))
+            && text.get(5..).is_some_and(|s| s.is_empty() || s.starts_with(char::is_whitespace));
+        let running = p.commands.as_ref().is_some_and(|c| c.shell.is_some());
+        if !wanted {
+            if running {
+                self.cancel_palette_shell();
+                if let Some(p) = &mut self.nav.palette {
+                    p.refresh();
+                }
+            }
+        } else if !running {
+            let menu = if self.search_active() {
+                self.search_shell_target()
+            } else if !self.in_bin() && self.archive_view().is_none() {
+                let items = self.selected_items();
+                (!items.is_empty() && items.len() <= 256).then(|| self.shell_target(&items, true, false).ok()).flatten()
+            } else {
+                None
+            };
+            let Some(mut menu) = menu else { return };
+            if !self.caps.is_native(&menu.dir) {
+                return;
+            }
+            self.palette_shell_id += 1;
+            let ticket = self.palette_shell_id;
+            if let Some(p) = &mut self.nav.palette {
+                menu.x = p.rect.x;
+                menu.y = p.rect.bottom();
+                p.commands.as_mut().unwrap().shell = Some((ticket, Vec::new()));
+                p.refresh();
+            }
+            self.effects.push(Effect::PaletteShell { ticket, menu });
+        }
+    }
+
+    pub(super) fn receive_palette_shell(&mut self, ticket: u64, items: &[super::MenuItem], ids: &[u32]) {
+        fn flatten(items: &[super::MenuItem], path: &str, ids: &mut impl Iterator<Item = u32>, out: &mut Vec<(u32, String)>) {
+            for item in items {
+                match item {
+                    super::MenuItem::Command { label, disabled, .. } => {
+                        if let Some(id) = ids.next().filter(|_| !disabled) {
+                            let label = crate::tr!(S::PaletteShellCommand, command = format_args!("{path}{label}"));
+                            out.push((id, label));
+                        }
+                    }
+                    super::MenuItem::Submenu { label, items } => flatten(items, &format!("{path}{label} › "), ids, out),
+                    _ => {}
+                }
+            }
+        }
+        let Some(p) = &mut self.nav.palette else { return };
+        let Some((_, choices)) = p.commands.as_mut().and_then(|c| c.shell.as_mut()).filter(|(current, _)| *current == ticket) else { return };
+        choices.clear();
+        flatten(items, "", &mut ids.iter().copied(), choices);
+        p.refresh();
+        self.layout();
+        self.dirty = true;
+    }
+
     pub fn command_usage(&self) -> CommandUsage {
         self.command_usage.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
@@ -480,6 +553,7 @@ impl App {
     }
 
     pub(super) fn open_pick(&mut self, p: Palette) {
+        self.cancel_palette_shell();
         let same = self.nav.palette.as_ref().is_some_and(|open| open.pick == p.pick);
         self.nav.palette = None;
         if !same {
@@ -505,6 +579,7 @@ impl App {
     }
 
     pub(super) fn close_palette(&mut self) {
+        self.cancel_palette_shell();
         let editing = self.nav.palette.take().is_some_and(|p| p.pick.edits_keys());
         match editing {
             true => self.back_to_commands(),
@@ -539,6 +614,11 @@ impl App {
                     p.fold(g);
                     self.nav.palette = Some(p);
                     self.layout();
+                }
+                Some(Line::Shell(command, _)) => {
+                    if let Some((ticket, _)) = &c.shell {
+                        self.effects.push(Effect::PaletteShellPick { ticket: *ticket, command: Some(*command) });
+                    }
                 }
                 Some(Line::Item(k, ..)) if c.live[*k] => {
                     self.record_command_use(ACTIONS[p.ids[*k]].id);
@@ -651,6 +731,7 @@ impl App {
         if changed_go {
             self.go_refresh();
         }
+        self.update_palette_shell();
         self.layout();
         true
     }
@@ -665,6 +746,7 @@ impl App {
         if p.go.is_some() {
             self.go_refresh();
         }
+        self.update_palette_shell();
         self.layout();
         true
     }
@@ -873,6 +955,14 @@ impl App {
                     turning |= turns[k].1.aim(to, animate, now, super::address::TURN);
                     let cr = Rect::new(head.right() - s12 - s16, head.y, s16, head.h);
                     w.g.dl.chevron((cr.x + cr.w / 2.0, cr.y + cr.h / 2.0), s4 * 2.0, turns[k].1.value(now, super::address::TURN), (sc * 1.25).round().max(1.0), ink);
+                }
+                Line::Shell(_, label) => {
+                    if hot {
+                        w.g.dl.round_rect(row, t.accent_fill, s4);
+                    }
+                    let ink = if hot { ink_on(t.accent_fill) } else { t.text };
+                    let y = baseline(w.g, row, font);
+                    w.g.text(row.x + s12, y, label, font, ink, (row.w - 2.0 * s12).max(0.0));
                 }
                 Line::Item(n, title_marks, desc_marks) => {
                     let live = c.live[*n];

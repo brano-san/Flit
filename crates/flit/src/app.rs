@@ -800,6 +800,8 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::ShellPick(cmd) => window.shell_pick(cmd),
+                Effect::PaletteShell { ticket, menu } => window.palette_shell(ticket, menu),
+                Effect::PaletteShellPick { ticket, command } => window.palette_shell_pick(ticket, command),
                 Effect::ShellPrefetch(menu) => window.shell_prefetch(menu),
                 Effect::ShellWarm(menus) => window.shell_warm(menus),
                 Effect::Layout(cmd) => self.layout_cmd(id, cmd),

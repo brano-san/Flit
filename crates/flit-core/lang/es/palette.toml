@@ -39,3 +39,6 @@ text = "Texto"
 scroll = "Desplazamiento"
 flit = "Flit"
 command_usage = "Recientes y frecuentes"
+
+[shell]
+command = "Shell: {command}"

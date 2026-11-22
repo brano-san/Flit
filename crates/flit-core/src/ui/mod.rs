@@ -451,6 +451,8 @@ pub enum Effect {
     SetVolumeLabel { drive: FsPath, label: String },
     Git(crate::git::GitRequest),
     ShellPick(Option<u32>),
+    PaletteShell { ticket: u64, menu: ShellMenu },
+    PaletteShellPick { ticket: u64, command: Option<u32> },
     Layout(LayoutCmd),
     Update(crate::update::UpdateRequest),
 }
@@ -682,6 +684,7 @@ pub struct App {
     pub tab_wheel_reversed: bool,
     pub mru_tabs: bool,
     command_usage: Arc<std::sync::Mutex<CommandUsage>>,
+    palette_shell_id: u64,
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
     pub double_click_up: bool,
@@ -829,6 +832,7 @@ impl App {
             tab_wheel_reversed: false,
             mru_tabs: true,
             command_usage: Arc::default(),
+            palette_shell_id: 0,
             tab_actions_button: true,
             folders_in_new_tab: false,
             double_click_up: true,
@@ -2078,6 +2082,7 @@ impl App {
             Event::ShellError(message) => self.status(message.as_str()),
             Event::MenuCommand(k) => self.menu_command(*k, now),
             Event::ShowMenu { .. } | Event::ShellItems { .. } => {}
+            Event::PaletteShell { ticket, items, shell } => self.receive_palette_shell(*ticket, items, shell),
             Event::DevicesChanged => {
                 self.effects.push(Effect::RefreshPlaces);
                 self.each_pane(|a, k| {

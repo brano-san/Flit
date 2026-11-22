@@ -39,3 +39,6 @@ text = "Текст"
 scroll = "Прокручування"
 flit = "Flit"
 command_usage = "Нещодавні та часті"
+
+[shell]
+command = "Оболонка: {command}"

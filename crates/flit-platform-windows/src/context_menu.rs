@@ -71,6 +71,8 @@ const RECYCLE_BIN: &str = "::{645FF040-5081-101B-9F08-00AA002F954E}";
 
 pub(crate) enum ShellUi {
     Menu(ShellMenu),
+    Palette(u64, ShellMenu),
+    PalettePick(u64, Option<u32>),
     Properties(Vec<FsPath>),
     Drag(Vec<FsPath>),
     Verb(Vec<FsPath>, &'static CStr),
@@ -83,6 +85,8 @@ pub(crate) const SHARE_VERB: &CStr = c"Windows.ModernShare";
 enum Job {
     Menu { owner: isize, gen: u64, menu: ShellMenu, pt: POINT },
     Adopt { owner: isize, prep: u64, menu: ShellMenu, pt: POINT },
+    Palette { owner: isize, gen: u64, ticket: u64, menu: ShellMenu, pt: POINT },
+    PalettePick { owner: isize, ticket: u64, cmd: Option<u32> },
     Pick { owner: isize, cmd: Option<u32>, shift: bool, ctrl: bool },
     Warm(Vec<ShellMenu>),
     #[cfg(test)]
@@ -106,6 +110,7 @@ struct Ready {
 
 struct Shown {
     hmenu: HMENU,
+    palette: Option<(isize, u64)>,
     menu: ShellMenu,
     pt: POINT,
 }
@@ -207,6 +212,7 @@ static STALL_SEEN: Condvar = Condvar::new();
 static STALL_ID: AtomicU64 = AtomicU64::new(0);
 static HUNG_MS: AtomicU64 = AtomicU64::new(8000);
 static PREP_GEN: AtomicU64 = AtomicU64::new(0);
+static PALETTE: Mutex<Option<(isize, u64, u64)>> = Mutex::new(None);
 static WANT: Mutex<Option<(u64, isize, ShellMenu)>> = Mutex::new(None);
 static READY: Mutex<Option<Ready>> = Mutex::new(None);
 
@@ -443,7 +449,7 @@ unsafe fn adopt(owner: isize, prep: u64, m: &ShellMenu, pt: POINT) -> Result<(),
         }
     };
     ACTIVE.set(Some(active));
-    SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt }));
+    SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt, palette: None }));
     Ok(())
 }
 
@@ -454,9 +460,22 @@ fn serve() {
     while let Some(job) = next_job() {
         match job {
             Job::Menu { owner, gen, menu, pt } => {
-                if let Err(e) = unsafe { show_menu(owner, gen, &menu, pt) } {
+                if let Err(e) = unsafe { show_menu(owner, gen, &menu, pt, None) } {
                     tracing::warn!("shell menu: {e}");
                     deliver(owner, Some(gen), Event::ShellItems { items: Vec::new(), shell: Vec::new() });
+                }
+            }
+            Job::Palette { owner, gen, ticket, menu, pt } => {
+                if let Err(e) = unsafe { show_menu(owner, gen, &menu, pt, Some(ticket)) } {
+                    tracing::warn!("shell menu: {e}");
+                    deliver(owner, Some(gen), Event::PaletteShell { ticket, items: Vec::new(), shell: Vec::new() });
+                }
+            }
+            Job::PalettePick { owner, ticket, cmd } => {
+                if SHOWN.with_borrow(|s| s.as_ref().is_some_and(|s| s.palette == Some((owner, ticket)))) {
+                    if let Err(e) = unsafe { pick(owner, cmd, false, false) } {
+                        tracing::warn!("shell: {e}");
+                    }
                 }
             }
             Job::Adopt { owner, prep, menu, pt } => {
@@ -884,11 +903,11 @@ pub(crate) unsafe fn shell_items(menu: Option<&IContextMenu>, hmenu: HMENU) -> (
     (items, ids)
 }
 
-unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT) -> Result<(), PlatformError> {
-    release();
+unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT, ticket: Option<u64>) -> Result<(), PlatformError> {
     if CURRENT.load(Ordering::SeqCst) != gen {
         return Ok(());
     }
+    release();
     let started = Instant::now();
     let hmenu = CreatePopupMenu().map_err(err)?;
     let busy = Busy::start(owner, Some(gen));
@@ -903,12 +922,16 @@ unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT) -> Result<
     drop(busy);
     ACTIVE.set(Some(active));
     tracing::info!("context menu shell items ready in {:.1} ms, {} commands, {}", started.elapsed().as_secs_f64() * 1e3, ids.len(), if m.inline { "inline" } else { "in a submenu" });
-    SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt }));
+    SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt, palette: ticket.map(|ticket| (owner, ticket)) }));
     if CURRENT.load(Ordering::SeqCst) != gen {
         release();
         return Ok(());
     }
-    deliver(owner, Some(gen), Event::ShellItems { items, shell: ids });
+    let event = match ticket {
+        Some(ticket) => Event::PaletteShell { ticket, items, shell: ids },
+        None => Event::ShellItems { items, shell: ids },
+    };
+    deliver(owner, Some(gen), event);
     Ok(())
 }
 
@@ -1052,6 +1075,27 @@ pub(crate) fn run(hwnd: HWND, req: ShellUi, send: &dyn Fn(Event)) {
     let (result, what) = match req {
         ShellUi::Menu(m) => {
             show(hwnd, &m, send);
+            (Ok(()), None)
+        }
+        ShellUi::Palette(ticket, menu) => {
+            let gen = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
+            let owner = hwnd.0 as isize;
+            *locked(&PALETTE) = Some((owner, ticket, gen));
+            let mut pt = POINT { x: menu.x as i32, y: menu.y as i32 };
+            let _ = unsafe { ClientToScreen(hwnd, &mut pt) };
+            send_job(Job::Palette { owner, gen, ticket, menu, pt });
+            (Ok(()), None)
+        }
+        ShellUi::PalettePick(ticket, cmd) => {
+            let owner = hwnd.0 as isize;
+            let mut active = locked(&PALETTE);
+            if active.is_some_and(|(window, running, gen)| {
+                window == owner && running == ticket && CURRENT.compare_exchange(gen, gen + 1, Ordering::SeqCst, Ordering::SeqCst).is_ok()
+            }) {
+                *active = None;
+                drop(active);
+                send_job(Job::PalettePick { owner, ticket, cmd });
+            }
             (Ok(()), None)
         }
         ShellUi::Properties(paths) => (properties(hwnd, &paths), Some(S::ErrorsEnginePropertiesFailed)),

@@ -1209,6 +1209,17 @@ impl App {
         Some((self.search_row_location(row)?, self.search.row(row)?.meta.attrs & attr::DIR != 0))
     }
 
+    pub(super) fn search_shell_target(&self) -> Option<super::ShellMenu> {
+        let row = self.search.rows.get(&self.search.focus?)?;
+        let dir = crate::FsPath::parse_exact(&row.dir)?;
+        let path = dir.join(&row.name);
+        if crate::archive::split(&path).is_some() || crate::recycle::in_bin(&path) {
+            return None;
+        }
+        let kind = if row.meta.attrs & attr::DIR != 0 { super::MenuKind::Folder } else { super::MenuKind::File };
+        Some(super::ShellMenu { dir, items: vec![path], x: 0.0, y: 0.0, extended: false, menu: Vec::new(), inline: self.shell_items_inline, shell: true, kind })
+    }
+
     pub(super) fn set_search_exclusions(&mut self, paths: Vec<Location>) {
         let mut unique: Vec<Location> = Vec::new();
         for location in paths.into_iter().take(256) {

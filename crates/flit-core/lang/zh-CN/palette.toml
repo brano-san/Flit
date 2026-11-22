@@ -39,3 +39,6 @@ text = "文本"
 scroll = "滚动"
 flit = "Flit"
 command_usage = "最近和常用"
+
+[shell]
+command = "Shell：{command}"

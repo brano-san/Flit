@@ -71,6 +71,57 @@ fn w3_review_palette_history_ignores_shortcuts_and_programmatic_actions() {
 }
 
 #[test]
+fn w3_review_windows_palette_does_not_use_hidden_tab_selection_in_search() {
+    let mut a = crate::ui::harness::app(&["hidden.txt"]);
+    a.set_caps(crate::caps::Caps { unix_paths: false });
+    a.tab_mut().view.as_mut().unwrap().set_selected(0, true);
+    a.search_for("visible");
+    a.open_palette();
+    a.palette_insert("shell");
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::PaletteShell { .. })));
+    a.close_palette();
+
+    let gen = 1;
+    a.on_search_event(crate::ui::SearchEvent::Done { gen, total: 1, version: 0 }, Instant::now());
+    a.on_search_event(crate::ui::SearchEvent::Rows { gen, from: 0, rows: vec![crate::ui::SearchRow {
+        name: b"visible.txt".to_vec(), dir: br"D:\results".to_vec(), meta: Default::default(),
+    }] }, Instant::now());
+    press(&mut a, Key::Down, NONE);
+    a.open_palette();
+    a.palette_insert("shell");
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::PaletteShell { menu, .. }
+        if menu.items.len() == 1 && menu.items[0].as_bytes() == br"D:\results\visible.txt")));
+}
+
+#[test]
+fn w3_windows_palette_builds_the_shell_menu_only_for_the_shell_query() {
+    let mut a = crate::ui::harness::app(&["selected.txt"]);
+    a.set_caps(crate::caps::Caps { unix_paths: false });
+    a.tab_mut().view.as_mut().unwrap().set_selected(0, true);
+    a.open_palette();
+    a.palette_insert("shel");
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::PaletteShell { .. })));
+    a.palette_insert("l");
+    let ticket = a.drain_effects().find_map(|e| match e {
+        Effect::PaletteShell { ticket, menu } => {
+            assert_eq!(menu.items.len(), 1);
+            Some(ticket)
+        }
+        _ => None,
+    }).unwrap();
+    let items = vec![super::super::MenuItem::command("Properties", "")];
+    a.on_event(&Event::PaletteShell { ticket: ticket + 1, items: items.clone(), shell: vec![42] }, Instant::now());
+    assert!(a.nav.palette.as_ref().unwrap().matches.is_empty());
+    a.on_event(&Event::PaletteShell { ticket, items, shell: vec![42] }, Instant::now());
+    a.run_palette_item(0, Instant::now());
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::PaletteShellPick { ticket: found, command: Some(42) } if found == ticket)));
+    a.set_caps(crate::caps::Caps { unix_paths: true });
+    a.open_palette();
+    a.palette_insert("shell");
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::PaletteShell { .. })));
+}
+
+#[test]
 fn palette_wheel_up_and_down_move_on_the_same_frame() {
     let start = Instant::now();
     let mut a = long_pick(start);
@@ -165,6 +216,7 @@ fn item_title(a: &App, row: usize) -> String {
     match &commands(a).lines[row] {
         Line::Item(k, ..) => p.titles[*k].clone(),
         Line::Header(g) => panic!("row {row} is the header of {g:?}"),
+        Line::Shell(_, title) => panic!("row {row} is the shell command {title:?}"),
     }
 }
 
