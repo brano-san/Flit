@@ -2,7 +2,7 @@ use flit_core::archive::Defaults;
 use flit_core::sort::{GroupField, GroupSpec, SortField, SortSpec};
 use flit_core::ui::{Column, FolderView, FolderViews, LayoutMode, NavPrefs, NavState, PaneState, Persisted, QuickPrefs, SavedServer, Sizes, ViewPrefs, EXTRA, MAX_HISTORY, ORDERED};
 use flit_core::Location;
-use flit_platform::{Placement, Platform};
+use flit_platform::{Placement, ProfilePlatform, ShellPlatform};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -561,7 +561,7 @@ pub(crate) fn compatible_location(location: &Location) -> Location {
     }
 }
 
-pub fn file<P: Platform>() -> Option<PathBuf> {
+pub fn file<P: ProfilePlatform>() -> Option<PathBuf> {
     P::state_dir().map(|d| d.join("state.bin"))
 }
 
@@ -571,7 +571,7 @@ fn load_from(f: &std::path::Path) -> Option<Saved> {
     crate::schema::load(f, VERSION, &MIGRATIONS, Saved::decode).map(Saved::sanitized)
 }
 
-pub fn load<P: Platform>() -> Saved {
+pub fn load<P: ProfilePlatform + ShellPlatform>() -> Saved {
     file::<P>()
         .as_deref()
         .and_then(load_from)
@@ -581,7 +581,7 @@ pub fn load<P: Platform>() -> Saved {
         })
 }
 
-pub fn save<P: Platform>(s: &Saved) {
+pub fn save<P: ProfilePlatform>(s: &Saved) {
     let Some(f) = file::<P>() else { return };
     save_to(&f, s);
 }

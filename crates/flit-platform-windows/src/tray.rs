@@ -1,4 +1,4 @@
-use flit_platform::{tray::{Action, Menu, Tray}, Platform};
+use flit_platform::{tray::{Action, Menu, Tray}, SystemPlatform};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 use windows::core::{w, PCWSTR};

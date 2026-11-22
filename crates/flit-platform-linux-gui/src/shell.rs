@@ -928,7 +928,7 @@ impl FileOps for LinuxShell {
 
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         let free_space = |p: &Path| p.ancestors().find_map(flit_platform_linux::mounts::space).map(|s| s.1);
-        let env = flit_archive::Env { utc_offset: <crate::Linux as flit_platform::Platform>::utc_offset_minutes(), free_space: &free_space };
+        let env = flit_archive::Env { utc_offset: <crate::Linux as flit_platform::SystemPlatform>::utc_offset_minutes(), free_space: &free_space };
         if let Some(out) = flit_archive::file_op(op, job, &env) {
             fs::rescan_blind();
             return out;

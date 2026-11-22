@@ -8,7 +8,7 @@ use std::os::unix::ffi::OsStrExt;
 
 #[test]
 fn linux_has_no_business_onedrive_places() {
-    assert!(<crate::Linux as flit_platform::Platform>::business_onedrive().is_empty());
+    assert!(<crate::Linux as flit_platform::ShellPlatform>::business_onedrive().is_empty());
 }
 
 #[test]

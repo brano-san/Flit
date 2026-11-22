@@ -48,7 +48,7 @@ struct Report {
 }
 
 pub fn install(dir: &Path) {
-    let home = <crate::Windows as flit_platform::Platform>::home();
+    let home = <crate::Windows as flit_platform::ShellPlatform>::home();
     install_report(Report {
         dir: dir.to_owned(),
         user: std::env::var("USERNAME").unwrap_or_else(|_| flit_core::name::display(home.file_name()).into_owned()),

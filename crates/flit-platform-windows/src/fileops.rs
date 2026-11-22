@@ -702,7 +702,7 @@ impl FileOps for ShellCom {
         if !op.all_paths(|p| p.kind() != flit_core::path::PathKind::Shell) {
             return device_op(op, job);
         }
-        let env = flit_archive::Env { utc_offset: <crate::Windows as flit_platform::Platform>::utc_offset_minutes(), free_space: &free_space };
+        let env = flit_archive::Env { utc_offset: <crate::Windows as flit_platform::SystemPlatform>::utc_offset_minutes(), free_space: &free_space };
         if let Some(out) = flit_archive::file_op(op, job, &env) {
             return out;
         }

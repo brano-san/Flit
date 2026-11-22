@@ -2,7 +2,7 @@ use flit_core::i18n::S;
 use flit_core::preview::PropGroup;
 use flit_core::provider::{Access, Accounts};
 use flit_core::FsPath;
-use flit_platform::Platform;
+use flit_platform::SystemPlatform;
 use std::ffi::CStr;
 use std::os::unix::fs::MetadataExt;
 use std::path::Path;

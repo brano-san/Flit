@@ -37,7 +37,9 @@ use flit_core::i18n::{self, Lang};
 use flit_core::open::parse_args;
 #[cfg(target_os = "linux")]
 use flit_platform_linux_gui::instance::parse_args;
-use flit_platform::{Instance, Platform, SingleInstance};
+#[cfg(windows)]
+use flit_platform::ShellPlatform;
+use flit_platform::{Instance, ProfilePlatform, SingleInstance, SystemPlatform, WindowPlatform};
 use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -181,7 +183,7 @@ fn main() {
     let instance = if headless || pseudo {
         None
     } else {
-        match if background { <P as Platform>::Instance::acquire_background() } else { <P as Platform>::Instance::acquire(&open) } {
+        match if background { <P as SystemPlatform>::Instance::acquire_background() } else { <P as SystemPlatform>::Instance::acquire(&open) } {
             Instance::Forwarded => {
                 if std::env::var_os("FLIT_TIMING").is_some() {
                     eprintln!("forwarded in {:?}", started.elapsed());
@@ -197,7 +199,7 @@ fn main() {
     };
     #[cfg(windows)]
     let identity = (!gui_test).then(flit_platform_windows::aumid::adopt);
-    let logs_dir = <P as Platform>::state_dir().map(|d| d.join("logs"));
+    let logs_dir = P::state_dir().map(|d| d.join("logs"));
     #[cfg(windows)]
     if let Some(dir) = &logs_dir {
         flit_platform_windows::crash::install(dir);
@@ -212,7 +214,7 @@ fn main() {
     if let Some(Err(e)) = &identity {
         tracing::warn!("cannot set the application identity of the process: {e}");
     }
-    let system = flit_core::i18n::Lang::from_code(&std::env::var("FLIT_LANG").unwrap_or_else(|_| <P as Platform>::ui_language())).unwrap_or_default();
+    let system = flit_core::i18n::Lang::from_code(&std::env::var("FLIT_LANG").unwrap_or_else(|_| P::ui_language())).unwrap_or_default();
     flit_core::i18n::set_system_lang(system);
     flit_core::i18n::set_lang(system);
     if let Some(e) = standalone {
@@ -222,7 +224,7 @@ fn main() {
         if let Err(e) = tags::run_command::<P>(&open) {
             tracing::error!("cannot tag the files: {e}");
             logs::flush();
-            <P as Platform>::fatal_error(&flit_core::tr!(flit_core::i18n::S::UiAppTagFailed, error = flit_core::i18n::localize(&e.to_string())));
+            P::fatal_error(&flit_core::tr!(flit_core::i18n::S::UiAppTagFailed, error = flit_core::i18n::localize(&e.to_string())));
         }
         return logs::flush();
     }
@@ -250,7 +252,7 @@ fn main() {
             eprintln!("flit: {e}");
         } else {
             let failed = if ran { flit_core::i18n::S::UiAppStopped } else { flit_core::i18n::S::UiAppStartFailed };
-            <P as Platform>::fatal_error(&flit_core::tr!(failed, error = flit_core::i18n::localize(&e.to_string())));
+            P::fatal_error(&flit_core::tr!(failed, error = flit_core::i18n::localize(&e.to_string())));
         }
         std::process::exit(1);
     }

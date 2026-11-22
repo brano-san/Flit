@@ -1,4 +1,4 @@
-use flit_platform::Platform;
+use flit_platform::{ProfilePlatform, ShellPlatform, SystemPlatform};
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
 
@@ -22,7 +22,7 @@ fn files_with(dir: &Path, ext: &str) -> Vec<PathBuf> {
     found
 }
 
-pub fn report<P: Platform>() -> String {
+pub fn report<P: ProfilePlatform + ShellPlatform + SystemPlatform>() -> String {
     let logs = P::state_dir().map(|d| d.join("logs"));
     let mut out = String::new();
     let _ = writeln!(out, "Flit {} ({} {})", env!("CARGO_PKG_VERSION"), std::env::consts::OS, std::env::consts::ARCH);
@@ -59,7 +59,7 @@ pub fn report<P: Platform>() -> String {
     flit_core::redact::passwords(&out).into_owned()
 }
 
-pub fn run<P: Platform>() -> std::io::Result<PathBuf> {
+pub fn run<P: ProfilePlatform + ShellPlatform + SystemPlatform>() -> std::io::Result<PathBuf> {
     let dir = P::state_dir().map_or_else(std::env::temp_dir, |d| d.join("logs"));
     let path = dir.join(FILE);
     crate::settings::write_atomic(&path, report::<P>().as_bytes())?;

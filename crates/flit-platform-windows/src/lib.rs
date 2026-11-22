@@ -67,7 +67,7 @@ pub use window::{Win32, Win32Waker, Win32Window};
 pub use wsl::{native_arm64, WslLauncher};
 
 use flit_core::{FsPath, Location};
-use flit_platform::{OnClient, Platform, PlatformError, Service};
+use flit_platform::{DevicePlatform, FilePlatform, NetworkPlatform, OnClient, Platform, PlatformError, ProfilePlatform, SearchPlatform, Service, ShellPlatform, SystemPlatform, WindowPlatform};
 use windows::core::{w, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HWND;
 use windows::Win32::Graphics::Dwm::{DwmGetCompositionTimingInfo, DWM_TIMING_INFO};
@@ -154,9 +154,9 @@ impl Windows {
 }
 
 impl flit_platform::IndexPlatform for Windows {
-    type Source = <Self as Platform>::IndexSource;
-    type Walk = <Self as Platform>::FallbackIndex;
-    type Service = <Self as Platform>::Service;
+    type Source = <Self as SearchPlatform>::IndexSource;
+    type Walk = <Self as SearchPlatform>::FallbackIndex;
+    type Service = <Self as SearchPlatform>::Service;
 
     fn walk_source(roots: &[String]) -> Result<Self::Walk, PlatformError> {
         if roots.is_empty() {
@@ -168,56 +168,73 @@ impl flit_platform::IndexPlatform for Windows {
     }
 
     fn utc_offset_minutes() -> i32 {
-        <Self as Platform>::utc_offset_minutes()
+        <Self as SystemPlatform>::utc_offset_minutes()
     }
 
     fn state_dir() -> Option<std::path::PathBuf> {
-        <Self as Platform>::state_dir()
+        <Self as ProfilePlatform>::state_dir()
     }
 }
 
-impl Platform for Windows {
+impl WindowPlatform for Windows {
     type WindowSystem = Win32;
     type Renderer = D3dRenderer;
     type Text = DWriteText;
-    type Fs = NtFs;
-    type Watcher = DirWatcher;
-    type Shell = ShellCom;
-    type Instance = PipeInstance;
-    type IndexSource = MftIndex;
-    type Service = WinService;
-    type FallbackIndex = WalkIndex;
 
     fn text() -> Result<DWriteText, PlatformError> {
         DWriteText::new()
-    }
-
-    fn fs() -> NtFs {
-        NtFs
-    }
-
-    fn utc_offset_minutes() -> i32 {
-        let mut tz = TIME_ZONE_INFORMATION::default();
-        let r = unsafe { GetTimeZoneInformation(&mut tz) };
-        let extra = match r {
-            1 => tz.StandardBias,
-            2 => tz.DaylightBias,
-            _ => 0,
-        };
-        -(tz.Bias + extra)
     }
 
     fn dark_mode() -> bool {
         dark_mode()
     }
 
+    fn fatal_error(message: &str) {
+        let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            MessageBoxW(None, PCWSTR(text.as_ptr()), w!("Flit"), MB_ICONERROR | MB_OK);
+        }
+    }
+
+    fn refresh_period() -> Option<std::time::Duration> {
+        let mut info = DWM_TIMING_INFO { cbSize: size_of::<DWM_TIMING_INFO>() as u32, ..Default::default() };
+        unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut info) }.ok()?;
+        let rate = info.rateRefresh;
+        (rate.uiNumerator > 0 && rate.uiDenominator > 0).then(|| std::time::Duration::from_secs_f64(rate.uiDenominator as f64 / rate.uiNumerator as f64))
+    }
+
+    fn double_click_time() -> std::time::Duration {
+        double_click_time()
+    }
+
+    fn wheel_lines() -> u32 {
+        wheel_lines()
+    }
+}
+
+impl FilePlatform for Windows {
+    type Fs = NtFs;
+    type Watcher = DirWatcher;
+
+    fn fs() -> NtFs {
+        NtFs
+    }
+
     fn recycle_bin() -> bool {
         true
     }
 
-    fn state_dir() -> Option<std::path::PathBuf> {
-        std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Flit"))
+    fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        tags::file_key(path)
     }
+
+    fn resolve_files(files: &[(flit_core::tags::FileKey, &FsPath)]) -> Vec<flit_platform::Resolved> {
+        tags::resolve_files(&files.iter().map(|f| f.0).collect::<Vec<_>>())
+    }
+}
+
+impl ShellPlatform for Windows {
+    type Shell = ShellCom;
 
     fn home() -> FsPath {
         std::env::var("USERPROFILE").ok().and_then(|h| FsPath::parse(&h)).unwrap_or_else(FsPath::computer)
@@ -235,28 +252,6 @@ impl Platform for Windows {
 
     fn business_onedrive() -> Vec<(String, Location)> {
         places::business_onedrive()
-    }
-
-    fn fatal_error(message: &str) {
-        let text: Vec<u16> = message.encode_utf16().chain(Some(0)).collect();
-        unsafe {
-            MessageBoxW(None, PCWSTR(text.as_ptr()), w!("Flit"), MB_ICONERROR | MB_OK);
-        }
-    }
-
-    fn refresh_period() -> Option<std::time::Duration> {
-        let mut info = DWM_TIMING_INFO { cbSize: size_of::<DWM_TIMING_INFO>() as u32, ..Default::default() };
-        unsafe { DwmGetCompositionTimingInfo(HWND::default(), &mut info) }.ok()?;
-        let rate = info.rateRefresh;
-        (rate.uiNumerator > 0 && rate.uiDenominator > 0).then(|| std::time::Duration::from_secs_f64(rate.uiDenominator as f64 / rate.uiNumerator as f64))
-    }
-
-    fn drives() -> Vec<flit_core::ui::Drive> {
-        places::drives()
-    }
-
-    fn wsl_distros() -> Vec<String> {
-        places::wsl_distros()
     }
 
     fn templates() -> Vec<flit_core::ui::NewTemplate> {
@@ -279,12 +274,55 @@ impl Platform for Windows {
         quick::pinned_folders(&Self::standard_places())
     }
 
-    fn double_click_time() -> std::time::Duration {
-        double_click_time()
+    fn jump_list(pinned: &[Location], frequent: &[Location]) {
+        jumplist::update(pinned, frequent)
     }
 
-    fn wheel_lines() -> u32 {
-        wheel_lines()
+    fn quick_access() -> Option<Box<dyn flit_core::quick_sync::QuickAccess>> {
+        Some(Box::new(quick::ShellQuickAccess::new(Self::standard_places())))
+    }
+
+    fn never_shown_extensions() -> Vec<String> {
+        extensions::never_shown()
+    }
+}
+
+impl DevicePlatform for Windows {
+    fn drives() -> Vec<flit_core::ui::Drive> {
+        places::drives()
+    }
+
+    fn wsl_distros() -> Vec<String> {
+        places::wsl_distros()
+    }
+
+    fn watch_wsl(changed: Box<dyn Fn() + Send>) {
+        places::watch_lxss(changed)
+    }
+
+    fn wsl_launcher(distro: &str, images: &flit_platform::AgentImages) -> Option<Box<dyn flit_platform::AgentLauncher>> {
+        wsl::launcher(distro, images)
+    }
+}
+
+impl ProfilePlatform for Windows {
+    fn state_dir() -> Option<std::path::PathBuf> {
+        std::env::var_os("LOCALAPPDATA").map(|d| std::path::PathBuf::from(d).join("Flit"))
+    }
+}
+
+impl SystemPlatform for Windows {
+    type Instance = PipeInstance;
+
+    fn utc_offset_minutes() -> i32 {
+        let mut tz = TIME_ZONE_INFORMATION::default();
+        let r = unsafe { GetTimeZoneInformation(&mut tz) };
+        let extra = match r {
+            1 => tz.StandardBias,
+            2 => tz.DaylightBias,
+            _ => 0,
+        };
+        -(tz.Bias + extra)
     }
 
     fn elevated() -> bool {
@@ -299,10 +337,6 @@ impl Platform for Windows {
         places::os_version()
     }
 
-    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
-        network::discovery_warning(network::discovery_enabled)
-    }
-
     fn ui_language() -> String {
         places::ui_language()
     }
@@ -315,30 +349,6 @@ impl Platform for Windows {
         integration::tidy()
     }
 
-    fn watch_wsl(changed: Box<dyn Fn() + Send>) {
-        places::watch_lxss(changed)
-    }
-
-    fn wsl_launcher(distro: &str, images: &flit_platform::AgentImages) -> Option<Box<dyn flit_platform::AgentLauncher>> {
-        wsl::launcher(distro, images)
-    }
-
-    fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
-        tags::file_key(path)
-    }
-
-    fn shell_search(folder: Option<&FsPath>, query: &str, keep_going: &dyn Fn() -> bool, found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
-        winsearch::search(folder, query, keep_going, found)
-    }
-
-    fn resolve_files(files: &[(flit_core::tags::FileKey, &FsPath)]) -> Vec<flit_platform::Resolved> {
-        tags::resolve_files(&files.iter().map(|f| f.0).collect::<Vec<_>>())
-    }
-
-    fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
-        update::download(url, out, progress)
-    }
-
     fn wait_exit(pid: u32, limit: std::time::Duration) {
         update::wait_exit(pid, limit)
     }
@@ -347,22 +357,32 @@ impl Platform for Windows {
         power::Awake::hold(reason).map(|a| Box::new(a) as flit_platform::Awake)
     }
 
-    fn jump_list(pinned: &[Location], frequent: &[Location]) {
-        jumplist::update(pinned, frequent)
-    }
-
-    fn quick_access() -> Option<Box<dyn flit_core::quick_sync::QuickAccess>> {
-        Some(Box::new(quick::ShellQuickAccess::new(Self::standard_places())))
-    }
-
-    fn never_shown_extensions() -> Vec<String> {
-        extensions::never_shown()
-    }
-
     fn run_elevated(args: &[String]) -> Result<u32, PlatformError> {
         update::run_elevated(args)
     }
 }
+
+impl SearchPlatform for Windows {
+    type IndexSource = MftIndex;
+    type Service = WinService;
+    type FallbackIndex = WalkIndex;
+
+    fn shell_search(folder: Option<&FsPath>, query: &str, keep_going: &dyn Fn() -> bool, found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
+        winsearch::search(folder, query, keep_going, found)
+    }
+}
+
+impl NetworkPlatform for Windows {
+    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
+        network::discovery_warning(network::discovery_enabled)
+    }
+
+    fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
+        update::download(url, out, progress)
+    }
+}
+
+impl Platform for Windows {}
 
 const PIPE_NAME: &str = r"\\.\pipe\flit-indexd";
 

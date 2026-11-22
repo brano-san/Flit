@@ -46,9 +46,9 @@ mod agents {
     include!(concat!(env!("OUT_DIR"), "/wsl_agent.rs"));
 }
 
-type Ws<P> = <P as Platform>::WindowSystem;
+type Ws<P> = <P as WindowPlatform>::WindowSystem;
 type Win<P> = <Ws<P> as WindowSystem>::Window;
-type Device<P> = <<P as Platform>::Renderer as Renderer>::Device;
+type Device<P> = <<P as WindowPlatform>::Renderer as Renderer>::Device;
 
 #[derive(Default)]
 struct Rows {
@@ -218,7 +218,7 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformEr
 
 type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Sender<PreviewJob>, crate::overlays::Overlays, Receiver<Done>);
 
-fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest>) -> Result<Workers, PlatformError> {
+fn start_workers<P: ShellPlatform + 'static>(wake: Wake, cache: Cache, refresh: Vec<IconRequest>) -> Result<Workers, PlatformError> {
     let (done_tx, done) = unbounded();
     let (tx, refresh_wake) = (done_tx.clone(), wake.clone());
     spawn("flit-icon-refresh", move || {
@@ -2005,7 +2005,7 @@ impl<D> Graphics<D> {
     }
 }
 
-fn start_gpu<P: Platform>(wake: Wake) -> Result<Receiver<Gpu<Device<P>>>, PlatformError> {
+fn start_gpu<P: WindowPlatform>(wake: Wake) -> Result<Receiver<Gpu<Device<P>>>, PlatformError> {
     let (tx, rx) = unbounded();
     spawn("flit-gpu", move || {
         for software in [true, false] {

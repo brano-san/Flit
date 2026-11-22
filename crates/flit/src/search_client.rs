@@ -5,7 +5,7 @@ use flit_core::tags::TagCell;
 use flit_core::tr;
 use flit_core::ui::{IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource};
 use flit_core::FsPath;
-use flit_platform::{start_indexer, Duplex, IndexSource, Platform, PlatformError, Service, Wake, WindowId};
+use flit_platform::{start_indexer, Duplex, FilePlatform, IndexSource, PlatformError, ProfilePlatform, SearchPlatform, Service, Wake, WindowId};
 use flit_proto::transport::{handshake, read_frame_limited, write_frame, Hello, Protocol, MAX_FRAME};
 use flit_proto::ProtoError;
 use flit_search::engine::MAX_ROWS;
@@ -27,9 +27,9 @@ const IDLE_POLL: Duration = Duration::from_millis(500);
 const FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 const SERVICE_RETRY: Duration = Duration::from_secs(60);
 
-type Conn<P> = <<P as Platform>::Service as Service>::Conn;
+type Conn<P> = <<P as SearchPlatform>::Service as Service>::Conn;
 type Connect<P> = Box<dyn Fn() -> Result<Conn<P>, PlatformError> + Send>;
-type Fallback<P> = Box<dyn Fn() -> Result<(<P as Platform>::FallbackIndex, Option<PathBuf>), PlatformError> + Send>;
+type Fallback<P> = Box<dyn Fn() -> Result<(<P as SearchPlatform>::FallbackIndex, Option<PathBuf>), PlatformError> + Send>;
 type Out = Sender<(WindowId, SearchEvent)>;
 type FacetTokens = Arc<Mutex<HashMap<WindowId, Arc<AtomicU64>>>>;
 
@@ -54,7 +54,7 @@ pub struct SearchClient {
 }
 
 impl SearchClient {
-    pub fn start<P: Platform>(wake: Wake, utc_offset_min: i32, tags: TagCell) -> Result<Self, PlatformError> {
+    pub fn start<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static>(wake: Wake, utc_offset_min: i32, tags: TagCell) -> Result<Self, PlatformError> {
         let (tx, rx) = unbounded();
         let (out, events) = unbounded();
         let worker = Worker::<P>::new(rx, tx.clone(), out, wake, utc_offset_min, tags);
@@ -215,7 +215,7 @@ enum Link<C> {
     Local { session: Session, latest: Arc<AtomicU64> },
 }
 
-struct Worker<P: Platform> {
+struct Worker<P: SearchPlatform> {
     rx: Receiver<Cmd>,
     me: Sender<Cmd>,
     out: Out,
@@ -281,7 +281,7 @@ fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out:
     }
 }
 
-impl<P: Platform> Worker<P> {
+impl<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static> Worker<P> {
     fn new(rx: Receiver<Cmd>, me: Sender<Cmd>, out: Out, wake: Wake, utc_offset_min: i32, tags: TagCell) -> Self {
         Self { rx, me, out, wake, utc_offset_min, remote_failed: None, failed_at: None, retry: SERVICE_RETRY, indexing: true, portable: false, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), facets: Arc::default(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
     }
@@ -694,7 +694,7 @@ impl<P: Platform> Worker<P> {
     }
 }
 
-fn run_shell<P: Platform>(folder: Option<&FsPath>, aqs: &str, paths: &flit_core::query_attrs::SearchPaths, keep_going: find::KeepGoing<'_>, found: &Mutex<Found>) {
+fn run_shell<P: SearchPlatform>(folder: Option<&FsPath>, aqs: &str, paths: &flit_core::query_attrs::SearchPaths, keep_going: find::KeepGoing<'_>, found: &Mutex<Found>) {
     let mut batch = Vec::new();
     let flush = |batch: &mut Vec<Hit>| found.lock().unwrap_or_else(|e| e.into_inner()).hits.append(batch);
     let result = P::shell_search(folder, aqs, keep_going, &mut |path, meta| {

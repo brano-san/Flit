@@ -1,7 +1,7 @@
 use crossbeam_channel::{unbounded, Sender};
 use flit_core::ui::{NavPrefs, NavState};
 use flit_core::Location;
-use flit_platform::Platform;
+use flit_platform::ShellPlatform;
 
 pub type Lists = (Vec<Location>, Vec<Location>);
 
@@ -15,7 +15,7 @@ pub struct JumpList {
 }
 
 impl JumpList {
-    pub fn start<P: Platform>(on: bool) -> Self {
+    pub fn start<P: ShellPlatform>(on: bool) -> Self {
         let tx = on.then(|| {
             let (tx, rx) = unbounded::<Lists>();
             let run = move || {

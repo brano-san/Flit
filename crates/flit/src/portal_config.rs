@@ -106,14 +106,14 @@ pub fn path() -> io::Result<PathBuf> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn restore<P: flit_platform::Platform>() -> io::Result<()> {
+pub fn restore<P: flit_platform::ProfilePlatform>() -> io::Result<()> {
     let path = path()?;
     crate::system_changes::journal::<P>()?.undo(&Native, Some(Group::Portal))?;
     strip(&path)
 }
 
 #[cfg(target_os = "linux")]
-pub fn configure<P: flit_platform::Platform>(on: bool, startup: bool) -> io::Result<Option<bool>> {
+pub fn configure<P: flit_platform::ProfilePlatform>(on: bool, startup: bool) -> io::Result<Option<bool>> {
     let path = path()?;
     let journal = crate::system_changes::journal::<P>()?;
     let desktop_files: Vec<_> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':')

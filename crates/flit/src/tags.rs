@@ -5,7 +5,7 @@ use flit_core::i18n::S;
 use flit_core::tags::{self, FileKey, TagCell, TagEvent, TagRequest, TagStore, Tagged, Tags, COLORS};
 use flit_core::ui::{SearchKey, SearchRow, SearchSort};
 use flit_core::{FsPath, Meta};
-use flit_platform::{Platform, PlatformError, Resolved, Wake, WindowId};
+use flit_platform::{FilePlatform, PlatformError, ProfilePlatform, Resolved, ShellPlatform, Wake, WindowId};
 use flit_search::index::lowercase;
 use flit_search::query::{Filter, Plain, Query};
 use serde::{Deserialize, Serialize};
@@ -267,15 +267,15 @@ impl Book {
     }
 }
 
-fn state_file<P: Platform>() -> Option<PathBuf> {
+fn state_file<P: ProfilePlatform>() -> Option<PathBuf> {
     P::state_dir().map(|d| d.join("tags.bin"))
 }
 
-pub fn command_items<P: Platform>(o: &Open) -> Vec<FsPath> {
+pub fn command_items<P: ShellPlatform>(o: &Open) -> Vec<FsPath> {
     o.paths.iter().filter_map(|raw| open::resolve(raw, o.cwd.as_deref(), &P::known_folder).ok()?.to_windows()).collect()
 }
 
-pub fn run_command<P: Platform>(o: &Open) -> Result<String, String> {
+pub fn run_command<P: FilePlatform + ProfilePlatform + ShellPlatform>(o: &Open) -> Result<String, String> {
     let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths).syncing(P::sync_tag_names);
     let items = command_items::<P>(o);
     if items.is_empty() {
@@ -293,7 +293,7 @@ pub struct TagWorker {
 }
 
 impl TagWorker {
-    pub fn start<P: Platform>(cell: TagCell, wake: Wake) -> Result<Self, PlatformError> {
+    pub fn start<P: FilePlatform + ProfilePlatform>(cell: TagCell, wake: Wake) -> Result<Self, PlatformError> {
         let mut book = Book::load(state_file::<P>(), P::file_key, P::resolve_files).on_unix(P::caps().unix_paths).syncing(P::sync_tag_names);
         cell.set(book.publish());
         let (tx, rx) = unbounded::<(Option<WindowId>, TagRequest)>();

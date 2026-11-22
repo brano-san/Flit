@@ -2,7 +2,7 @@ use crate::{app, wtf8, P};
 use flit_core::i18n::{self, Lang, S};
 use flit_core::{FsPath, Location, Open};
 use flit_core::pick::{self, Request};
-use flit_platform::{Platform, PlatformError};
+use flit_platform::{FilePlatform, PlatformError, ShellPlatform, SystemPlatform};
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;

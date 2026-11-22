@@ -1,7 +1,7 @@
 use crossbeam_channel::{unbounded, Sender};
 use flit_core::Location;
 use flit_core::ui::{PanelsSession, Startup, WindowSession};
-use flit_platform::{Placement, Platform};
+use flit_platform::{Placement, ProfilePlatform, SystemPlatform};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -113,7 +113,7 @@ pub struct Files {
 }
 
 impl Files {
-    pub fn of<P: Platform>() -> Option<Self> {
+    pub fn of<P: ProfilePlatform + SystemPlatform>() -> Option<Self> {
         let dir = P::state_dir()?;
         let suffix = if P::elevated() { "-admin" } else { "" };
         Some(Self { session: dir.join(format!("session{suffix}.bin")), marker: dir.join(format!("running{suffix}")) })

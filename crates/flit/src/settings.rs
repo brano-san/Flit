@@ -2,7 +2,7 @@ use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::ui::settings::{self, Doc};
 use flit_core::ui::{Value, WatchLimit, SETTINGS};
-use flit_platform::{Platform, PlatformError, Wake, WindowId};
+use flit_platform::{PlatformError, ProfilePlatform, SystemPlatform, Wake, WindowId};
 use serde_json::{Map, Value as Json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -54,7 +54,7 @@ pub enum Reply {
 
 pub type Integrate = fn(bool) -> Result<(), PlatformError>;
 
-pub fn file<P: Platform>() -> Option<PathBuf> {
+pub fn file<P: ProfilePlatform>() -> Option<PathBuf> {
     P::config_dir().map(|d| d.join("settings.json"))
 }
 
@@ -122,7 +122,7 @@ fn locked(c: &Mutex<ThumbCache>) -> std::sync::MutexGuard<'_, ThumbCache> {
     c.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn work<P: Platform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: Option<Integrate>, first: String, jobs: Receiver<Job>, replies: Sender<Reply>, wake: Wake) {
+fn work<P: ProfilePlatform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: Option<Integrate>, first: String, jobs: Receiver<Job>, replies: Sender<Reply>, wake: Wake) {
     let mut last = first;
     let reply = |r: Reply| {
         let _ = replies.send(r);
@@ -237,7 +237,7 @@ pub struct Settings {
 }
 
 impl Settings {
-    pub fn start<P: Platform>(file: Option<PathBuf>, text: Option<String>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: bool, wake: Wake) -> Self {
+    pub fn start<P: ProfilePlatform + SystemPlatform>(file: Option<PathBuf>, text: Option<String>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate: bool, wake: Wake) -> Self {
         let (jobs, rx) = unbounded::<Job>();
         let (tx, replies) = unbounded::<Reply>();
         let (path, first) = (file, text.unwrap_or_default());

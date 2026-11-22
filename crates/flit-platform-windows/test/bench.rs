@@ -258,7 +258,7 @@ fn bench_shell_ui_objects() {
 fn bench_places() {
     measure("drives()", RUNS, |_| (), |_| assert!(!crate::places::drives().is_empty()));
     measure("wsl_distros()", RUNS, |_| (), |_| drop(crate::places::wsl_distros()));
-    measure("known_folder shell:Downloads", RUNS, |_| (), |_| assert!(<crate::Windows as flit_platform::Platform>::known_folder("shell:Downloads").is_some()));
+    measure("known_folder shell:Downloads", RUNS, |_| (), |_| assert!(<crate::Windows as flit_platform::ShellPlatform>::known_folder("shell:Downloads").is_some()));
     crate::com_sta();
     measure("libraries() IShellLibrary read", RUNS, |_| (), |_| drop(crate::library::libraries()));
     measure("recent(24) Recent folder", RUNS, |_| (), |_| drop(crate::places::recent(24)));

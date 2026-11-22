@@ -1,6 +1,6 @@
 use crate::system_journal::{Group, Journal, Native};
 use flit_core::i18n::S;
-use flit_platform::Platform;
+use flit_platform::{ProfilePlatform, SystemPlatform};
 use std::io;
 
 pub enum Action {
@@ -23,12 +23,12 @@ pub struct Reply {
     pub archive_registered: bool,
 }
 
-pub fn journal<P: Platform>() -> io::Result<Journal> {
+pub fn journal<P: ProfilePlatform>() -> io::Result<Journal> {
     let dir = P::state_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, S::SettingsPageSystemStateMissing.t()))?;
     Ok(Journal::new(&dir))
 }
 
-pub fn run<P: Platform>(action: Action) -> Reply {
+pub fn run<P: ProfilePlatform>(action: Action) -> Reply {
     let undone = matches!(action, Action::Undo);
     let archive_registered = matches!(action, Action::RegisterArchive { startup: false });
     let mut offer_archives = false;
@@ -255,7 +255,7 @@ fn notify_associations() {
     unsafe { SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, None, None) };
 }
 
-pub fn unregister<P: Platform>() -> i32 {
+pub fn unregister<P: ProfilePlatform + SystemPlatform>() -> i32 {
     #[cfg(windows)]
     flit_platform_windows::diagnose::attach_console();
     let ui = std::env::var("FLIT_LANG").unwrap_or_else(|_| P::ui_language());
