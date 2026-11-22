@@ -218,7 +218,7 @@ fn system_changes_reply_when_integration_is_disabled() {
     use crate::system_changes::Action;
     let d = temp("system-unavailable");
     let (jobs, replies, thread) = worker(&d.0.join("settings.json"), "");
-    for action in [Action::Refresh, Action::Autostart { on: true, startup: false }, Action::Protocol { on: true, startup: false }] {
+    for action in [Action::Refresh, Action::Autostart { on: true, startup: false, background: false }, Action::Protocol { on: true, startup: false }] {
         jobs.send(Job::SystemChanges(action)).unwrap();
     }
     drop(jobs);
@@ -229,4 +229,20 @@ fn system_changes_reply_when_integration_is_disabled() {
     }
     assert!(replies.try_recv().is_err());
     assert!(!d.0.exists());
+}
+
+#[test]
+fn autostart_follows_background_mode_while_it_is_on() {
+    use crate::system_changes::Action;
+    let both = |autostart: bool, background: bool| {
+        let mut v = with(settings::AUTOSTART, autostart);
+        v[settings::index(settings::BACKGROUND).unwrap()] = Value::Bool(background);
+        v
+    };
+    assert!(matches!(autostart_change(&[], &both(true, true)), Some(Action::Autostart { on: true, startup: true, background: true })));
+    assert!(matches!(autostart_change(&both(true, false), &both(true, true)), Some(Action::Autostart { on: true, startup: false, background: true })));
+    assert!(matches!(autostart_change(&both(true, true), &both(true, false)), Some(Action::Autostart { on: true, startup: false, background: false })));
+    assert!(autostart_change(&both(false, false), &both(false, true)).is_none());
+    assert!(autostart_change(&both(true, true), &both(true, true)).is_none());
+    assert!(matches!(autostart_change(&both(false, true), &both(true, true)), Some(Action::Autostart { on: true, startup: false, background: true })));
 }

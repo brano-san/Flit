@@ -6,7 +6,7 @@ use std::io;
 pub enum Action {
     Refresh,
     Undo,
-    Autostart { on: bool, startup: bool },
+    Autostart { on: bool, startup: bool, background: bool },
     RegisterArchive { startup: bool },
     ArchiveOfferShown,
     Protocol { on: bool, startup: bool },
@@ -39,7 +39,7 @@ pub fn run<P: Platform>(action: Action) -> Reply {
         Action::Refresh => Ok(()),
         Action::Undo => journal.undo(&Native, None),
         Action::Autostart { on: false, .. } => journal.undo(&Native, Some(Group::Autostart)),
-        Action::Autostart { on: true, startup } => apply_autostart(&journal, startup),
+        Action::Autostart { on: true, startup, background } => apply_autostart(&journal, startup, background),
         Action::RegisterArchive { startup } => apply_archive(&journal, startup, &mut offer_archives),
         Action::ArchiveOfferShown => journal.mark_archive_offer_shown(),
         Action::Protocol { on: false, .. } => journal.undo(&Native, Some(Group::Protocol)),
@@ -84,18 +84,18 @@ fn integration_exe() -> io::Result<std::path::PathBuf> {
     Ok(exe)
 }
 
-fn apply_autostart(journal: &Journal, startup: bool) -> io::Result<()> {
+fn apply_autostart(journal: &Journal, startup: bool, background: bool) -> io::Result<()> {
     if crate::update::store_managed() {
         return Ok(());
     }
     let exe = integration_exe()?;
     let exe = exe.to_str().ok_or(io::ErrorKind::InvalidData)?;
     #[cfg(windows)]
-    let desired = [autostart_registry(exe)];
+    let desired = [autostart_registry(exe, background)];
     #[cfg(not(windows))]
     let desired = [(
         crate::system_journal::Target::File(flit_platform_linux_gui::xdg::config_home().ok_or(io::ErrorKind::NotFound)?.join("autostart/flit.desktop")),
-        crate::system_journal::Value { kind: 0, bytes: autostart_desktop(exe)?.into_bytes() },
+        crate::system_journal::Value { kind: 0, bytes: autostart_desktop(exe, background)?.into_bytes() },
     )];
     journal.apply(&Native, Group::Autostart, &desired, startup)
 }
@@ -110,14 +110,16 @@ fn reg_string(key: &str, name: &str, text: &str) -> (crate::system_journal::Targ
 }
 
 #[cfg(any(windows, test))]
-fn autostart_registry(exe: &str) -> (crate::system_journal::Target, crate::system_journal::Value) {
-    reg_string(r"Software\Microsoft\Windows\CurrentVersion\Run", "Flit", &format!("\"{exe}\""))
+fn autostart_registry(exe: &str, background: bool) -> (crate::system_journal::Target, crate::system_journal::Value) {
+    let flag = if background { " --background" } else { "" };
+    reg_string(r"Software\Microsoft\Windows\CurrentVersion\Run", "Flit", &format!("\"{exe}\"{flag}"))
 }
 
 #[cfg(any(not(windows), test))]
-fn autostart_desktop(exe: &str) -> io::Result<String> {
+fn autostart_desktop(exe: &str, background: bool) -> io::Result<String> {
     use flit_core::mimeapps::desktop_exec;
     let exec = desktop_exec(exe).ok_or(io::ErrorKind::InvalidInput)?;
+    let exec = if background { format!("{exec} --background") } else { exec };
     let text = include_str!("../../../assets/flit.desktop").lines().take_while(|line| !line.is_empty()).filter(|line| !line.starts_with("Actions=")).map(|line| {
         if line.starts_with("Exec=") { format!("Exec={exec}\n") } else { format!("{line}\n") }
     }).collect::<String>();

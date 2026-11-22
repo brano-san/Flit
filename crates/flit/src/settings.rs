@@ -233,11 +233,8 @@ impl Settings {
         if let Some(on) = integration_change(&self.values, &values) {
             self.send(Job::Integrate(on));
         }
-        if let Some(on) = flag(&values, settings::AUTOSTART) {
-            let previous = flag(&self.values, settings::AUTOSTART);
-            if previous.map_or(on, |was| was != on) {
-                self.send(Job::SystemChanges(crate::system_changes::Action::Autostart { on, startup: previous.is_none() }));
-            }
+        if let Some(action) = autostart_change(&self.values, &values) {
+            self.send(Job::SystemChanges(action));
         }
         if let Some(on) = flag(&values, settings::PROTOCOL_LINKS) {
             let previous = flag(&self.values, settings::PROTOCOL_LINKS);
@@ -293,6 +290,15 @@ pub fn integration_change(before: &[Value], now: &[Value]) -> Option<bool> {
         (None, Some(true)) => Some(true),
         _ => None,
     }
+}
+
+pub fn autostart_change(before: &[Value], now: &[Value]) -> Option<crate::system_changes::Action> {
+    let on = flag(now, settings::AUTOSTART)?;
+    let previous = flag(before, settings::AUTOSTART);
+    let background = flag(now, settings::BACKGROUND).unwrap_or(false);
+    let background_changed = flag(before, settings::BACKGROUND).is_some_and(|was| was != background);
+    (previous.map_or(on, |was| was != on) || (on && background_changed))
+        .then_some(crate::system_changes::Action::Autostart { on, startup: previous.is_none(), background })
 }
 
 pub fn flag(values: &[Value], id: &str) -> Option<bool> {

@@ -31,10 +31,10 @@ fn autostart_relocates_and_can_be_disabled() {
     let dir = std::env::temp_dir().join(format!("flit-autostart-{}", std::process::id()));
     let journal = Journal::new(&dir);
     let system = Memory::default();
-    let first = autostart_registry(r"C:\Мои программы\Flit\flit.exe");
+    let first = autostart_registry(r"C:\Мои программы\Flit\flit.exe", false);
     assert_eq!(string(&first.1), r#""C:\Мои программы\Flit\flit.exe""#);
     journal.apply(&system, Group::Autostart, &[first], false).unwrap();
-    let (target, relocated) = autostart_registry(r"D:\Утилиты Flit\flit.exe");
+    let (target, relocated) = autostart_registry(r"D:\Утилиты Flit\flit.exe", false);
     journal.apply(&system, Group::Autostart, &[(target.clone(), relocated)], true).unwrap();
     assert_eq!(string(&system.read(&target).unwrap().unwrap()), r#""D:\Утилиты Flit\flit.exe""#);
     journal.undo(&system, Some(Group::Autostart)).unwrap();
@@ -44,11 +44,11 @@ fn autostart_relocates_and_can_be_disabled() {
 
 #[test]
 fn autostart_desktop_quotes_the_program_and_has_no_file_arguments() {
-    let text = autostart_desktop("/home/user/Flit версия 100%/flit").unwrap();
+    let text = autostart_desktop("/home/user/Flit версия 100%/flit", false).unwrap();
     assert!(text.lines().any(|l| l == r#"Exec="/home/user/Flit версия 100%%/flit""#));
     assert!(text.lines().any(|l| l == "X-GNOME-Autostart-enabled=true"));
     assert!(!text.contains("%U"));
-    assert!(autostart_desktop("/home/user/Flit\nExec=other").is_err());
+    assert!(autostart_desktop("/home/user/Flit\nExec=other", false).is_err());
 }
 
 
@@ -138,7 +138,7 @@ fn appimage_registration_uses_one_stable_launch_path_across_mounts() {
     let system = Memory::default();
     let image = Some(OsStr::new("/home/user/Flit 100%.AppImage"));
     let target = Target::File(dir.join("flit.desktop"));
-    for (group, desktop) in [(Group::Autostart, autostart_desktop as fn(&str) -> io::Result<String>), (Group::Protocol, protocol_desktop)] {
+    for (group, desktop) in [(Group::Autostart, (|exe: &str| autostart_desktop(exe, false)) as fn(&str) -> io::Result<String>), (Group::Protocol, protocol_desktop)] {
         for (index, mount) in ["/tmp/.mount_FlitAAA", "/tmp/.mount_FlitBBB"].into_iter().enumerate() {
             let exe = format!("{mount}/usr/bin/flit");
             let launch = launch_path(Path::new(&exe), image, Some(OsStr::new(mount)));
@@ -166,4 +166,23 @@ fn msix_documentation_covers_the_handler_registered_at_install_time() {
     let architecture = include_str!("../../../ARCHITECTURE.md");
     assert!(architecture.contains("Windows регистрирует обработчик `flit:` при установке MSIX"));
     assert!(architecture.contains("`--unregister` не снимает регистрацию из манифеста"));
+}
+
+
+#[test]
+fn background_mode_starts_flit_at_sign_in_without_a_window_and_undo_restores_the_original() {
+    let dir = std::env::temp_dir().join(format!("flit-autostart-background-{}", std::process::id()));
+    let journal = Journal::new(&dir);
+    let system = Memory::default();
+    let (target, plain) = autostart_registry(r"C:\Flit\flit.exe", false);
+    let (_, background) = autostart_registry(r"C:\Flit\flit.exe", true);
+    assert_eq!(string(&background), r#""C:\Flit\flit.exe" --background"#);
+    journal.apply(&system, Group::Autostart, &[(target.clone(), plain)], false).unwrap();
+    journal.apply(&system, Group::Autostart, &[(target.clone(), background.clone())], false).unwrap();
+    assert_eq!(system.read(&target).unwrap(), Some(background));
+    journal.undo(&system, None).unwrap();
+    assert_eq!(system.read(&target).unwrap(), None);
+    let desktop = autostart_desktop("/opt/flit/flit", true).unwrap();
+    assert!(desktop.lines().any(|l| l == r#"Exec="/opt/flit/flit" --background"#));
+    std::fs::remove_dir_all(dir).unwrap();
 }
