@@ -66,6 +66,12 @@ impl ThumbAtlas {
         self.map.contains_key(&key)
     }
 
+    pub(crate) fn dimensions(&self, key: u64) -> Option<(u32, u32)> {
+        let &(p, c) = self.map.get(&key)?;
+        let cell = self.pages[p].cells[c];
+        Some((cell.w, cell.h))
+    }
+
     fn slot(&self, p: usize, c: usize) -> Slot {
         let side = CLASSES[self.pages[p].class.unwrap_or(0)];
         let per_row = PAGE / side;
@@ -118,10 +124,14 @@ impl ThumbAtlas {
     }
 
     pub fn draw(&mut self, dl: &mut DrawList, key: u64, r: Rect, alpha: u8) -> bool {
+        self.draw_fit(dl, key, r, alpha, 1.0)
+    }
+
+    pub(crate) fn draw_fit(&mut self, dl: &mut DrawList, key: u64, r: Rect, alpha: u8, max_scale: f32) -> bool {
         let Some(&(p, c)) = self.map.get(&key) else { return false };
         self.pages[p].cells[c].used = self.frame;
         let s = self.slot(p, c);
-        let k = (r.w / s.w as f32).min(r.h / s.h as f32).min(1.0);
+        let k = (r.w / s.w as f32).min(r.h / s.h as f32).min(max_scale);
         let (w, h) = ((s.w as f32 * k).round(), (s.h as f32 * k).round());
         let n = THUMB_ATLAS as f32;
         let uv = [s.x as f32 / n, s.y as f32 / n, (s.x + s.w) as f32 / n, (s.y + s.h) as f32 / n];

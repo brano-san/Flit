@@ -104,6 +104,226 @@ fn selection_requests_previews_and_drops_stale_results() {
 }
 
 #[test]
+fn the_previous_preview_is_reused_when_switching_between_two_loaded_files() {
+    let mut a = app((1200, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    let text = requests(&mut a).pop().unwrap();
+    a.on_preview(text.gen, PreviewData::Doc(preview::text_doc("cached text", None)));
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let image = requests(&mut a).pop().unwrap();
+    a.on_preview(image.gen, PreviewData::Image(Bitmap { width: 2, height: 1, rgba: vec![255; 8] }));
+
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    assert!(requests(&mut a).is_empty());
+    assert!(matches!(&a.preview.content, Content::Doc(d) if d.text.contains("cached text")));
+    assert!(a.preview_image().1.is_none());
+
+    select(&mut a, "b.png");
+    frame(&mut a);
+    assert!(requests(&mut a).is_empty());
+    assert_eq!(a.preview_image().1.unwrap().rgba, vec![255; 8]);
+}
+
+#[test]
+fn review_inspector_requests_a_larger_raster_after_resizing_and_switching_back() {
+    let mut a = app((850, 580));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let original = requests(&mut a).pop().unwrap();
+    a.on_preview(original.gen, PreviewData::Image(Bitmap { width: 4, height: 4, rgba: vec![255; 64] }));
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    assert_eq!(requests(&mut a).len(), 1);
+    a.on_event(&Event::Resized { width: 1800, height: 1100 }, Instant::now());
+    frame(&mut a);
+    select(&mut a, "b.png");
+    frame(&mut a);
+    let retry = requests(&mut a).pop().expect("the smaller cached preview must be replaced");
+    assert_eq!(retry.path, original.path);
+    assert!(retry.px > original.px);
+    assert!(a.preview_image().1.is_none());
+}
+
+#[test]
+fn an_expired_or_oversized_previous_preview_is_requested_again() {
+    for expired in [true, false] {
+        let mut a = app((1200, 700));
+        a.set_pane_state(PaneState { visible: true, ..Default::default() });
+        select(&mut a, "b.png");
+        frame(&mut a);
+        let original = requests(&mut a).pop().unwrap();
+        let side = if expired { 2 } else { 2048 };
+        a.on_preview(original.gen, PreviewData::Image(Bitmap { width: side, height: side, rgba: vec![255; (side * side * 4) as usize] }));
+        select(&mut a, "a.rs");
+        let now = Instant::now();
+        let mut g = Gfx::new(Mono, 2048);
+        a.frame(&mut g, now);
+        assert_eq!(requests(&mut a).len(), 1);
+        select(&mut a, "b.png");
+        a.frame(&mut g, now + if expired { Duration::from_secs(61) } else { Duration::from_millis(16) });
+        let retry = requests(&mut a).pop().unwrap();
+        assert_eq!(retry.path, original.path);
+        assert_ne!(retry.gen, original.gen);
+    }
+}
+
+#[test]
+fn pretty_is_requested_only_by_the_inspector_button() {
+    let mut a = app((520, 790));
+    a.animations = false;
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    add_file(&mut a, "data.json");
+    select(&mut a, "data.json");
+    frame(&mut a);
+    let raw = requests(&mut a).pop().unwrap();
+    a.on_preview(raw.gen, PreviewData::Doc(preview::text_doc(r#"{"n":1}"#, None)));
+    frame(&mut a);
+    assert!(a.preview_rect(PaneHit::Pretty).is_none());
+    let body = a.preview.r.body;
+    mouse(&mut a, (body.x + 5.0, body.y + 5.0), MouseButton::Left, 1);
+    frame(&mut a);
+    let r = a.preview_rect(PaneHit::Pretty).expect("formatting is available");
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::PrettyPreview(_))));
+    mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
+    let job = a.drain_effects().find_map(|e| match e { Effect::PrettyPreview(r) => Some(r), _ => None }).unwrap();
+    assert_eq!(job.path, raw.path);
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    assert!(!job.cancel.is_current(job.gen));
+    a.on_pretty(job.gen, Ok(preview::text_doc("formatted", None)));
+    assert!(matches!(a.preview.content, Content::Loading));
+    assert!(a.preview_rect(PaneHit::Pretty).is_none());
+}
+
+#[test]
+fn returning_to_a_pretty_preview_keeps_the_formatted_document_and_its_original() {
+    let mut a = app((1000, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    add_file(&mut a, "data.json");
+    select(&mut a, "data.json");
+    frame(&mut a);
+    let job = requests(&mut a).pop().unwrap();
+    a.on_preview(job.gen, PreviewData::Doc(preview::text_doc(r#"{"n":1}"#, None)));
+    frame(&mut a);
+    a.preview_click(PaneHit::Pretty);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::PrettyPreview(_))));
+    a.on_pretty(job.gen, Ok(preview::text_doc("{\n  \"n\": 1\n}", None)));
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    assert_eq!(requests(&mut a).len(), 1);
+    select(&mut a, "data.json");
+    frame(&mut a);
+    assert!(requests(&mut a).is_empty());
+    assert!(matches!(&a.preview.content, Content::Doc(doc) if doc.paras.len() == 3));
+    a.preview_click(PaneHit::Pretty);
+    assert!(matches!(&a.preview.content, Content::Doc(doc) if doc.paras.len() == 1));
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::PrettyPreview(_))));
+}
+
+#[test]
+fn svg_background_changes_without_loading_another_preview() {
+    let mut a = app((520, 790));
+    a.animations = false;
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    add_file(&mut a, "icon.svg");
+    select(&mut a, "icon.svg");
+    frame(&mut a);
+    let req = requests(&mut a).pop().unwrap();
+    assert_eq!(req.kind, preview::kind_of(b"icon.svg"));
+    assert_ne!(req.kind, Kind::Image);
+    assert!(super::super::has_thumbnail(b"SVG"));
+    assert!(super::super::has_thumbnail(b"SVGZ"));
+    assert!(super::super::has_thumbnail(b"DNG"));
+    a.on_preview(req.gen, PreviewData::Image(Bitmap { width: 8, height: 8, rgba: vec![0; 256] }));
+    frame(&mut a);
+    assert!(a.preview_rect(PaneHit::SvgBackground).is_none());
+    let body = a.preview.r.body;
+    mouse(&mut a, (body.x + 5.0, body.y + 5.0), MouseButton::Left, 1);
+    frame(&mut a);
+    let rev = a.preview_image().0;
+    for bg in [preview::SvgBackground::White, preview::SvgBackground::Black, preview::SvgBackground::Checker] {
+        let r = a.preview_rect(PaneHit::SvgBackground).unwrap();
+        mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
+        frame(&mut a);
+        assert_eq!(a.opts.svg_background, bg);
+        assert_eq!(a.preview_image().0, rev);
+        assert!(requests(&mut a).is_empty());
+    }
+}
+
+#[test]
+fn review_preview_controls_follow_the_animated_inspector_footer() {
+    for (name, image) in [("test.json", false), ("test.yaml", false), ("test.toml", false), ("test.xml", false), ("test.svg", true)] {
+        let mut a = app((600, 790));
+        a.animations = true;
+        a.set_pane_state(PaneState { visible: true, ..Default::default() });
+        add_file(&mut a, name);
+        select(&mut a, name);
+        frame(&mut a);
+        let req = requests(&mut a).pop().unwrap();
+        let data = if image { PreviewData::Image(Bitmap { width: 4, height: 4, rgba: vec![255; 64] }) }
+            else { PreviewData::Doc(preview::text_doc("root", None)) };
+        let hit = if image { PaneHit::SvgBackground } else { PaneHit::Pretty };
+        a.on_preview(req.gen, data);
+
+        let mut g = Gfx::new(Mono, 2048);
+        let start = Instant::now() + Duration::from_secs(1);
+        a.frame(&mut g, start);
+        assert!(a.preview_rect(hit).is_none(), "{name}");
+        a.focus = Focus::Preview;
+        a.frame(&mut g, start);
+        let span = crate::ui::panels::SPLIT;
+        assert_eq!(a.preview.foot_slide.value(start, span), 0.0, "{name}");
+        assert!(a.preview.foot_slide.target() > 0.0, "{name}");
+        a.frame(&mut g, start + span);
+        assert!(a.preview_rect(hit).is_some(), "{name}");
+        a.focus = Focus::List;
+        a.frame(&mut g, start + span);
+        assert!(a.preview.foot_slide.value(start + span, span) > 0.0, "{name}");
+        a.frame(&mut g, start + span * 2);
+        assert!(a.preview_rect(hit).is_none(), "{name}");
+    }
+}
+
+#[test]
+fn a_pdf_requests_visible_pages_and_cancels_pages_scrolled_out_of_view() {
+    let mut a = app((1200, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    add_file(&mut a, "paper.pdf");
+    select(&mut a, "paper.pdf");
+    frame(&mut a);
+    let initial = requests(&mut a).pop().unwrap();
+    let mut pages = vec![None; 10];
+    pages[0] = Some(preview::pdf::Size { width: 300.0, height: 500.0 });
+    a.on_preview(initial.gen, PreviewData::Pdf(pages));
+    frame(&mut a);
+    let get_pages = |a: &mut App| a.drain_effects().filter_map(|e| match e {
+        Effect::PreviewPdfPage { req, page } => Some((page, req)),
+        _ => None,
+    }).collect::<Vec<_>>();
+    let first = get_pages(&mut a);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].0, 1);
+    a.scroll_preview(-50.0);
+    frame(&mut a);
+    let visible = get_pages(&mut a);
+    assert!(!visible.is_empty());
+    assert!(visible.iter().all(|(page, _)| *page > 1));
+    assert!(!first[0].1.cancel.is_current(first[0].1.gen));
+    let extent = a.preview.extent;
+    let mut g = Gfx::new(Mono, 2048);
+    let (page, req) = &visible[0];
+    a.on_pdf_page(&mut g, req.gen, *page, Some(Bitmap { width: 16, height: 8, rgba: vec![255; 512] }));
+    a.frame(&mut g, Instant::now());
+    assert!(a.preview.extent < extent, "the missing geometry is measured from the rendered page");
+}
+
+#[test]
 fn properties_card_details_and_many_items() {
     let mut a = app((1200, 700));
     press(&mut a, Key::Space, NO);

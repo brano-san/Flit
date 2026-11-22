@@ -7,7 +7,7 @@ const TUMBLEWEED: &str = "ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\
 
 #[test]
 fn missing_helpers_are_listed_with_the_package_of_this_distribution() {
-    let have = ["gdbus", "gio", "udisksctl", "pkexec", "setfacl", "fusermount", "umount", "curl", "recollq", "pdftoppm", "ffmpegthumbnailer", "lp", "paplay", "xclip", "libmpv"];
+    let have = ["gdbus", "gio", "udisksctl", "pkexec", "setfacl", "fusermount", "umount", "curl", "recollq", "pdftoppm", "pdfinfo", "ffmpegthumbnailer", "lp", "paplay", "xclip", "libmpv"];
     let found = |t: &str| have.contains(&t);
     let missing = missing_from(found, FEDORA_RELEASE, false, true);
     assert_eq!(missing.iter().map(|m| (m.tool, m.package)).collect::<Vec<_>>(), [("xdg-open", "xdg-utils"), ("gvfsd-network", "gvfs"), ("avahi-browse", "avahi-tools")], "paplay plays audio when mpv is missing");
@@ -54,6 +54,14 @@ fn missing_helper_packages_match_all_four_distribution_families() {
 fn missing_independent_helpers_are_not_hidden_by_another_program_from_the_same_package() {
     let missing = missing_from(|t| t != "gio" && t != "wl-paste", UBUNTU, true, true);
     assert_eq!(missing.iter().map(|m| (m.tool, m.package)).collect::<Vec<_>>(), [("gio", "libglib2.0-bin"), ("wl-paste", "wl-clipboard")]);
+}
+
+#[test]
+fn pdfinfo_and_pdftoppm_are_independently_reported_as_missing() {
+    for tool in ["pdfinfo", "pdftoppm"] {
+        let missing = missing_from(|t| t != tool, UBUNTU, false, true);
+        assert_eq!(missing.iter().map(|m| (m.tool, m.package)).collect::<Vec<_>>(), [(tool, "poppler-utils")]);
+    }
 }
 
 #[test]

@@ -732,6 +732,10 @@ impl App {
         self.folders.owner(&lineage(t.location())).and_then(|k| self.folders.get(k)).unwrap_or(inherited)
     }
 
+    pub(super) fn has_saved_view(&self, location: &Location) -> bool {
+        self.folders.owner(&lineage(location)).is_some()
+    }
+
     pub(super) fn view_mode(&self) -> ViewMode {
         self.folders.mode(folder_key(self.current_location()))
     }

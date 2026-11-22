@@ -1,7 +1,14 @@
+pub(crate) mod pretty;
+pub(crate) mod svg;
+mod child;
+mod raw;
+
 use flit_core::preview::{self, FolderSummary, Kind, Note, PreviewData, PreviewRequest, FOLDER_SCAN, IMAGE_FILE_LIMIT, POSTER_PX, RTF_BYTES, SNIFF_LIMIT, TEXT_BYTES};
 use flit_core::FsPath;
 use flit_platform::{parse_process, PreviewPicture, Shell};
+use std::fs::File;
 use std::io::Read;
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 pub(crate) use flit_platform::std_path;
@@ -22,8 +29,23 @@ fn ticks(m: &std::fs::Metadata) -> i64 {
 
 fn head(path: &FsPath, limit: usize) -> Option<Vec<u8>> {
     let mut buf = Vec::with_capacity(limit.min(1 << 20));
-    std::fs::File::open(std_path(path)).ok()?.take(limit as u64).read_to_end(&mut buf).ok()?;
+    regular_file(&std_path(path))?.take(limit as u64).read_to_end(&mut buf).ok()?;
     Some(buf)
+}
+
+fn regular_file(path: &Path) -> Option<File> {
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let mut options = File::options();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path).ok()?;
+    file.metadata().ok()?.is_file().then_some(file)
 }
 
 fn folder(req: &PreviewRequest) -> Option<FolderSummary> {
@@ -101,6 +123,41 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
     }
     let ext = req.path.file_name();
     let ext = &ext[ext.len() - flit_core::name::ext_len(ext)..];
+    if ext.eq_ignore_ascii_case(b"pdf") && req.kind != Kind::Folder {
+        if let Some(pages) = shell.pdf_document(req) {
+            return Some(PreviewData::Pdf(pages));
+        }
+        if !req.cancel.is_current(req.gen) {
+            return None;
+        }
+    }
+    if preview::is_svg(ext) && req.kind != Kind::Folder {
+        let result = svg::load(&req.path, req.px, || req.cancel.is_current(req.gen));
+        if !req.cancel.is_current(req.gen) {
+            return None;
+        }
+        let fallback = || {
+            let kind = preview::syntax::by_ext("xml").map_or(Kind::Text, Kind::Code);
+            match head(&req.path, TEXT_BYTES) {
+                Some(bytes) if !preview::looks_binary(&bytes) => PreviewData::Doc(preview::build(kind, &bytes)),
+                _ => PreviewData::Basic { poster: None, note: None },
+            }
+        };
+        return Some(result.map_or_else(fallback, PreviewData::Image));
+    }
+    if preview::is_raw(ext) && req.kind != Kind::Folder {
+        let path = std_path(&req.path);
+        let result = raw::load(&path, req.px, raw::Source::Inspector, || req.cancel.is_current(req.gen));
+        return req.cancel.is_current(req.gen).then(|| {
+            result.map_or_else(|| {
+                if cfg!(windows) && std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+                    shell.preview_image(&req.path, req.px).map_or_else(|| basic(shell, req, None), PreviewData::Image)
+                } else {
+                    PreviewData::Basic { poster: None, note: None }
+                }
+            }, PreviewData::Image)
+        });
+    }
     match req.kind {
         Kind::Folder => folder(req).map(PreviewData::Folder),
         Kind::Image if req.size > IMAGE_FILE_LIMIT => Some(basic(shell, req, Some(Note::TooLarge))),
@@ -128,6 +185,24 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
         Kind::Other if flit_core::archive::browsable(req.path.file_name()).is_some() => archive(shell, req),
         Kind::Other => other(shell, req, ext),
     }
+}
+
+pub(crate) fn thumbnail<S: Shell>(shell: &mut S, req: &flit_core::ui::IconRequest, current: impl Fn() -> bool) -> Option<flit_core::ui::Bitmap> {
+    let file = req.path.file_name();
+    let ext = &file[file.len() - flit_core::name::ext_len(file)..];
+    if preview::is_svg(ext) {
+        return svg::load(&req.path, req.size, current);
+    }
+    if preview::is_raw(ext) {
+        let path = std_path(&req.path);
+        if let Some(image) = raw::load(&path, req.size, raw::Source::Thumbnail, &current) {
+            return Some(image);
+        }
+        if !cfg!(windows) || !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+            return None;
+        }
+    }
+    if current() { shell.thumbnail_current(req, &current) } else { None }
 }
 
 #[cfg(test)]

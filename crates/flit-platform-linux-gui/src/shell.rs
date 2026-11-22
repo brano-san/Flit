@@ -774,6 +774,14 @@ impl Shell for LinuxShell {
         poster(host(path)?, size)
     }
 
+    fn pdf_document(&mut self, req: &flit_core::preview::PreviewRequest) -> Option<Vec<Option<flit_core::preview::pdf::Size>>> {
+        pdf::document(host(&req.path)?, req)
+    }
+
+    fn pdf_page(&mut self, req: &flit_core::preview::PreviewRequest, page: u32) -> Option<Bitmap> {
+        pdf::page(host(&req.path)?, req, page)
+    }
+
     fn type_name(&mut self, ext: &[u8]) -> Option<String> {
         crate::mime::type_name(ext)
     }
@@ -929,7 +937,7 @@ pub fn poster_command(path: &Path, size: u32) -> Option<Vec<OsString>> {
     let px = size.to_string();
     let file = path.as_os_str().to_owned();
     let args: Vec<OsString> = if ext == "pdf" {
-        ["pdftoppm", "-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", &px].into_iter().map(OsString::from).chain([file, "-".into()]).collect()
+        pdf::page_command(path, 1, size)
     } else if media.starts_with("video/") || media.starts_with("audio/") {
         ["ffmpegthumbnailer", "-c", "png", "-o", "-", "-s", &px, "-i"].into_iter().map(OsString::from).chain([file]).collect()
     } else {
@@ -937,6 +945,8 @@ pub fn poster_command(path: &Path, size: u32) -> Option<Vec<OsString>> {
     };
     Some(args)
 }
+
+mod pdf;
 
 fn poster_png(path: &Path, size: u32) -> Option<Vec<u8>> {
     let args = poster_command(path, size)?;

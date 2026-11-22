@@ -24,6 +24,12 @@ ed25519-compact.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-tracy = { workspace = true, optional = true }
+quick-xml = { version = "0.41", default-features = false }
+toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
+pretty_yaml = { version = "0.6", default-features = false }
+resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts"] }
+jpeg-decoder = { version = "0.3", default-features = false }
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 
 [package.metadata.deb]
 name = "flit"
@@ -78,14 +84,13 @@ fontconfig = "*"
 
 [target.'cfg(windows)'.dependencies]
 flit-platform-windows.workspace = true
-windows = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_UI_Shell"] }
+windows = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_Security", "Win32_UI_Shell"] }
 zip = { version = "7.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(not(windows))'.dependencies]
 flit-platform-linux-gui.workspace = true
 libc.workspace = true
 tar = { version = "0.4", default-features = false }
-flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 
 [target.'cfg(not(windows))'.dev-dependencies]
 flit-platform-linux.workspace = true

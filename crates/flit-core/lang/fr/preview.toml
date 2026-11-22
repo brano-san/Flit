@@ -52,3 +52,21 @@ no_extension = "sans extension"
 [filter]
 lines = "Filtrer {n} lignes..."
 files = "Filtrer {n} fichiers..."
+
+[pretty]
+button = "Formater"
+working = "Formatage…"
+original = "Original"
+too_large = "Le fichier est trop volumineux pour être formaté (8 Mio maximum)."
+invalid = "Le fichier contient des données non valides pour ce format."
+unavailable = "Impossible de formater l’aperçu."
+
+[svg]
+checker = "Damier"
+white = "Blanc"
+black = "Noir"
+background = "Arrière-plan SVG"
+background_help = "Arrière-plan des aperçus SVG transparents."
+
+[pdf]
+failed = "Impossible d’afficher cette page."

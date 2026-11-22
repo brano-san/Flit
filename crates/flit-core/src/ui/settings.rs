@@ -1,6 +1,6 @@
 use super::home::Widget;
 use super::user_menu::{self, UserEntry};
-use super::layouts::LAYOUTS;
+use super::layouts::{LayoutMode, LAYOUTS};
 use super::tabbar::Startup;
 use super::options::{self, CharKey, InspectorAt, NewTabShow, Recents};
 use super::{App, Column, Effect, Persisted};
@@ -255,6 +255,11 @@ const CHARS: [CharKey; 2] = [CharKey::Filter, CharKey::Select];
 const CHAR_CHOICES: Choices = &[("filter", S::OptionsChoiceCharFilter), ("select", S::OptionsChoiceCharSelect)];
 const INSPECTORS: [InspectorAt; 3] = [InspectorAt::Auto, InspectorAt::Right, InspectorAt::Below];
 const INSPECTOR_CHOICES: Choices = &[("auto", S::OptionsChoiceInspectorAuto), ("right", S::OptionsChoiceInspectorRight), ("below", S::OptionsChoiceInspectorBelow)];
+const SVG_BACKGROUNDS: Choices = &[("checker", S::PreviewSvgChecker), ("white", S::PreviewSvgWhite), ("black", S::PreviewSvgBlack)];
+const RULE_LAYOUTS: [Option<LayoutMode>; 5] = [None, Some(LayoutMode::Details), Some(LayoutMode::List), Some(LayoutMode::Cards), Some(LayoutMode::Grid)];
+const RULE_CHOICES: Choices = &[("off", S::SettingsChoiceLogOff), ("details", S::LayoutsDetails), ("list", S::LayoutsList), ("cards", S::LayoutsCards), ("grid", S::LayoutsGrid)];
+const PICTURE_LAYOUTS: [LayoutMode; 4] = [LayoutMode::Grid, LayoutMode::Details, LayoutMode::List, LayoutMode::Cards];
+const PICTURE_CHOICES: Choices = &[("grid", S::LayoutsGrid), ("details", S::LayoutsDetails), ("list", S::LayoutsList), ("cards", S::LayoutsCards)];
 const NEW_TABS: [NewTabShow; 3] = [NewTabShow::Current, NewTabShow::Root, NewTabShow::Home];
 const NEW_TAB_CHOICES: Choices = &[("current", S::OptionsChoiceNewTabCurrent), ("root", S::OptionsChoiceNewTabRoot), ("home", S::OptionsChoiceNewTabHome)];
 const OPS_CHOICES: Choices = &[("during", S::SettingsChoiceOpsDuring), ("always", S::SettingsChoiceOpsAlways)];
@@ -388,6 +393,33 @@ pub static SETTINGS: &[Setting] = &[
             a.toggle_auto_fit();
         }
     }),
+    choice("layout.rule_network", Page::Files, S::LayoutsRulesNetwork, S::LayoutsRulesNetworkHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.opts.view_rules.network), |a, i| {
+        a.opts.view_rules.network = RULE_LAYOUTS[i];
+        a.refresh_view_rules();
+    }),
+    choice("layout.rule_removable", Page::Files, S::LayoutsRulesRemovable, S::LayoutsRulesRemovableHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.opts.view_rules.removable), |a, i| {
+        a.opts.view_rules.removable = RULE_LAYOUTS[i];
+        a.refresh_view_rules();
+    }),
+    choice("layout.rule_archive", Page::Files, S::LayoutsRulesArchive, S::LayoutsRulesArchiveHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.opts.view_rules.archive), |a, i| {
+        a.opts.view_rules.archive = RULE_LAYOUTS[i];
+        a.refresh_view_rules();
+    }),
+    toggle("layout.rule_search_grid", Page::Files, S::LayoutsRulesSearch, S::LayoutsRulesSearchHelp, |a| a.opts.view_rules.search_grid, |a, on| a.opts.view_rules.search_grid = on),
+    Setting {
+        id: "layout.rule_pictures_min",
+        page: Page::Files,
+        title: S::LayoutsRulesPicturesShare,
+        help: S::LayoutsRulesPicturesShareHelp,
+        kind: Kind::Number { min: 0, max: 100, step: 5, unit: S::SettingsUnitPercent, zero: Some(S::SettingsChoiceLogOff), get: |a| i64::from(a.opts.view_rules.pictures_min), set: |a, v| {
+            a.opts.view_rules.pictures_min = v as u8;
+            a.refresh_view_rules();
+        } },
+    },
+    choice("layout.rule_pictures_layout", Page::Files, S::LayoutsRulesPictures, S::LayoutsRulesPicturesHelp, PICTURE_CHOICES, |a| pos(&PICTURE_LAYOUTS, &a.opts.view_rules.pictures), |a, i| {
+        a.opts.view_rules.pictures = PICTURE_LAYOUTS[i];
+        a.refresh_view_rules();
+    }),
     Setting {
         id: CACHE,
         page: Page::Data,
@@ -432,6 +464,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.smooth_scroll", Page::Input, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::Input, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
     choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.opts.inspector_at), |a, i| a.opts.inspector_at = INSPECTORS[i]),
+    choice("windows.svg_background", Page::Windows, S::PreviewSvgBackground, S::PreviewSvgBackgroundHelp, SVG_BACKGROUNDS, |a| a.opts.svg_background as usize, |a, i| a.opts.svg_background = crate::preview::SvgBackground::ALL[i]),
     choice("general.startup", Page::Windows, S::OptionsTitleLoadOnStartup, S::OptionsHelpLoadOnStartup, STARTUP, |a| match a.startup {
         Startup::Continue => 0,
         Startup::NewTab => 1,

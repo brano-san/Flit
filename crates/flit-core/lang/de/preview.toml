@@ -52,3 +52,21 @@ no_extension = "keine Erweiterung"
 [filter]
 lines = "{n} Zeilen filtern..."
 files = "{n} Dateien filtern..."
+
+[pretty]
+button = "Formatieren"
+working = "Wird formatiert…"
+original = "Original"
+too_large = "Die Datei ist für die Formatierung zu groß (maximal 8 MiB)."
+invalid = "Die Datei enthält ungültige Daten für dieses Format."
+unavailable = "Die Vorschau konnte nicht formatiert werden."
+
+[svg]
+checker = "Schachbrett"
+white = "Weiß"
+black = "Schwarz"
+background = "SVG-Hintergrund"
+background_help = "Hintergrund für transparente SVG-Vorschauen."
+
+[pdf]
+failed = "Die Seite konnte nicht angezeigt werden."

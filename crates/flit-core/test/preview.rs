@@ -124,3 +124,27 @@ fn a_video_frame_waits_alone_and_a_newer_one_replaces_it() {
     assert_eq!(frames, shared);
     assert_ne!(frames, Frames::default());
 }
+#[test]
+fn pdf_page_sizes_follow_the_poppler_crop_and_rotation_output() {
+    let output = b"Pages:           2\nPage    1 size:  160 x 240 pts\nPage    1 rot:   0\nPage    2 size:  320 x 500 pts\nPage    2 rot:   90\nPage    1 MediaBox:      0.00     0.00   200.00   300.00\n";
+    assert_eq!(pdf::sizes(output), Some(vec![Some(pdf::Size { width: 160.0, height: 240.0 }), Some(pdf::Size { width: 500.0, height: 320.0 })]));
+    assert_eq!(pdf::sizes(b"Pages: 1\nPage size: 210 x 297 pts\nPage rot: 0\n"), Some(vec![Some(pdf::Size { width: 210.0, height: 297.0 })]));
+}
+
+#[test]
+fn pdf_rejects_unreasonable_page_metadata() {
+    for output in [
+        "Pages: 9999999999\n",
+        "Pages: 1\nPage 0 size: 160 x 240 pts\n",
+    ] {
+        assert!(pdf::sizes(output.as_bytes()).is_none());
+    }
+}
+
+#[test]
+fn review_pdf_accepts_a_large_document_with_only_the_first_size_available() {
+    let pages = pdf::sizes(b"Pages: 5000\nPage 1 size: 160 x 240 pts\nPage 2 size: NaN x 240 pts\nPage 3 size: 320 x 500 pts\nPage 3 rot: 90\n").unwrap();
+    assert_eq!(pages.len(), 5000);
+    assert_eq!(pages[..4], [Some(pdf::Size { width: 160.0, height: 240.0 }), None, Some(pdf::Size { width: 500.0, height: 320.0 }), None]);
+    assert_eq!(pages[4999], None);
+}

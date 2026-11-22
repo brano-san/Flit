@@ -60,6 +60,7 @@ pub struct Tab {
     pub(super) fit_column: Option<super::Column>,
     pub(super) loading: Option<Loading>,
     pub(super) view: Option<DirView>,
+    pub(super) picture_scan: Option<super::view_rules::PictureScan>,
     pub(super) view_loc: Location,
     network_listing: bool,
     network_cache: VecDeque<Arc<DirSnapshot>>,
@@ -147,6 +148,7 @@ impl Tab {
             tree: TreeState::default(),
             hidden_types: FxHashSet::default(),
             retain_filter: false,
+            picture_scan: None,
         }
     }
 
@@ -167,6 +169,7 @@ impl Tab {
 
     pub(super) fn load(&mut self, gen: u64, select: Option<Vec<u8>>, restore: Option<crate::nav::Restore>, case: CaseMode, now: Instant, fx: &mut Vec<Effect>) {
         self.gen = gen;
+        self.picture_scan = None;
         self.network_listing = false;
         self.discovered_servers = None;
         self.cancel.set(gen);

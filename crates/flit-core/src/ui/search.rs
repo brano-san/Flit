@@ -219,6 +219,17 @@ struct SLayout {
     hthumb: Rect,
     max_x: f32,
     row_h: f32,
+    grid: bool,
+    tiles: u64,
+}
+
+impl SLayout {
+    fn cell(&self, line: u64, scroll: f64) -> Rect {
+        let width = self.list.w / self.tiles as f32;
+        let x = self.list.x + (line % self.tiles) as f32 * width;
+        let y = (self.list.y as f64 + (line / self.tiles) as f64 * f64::from(self.row_h) - scroll).round() as f32;
+        Rect::new(x, y, width, self.row_h)
+    }
 }
 
 pub fn thousands(n: u64) -> String {
@@ -573,8 +584,10 @@ impl App {
         let date_w = self.s(140.0).min(list.w / 4.0);
         let name_w = (list.w * 0.32).max(self.s(140.0)).min(list.w - size_w - date_w);
         let folder_w = (list.w - name_w - size_w - date_w).max(0.0);
+        let grid = self.opts.view_rules.search_grid && !self.search.group_folder;
         let mut cols = [Rect::default(); 4];
-        let widths = self.search.widths.map(|widths| widths.map(|w| w * self.scale)).unwrap_or([name_w, folder_w, size_w, date_w]);
+        let defaults = [name_w, folder_w, size_w, date_w];
+        let widths = if grid { defaults } else { self.search.widths.map(|widths| widths.map(|w| w * self.scale)).unwrap_or(defaults) };
         let content_w = widths.iter().sum::<f32>();
         let max_x = (content_w - list.w).max(0.0);
         let mut x = list.x - self.search.scroll_x.clamp(0.0, max_x);
@@ -588,8 +601,9 @@ impl App {
             *c = Rect::new(x, l.header.y, w, l.header.h);
             x += w;
         }
-        let rh = l.row_h.max(1.0);
-        let content = self.search.lines() as f64 * rh as f64;
+        let tiles = if grid { ((list.w / self.s(135.0).max(1.0)) as u64).max(1) } else { 1 };
+        let rh = if grid { self.s(94.0) } else { l.row_h }.max(1.0);
+        let content = self.search.lines().div_ceil(tiles) as f64 * rh as f64;
         let lh = list.h as f64;
         let thumb = if content > lh {
             let th = (l.track.h as f64 * lh / content).max(self.s(24.0) as f64).min(l.track.h as f64) as f32;
@@ -598,7 +612,7 @@ impl App {
         } else {
             Rect::default()
         };
-        SLayout { field, header: l.header, cols, list, track: l.track, thumb, htrack, hthumb, max_x, row_h: rh }
+        SLayout { field, header: l.header, cols, list, track: l.track, thumb, htrack, hthumb, max_x, row_h: rh, grid, tiles }
     }
 
     pub(super) fn search_pans_at(&self, x: f32, y: f32) -> bool {
@@ -621,17 +635,17 @@ impl App {
     }
 
     fn search_max_scroll(&self) -> f64 {
-        let l = &self.layout;
-        (self.search.lines() as f64 * l.row_h.max(1.0) as f64 - self.search_layout().list.h as f64).max(0.0)
+        let sl = self.search_layout();
+        (self.search.lines().div_ceil(sl.tiles) as f64 * f64::from(sl.row_h) - f64::from(sl.list.h)).max(0.0)
     }
 
     fn search_range(&self) -> (u64, u64) {
-        let l = &self.layout;
-        let rh = l.row_h.max(1.0) as f64;
+        let sl = self.search_layout();
+        let rh = f64::from(sl.row_h);
         let s = &self.search;
         let first = (s.scroll / rh).floor() as u64;
-        let last = ((s.scroll + l.list.h as f64) / rh).ceil() as u64;
-        (first.min(s.lines()), last.min(s.lines()))
+        let last = ((s.scroll + f64::from(sl.list.h)) / rh).ceil() as u64;
+        (first.saturating_mul(sl.tiles).min(s.lines()), last.saturating_mul(sl.tiles).min(s.lines()))
     }
 
     fn search_row_range(&self) -> (u64, u64) {
@@ -666,8 +680,10 @@ impl App {
             return SHit::Field;
         }
         if sl.header.contains(x, y) {
-            if let Some(c) = (0..4).find(|&c| (x - sl.cols[c].right()).abs() <= self.s(4.0)) {
-                return SHit::ColSep(c);
+            if !sl.grid {
+                if let Some(c) = (0..4).find(|&c| (x - sl.cols[c].right()).abs() <= self.s(4.0)) {
+                    return SHit::ColSep(c);
+                }
             }
             return sl.cols.iter().position(|c| c.contains(x, y)).map_or(SHit::None, SHit::Header);
         }
@@ -679,7 +695,9 @@ impl App {
             return if sl.hthumb.contains(x, y) { SHit::HThumb } else { SHit::HTrack };
         }
         if sl.list.contains(x, y) {
-            let line = ((self.search.scroll + (y - sl.list.y) as f64) / sl.row_h as f64).floor() as u64;
+            let band = ((self.search.scroll + (y - sl.list.y) as f64) / sl.row_h as f64).floor() as u64;
+            let col = (((x - sl.list.x) / sl.list.w * sl.tiles as f32) as u64).min(sl.tiles - 1);
+            let line = band.saturating_mul(sl.tiles).saturating_add(col);
             if line >= self.search.lines() {
                 return SHit::Empty;
             }
@@ -715,7 +733,8 @@ impl App {
                     self.dirty = true;
                     return true;
                 }
-                let step = f64::from(self.wheel_px(self.layout.row_h, self.search_layout().list.h));
+                let sl = self.search_layout();
+                let step = f64::from(self.wheel_px(sl.row_h, sl.list.h));
                 let max = self.search_max_scroll();
                 self.search.scroll = (self.search.scroll - *dy as f64 * step).clamp(0.0, max);
                 self.dirty = true;
@@ -773,7 +792,8 @@ impl App {
         if self.recent_key(key, m, now) {
             return true;
         }
-        let page = ((self.layout.list.h / self.layout.row_h.max(1.0)).floor() as i64).max(1);
+        let sl = self.search_layout();
+        let page = ((sl.list.h / sl.row_h).floor() as i64).max(1) * sl.tiles as i64;
         let mut moved = None;
         if self.keymap.runs(key, m, "search.open") {
             if self.search.within.is_some() {
@@ -817,8 +837,11 @@ impl App {
                 self.close_search();
                 return false;
             }
-            (Key::Up, _, false) => moved = Some(-1),
-            (Key::Down, _, false) => moved = Some(1),
+            (Key::Left | Key::Right, false, false) if sl.grid && self.search.focus.is_some() && !m.shift => {
+                moved = Some(if key == Key::Left { -1 } else { 1 });
+            }
+            (Key::Up, _, false) => moved = Some(if self.search.focus.is_some() { -(sl.tiles as i64) } else { -1 }),
+            (Key::Down, _, false) => moved = Some(if self.search.focus.is_some() { sl.tiles as i64 } else { 1 }),
             (Key::PageUp, _, false) => moved = Some(-page),
             (Key::PageDown, _, false) => moved = Some(page),
             (Key::Home, true, false) => moved = Some(i64::MIN / 2),
@@ -850,9 +873,9 @@ impl App {
     }
 
     fn search_reveal(&mut self, row: u64) {
-        let rh = self.layout.row_h as f64;
-        let lh = self.search_layout().list.h as f64;
-        let line = self.search.line_of_row(row);
+        let sl = self.search_layout();
+        let (rh, lh) = (f64::from(sl.row_h), f64::from(sl.list.h));
+        let line = self.search.line_of_row(row) / sl.tiles;
         let (top, bottom) = (line as f64 * rh, (line + 1) as f64 * rh);
         let max = self.search_max_scroll();
         let s = &mut self.search;
@@ -973,6 +996,9 @@ impl App {
                 self.flit_menu(x, y, menu);
             }
             SHit::Field => {
+                if self.search_layout().grid {
+                    self.search.focus = None;
+                }
                 match Grab::of(self.text_clicks((x, y), clicks, now), self.mods.shift) {
                     Some(how) => {
                         self.search.pending_click = Some((x, how));
@@ -1103,8 +1129,10 @@ impl App {
             return None;
         }
         let sl = self.search_layout();
-        let y = (sl.list.y as f64 + self.search.line_of_row(row) as f64 * sl.row_h as f64 - self.search.scroll).round() as f32;
-        let (left, right) = (sl.cols[0].x.max(sl.list.x), sl.cols[0].right().min(sl.list.right()));
+        let cell = sl.cell(self.search.line_of_row(row), self.search.scroll);
+        let y = cell.y;
+        let name = if sl.grid { cell } else { sl.cols[0] };
+        let (left, right) = (name.x.max(sl.list.x), name.right().min(sl.list.right()));
         let (top, bottom) = (y.max(sl.list.y), (y + sl.row_h).min(sl.list.bottom()));
         (bottom > top && right > left).then(|| Rect::new(left, top, right - left, bottom - top))
     }
@@ -1201,7 +1229,7 @@ impl App {
         let rh = sl.row_h;
         let text_dy = ((rh + m.ascent - m.descent) / 2.0).round();
         let pad = self.s(10.0);
-        let icon_px = self.s(ICON);
+        let icon_px = self.s(if sl.grid { 42.0 } else { ICON });
         let focused = self.active;
         let (first, last) = self.search_range();
         g.dl.set_clip(Some(sl.list));
@@ -1216,7 +1244,8 @@ impl App {
             g.text(sl.list.x + (sl.list.w - w) / 2.0, sl.list.y + self.s(40.0), msg, font, t.text_dim, f32::INFINITY);
         }
         for line in first..last {
-            let y = (sl.list.y as f64 + line as f64 * rh as f64 - s.scroll).round() as f32;
+            let cell = sl.cell(line, s.scroll);
+            let y = cell.y;
             let row = match s.line_at(line) {
                 SLine::Row(r) => r,
                 SLine::Header(k) => {
@@ -1224,7 +1253,7 @@ impl App {
                     continue;
                 }
             };
-            let rr = Rect::new(sl.list.x + self.s(4.0), y + 1.0, sl.list.w - self.s(8.0), rh - 2.0);
+            let rr = Rect::new(cell.x + self.s(4.0), y + 1.0, cell.w - self.s(8.0), rh - 2.0);
             if s.focus == Some(row) {
                 g.dl.round_rect(rr, if focused { t.selection } else { t.selection_inactive }, self.s(4.0));
             } else if s.hover == SHit::Row(row) && s.drag == SDrag::None {
@@ -1235,14 +1264,18 @@ impl App {
             let ext_at = if is_dir { r.name.len() } else { r.name.len() - name::ext_len(&r.name) };
             let ext = &r.name[ext_at..];
             let folded = ext.to_ascii_lowercase();
-            if !is_dir && !self.type_names.contains_key(&folded) && !type_requests.contains(&folded) {
+            if !sl.grid && !is_dir && !self.type_names.contains_key(&folded) && !type_requests.contains(&folded) {
                 type_requests.push(folded);
             }
             let entry = Entry { size: r.meta.size, modified: r.meta.modified, created: r.meta.created, accessed: 0, name_off: 0, attrs: r.meta.attrs, name_len: 0, ext_len: 0, tags: 0 };
             let (key, kind) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
             self.file_icons.see(key, kind);
             let indent = if headers { self.s(16.0) } else { 0.0 };
-            let ir = Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px);
+            let ir = if sl.grid {
+                Rect::new((cell.x + (cell.w - icon_px) / 2.0).round(), y + self.s(14.0), icon_px, icon_px)
+            } else {
+                Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px)
+            };
             if !g.image(key, ir) {
                 if !self.folder_stand_in(g, kind, icon_px as u32, ir, 255, &mut requests) {
                     let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };
@@ -1255,9 +1288,19 @@ impl App {
             }
             self.draw_shell_overlay(g, kind, &entry, &r.dir, &r.name, ir, 255);
             self.draw_file_emblems(g, entry.attrs, ir, 255, &mut requests);
+            let color = if r.meta.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
+            if sl.grid {
+                let shown = name::display(&r.name);
+                let room = (cell.w - pad * 2.0).max(0.0);
+                let width = g.measure(&shown, font);
+                if width > room {
+                    elided.push(row);
+                }
+                g.text(cell.x + (cell.w - width.min(room)) / 2.0, ir.bottom() + self.s(6.0) + m.ascent, &shown, font, color, room);
+                continue;
+            }
             let ty = y + text_dy;
             let name_x = ir.right() + self.s(8.0);
-            let color = if r.meta.attrs & attr::HIDDEN != 0 { t.text_dim } else { t.text };
             let (shown, room) = (name::display(&r.name), sl.cols[0].right() - name_x - pad);
             if g.measure(&shown, font) > room {
                 elided.push(row);

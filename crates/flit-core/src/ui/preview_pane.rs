@@ -1,4 +1,5 @@
 mod document_layout;
+mod pdf_view;
 
 use document_layout::{Grid, TextFlow};
 use super::field::{Field, TextCmd};
@@ -22,7 +23,7 @@ use crate::theme::Theme;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
 use std::ops::Range;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const MIN_RIGHT: f32 = 200.0;
 const MIN_BOTTOM: f32 = 120.0;
@@ -42,6 +43,8 @@ const CARD_W: f32 = 320.0;
 const CHECKER: f32 = 10.0;
 const ZOOM_STEP: f32 = 1.25;
 const ZOOM_RANGE: (f32, f32) = (0.05, 16.0);
+const KEEP_PREVIEW_FOR: Duration = Duration::from_secs(60);
+const PREVIOUS_PREVIEW_BYTES: usize = 12 << 20;
 const G_PLAY: &str = "\u{E768}";
 const G_PAUSE: &str = "\u{E769}";
 const G_VOLUME: &str = "\u{E767}";
@@ -120,6 +123,8 @@ pub enum PaneHit {
     Tag(usize),
     NewTag,
     Download,
+    Pretty,
+    SvgBackground,
     Body,
 }
 
@@ -151,12 +156,13 @@ struct Subject {
     dir_key: Vec<u8>,
     many: Option<(usize, u64)>,
     drive: Option<(u64, u64)>,
+    listing_gen: Option<u64>,
 }
 
 impl Subject {
     fn key(&self) -> u64 {
         let e = self.entry.map(|e| (e.size, e.modified, e.attrs));
-        hash::hash(&(&self.title, self.path.as_ref().map(|p| p.as_bytes()), self.kind, e, self.many, self.drive))
+        hash::hash(&(&self.title, self.path.as_ref().map(|p| p.as_bytes()), self.kind, e, self.many, self.drive, self.listing_gen))
     }
 }
 
@@ -171,6 +177,24 @@ enum Content {
     Media { video: bool },
     Handler,
     Basic(Option<Note>),
+    Pdf(pdf_view::PdfView),
+}
+
+struct PreviousPreview {
+    key: u64,
+    until: Instant,
+    content: Content,
+    image: Option<Bitmap>,
+    px: u32,
+    pretty: Pretty,
+}
+
+#[derive(Default)]
+enum Pretty {
+    #[default]
+    Off,
+    Loading,
+    On(Doc),
 }
 
 #[derive(Default)]
@@ -307,9 +331,38 @@ pub(super) struct PreviewPane {
     chips: Vec<(Rect, PaneHit)>,
     buttons: Vec<(Rect, PaneHit)>,
     download: u64,
+    previous: Option<PreviousPreview>,
+    pretty: Pretty,
 }
 
 impl PreviewPane {
+    fn replace_text(&mut self, doc: Doc) {
+        self.content = Content::Doc(doc);
+        self.doc = None;
+        self.pick = Pick::default();
+        self.scroll = 0.0;
+        self.hscroll = 0.0;
+    }
+
+    fn previous_size(&self) -> Option<usize> {
+        let content = match &self.content {
+            Content::Doc(d) => doc_capacity(d),
+            Content::Image => 0,
+            Content::Folder(f) => {
+                f.entries.capacity() * size_of::<preview::FolderItem>()
+                    + f.entries.iter().map(|e| e.name.capacity()).sum::<usize>()
+                    + f.types.capacity() * size_of::<(String, u64)>()
+                    + f.types.iter().map(|(t, _)| t.capacity()).sum::<usize>()
+            }
+            Content::Basic(None) if self.image.is_some() => 0,
+            Content::Basic(Some(Note::Shortcut(target))) => target.capacity(),
+            Content::Pdf(pdf) => pdf.retained_bytes(),
+            _ => return None,
+        };
+        let raw = if let Pretty::On(raw) = &self.pretty { doc_capacity(raw) } else { 0 };
+        Some(content + raw + self.image.as_ref().map_or(0, |b| b.rgba.capacity()))
+    }
+
     fn held(&self) -> usize {
         let image = self.image.as_ref().map_or(0, |b| b.rgba.len() * 2);
         let doc = match &self.content {
@@ -327,6 +380,16 @@ impl PreviewPane {
     fn effective_wrap(&self, d: &Doc) -> bool {
         if d.mono { self.look.wrap.unwrap_or(d.wrap) } else { true }
     }
+}
+
+fn doc_capacity(d: &Doc) -> usize {
+    d.text.capacity() + d.runs.capacity() * size_of::<Run>() + d.paras.capacity() * size_of::<preview::Para>()
+        + d.tables.capacity() * size_of::<preview::Table>()
+        + d.tables.iter().map(|t| {
+            t.align.capacity() * size_of::<preview::Alignment>()
+                + t.rows.capacity() * size_of::<Vec<Range<u32>>>()
+                + t.rows.iter().map(|r| r.capacity() * size_of::<Range<u32>>()).sum::<usize>()
+        }).sum::<usize>()
 }
 
 fn ui(px: f32, sc: f32, bold: bool) -> FontStyle {
@@ -679,7 +742,8 @@ impl App {
         let shown = self.preview.state.visible;
         match id {
             "inspector.wrap" | "inspector.line_numbers" | "inspector.whitespace" => shown && self.shows_doc(),
-            "inspector.grid" | "inspector.scale" => shown && self.shows_image(),
+            "inspector.grid" => shown && self.shows_image() && !self.preview_is_svg(),
+            "inspector.scale" => shown && self.shows_image(),
             "inspector.filter" => shown && (self.shows_doc() || self.shows_folder()),
             "inspector.zoom_in" | "inspector.zoom_out" => shown && (self.shows_doc() || self.shows_image()),
             _ => true,
@@ -1215,6 +1279,11 @@ impl App {
                 let p = &mut self.preview;
                 p.download = std::mem::take(&mut p.key);
             }
+            PaneHit::Pretty => self.toggle_pretty(),
+            PaneHit::SvgBackground => {
+                use preview::SvgBackground as Bg;
+                self.opts.svg_background = Bg::ALL[(self.opts.svg_background as usize + 1) % Bg::ALL.len()];
+            }
             PaneHit::Play => {
                 let p = &mut self.preview;
                 p.media.playing = !p.media.playing;
@@ -1284,7 +1353,7 @@ impl App {
         let l = v.listing();
         let in_bin = t.view_loc.is_recycle_bin();
         let dir_key = t.view_loc.to_windows().map(|p| p.as_bytes().to_vec()).unwrap_or_default();
-        let base = Subject { title: t.title(), path: None, kind: Kind::Folder, entry: None, ext: Vec::new(), dir_key, many: None, drive: None };
+        let base = Subject { title: t.title(), path: None, kind: Kind::Folder, entry: None, ext: Vec::new(), dir_key, many: None, drive: None, listing_gen: Some(t.gen) };
         match v.selected_count() {
             0 => Some(Subject { path: t.view_loc.to_windows().filter(|p| p.kind() != PathKind::Computer), ..base }),
             1 => {
@@ -1298,7 +1367,7 @@ impl App {
                     .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free)))
                     .flatten();
                 let dir_key = if in_bin { recycle::origin(l, i).to_vec() } else { row_dir.map_or(base.dir_key, |d| d.as_bytes().to_vec()) };
-                Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, ..base })
+                Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, listing_gen: None, ..base })
             }
             n => Some(Subject { title: crate::trn!(P::PreviewSelected, n), many: Some((n, v.selected_size())), path: None, ..base }),
         }
@@ -1336,6 +1405,65 @@ impl App {
         }
     }
 
+    pub(super) fn expire_previous_preview(&mut self, now: Instant) {
+        if let Some(previous) = &self.preview.previous {
+            if previous.until <= now {
+                self.preview.previous = None;
+            } else {
+                self.arm_timer(now, previous.until);
+            }
+        }
+    }
+
+    fn pretty_available(&self) -> bool {
+        matches!(self.preview.content, Content::Doc(_))
+            && self.preview.subject.as_ref().is_some_and(|s| preview::PrettyFormat::for_ext(&s.ext).is_some())
+    }
+
+    fn toggle_pretty(&mut self) {
+        let p = &mut self.preview;
+        if matches!(p.pretty, Pretty::Loading) {
+            return;
+        }
+        if let Pretty::On(raw) = std::mem::take(&mut p.pretty) {
+            p.replace_text(raw);
+            return;
+        }
+        let Some(s) = p.subject.as_ref().filter(|s| preview::PrettyFormat::for_ext(&s.ext).is_some()) else { return };
+        let (Some(path), Some(entry)) = (s.path.clone(), s.entry) else { return };
+        if !matches!(p.content, Content::Doc(_)) {
+            return;
+        }
+        if entry.size > preview::PRETTY_FILE_LIMIT {
+            self.status(S::PreviewPrettyTooLarge.t());
+            return;
+        }
+        p.pretty = Pretty::Loading;
+        self.effects.push(Effect::PrettyPreview(PreviewRequest {
+            gen: p.gen, cancel: p.cancel.clone(), path, kind: s.kind, size: entry.size, details: false, px: 0,
+        }));
+    }
+
+    pub fn on_pretty(&mut self, gen: u64, result: Result<Doc, preview::PrettyError>) {
+        let p = &mut self.preview;
+        if p.gen != gen || !matches!(p.pretty, Pretty::Loading) {
+            return;
+        }
+        p.pretty = Pretty::Off;
+        self.dirty = true;
+        match result {
+            Ok(doc) => {
+                if let Content::Doc(raw) = std::mem::replace(&mut p.content, Content::Empty) {
+                    p.pretty = Pretty::On(raw);
+                    p.replace_text(doc);
+                }
+            }
+            Err(preview::PrettyError::Invalid) => self.status(S::PreviewPrettyInvalid.t()),
+            Err(preview::PrettyError::TooLarge) => self.status(S::PreviewPrettyTooLarge.t()),
+            Err(preview::PrettyError::Unavailable) => self.status(S::PreviewPrettyUnavailable.t()),
+        }
+    }
+
     pub(super) fn sync_preview(&mut self, now: Instant) {
         let shown = self.preview.state.visible && !self.search.active && !self.on_home();
         let subject = if shown { self.subject() } else { None };
@@ -1365,6 +1493,27 @@ impl App {
         let archived = self.archive_view().is_some();
         let (types, dirs, files) = if subject.as_ref().is_some_and(|s| s.many.is_some()) { self.selection_types() } else { (Vec::new(), 0, 0) };
         let p = &mut self.preview;
+        let mut previous = p.previous.take().filter(|v| v.until > now);
+        let cached = if previous.as_ref().is_some_and(|v| v.key == key) { previous.take() } else { None };
+        let had_image = p.image.is_some();
+        if p.key != 0 && p.previous_size().is_some_and(|n| n <= PREVIOUS_PREVIEW_BYTES) {
+            if let Content::Pdf(pdf) = &mut p.content {
+                pdf.cancel();
+            }
+            previous = Some(PreviousPreview {
+                key: p.key,
+                until: now + KEEP_PREVIEW_FOR,
+                content: std::mem::take(&mut p.content),
+                image: p.image.take(),
+                px: p.image_px,
+                pretty: match std::mem::take(&mut p.pretty) {
+                    ready @ Pretty::On(_) => ready,
+                    _ => Pretty::Off,
+                },
+            });
+        }
+        p.previous = previous;
+        p.pretty = Pretty::Off;
         p.key = key;
         p.gen = gen;
         p.cancel.set(gen);
@@ -1378,12 +1527,14 @@ impl App {
                 s.title = String::new();
             }
         }
-        if p.image.take().is_some() {
+        p.image = None;
+        if had_image {
             p.image_rev += 1;
         }
         if std::mem::take(&mut p.host).gen != 0 {
             self.effects.push(Effect::Host(HostCmd::Close));
         }
+        self.expire_previous_preview(now);
         let p = &mut self.preview;
         p.content = Content::Empty;
         p.requested = None;
@@ -1405,6 +1556,16 @@ impl App {
         }
         let side = p.r.body.w.max(p.r.body.h) * 2.0;
         let px = (side as u32).clamp(256, IMAGE_PX);
+        if let Some(cached) = cached.filter(|cached| cached.px >= px) {
+            p.content = cached.content;
+            p.image = cached.image;
+            p.image_px = cached.px;
+            p.pretty = cached.pretty;
+            if p.image.is_some() {
+                p.image_rev += 1;
+            }
+            return;
+        }
         p.image_px = px;
         p.content = Content::Loading;
         p.requested = Some(now);
@@ -1446,6 +1607,7 @@ impl App {
             PreviewData::Handler(clsid) => (Content::Handler, None, Some(Hosted::Handler(clsid))),
             PreviewData::Basic { poster, note } => (Content::Basic(note), poster, None),
             PreviewData::Props(_) => (Content::Basic(None), None, None),
+            PreviewData::Pdf(sizes) => (Content::Pdf(pdf_view::PdfView::new(sizes)), None, None),
         };
         p.content = content;
         p.pick = Pick::default();
@@ -1583,7 +1745,7 @@ impl App {
         }
         x += self.s(8.0);
         let look = self.preview.look;
-        let tools: Vec<(&str, PaneHit, bool)> = match &self.preview.content {
+        let mut tools: Vec<(&str, PaneHit, bool)> = match &self.preview.content {
             Content::Doc(d) => {
                 let wrap = self.preview.effective_wrap(d);
                 let mut v = vec![(G_WRAP, PaneHit::Tool(PaneTool::Wrap), wrap)];
@@ -1601,6 +1763,9 @@ impl App {
             ],
             _ => Vec::new(),
         };
+        if self.preview_is_svg() {
+            tools.retain(|(_, hit, _)| *hit != PaneHit::Tool(PaneTool::Grid));
+        }
         if !tools.is_empty() {
             g.dl.rect(Rect::new(x - self.s(4.0), y + self.s(5.0), 1.0, bw - self.s(10.0)), t.separator);
         }
@@ -1646,6 +1811,14 @@ impl App {
         match &self.preview.content {
             Content::Doc(d) => {
                 let mut v = vec![("", self.opts.inspector_size.to_string(), Some(PaneHit::Size)), (G_LINES, super::thousands(d.paras.len() as u64), None)];
+                if self.pretty_available() {
+                    let (label, hit) = match self.preview.pretty {
+                        Pretty::Off => (S::PreviewPrettyButton, Some(PaneHit::Pretty)),
+                        Pretty::Loading => (S::PreviewPrettyWorking, None),
+                        Pretty::On(_) => (S::PreviewPrettyOriginal, Some(PaneHit::Pretty)),
+                    };
+                    v.insert(0, ("", label.t().to_owned(), hit));
+                }
                 if !d.encoding.is_empty() {
                     v.push(("", d.encoding.to_owned(), None));
                 }
@@ -1655,7 +1828,11 @@ impl App {
                 let Some((w, h)) = self.preview.image.as_ref().map(|i| (i.width as f32, i.height as f32)) else { return (Vec::new(), None) };
                 let b = self.preview.r.body;
                 let k = image_factor(self.preview.look.scale, self.preview.look.zoom, (w, h), (b.w, b.h));
-                (vec![("", format!("{}%", (k * 100.0).round()), Some(PaneHit::Size)), ("", format!("{} \u{D7} {}", w as u32, h as u32), None)], None)
+                let mut blocks = vec![("", format!("{}%", (k * 100.0).round()), Some(PaneHit::Size)), ("", format!("{} \u{D7} {}", w as u32, h as u32), None)];
+                if self.preview_is_svg() {
+                    blocks.insert(0, ("", self.opts.svg_background.label().t().to_owned(), Some(PaneHit::SvgBackground)));
+                }
+                (blocks, None)
             }
             Content::Folder(f) => (vec![(super::G_FILE, super::thousands(f.files), None), (super::G_FOLDER, super::thousands(f.dirs), None)], Some((S::PreviewFilterFiles, self.folder_rows(f).len()))),
             _ => (Vec::new(), None),
@@ -1681,6 +1858,9 @@ impl App {
         for (glyph, label, hit) in blocks {
             let icon_w = if glyph.is_empty() { 0.0 } else { self.s(18.0) };
             let w = g.measure(&label, font) + self.s(14.0) + icon_w;
+            if right - w < r.x + self.s(6.0) {
+                continue;
+            }
             let br = Rect::new(right - w, r.y + self.s(2.0), w, block_h);
             if let Some(h) = hit {
                 g.dl.round_rect(br, t.input_bg, self.s(3.0));
@@ -1986,6 +2166,7 @@ impl App {
         }
         match &self.preview.content {
             Content::Doc(_) => return self.draw_doc(g, t),
+            Content::Pdf(_) => return self.draw_pdf(g, t),
             Content::Image => {
                 if let Some((w, h)) = dims {
                     return self.draw_image(g, t, w, h);
@@ -2077,7 +2258,12 @@ impl App {
         y
     }
 
+    fn preview_is_svg(&self) -> bool {
+        self.preview.subject.as_ref().is_some_and(|s| preview::is_svg(&s.ext))
+    }
+
     fn draw_image<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, w: f32, h: f32) -> f32 {
+        use preview::SvgBackground as Bg;
         let b = self.preview.r.body;
         let look = self.preview.look;
         let k = image_factor(look.scale, look.zoom, (w, h), (b.w, b.h));
@@ -2086,7 +2272,11 @@ impl App {
         self.preview.hmax = (dw - b.w).max(0.0);
         let x0 = if dw <= b.w { (b.x + (b.w - dw) / 2.0).round() } else { (b.x - self.preview.hscroll.min(self.preview.hmax)).round() };
         let r = Rect::new(x0, y0, dw, dh);
-        if look.grid {
+        let background = if self.preview_is_svg() { Some(self.opts.svg_background) } else { look.grid.then_some(Bg::Checker) };
+        if let Some(Bg::Black | Bg::White) = background {
+            g.dl.rect(r, Color::rgb(if background == Some(Bg::Black) { 0 } else { 0xFFFFFF }));
+        }
+        if background == Some(Bg::Checker) {
             let cell = self.s(CHECKER).max(4.0);
             let visible = Rect::new(r.x.max(b.x), r.y.max(b.y), (r.right().min(b.right()) - r.x.max(b.x)).max(0.0), (r.bottom().min(b.bottom()) - r.y.max(b.y)).max(0.0));
             g.dl.rect(visible, Color::rgb(if self.dark { 0x3A3A3A } else { 0xFFFFFF }));

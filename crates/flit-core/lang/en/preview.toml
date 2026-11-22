@@ -52,3 +52,21 @@ no_extension = "no extension"
 [filter]
 lines = "Filter {n} lines..."
 files = "Filter {n} files..."
+
+[pretty]
+button = "Pretty"
+working = "Formatting…"
+original = "Original"
+too_large = "The file is too large to format (8 MiB maximum)."
+invalid = "The file contains invalid data for this format."
+unavailable = "The preview could not be formatted."
+
+[svg]
+checker = "Checkerboard"
+white = "White"
+black = "Black"
+background = "SVG background"
+background_help = "Background for transparent SVG previews."
+
+[pdf]
+failed = "This page could not be rendered."

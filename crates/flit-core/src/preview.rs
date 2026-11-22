@@ -1,4 +1,5 @@
 pub mod markdown;
+pub mod pdf;
 pub mod syntax;
 
 use crate::hash::FxHashMap;
@@ -23,8 +24,62 @@ pub const POSTER_PX: u32 = 256;
 pub const FOLDER_SCAN: usize = 20_000;
 pub const MAX_PROPS: usize = 120;
 pub const FOLDER_ROWS: usize = 2_000;
+pub const PRETTY_FILE_LIMIT: u64 = 8 << 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrettyFormat {
+    Json,
+    Yaml,
+    Toml,
+    Xml,
+}
+
+impl PrettyFormat {
+    pub fn for_ext(ext: &[u8]) -> Option<Self> {
+        [(b"json".as_slice(), Self::Json), (b"yaml", Self::Yaml), (b"yml", Self::Yaml), (b"toml", Self::Toml), (b"xml", Self::Xml)]
+            .into_iter()
+            .find_map(|(suffix, format)| ext.eq_ignore_ascii_case(suffix).then_some(format))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrettyError {
+    Invalid,
+    TooLarge,
+    Unavailable,
+}
 
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "dib", "tif", "tiff", "ico", "webp", "heic", "heif", "avif", "jxr", "wdp", "dds", "jxl"];
+const RAW: &[&[u8]] = &[b"dng", b"cr2", b"nef", b"nrw", b"arw", b"sr2", b"pef", b"rw2", b"orf"];
+
+pub fn is_raw(ext: &[u8]) -> bool {
+    RAW.iter().any(|s| ext.eq_ignore_ascii_case(s))
+}
+
+pub fn is_svg(ext: &[u8]) -> bool {
+    ext.eq_ignore_ascii_case(b"svg") || ext.eq_ignore_ascii_case(b"svgz")
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SvgBackground {
+    #[default]
+    Checker,
+    White,
+    Black,
+}
+
+impl SvgBackground {
+    pub(super) const ALL: [Self; 3] = [Self::Checker, Self::White, Self::Black];
+
+    pub(super) fn label(self) -> crate::i18n::S {
+        use crate::i18n::S;
+        match self {
+            Self::Checker => S::PreviewSvgChecker,
+            Self::White => S::PreviewSvgWhite,
+            Self::Black => S::PreviewSvgBlack,
+        }
+    }
+}
 const AUDIO: &[&str] = &["mp3", "wav", "wma", "flac", "m4a", "aac", "ogg", "oga", "opus", "aif", "aiff", "amr", "ac3"];
 const VIDEO: &[&str] = &["mp4", "m4v", "mov", "wmv", "avi", "mkv", "webm", "mpg", "mpeg", "3gp", "3g2", "m2ts", "mts", "asf"];
 const TEXT: &[&str] = &["txt", "log", "csv", "tsv", "nfo", "diz", "srt", "vtt", "lst", "text", "readme", "gitignore", "gitattributes"];
@@ -485,6 +540,7 @@ pub enum PreviewData {
     Handler(String),
     Basic { poster: Option<Bitmap>, note: Option<Note> },
     Props(Vec<PropGroup>),
+    Pdf(Vec<Option<pdf::Size>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]

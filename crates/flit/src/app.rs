@@ -158,7 +158,7 @@ fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &I
     if let Some(b) = cache.and_then(|c| locked(c).get(req.key)) {
         return IconResult::Ready(b);
     }
-    match shell.thumbnail_current(req, current) {
+    match crate::preview::thumbnail(shell, req, current) {
         Some(b) => {
             if let Some(c) = cache {
                 let mut cache = locked(c);
@@ -173,16 +173,15 @@ fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &I
     }
 }
 
-struct SortJob {
-    window: WindowId,
-    tab: TabId,
-    gen: u64,
-    snap: Arc<DirSnapshot>,
-    view: ViewSpec,
+enum SortJob {
+    Rows { window: WindowId, tab: TabId, gen: u64, snap: Arc<DirSnapshot>, view: ViewSpec },
+    Pictures { window: WindowId, tab: TabId, ask: u64, snap: Arc<DirSnapshot>, cancel: flit_core::provider::GenToken },
 }
 
 enum PreviewJob {
     Load { window: WindowId, req: PreviewRequest },
+    Pretty { window: WindowId, req: PreviewRequest },
+    PdfPage { window: WindowId, req: PreviewRequest, page: u32 },
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
@@ -197,7 +196,10 @@ enum Done {
     TypeName(Vec<u8>, Option<String>),
     LinkChoices { window: WindowId, generation: u64, choices: flit_core::provider::LinkChoices },
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
+    PictureShare { window: WindowId, tab: TabId, ask: u64, share: flit_core::ui::PictureShare },
     Preview { window: WindowId, gen: u64, data: PreviewData },
+    Pretty { window: WindowId, gen: u64, result: Result<flit_core::preview::Doc, flit_core::preview::PrettyError> },
+    PdfPage { window: WindowId, gen: u64, page: u32, image: Option<flit_core::ui::Bitmap> },
     QuickView { window: WindowId, shown: bool },
     Backdrop { window: WindowId, gen: u64, image: Option<flit_core::ui::Bitmap> },
     Browsed { window: WindowId, path: Option<FsPath> },
@@ -236,6 +238,17 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         Some(data) => Done::Preview { window, gen: req.gen, data },
                         None => continue,
                     },
+                    PreviewJob::Pretty { window, req } => match crate::preview::pretty::load(&req) {
+                        Some(result) => Done::Pretty { window, gen: req.gen, result },
+                        None => continue,
+                    },
+                    PreviewJob::PdfPage { window, req, page } => {
+                        let image = shell.pdf_page(&req, page);
+                        if !req.cancel.is_current(req.gen) {
+                            continue;
+                        }
+                        Done::PdfPage { window, gen: req.gen, page, image }
+                    }
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
                     PreviewJob::ColumnProps { window, tab, gen, ask, dir, names } => Done::ColumnProps { window, tab, gen, ask, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
@@ -301,11 +314,18 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
     let (sort_tx, sort_rx) = unbounded::<SortJob>();
     spawn("flit-sort", move || {
         for job in sort_rx {
-            let t = Instant::now();
-            let mut order = Vec::new();
-            sort::sort(&job.snap.listing, &job.snap.keys, job.view, &mut order);
-            let ms = t.elapsed().as_secs_f64() * 1e3;
-            let done = Done::Sorted { window: job.window, tab: job.tab, gen: job.gen, view: job.view, base_len: job.snap.listing.len(), order, ms };
+            let done = match job {
+                SortJob::Rows { window, tab, gen, snap, view } => {
+                    let t = Instant::now();
+                    let mut order = Vec::new();
+                    sort::sort(&snap.listing, &snap.keys, view, &mut order);
+                    Done::Sorted { window, tab, gen, view, base_len: snap.listing.len(), order, ms: t.elapsed().as_secs_f64() * 1e3 }
+                }
+                SortJob::Pictures { window, tab, ask, snap, cancel } => {
+                    let Some(share) = flit_core::ui::count_pictures(&snap.listing, &cancel, ask) else { continue };
+                    Done::PictureShare { window, tab, ask, share }
+                }
+            };
             if done_tx.send(done).is_err() {
                 return;
             }
@@ -811,7 +831,10 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Effect::Resort { tab, gen, snap, view } => {
-                    let _ = self.sorter.send(SortJob { window: id, tab, gen, snap, view });
+                    let _ = self.sorter.send(SortJob::Rows { window: id, tab, gen, snap, view });
+                }
+                Effect::ViewPictures { tab, ask, snap, cancel } => {
+                    let _ = self.sorter.send(SortJob::Pictures { window: id, tab, ask, snap, cancel });
                 }
                 Effect::Icon(req) => {
                     let visible = self.windows[&id].visible.clone();
@@ -911,6 +934,12 @@ impl<P: Platform> Handler<P> {
                 Effect::Search(req) => self.search.submit(id, req),
                 Effect::Preview(req) => {
                     let _ = self.previews.send(PreviewJob::Load { window: id, req });
+                }
+                Effect::PrettyPreview(req) => {
+                    let _ = self.previews.send(PreviewJob::Pretty { window: id, req });
+                }
+                Effect::PreviewPdfPage { req, page } => {
+                    let _ = self.previews.send(PreviewJob::PdfPage { window: id, req, page });
                 }
                 Effect::QuickView(path) => {
                     let _ = self.previews.send(PreviewJob::QuickView { window: id, path });
@@ -1340,6 +1369,16 @@ impl<P: Platform> Handler<P> {
                         st.app.on_preview(gen, data);
                     }
                 }
+                Done::Pretty { window, gen, result } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_pretty(gen, result);
+                    }
+                }
+                Done::PdfPage { window, gen, page, image } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_pdf_page(&mut st.gfx, gen, page, image);
+                    }
+                }
                 Done::ColumnProps { window, tab, gen, ask, rows } => {
                     if let Some(st) = self.windows.get_mut(&window) {
                         st.app.on_shell_props(tab, gen, ask, rows);
@@ -1366,6 +1405,11 @@ impl<P: Platform> Handler<P> {
                     }
                     if let Some(m) = &mut self.metrics {
                         m.on_sorted(ms);
+                    }
+                }
+                Done::PictureShare { window, tab, ask, share } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_picture_share(tab, ask, share);
                     }
                 }
             }

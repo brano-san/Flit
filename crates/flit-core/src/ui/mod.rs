@@ -26,6 +26,7 @@ mod home;
 mod jobs;
 mod libraries;
 mod layouts;
+mod view_rules;
 mod marquee;
 mod menu;
 mod menu_editor;
@@ -82,6 +83,7 @@ pub const UI_SCALE: (u32, u32) = (70, 200);
 pub const SPRING_DELAY_MAX_MS: u32 = 3000;
 pub use details::{folder_key, Columns, FolderView, FolderViews, ViewMode, ViewPrefs, EXTRA, ORDERED, THUMB_CACHE_MB};
 pub use layouts::{adaptive_layout, has_thumbnail, is_media, LayoutMode, Sizes, LAYOUTS};
+pub use view_rules::{count_pictures, PictureShare};
 pub use jobs::JobState;
 pub use preview_pane::PaneState;
 pub use menu::{Mark, MenuImage, MenuItem};
@@ -110,7 +112,7 @@ use crate::name;
 use crate::open::{self, Open, OpenTarget, ResolveError, Route};
 use crate::path::{FsPath, PathKind};
 use crate::preview::{HostCmd, PreviewRequest};
-use crate::provider::{ProviderEvent, ProviderRequest, Resolve, TabId};
+use crate::provider::{GenToken, ProviderEvent, ProviderRequest, Resolve, TabId};
 use crate::recycle;
 use crate::render::{Color, Rect};
 use crate::sort::{CaseMode, GroupField, SortField, ViewSpec};
@@ -439,6 +441,9 @@ pub enum Effect {
     RefreshPlaces,
     Search(SearchRequest),
     Preview(PreviewRequest),
+    PrettyPreview(PreviewRequest),
+    PreviewPdfPage { req: PreviewRequest, page: u32 },
+    ViewPictures { tab: TabId, ask: u64, snap: Arc<crate::listing::DirSnapshot>, cancel: GenToken },
     QuickView(FsPath),
     Backdrop { gen: u64, path: FsPath },
     Host(HostCmd),
@@ -2094,6 +2099,7 @@ impl App {
                 self.strip_timer(now);
                 self.tip_timer(now);
                 self.quick_timer(now);
+                self.expire_previous_preview(now);
                 self.expire_error(now);
                 self.expire_undo_bar(now);
                 self.dirty |= self.shell_props_due(now);

@@ -83,6 +83,57 @@ fn click(app: &mut App, (x, y): (f32, f32)) {
 }
 
 #[test]
+fn folder_view_rules_apply_to_network_and_picture_listings() {
+    let mut network = app_at(r"\\server\share");
+    network.opts.view_rules.network = Some(LayoutMode::List);
+    deliver(&mut network, &["photo.jpg"]);
+    assert_eq!(network.tab().look, LayoutMode::List);
+    assert!(network.tab().picture_scan.is_none());
+
+    let mut a = app_at(r"C:\pictures");
+    a.opts.view_rules.pictures_min = 50;
+    deliver(&mut a, &["one.jpg", "two.txt", "subfolder"]);
+    let (tab, ask, snap, cancel) = a.drain_effects().find_map(|e| match e {
+        Effect::ViewPictures { tab, ask, snap, cancel } => Some((tab, ask, snap, cancel)),
+        _ => None,
+    }).unwrap();
+    let share = crate::ui::count_pictures(&snap.listing, &cancel, ask).unwrap();
+    a.on_picture_share(tab, ask, share);
+    frame(&mut a);
+    assert_eq!(a.layout.mode, LayoutMode::Grid);
+    a.refresh_view_rules();
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::ViewPictures { .. })));
+}
+
+#[test]
+fn an_empty_archive_gets_its_rule_but_an_empty_zip_named_folder_does_not() {
+    let mut a = app_at(r"C:\work\empty.zip");
+    a.opts.view_rules.archive = Some(LayoutMode::Grid);
+    deliver(&mut a, &[]);
+    assert_eq!(a.tab().look, LayoutMode::Details);
+    let t = a.tab();
+    let mut archive = t.view.as_ref().unwrap().snap().as_ref().clone();
+    archive.listing.archived = true;
+    t.slot.publish(Arc::new(archive));
+    a.poll();
+    frame(&mut a);
+    assert_eq!(a.tab().look, LayoutMode::Grid);
+}
+
+#[test]
+fn a_saved_folder_view_takes_priority_and_disabled_picture_rules_do_not_scan() {
+    let mut a = app_at(r"C:\pictures");
+    deliver(&mut a, &["one.jpg", "two.png"]);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::ViewPictures { .. })));
+    a.set_view_mode(crate::ui::ViewMode::Folder);
+    a.set_layout(LayoutMode::Cards);
+    a.opts.view_rules.pictures_min = 50;
+    deliver(&mut a, &["one.jpg", "two.png"]);
+    assert_eq!(a.layout.mode, LayoutMode::Cards);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::ViewPictures { .. })));
+}
+
+#[test]
 fn ctrl_shift_digits_switch_layouts_and_each_folder_remembers_its_own() {
     let mut app = app_at(r"C:\x");
     app.set_view_mode(crate::ui::ViewMode::Folder);

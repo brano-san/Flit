@@ -2555,6 +2555,20 @@ fn one_selected_picture_becomes_the_desktop_background() {
 }
 
 #[test]
+fn review_preview_only_formats_do_not_offer_background_commands() {
+    let mut app = app_at(r"C:\x");
+    deliver(&mut app, &[("drawing.svg", false), ("photo.dng", false), ("photo.jpg", false)]);
+    let commands = ["file.wallpaper", "file.lock_screen", "file.set_backdrop"];
+    for (name, expected) in [("drawing.svg", false), ("photo.dng", false), ("photo.jpg", true)] {
+        select(&mut app, &[name]);
+        app.collect(|a, menu| a.media_entries(menu));
+        for id in commands {
+            assert_eq!(app.menu.contains(&crate::ui::menu::Cmd::Action(id)), expected, "{name}: {id}");
+        }
+    }
+}
+
+#[test]
 fn a_document_or_several_pictures_do_not_change_the_background() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("photo.jpg", false), ("notes.txt", false), ("more.png", false)]);

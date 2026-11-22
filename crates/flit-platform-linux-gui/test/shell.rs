@@ -109,7 +109,7 @@ fn missing_media_players_name_mpv_only_after_every_applicable_fallback() {
 #[test]
 fn posters_come_from_pdftoppm_and_ffmpegthumbnailer() {
     let pdf = poster_command(Path::new("/d/a b.PDF"), 256).unwrap();
-    assert_eq!(pdf.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["pdftoppm", "-png", "-f", "1", "-l", "1", "-singlefile", "-scale-to", "256", "/d/a b.PDF", "-"]);
+    assert_eq!(pdf.iter().map(|a| a.to_string_lossy().into_owned()).collect::<Vec<_>>(), ["pdftoppm", "-png", "-f", "1", "-l", "1", "-singlefile", "-cropbox", "-scale-to", "256", "/d/a b.PDF"]);
     if std::path::Path::new("/usr/share/mime/globs2").exists() {
         let video = poster_command(Path::new("/d/clip.mp4"), 128).unwrap();
         assert_eq!(video[0], "ffmpegthumbnailer");
@@ -124,6 +124,38 @@ fn posters_come_from_pdftoppm_and_ffmpegthumbnailer() {
         assert_eq!(b.height, 120);
         assert!(b.rgba[2] > 200);
     }
+}
+
+#[test]
+fn pdf_info_requests_page_sizes_without_box_details() {
+    assert_eq!(pdf::document_command(Path::new("/d/mixed pages.pdf"), 128), ["pdfinfo", "-f", "1", "-l", "128", "/d/mixed pages.pdf"].map(OsString::from));
+}
+
+#[test]
+fn pdf_pages_are_loaded_at_their_own_crop_and_rotation() {
+    if on_path(OsStr::new("pdfinfo")).is_none() || on_path(OsStr::new("pdftoppm")).is_none() {
+        return;
+    }
+    let temp = Temp::new("pdf-preview");
+    let path = temp.path().join("mixed pages.pdf");
+    let document = include_bytes!("fixtures/pdf-preview.pdf");
+    std::fs::write(&path, document).unwrap();
+    let path = FsPath::parse_exact(path.as_os_str().as_encoded_bytes()).unwrap();
+    let cancel = flit_core::provider::GenToken::default();
+    cancel.set(7);
+    let req = flit_core::preview::PreviewRequest {
+        gen: 7, cancel, path, kind: flit_core::preview::Kind::Other, size: document.len() as u64, details: false, px: 256,
+    };
+    let mut shell = LinuxShell;
+    let pages = shell.pdf_document(&req).unwrap();
+    use flit_core::preview::pdf::Size;
+    assert_eq!(pages, [Some(Size { width: 160.0, height: 240.0 }), Some(Size { width: 500.0, height: 320.0 })]);
+    let first = shell.pdf_page(&req, 1).unwrap();
+    let second = shell.pdf_page(&req, 2).unwrap();
+    assert_eq!((first.width, first.height), (171, 256));
+    assert_eq!((second.width, second.height), (256, 164));
+    req.cancel.set(8);
+    assert!(shell.pdf_page(&req, 2).is_none());
 }
 
 #[test]

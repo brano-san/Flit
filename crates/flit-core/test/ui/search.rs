@@ -45,6 +45,30 @@ fn frame(app: &mut App) {
 }
 
 #[test]
+fn a_search_view_rule_lays_out_results_in_a_selectable_grid() {
+    let mut a = app();
+    a.open_search();
+    a.search.recent_open = false;
+    let gen = gen_of(&a);
+    a.on_search_event(SearchEvent::Done { gen, total: 3 }, t0());
+    a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: page(0, 3) }, t0());
+    frame(&mut a);
+    let table = a.search_layout();
+    assert_eq!(a.search_hit(table.list.x + table.list.w / 2.0, table.list.y + 6.0), SHit::Row(0));
+    a.opts.view_rules.search_grid = true;
+    frame(&mut a);
+    let grid = a.search_layout();
+    assert!(grid.tiles > 1);
+    let second = grid.cell(1, 0.0);
+    let (x, y) = (second.x + second.w / 2.0, second.y + second.h / 2.0);
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t0());
+    assert_eq!(a.search.focus, Some(1));
+    a.search.group_folder = true;
+    assert!(!a.search_layout().grid);
+}
+
+#[test]
 fn tab_toggles_scope_only_in_search_and_keeps_the_query() {
     let mut a = app();
     key(&mut a, Key::Char('F'), CTRL_SHIFT);
