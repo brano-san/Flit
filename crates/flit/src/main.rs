@@ -82,7 +82,12 @@ fn main() {
             return;
         } else if a == "--elevated-agent" {
             #[cfg(target_os = "linux")]
-            std::process::exit(flit_platform_linux_gui::elevated::serve(it.next().as_deref()));
+            {
+                use flit_platform_linux_gui::elevated;
+                let lang = it.next();
+                let companions = it.next().is_some_and(|arg| arg == elevated::COMPANIONS_FLAG);
+                std::process::exit(elevated::serve(lang.as_deref(), companions));
+            }
         } else if a == "--create-symbolic-link" {
             #[cfg(windows)]
             std::process::exit(flit_platform_windows::symbolic_from_command_line(it));

@@ -247,3 +247,95 @@ fn copy_move_and_delete_ignore_a_drive_root_while_links_can_still_point_at_it() 
     let mut engine = Engine::new(&job);
     assert!(engine.stat_all(std::slice::from_ref(&root)).iter().all(Option::is_none));
 }
+
+fn with_companions(label: &str, test: impl FnOnce(&FsPath, &FsPath, &FsPath, &FsPath)) {
+    let root = crate::test_temp().join(format!("flit-companions-{label}-{}", std::process::id()));
+    std::fs::create_dir_all(root.join("to")).unwrap();
+    let dir = FsPath::parse(root.to_str().unwrap()).unwrap();
+    let dest = dir.join(b"to");
+    let owner = dir.join(b"photo.jpg");
+    let sidecar = dir.join(b"photo.jpg.xmp");
+    std::fs::write(flit_platform::std_path(&owner), b"photo").unwrap();
+    std::fs::write(flit_platform::std_path(&sidecar), b"metadata").unwrap();
+    test(&dir, &dest, &owner, &sidecar);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_duplicate_uses_the_main_files_copy_name_for_its_companion() {
+    with_companions("duplicate", |dir, _, owner, sidecar| {
+        let job = Job::detached(Resolve::Skip);
+        let op = FileOp::Copy { items: vec![owner.clone(), sidecar.clone()], dest: dir.clone() };
+        let op = job.prepare_companions(&NtFs, op).unwrap();
+        let out = run(&op, &job);
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert_eq!(out.items, [
+            (owner.clone(), dir.join(b"photo - Copy.jpg")),
+            (sidecar.clone(), dir.join(b"photo - Copy.jpg.xmp")),
+        ]);
+        assert_eq!(std::fs::read(flit_platform::std_path(&dir.join(b"photo - Copy.jpg.xmp"))).unwrap(), b"metadata");
+    });
+}
+
+#[test]
+fn a_primary_conflict_can_skip_rename_or_replace_a_group_and_sidecar_collisions_stop_it() {
+    for moving in [false, true] {
+        let label = if moving { "move-conflict" } else { "copy-conflict" };
+        with_companions(label, |_, dest, owner, sidecar| {
+            let target = dest.join(owner.file_name());
+            let side_target = dest.join(sidecar.file_name());
+            std::fs::write(flit_platform::std_path(&target), b"existing photo").unwrap();
+            std::fs::write(flit_platform::std_path(&side_target), b"existing sidecar").unwrap();
+            let perform = |choice| {
+                let ctl = flit_core::provider::OpCtl::new(None);
+                let answer = ctl.clone();
+                let wanted = target.clone();
+                let job = Job::new(ctl, Box::new(|_| {}), Box::new(move |conflict| {
+                    assert_eq!(conflict.target, wanted);
+                    answer.answer(choice, false);
+                }));
+                let op = if moving {
+                    FileOp::Move { items: vec![owner.clone()], dest: dest.clone() }
+                } else {
+                    FileOp::Copy { items: vec![owner.clone()], dest: dest.clone() }
+                };
+                run(&job.prepare_companions(&NtFs, op).unwrap(), &job)
+            };
+            let skipped = perform(Resolve::Skip);
+            assert!(skipped.error.is_none() && skipped.items.is_empty());
+            let refused = perform(Resolve::Replace);
+            assert!(refused.error.unwrap().to_string().contains("photo.jpg.xmp"));
+            assert!(refused.items.is_empty());
+            let renamed = perform(Resolve::KeepBoth);
+            assert!(renamed.error.is_none(), "{:?}", renamed.error);
+            assert_eq!(renamed.items, [
+                (owner.clone(), dest.join(b"photo (2).jpg")),
+                (sidecar.clone(), dest.join(b"photo (2).jpg.xmp")),
+            ]);
+            assert_eq!(std::fs::read(flit_platform::std_path(&side_target)).unwrap(), b"existing sidecar");
+            assert_eq!(std::fs::read(flit_platform::std_path(&target)).unwrap(), b"existing photo");
+            assert_eq!(exists(owner), !moving);
+            assert_eq!(exists(sidecar), !moving);
+        });
+    }
+}
+
+#[test]
+fn cancellation_after_the_main_file_moves_finishes_its_companion_group() {
+    with_companions("cancel", |_, dest, owner, sidecar| {
+        let job = Job::detached(Resolve::Skip);
+        let op = FileOp::Move { items: vec![owner.clone()], dest: dest.clone() };
+        job.prepare_companions(&NtFs, op).unwrap();
+        let target = dest.join(owner.file_name());
+        let side_target = dest.join(sidecar.file_name());
+        let mut engine = Engine::new(&job);
+        let moved = engine.transfer(owner, target.clone(), stat(owner).unwrap(), Mode::Move, true);
+        assert!(matches!(moved, Res::Whole(_)));
+        job.ctl().cancel();
+        engine.keep_group(owner, moved, Mode::Move);
+        assert!(engine.stopped());
+        assert_eq!(engine.done, [(owner.clone(), target), (sidecar.clone(), side_target.clone())]);
+        assert!(!exists(sidecar));
+        assert_eq!(std::fs::read(flit_platform::std_path(&side_target)).unwrap(), b"metadata");
+    });
+}

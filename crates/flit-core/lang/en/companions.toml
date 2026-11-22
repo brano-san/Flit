@@ -1,0 +1,3 @@
+hide = "Hide companion files"
+help = "Hide matched .xmp, .aae, and AppleDouble files and carry them with the primary file during copy, move, or rename"
+collision = "A companion or its primary file would conflict with {path}."

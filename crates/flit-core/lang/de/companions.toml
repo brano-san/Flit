@@ -1,0 +1,3 @@
+hide = "Begleitdateien ausblenden"
+help = "Zugeordnete .xmp-, .aae- und AppleDouble-Dateien ausblenden und beim Kopieren, Verschieben oder Umbenennen mitnehmen"
+collision = "Eine Begleitdatei oder ihre Hauptdatei würde mit {path} kollidieren."

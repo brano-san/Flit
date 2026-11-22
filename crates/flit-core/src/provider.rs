@@ -403,6 +403,7 @@ struct Answer {
 struct Control {
     cancelled: AtomicBool,
     paused: AtomicBool,
+    attach_companions: AtomicBool,
     answer: Mutex<Answer>,
     changed: Condvar,
 }
@@ -429,6 +430,14 @@ impl OpCtl {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn attach_companions(&self) {
+        self.0.attach_companions.store(true, Ordering::Release);
+    }
+
+    pub fn includes_companions(&self) -> bool {
+        self.0.attach_companions.load(Ordering::Acquire)
     }
 
     pub fn pause(&self, paused: bool) {

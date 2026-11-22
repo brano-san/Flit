@@ -803,8 +803,10 @@ impl App {
         let (p, tz) = (&self.prefs, self.utc_offset_min);
         let t = &mut self.tabs[k];
         let (deep, tree) = (t.subfolders, t.mode == LayoutMode::Tree);
+        let hide_companions = self.hide_companions && t.location().provider() == crate::location::ProviderId::Local;
         let v = &mut t.view_spec;
         v.hide_dotfiles = !p.show_dotfiles;
+        v.hide_companions = hide_companions;
         v.show_system = p.show_system;
         v.show_streams = p.show_streams;
         v.deep = deep;

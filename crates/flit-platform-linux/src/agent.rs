@@ -134,7 +134,19 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
             let _ = failure.send(Event::OpFailure { id, failure: f });
         }),
     );
-    let out = ops::run_in(op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
+    let run = |op: &FileOp| ops::run_in(op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
+    let out = if job.ctl().includes_companions() {
+        match job.prepare_companions(&crate::LinuxFs, op.clone()) {
+            Ok(prepared) => run(&prepared),
+            Err(error) => {
+                ctx.ops().remove(&id);
+                ctx.send(Event::OpDone { id, error: Some(error), items: Vec::new() });
+                return;
+            }
+        }
+    } else {
+        run(op)
+    };
     ctx.ops().remove(&id);
     if let Some(done) = job.take_performed() {
         ctx.send(Event::OpPerformed { id, op: done });
@@ -165,7 +177,11 @@ fn watch(notify: Option<&Notify<ReqId>>, id: ReqId, path: &FsPath) {
     }
 }
 
-pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: String, trash: Option<Trash>) -> Result<(), ProtoError> {
+pub fn serve(input: impl Read, output: impl Write + Send + 'static, build: String, trash: Option<Trash>) -> Result<(), ProtoError> {
+    serve_with_companions(input, output, build, trash, false)
+}
+
+pub fn serve_with_companions(mut input: impl Read, output: impl Write + Send + 'static, build: String, trash: Option<Trash>, companions: bool) -> Result<(), ProtoError> {
     let (events, rx) = unbounded();
     let ours = hello(build);
     let theirs = ours.clone();
@@ -225,6 +241,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
             }
             Request::Op { id, op: o, policy } => {
                 let ctl = OpCtl::new(policy);
+                if companions { ctl.attach_companions(); }
                 ctx.ops().insert(id, ctl.clone());
                 if !spawn("flit-agent-op", move || op(&c, id, &o, ctl)) {
                     ctx.ops().remove(&id);

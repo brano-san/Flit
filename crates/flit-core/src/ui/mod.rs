@@ -705,6 +705,7 @@ pub struct App {
     pub confirm_delete: ConfirmDelete,
     pub style: format::Style,
     pub show_hidden: bool,
+    hide_companions: bool,
     pub startup: Startup,
     pub startup_pages: Vec<Location>,
     pub about: About,
@@ -845,6 +846,7 @@ impl App {
             confirm_delete: ConfirmDelete::default(),
             style: format::Style { system: ("yyyy-MM-dd".into(), "HH:mm".into()), ..Default::default() },
             show_hidden: state.show_hidden,
+            hide_companions: false,
             startup_pages: match &state.startup {
                 Startup::Folders(pages) => pages.clone(),
                 _ => Vec::new(),

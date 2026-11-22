@@ -194,3 +194,20 @@ fn live_changes_set_replace_and_remove_launcher_labels_and_resort_by_them() {
     v.apply(&launcher(ChangeKind::Modified, "m.desktop", Label::Keep));
     assert_eq!(labeled(&v), ["b.desktop", "web.desktop", "y.txt", "Zulu"], "changes without label news keep the label");
 }
+
+#[test]
+fn a_companion_stays_hidden_across_filters_and_reappears_when_its_owner_is_removed() {
+    let mut snapshot = snap(&["photo.jpg", "photo.jpg.xmp", "unrelated.xmp"]);
+    Arc::make_mut(&mut snapshot).view.hide_companions = true;
+    let mut view = DirView::new(snapshot);
+    assert_eq!(rows(&view), ["photo.jpg", "unrelated.xmp"]);
+    view.hidden_companions.as_mut().unwrap().reserve(100);
+    let cached_capacity = view.hidden_companions.as_ref().unwrap().capacity();
+    view.set_filter("xmp");
+    assert_eq!(rows(&view), ["unrelated.xmp"]);
+    assert_eq!(view.hidden_companions.as_ref().unwrap().capacity(), cached_capacity);
+    view.apply(&change(ChangeKind::Removed, "photo.jpg", 0));
+    assert_eq!(rows(&view), ["photo.jpg.xmp", "unrelated.xmp"]);
+    view.apply(&change(ChangeKind::Added, "photo.jpg", 3));
+    assert_eq!(rows(&view), ["unrelated.xmp"]);
+}

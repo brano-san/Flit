@@ -610,6 +610,12 @@ impl App {
         self.ops.next_id += 1;
         let id = self.ops.next_id;
         let ctl = OpCtl::new(self.conflict_default);
+        if self.hide_companions && provider == ProviderId::Local && origin == Origin::Fresh
+            && matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Paste { .. })
+            && op.all_paths(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unix))
+        {
+            ctl.attach_companions();
+        }
         self.track_job(id, &provider, &op, &ctl);
         let optimistic_removal = provider == ProviderId::Local
             && match &op {

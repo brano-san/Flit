@@ -763,3 +763,31 @@ fn renaming_to_another_name_of_the_same_file_goes_through_a_temporary_name() {
     rename_through_temporary(dir.as_raw_fd(), c"A.txt", c"c.txt").unwrap();
     assert_eq!(listing(t.path()), [b"b.txt".to_vec(), b"c.txt".to_vec()]);
 }
+
+#[test]
+fn a_linux_move_uses_the_resolved_primary_name_and_skip_keeps_the_group_at_source() {
+    let temp = Temp::new("ops-companions");
+    let source = temp.path().join("source");
+    let destination = temp.path().join("destination");
+    let primary = source.join("photo.jpg");
+    let sidecar = source.join("photo.jpg.xmp");
+    write(&primary, "photo");
+    write(&sidecar, "metadata");
+    write(&destination.join("photo.jpg"), "existing");
+    write(&destination.join("photo.jpg.xmp"), "existing metadata");
+    let op = FileOp::Move { items: vec![fp(&primary)], dest: fp(&destination) };
+    let (skip, questions) = answering(Resolve::Skip, false);
+    let skipped = skip.prepare_companions(&crate::LinuxFs, op.clone()).unwrap();
+    assert!(ok(run(&skipped, &skip, None)).is_empty());
+    assert_eq!(questions.lock().unwrap().len(), 1);
+    assert!(primary.exists() && sidecar.exists());
+
+    let (rename, questions) = answering(Resolve::KeepBoth, false);
+    let renamed = rename.prepare_companions(&crate::LinuxFs, op).unwrap();
+    assert_eq!(ok(run(&renamed, &rename, None)).len(), 2);
+    assert_eq!(questions.lock().unwrap().len(), 1);
+    assert_eq!(read(&destination.join("photo (2).jpg")), "photo");
+    assert_eq!(read(&destination.join("photo (2).jpg.xmp")), "metadata");
+    assert_eq!(read(&destination.join("photo.jpg.xmp")), "existing metadata");
+    assert!(!primary.exists() && !sidecar.exists());
+}

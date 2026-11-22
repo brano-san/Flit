@@ -28,6 +28,7 @@ pub mod recycle;
 pub mod render;
 pub mod sort;
 pub mod segments;
+pub mod companions;
 pub mod tags;
 pub mod text;
 pub mod theme;

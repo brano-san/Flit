@@ -1,0 +1,3 @@
+hide = "Masquer les fichiers associés"
+help = "Masquer les fichiers .xmp, .aae et AppleDouble associés et les emporter avec le fichier principal lors d’une copie, d’un déplacement ou d’un renommage"
+collision = "Un fichier associé ou son fichier principal entrerait en conflit avec {path}."

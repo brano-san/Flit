@@ -461,6 +461,7 @@ pub static SETTINGS: &[Setting] = &[
     menu_list("menu.seen_file", |a| a.opts.menu.seen[0].clone(), |a, v| a.opts.menu.seen[0] = v),
     menu_list("menu.seen_folder", |a| a.opts.menu.seen[1].clone(), |a, v| a.opts.menu.seen[1] = v),
     menu_list("menu.seen_background", |a| a.opts.menu.seen[2].clone(), |a, v| a.opts.menu.seen[2] = v),
+    toggle("files.hide_companions", Page::Files, S::CompanionsHide, S::CompanionsHelp, |a| a.hide_companions, |a, on| a.set_companions(on)),
     Setting { id: "menu.custom", page: Page::Menu, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
 ];
 
@@ -818,6 +819,15 @@ impl App {
         if self.style.today != today {
             self.style.today = today;
             self.dirty |= self.style.dates == DateFormat::Application;
+        }
+    }
+
+    fn set_companions(&mut self, on: bool) {
+        if self.hide_companions == on { return; }
+        self.hide_companions = on;
+        for k in 0..self.tabs.len() {
+            self.sync_spec(k);
+            self.resort(k);
         }
     }
 

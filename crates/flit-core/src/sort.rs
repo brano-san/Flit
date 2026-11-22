@@ -168,6 +168,7 @@ pub struct ViewSpec {
     pub tree: bool,
     pub hide_dirs: bool,
     pub hide_files: bool,
+    pub hide_companions: bool,
 }
 
 impl ViewSpec {

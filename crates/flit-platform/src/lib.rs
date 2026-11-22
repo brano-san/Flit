@@ -2,6 +2,8 @@ mod digest;
 mod indexer;
 mod local;
 mod segments;
+mod companions;
+pub use companions::companion_collision;
 pub mod walk;
 mod wsl;
 
@@ -403,18 +405,28 @@ struct JobState {
     now: std::sync::Mutex<Shown>,
     performed: std::sync::Mutex<Option<FileOp>>,
     notice: std::sync::Mutex<Option<flit_core::i18n::S>>,
+    companions: std::sync::OnceLock<companions::Groups>,
+    defer_cancel: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone)]
 pub struct Job(Arc<JobState>);
 
+pub struct DeferCancellation<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for DeferCancellation<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 impl Job {
     pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default(), notice: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default(), notice: Default::default(), companions: Default::default(), defer_cancel: Default::default() }))
     }
 
     pub fn asking(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default(), notice: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default(), notice: Default::default(), companions: Default::default(), defer_cancel: Default::default() }))
     }
 
     pub fn performed(&self, op: FileOp) {
@@ -442,7 +454,13 @@ impl Job {
     }
 
     pub fn cancelled(&self) -> bool {
-        self.0.ctl.is_cancelled()
+        self.0.ctl.is_cancelled() && !self.0.defer_cancel.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn defer_companion_cancellation(&self, source: &FsPath) -> Option<DeferCancellation<'_>> {
+        let flag = &self.0.defer_cancel;
+        (self.has_companions(source) && !flag.swap(true, std::sync::atomic::Ordering::AcqRel))
+            .then(|| DeferCancellation(flag))
     }
 
     pub fn progress(&self) -> OpProgress {

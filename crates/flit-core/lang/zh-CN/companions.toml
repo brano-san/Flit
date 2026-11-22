@@ -1,0 +1,3 @@
+hide = "隐藏伴随文件"
+help = "隐藏匹配的 .xmp、.aae 和 AppleDouble 文件，并在复制、移动或重命名时一并处理"
+collision = "伴随文件或其主文件会与 {path} 冲突。"

@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub const FLAG: &str = "--elevated-agent";
+pub const COMPANIONS_FLAG: &str = "--companions";
 const OP: ReqId = 1;
 const CANCEL_POLL: Duration = Duration::from_millis(50);
 const PKEXEC_DISMISSED: i32 = 126;
@@ -27,11 +28,11 @@ fn helper_args(exe: &Path) -> [OsString; 3] {
     [exe.as_os_str().to_owned(), FLAG.into(), flit_core::i18n::lang().code().into()]
 }
 
-pub fn serve(lang: Option<&OsStr>) -> i32 {
+pub fn serve(lang: Option<&OsStr>, companions: bool) -> i32 {
     if let Some(lang) = spoken(lang) {
         flit_core::i18n::set_lang(lang);
     }
-    match flit_platform_linux::agent::serve(std::io::stdin().lock(), std::io::stdout(), env!("CARGO_PKG_VERSION").into(), None) {
+    match flit_platform_linux::agent::serve_with_companions(std::io::stdin().lock(), std::io::stdout(), env!("CARGO_PKG_VERSION").into(), None, companions) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("flit: elevated helper: {e}");
@@ -179,6 +180,7 @@ pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
     let exe = agent_program(&exe).map_err(|e| unelevated(e.to_string()))?;
     let mut child = Command::new(pkexec)
         .args(helper_args(&exe))
+        .args(job.has_companion_groups().then_some(COMPANIONS_FLAG))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

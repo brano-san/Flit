@@ -289,7 +289,7 @@ impl LocalProvider {
                     }
                 };
                 let job = reply.job(ctl);
-                if quick(&op) {
+                if quick(&op) && !job.ctl().includes_companions() {
                     reply.finish(perform(sh, op, cut, &job));
                     continue;
                 }
@@ -299,7 +299,17 @@ impl LocalProvider {
                     let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
                     let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
                         (true, _) => (Some(CANCELLED.into()), Some(OpReport { op, items: Vec::new() }), Vec::new()),
-                        (false, Ok(mut sh)) => perform(&mut sh, op, cut, &job),
+                        (false, Ok(mut sh)) => {
+                            let planned = if job.ctl().includes_companions() {
+                                job.prepare_companions(&*fs, op)
+                            } else {
+                                Ok(op)
+                            };
+                            match planned {
+                                Ok(op) => perform(&mut sh, op, cut, &job),
+                                Err(e) => (Some(e), None, Vec::new()),
+                            }
+                        }
                         (false, Err(e)) => (Some(e.to_string()), None, Vec::new()),
                     };
                     drop(turn);
