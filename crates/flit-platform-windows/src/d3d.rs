@@ -309,7 +309,7 @@ impl D3dRenderer {
                 }
             }
             if self.rtv.is_none() {
-                let back: ID3D11Texture2D = self.present.as_ref().unwrap().swap.GetBuffer(0).map_err(err)?;
+                let back: ID3D11Texture2D = com_output(self.present.as_ref()).map_err(err)?.swap.GetBuffer(0).map_err(err)?;
                 let mut rtv = None;
                 self.dev.device.CreateRenderTargetView(&back, None, Some(&mut rtv)).map_err(err)?;
                 self.rtv = rtv;
@@ -363,7 +363,7 @@ impl D3dRenderer {
     }
 
     unsafe fn capture(&self, path: &Path) -> Result<(), PlatformError> {
-        let back: ID3D11Texture2D = self.rtv.as_ref().unwrap().GetResource().map_err(err)?.cast().map_err(err)?;
+        let back: ID3D11Texture2D = com_output(self.rtv.as_ref()).map_err(err)?.GetResource().map_err(err)?.cast().map_err(err)?;
         let mut desc = D3D11_TEXTURE2D_DESC::default();
         back.GetDesc(&mut desc);
         desc.Usage = D3D11_USAGE_STAGING;

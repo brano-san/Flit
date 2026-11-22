@@ -1,3 +1,5 @@
+#![cfg(test)]
+
 use flit_core::i18n::{self, Lang, S};
 use flit_core::input::Event;
 use flit_core::listing::{attr, DirSnapshot, Listing, Meta};
