@@ -183,6 +183,7 @@ enum SDrag {
 
 #[derive(Default)]
 pub(super) struct SearchView {
+    pub(super) exclusions: Vec<Location>,
     pub(super) active: bool,
     pub(super) edit: LineEdit,
     edit_scroll: f32,
@@ -835,7 +836,7 @@ impl App {
             }
         }
         let paths = crate::query_attrs::SearchPaths {
-            exclude: self.search_exclusions.iter().filter_map(Location::to_windows).collect(),
+            exclude: s.exclusions.iter().filter_map(Location::to_windows).collect(),
             parent: s.result_folder.clone(),
             under: None,
         };
@@ -882,7 +883,7 @@ impl App {
         let date_w = self.s(140.0).min(list.w / 4.0);
         let name_w = (list.w * 0.32).max(self.s(140.0)).min(list.w - size_w - date_w);
         let folder_w = (list.w - name_w - size_w - date_w).max(0.0);
-        let grid = self.opts.view_rules.search_grid && !self.search.group_folder;
+        let grid = self.settings.opts.view_rules.search_grid && !self.search.group_folder;
         let mut cols = [Rect::default(); 4];
         let defaults = [name_w, folder_w, size_w, date_w];
         let widths = if grid { defaults } else { self.search.widths.map(|widths| widths.map(|w| w * self.scale)).unwrap_or(defaults) };
@@ -1135,14 +1136,14 @@ impl App {
         let sl = self.search_layout();
         let page = ((sl.list.h / sl.row_h).floor() as i64).max(1) * sl.tiles as i64;
         let mut moved = None;
-        if self.keymap.runs(key, m, "search.open") {
+        if self.settings.keymap.runs(key, m, "search.open") {
             if self.search.within.is_some() {
                 self.open_scoped(None);
             }
             self.search.edit.select_all();
             return true;
         }
-        if self.keymap.runs(key, m, "search.folder") {
+        if self.settings.keymap.runs(key, m, "search.folder") {
             if self.search.within.is_none() && self.search.home.is_some() {
                 self.toggle_scope();
             }
@@ -1261,8 +1262,8 @@ impl App {
                 unique.push(location);
             }
         }
-        if self.search_exclusions != unique {
-            self.search_exclusions = unique;
+        if self.search.exclusions != unique {
+            self.search.exclusions = unique;
             if self.search.active {
                 self.search_query(Instant::now());
             }
@@ -1282,7 +1283,7 @@ impl App {
                 self.dispatch(vec![Route { folder, select }], if action == "reveal_tab" { OpenTarget::NewTab } else { OpenTarget::CurrentTab }, now);
             }
             "exclude" => {
-                let mut paths = self.search_exclusions.clone();
+                let mut paths = self.search.exclusions.clone();
                 paths.insert(0, location);
                 self.set_search_exclusions(paths);
             }

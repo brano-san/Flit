@@ -280,7 +280,7 @@ fn sidebar_tags_search_and_open_their_items() {
     let fx: Vec<Effect> = app.drain_effects().collect();
     let opened: Vec<String> = fx.iter().filter_map(|e| if let Effect::Provider { req: ProviderRequest::Open { path, .. }, .. } = e { Some(path.display().into_owned()) } else { None }).collect();
     assert_eq!(opened, [r"C:\docs\x.pdf"]);
-    assert_eq!(app.tabs.len(), 2, "the tagged folder opens in a new tab");
+    assert_eq!(app.tabs.items.len(), 2, "the tagged folder opens in a new tab");
 }
 
 #[test]

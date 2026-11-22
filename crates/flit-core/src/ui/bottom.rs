@@ -87,7 +87,7 @@ impl App {
             BottomHit::Subfolders => self.toggle_subfolders(),
             BottomHit::Retain => {
                 self.prefs.retain_filter = !self.prefs.retain_filter;
-                for t in &mut self.tabs {
+                for t in &mut self.tabs.items {
                     t.retain_filter = self.prefs.retain_filter;
                 }
             }
@@ -447,7 +447,7 @@ impl App {
         let asked = std::mem::replace(&mut self.raising_watch_limit, false);
         match outcome {
             WatchLimit::Raised(n) => {
-                let blind: Vec<usize> = (0..self.tabs.len()).filter(|&k| self.tabs[k].live_off == Some(LiveOff::Limit)).collect();
+                let blind: Vec<usize> = (0..self.tabs.items.len()).filter(|&k| self.tabs.items[k].live_off == Some(LiveOff::Limit)).collect();
                 for k in blind {
                     self.reload(k, now);
                 }

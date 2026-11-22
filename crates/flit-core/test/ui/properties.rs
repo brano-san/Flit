@@ -37,13 +37,13 @@ fn linux_background_properties_keep_selection_and_measure_the_current_folder() {
     let path = app.current_location().path().clone();
     app.drain_effects().for_each(drop);
     app.properties_for(Some(path.clone()));
-    assert!(app.jobs.form.is_some());
+    assert!(app.dialogs.form.is_some());
     assert!(app.tab().view.as_ref().unwrap().is_selected(0));
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { items, .. }, .. } if items.iter().any(|(p, _)| p == &path))));
 }
 
 fn select(app: &mut App, names: &[&str]) {
-    let v = app.tabs[app.cur].view.as_mut().unwrap();
+    let v = app.tabs.items[app.tabs.cur].view.as_mut().unwrap();
     v.clear_selection();
     for n in names {
         let i = v.find(n.as_bytes()).unwrap();
@@ -52,7 +52,7 @@ fn select(app: &mut App, names: &[&str]) {
 }
 
 fn value(app: &App, label: S) -> Option<String> {
-    app.jobs.form.as_ref()?.controls.iter().find_map(|c| match c {
+    app.dialogs.form.as_ref()?.controls.iter().find_map(|c| match c {
         Control::Value { label: l, value } if l == label.t() => Some(value.clone()),
         _ => None,
     })
@@ -65,14 +65,14 @@ fn measure(app: &mut App) -> (OpId, Vec<(FsPath, Option<u64>)>) {
 }
 
 fn flags(app: &App) -> Option<Vec<(String, bool)>> {
-    app.jobs.form.as_ref()?.controls.iter().find_map(|c| match c {
+    app.dialogs.form.as_ref()?.controls.iter().find_map(|c| match c {
         Control::Flags { label, items, .. } if label == S::PropertiesAttributes.t() => Some(items.clone()),
         _ => None,
     })
 }
 
 fn set_flags(app: &mut App, on: &[bool]) {
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     let k = f.controls.iter().position(|c| matches!(c, Control::Flags { .. })).expect("no attribute flags");
     let Control::Flags { items, .. } = &mut f.controls[k] else { unreachable!() };
     for ((_, now), &want) in items.iter_mut().zip(on) {
@@ -82,7 +82,7 @@ fn set_flags(app: &mut App, on: &[bool]) {
 }
 
 fn check_unblock(app: &mut App) {
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     let k = f.controls.iter().position(|c| matches!(c, Control::Check { label, .. } if label == S::PropertiesUnblock.t())).expect("no unblock box");
     if let Control::Check { on, .. } = &mut f.controls[k] {
         *on = true;
@@ -110,11 +110,11 @@ fn a_file_shows_read_only_and_hidden_boxes_and_ok_changes_only_what_was_ticked()
     select(&mut app, &["a.txt"]);
     app.properties_dialog();
     assert_eq!(flags(&app), Some(vec![(S::PropertiesReadOnly.t().to_owned(), true), (S::PropertiesHidden.t().to_owned(), false)]));
-    assert!(app.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Value { value, .. } if value == S::PropertiesCompressed.t())), "other attributes are still listed");
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "nothing changed yet, so only Close is offered");
+    assert!(app.dialogs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Value { value, .. } if value == S::PropertiesCompressed.t())), "other attributes are still listed");
+    assert_eq!(app.dialogs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "nothing changed yet, so only Close is offered");
     app.drain_effects().for_each(drop);
     set_flags(&mut app, &[false, true]);
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
+    assert_eq!(app.dialogs.form.as_ref().unwrap().buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
     app.form_submit(0);
     assert_eq!(file_ops(&mut app), [FileOp::SetAttributes { items: vec![FsPath::parse(r"C:\work\a.txt").unwrap()], set: attr::HIDDEN, clear: attr::READONLY, unblock: false }]);
     assert_eq!(app.asking(), None);
@@ -147,7 +147,7 @@ fn a_downloaded_file_offers_unblock_and_ok_removes_the_mark_with_the_attribute_c
     app.properties_dialog();
     props_reply(&mut app, vec![PropGroup { title: "Origin".into(), rows: vec![("Authors".into(), "Ann".into())] }, security()]);
     assert_eq!(value(&app, S::PropertiesSecurity).as_deref(), Some(S::PropertiesBlocked.t()));
-    assert!(app.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Value { label, .. } if label == "Authors")));
+    assert!(app.dialogs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Value { label, .. } if label == "Authors")));
     check_unblock(&mut app);
     app.form_submit(0);
     assert_eq!(file_ops(&mut app), [FileOp::SetAttributes { items: vec![FsPath::parse(r"C:\Downloads\setup.exe").unwrap()], set: 0, clear: 0, unblock: true }]);
@@ -160,7 +160,7 @@ fn unblock_is_not_offered_without_the_mark_and_unix_items_keep_plain_attributes(
     select(&mut app, &["notes.txt"]);
     app.properties_dialog();
     props_reply(&mut app, vec![PropGroup { title: "Origin".into(), rows: vec![("Authors".into(), "Ann".into())] }]);
-    assert!(!app.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Check { .. })));
+    assert!(!app.dialogs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Check { .. })));
     let mut app = app_at("/home/user/folder");
     app.caps.unix_paths = true;
     deliver(&mut app, &[("notes.txt", attr::READONLY, 5)]);
@@ -168,7 +168,7 @@ fn unblock_is_not_offered_without_the_mark_and_unix_items_keep_plain_attributes(
     app.properties_dialog();
     assert_eq!(flags(&app), None);
     assert_eq!(value(&app, S::PropertiesAttributes).as_deref(), Some(S::PropertiesReadOnly.t()));
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons.len(), 1);
+    assert_eq!(app.dialogs.form.as_ref().unwrap().buttons.len(), 1);
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn a_folder_counts_in_the_background_and_esc_closes() {
     assert!(value(&app, S::PropertiesSize).unwrap().contains("2"));
     assert!(value(&app, S::PropertiesOnDisk).unwrap().contains("4"));
     assert_eq!(value(&app, S::PropertiesFileSystem).as_deref(), Some("NTFS"));
-    let Some(Form { kind: Kind::Properties(m), .. }) = &app.jobs.form else { panic!() };
+    let Some(Form { kind: Kind::Properties(m), .. }) = &app.dialogs.form else { panic!() };
     let ctl = m.ctl.clone();
     app.on_event(&Event::Key { key: Key::Escape, mods: Mods::default(), pressed: true }, Instant::now());
     assert_eq!(app.asking(), None);
@@ -217,7 +217,7 @@ fn an_open_asking_for_properties_shows_them_once_the_item_is_selected() {
     deliver(&mut app, &[("a.txt", 0, 5), ("c.txt", 0, 1)]);
     assert_eq!(app.asking(), Some("properties"));
     assert_eq!(value(&app, S::PropertiesName).as_deref(), Some("a.txt"));
-    app.jobs.form = None;
+    app.dialogs.form = None;
     deliver(&mut app, &[("a.txt", 0, 5), ("c.txt", 0, 1)]);
     assert_eq!(app.asking(), None);
     app.open(&crate::open::Open { properties: false, ..open }, &|_| None, Instant::now());
@@ -237,13 +237,13 @@ fn a_single_file_shows_the_shell_details_and_no_leftover_note() {
     let id = effects.iter().find_map(|e| if let Effect::Provider { req: ProviderRequest::Measure { id, .. }, .. } = e { Some(*id) } else { None }).unwrap();
     let rows = vec![("Authors".to_string(), "Ann".to_string())];
     app.on_preview(req.gen + 1, PreviewData::Props(vec![PropGroup { title: "Origin".into(), rows: rows.clone() }]));
-    assert!(app.jobs.form.as_ref().unwrap().controls.iter().all(|c| !matches!(c, Control::Value { label, .. } if label == "Authors")));
+    assert!(app.dialogs.form.as_ref().unwrap().controls.iter().all(|c| !matches!(c, Control::Value { label, .. } if label == "Authors")));
     app.on_preview(req.gen, PreviewData::Props(vec![PropGroup { title: "Origin".into(), rows }]));
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert!(f.controls.iter().any(|c| matches!(c, Control::Value { label, value } if label == "Authors" && value == "Ann")));
     let tab = app.tab().id;
     app.on_provider_event(ProviderEvent::Measured { tab, id, totals: Totals { size: 5, ..Totals::default() }, file_system: Some("NTFS".into()), done: true }, Instant::now());
-    assert_eq!(app.jobs.form.as_ref().unwrap().note, "");
+    assert_eq!(app.dialogs.form.as_ref().unwrap().note, "");
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn an_archive_root_also_measures_its_unpacked_contents_and_shift_opens_the_shell
     let zip = FsPath::parse(r"C:\work\pack.zip").unwrap();
     assert_eq!(items, vec![(zip.clone(), Some(300)), (zip, None)]);
     assert!(value(&app, S::PropertiesUnpacked).is_some() && value(&app, S::PropertiesContains).is_some());
-    app.jobs.form = None;
+    app.dialogs.form = None;
     select(&mut app, &["pack.zip", "b.txt"]);
     app.run_action("item.inspect", Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p.len() == 2)));
@@ -277,7 +277,7 @@ fn a_recent_file_from_the_home_page_shows_as_a_file_on_unix_paths() {
     app.drain_effects().for_each(drop);
     let path = FsPath::parse(r"C:\x\notes.txt").unwrap();
     app.place_command(crate::ui::sidebar::PlaceCmd::FileProperties(path.clone()), Instant::now());
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Properties(p) if p == vec![path.clone()])));
 }
 
@@ -288,7 +288,7 @@ fn sidebar_properties_open_the_core_dialog_on_unix_paths_only() {
     let path = FsPath::parse("/home/user/other").unwrap();
     app.drain_effects().for_each(drop);
     app.place_command(crate::ui::sidebar::PlaceCmd::Properties(path.clone()), Instant::now());
-    assert!(app.jobs.form.is_some());
+    assert!(app.dialogs.form.is_some());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Measure { items, .. }, .. } if items.iter().any(|(p, _)| p == &path))));
 }
 
@@ -300,13 +300,13 @@ fn long_properties_stay_in_the_window_and_scroll_below_a_fixed_header() {
     app.properties_dialog();
     props_reply(&mut app, vec![PropGroup { title: "Details".into(), rows: (0..80).map(|i| (format!("Property {i}"), "value".into())).collect() }]);
     app.on_event(&Event::Resized { width: 420, height: 320 }, Instant::now());
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert!(f.rect.y >= 0.0 && f.rect.bottom() <= 320.0);
     assert!(f.rect.x >= 0.0 && f.rect.right() <= 420.0);
     assert!(f.document.max() > 0.0);
     let buttons = f.button_rects.clone();
     app.form_key(Key::End, Mods::default());
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert!(f.document.scroll.target > 0.0);
     assert_eq!(f.button_rects, buttons);
 }
@@ -317,18 +317,18 @@ fn outside_click_closes_unchanged_properties_but_keeps_edits() {
     deliver(&mut app, &[("a.txt", 0, 5)]);
     select(&mut app, &["a.txt"]);
     app.properties_dialog();
-    let ctl = match &app.jobs.form.as_ref().unwrap().kind { Kind::Properties(m) => m.ctl.clone(), _ => unreachable!() };
-    let r = app.jobs.form.as_ref().unwrap().rect;
+    let ctl = match &app.dialogs.form.as_ref().unwrap().kind { Kind::Properties(m) => m.ctl.clone(), _ => unreachable!() };
+    let r = app.dialogs.form.as_ref().unwrap().rect;
     app.form_down(r.x + 2.0, r.y + 2.0, crate::input::MouseButton::Left, 1, Instant::now());
-    assert!(app.jobs.form.is_some(), "inside click keeps the dialog open");
+    assert!(app.dialogs.form.is_some(), "inside click keeps the dialog open");
     app.drain_effects().for_each(drop);
     set_flags(&mut app, &[true, true]);
     app.form_down(1.0, 100.0, crate::input::MouseButton::Left, 1, Instant::now());
-    assert!(app.jobs.form.is_some(), "a stray click never discards edited attributes");
+    assert!(app.dialogs.form.is_some(), "a stray click never discards edited attributes");
     assert!(file_ops(&mut app).is_empty());
     set_flags(&mut app, &[false, false]);
     app.form_down(1.0, 100.0, crate::input::MouseButton::Left, 1, Instant::now());
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(ctl.is_cancelled());
     assert!(file_ops(&mut app).is_empty());
 }
@@ -340,7 +340,7 @@ fn header_close_is_accessible_and_cancels_pending_attribute_changes() {
     select(&mut app, &["a.txt"]);
     app.properties_dialog();
     set_flags(&mut app, &[true, true]);
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     let k = f.controls.len() + f.buttons.len();
     let close = f.close_rect;
     assert_eq!(app.form_hit(close.x + 1.0, close.y + 1.0), Some(crate::ui::Hit::Form(k)));
@@ -350,7 +350,7 @@ fn header_close_is_accessible_and_cancels_pending_attribute_changes() {
     assert!(targets.iter().any(|(_, h)| *h == crate::ui::Hit::Form(k)));
     app.drain_effects().for_each(drop);
     app.form_a11y_invoke(k);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(file_ops(&mut app).is_empty());
 }
 
@@ -361,7 +361,7 @@ fn async_dates_update_existing_rows_without_duplicates_or_shifting_measurement_t
     deliver(&mut app, &[("notes.txt", 0, 5)]);
     select(&mut app, &["notes.txt"]);
     app.properties_dialog();
-    let (id, indices) = match &app.jobs.form.as_ref().unwrap().kind {
+    let (id, indices) = match &app.dialogs.form.as_ref().unwrap().kind {
         Kind::Properties(m) => (m.id, (m.rows.size, m.rows.on_disk, m.rows.accessed, m.rows.file_system)),
         _ => unreachable!(),
     };
@@ -372,13 +372,13 @@ fn async_dates_update_existing_rows_without_duplicates_or_shifting_measurement_t
         (S::PropertiesChanged.t().into(), "native metadata date".into()),
     ] }]);
     for (label, expected) in [(S::PropertiesCreated, "native creation date"), (S::PropertiesAccessed, "native access date"), (S::PropertiesChanged, "native metadata date")] {
-        let rows: Vec<_> = app.jobs.form.as_ref().unwrap().controls.iter().filter_map(|c| match c {
+        let rows: Vec<_> = app.dialogs.form.as_ref().unwrap().controls.iter().filter_map(|c| match c {
             Control::Value { label: shown, value } if shown == label.t() => Some(value.as_str()),
             _ => None,
         }).collect();
         assert_eq!(rows, [expected], "each date has one updated row");
     }
-    let Kind::Properties(m) = &app.jobs.form.as_ref().unwrap().kind else { unreachable!() };
+    let Kind::Properties(m) = &app.dialogs.form.as_ref().unwrap().kind else { unreachable!() };
     assert_eq!((m.rows.size, m.rows.on_disk, m.rows.accessed, m.rows.file_system), indices);
     let accessed = 133_000_000_000_000_000;
     app.measured(id, Totals { size: 42, on_disk: 4096, accessed, ..Default::default() }, Some("ext4".into()), true);
@@ -397,17 +397,17 @@ fn unchanged_properties_offer_one_close_and_ok_with_cancel_appear_only_while_som
     select(&mut app, &["a.txt"]);
     app.properties_dialog();
     app.layout();
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert_eq!(f.buttons, [S::ArchiveClose.t()]);
     assert_eq!(f.button_rects, [f.close_rect], "the only way out is the header close, not a second button below");
     set_flags(&mut app, &[true, false]);
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert_eq!(f.buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
     assert!(f.button_rects.iter().all(|r| *r != f.close_rect && r.y > f.close_rect.y), "OK and Cancel sit at the bottom");
     set_flags(&mut app, &[false, false]);
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "undoing the change brings back the single Close");
+    assert_eq!(app.dialogs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "undoing the change brings back the single Close");
     app.drain_effects().for_each(drop);
     app.form_key(Key::Enter, Mods::default());
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(file_ops(&mut app).is_empty(), "closing an unchanged dialog changes nothing");
 }

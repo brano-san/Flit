@@ -22,7 +22,7 @@ fn the_preview_lists_programs_and_changes_then_applies_and_undoes_after_backup()
     let mut a = app();
     let baseline = a.setting_values();
     a.preview_settings_import(sample());
-    let form = a.jobs.form.as_ref().unwrap();
+    let form = a.dialogs.form.as_ref().unwrap();
     assert_eq!(form.focus, form.controls.len() + 1);
     assert!(form.controls.iter().any(|c| matches!(c, Control::Paragraph { text, .. } if text.contains("menu.custom"))));
     assert!(form.controls.iter().any(|c| matches!(c, Control::Paragraph { text, .. } if text.contains("viewer.exe"))));
@@ -54,7 +54,7 @@ fn cancelling_or_changing_settings_before_the_backup_reply_prevents_the_import()
     let key = settings::index("files.show_hidden").unwrap();
     a.apply_settings(&[(key, Value::Bool(true))]);
     a.apply_confirmed_settings_import(plan, String::new());
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(!a.drain_effects().any(|e| matches!(e, Effect::Tags(_))));
     assert_eq!(SETTINGS[settings::index("menu.custom").unwrap()].get(&a), baseline[settings::index("menu.custom").unwrap()]);
 }

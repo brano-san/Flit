@@ -101,14 +101,14 @@ fn opening_a_locked_volume_asks_for_its_passphrase_and_unlocks_it_with_that() {
     let i = side(&app, "/dev/sdd2");
     app.open_side_item(i, false, Instant::now());
     assert!(launches(&mut app).is_empty(), "nothing is mounted before the passphrase is given");
-    let f = app.jobs.form.as_ref().expect("the passphrase is asked");
+    let f = app.dialogs.form.as_ref().expect("the passphrase is asked");
     assert!(matches!(&f.kind, Kind::Unlock { device } if *device == p("/dev/sdd2")));
     assert!(matches!(&f.controls[0], Control::Value { value, .. } if value == "Encrypted volume (sdd2)"));
     app.form_submit(0);
-    assert!(app.jobs.form.is_some() && launches(&mut app).is_empty(), "an empty passphrase keeps the dialog open");
-    app.jobs.form.as_mut().unwrap().set_text(1, "correct horse");
+    assert!(app.dialogs.form.is_some() && launches(&mut app).is_empty(), "an empty passphrase keeps the dialog open");
+    app.dialogs.form.as_mut().unwrap().set_text(1, "correct horse");
     app.form_submit(0);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert_eq!(launches(&mut app), [Launch::Unlock { device: p("/dev/sdd2"), passphrase: Secret("correct horse".into()) }]);
     assert!(!format!("{:?}", Launch::Unlock { device: p("/dev/sdd2"), passphrase: Secret("correct horse".into()) }).contains("horse"));
 }
@@ -118,12 +118,12 @@ fn cancelling_the_passphrase_unlocks_nothing_and_a_plain_volume_mounts_at_once()
     let mut app = machine();
     let i = side(&app, "/dev/sdd2");
     app.open_side_item(i, false, Instant::now());
-    app.jobs.form.as_mut().unwrap().set_text(1, "typed");
+    app.dialogs.form.as_mut().unwrap().set_text(1, "typed");
     app.form_submit(1);
-    assert!(app.jobs.form.is_none() && launches(&mut app).is_empty());
+    assert!(app.dialogs.form.is_none() && launches(&mut app).is_empty());
     let i = side(&app, "/dev/sdc1");
     app.open_side_item(i, false, Instant::now());
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert_eq!(launches(&mut app), [Launch::Mount(p("/dev/sdc1"))]);
 }
 
@@ -163,7 +163,7 @@ fn computer(app: &mut App, names: &[&str]) {
 }
 
 fn pick(app: &mut App, name: &str) -> u32 {
-    let v = app.tabs[app.cur].view.as_mut().unwrap();
+    let v = app.tabs.items[app.tabs.cur].view.as_mut().unwrap();
     let i = v.find(name.as_bytes()).unwrap();
     v.clear_selection();
     v.set_selected(i, true);
@@ -199,29 +199,29 @@ fn a_wrong_passphrase_asks_again_and_other_unlock_failures_go_to_the_status_bar(
     let mut app = machine();
     let i = side(&app, "/dev/sdd2");
     app.open_side_item(i, false, Instant::now());
-    assert!(app.jobs.form.as_ref().is_some_and(|f| f.note.is_empty() && !f.error), "the first dialog carries no warning");
-    app.jobs.form.as_mut().unwrap().set_text(1, "wrong horse");
+    assert!(app.dialogs.form.as_ref().is_some_and(|f| f.note.is_empty() && !f.error), "the first dialog carries no warning");
+    app.dialogs.form.as_mut().unwrap().set_text(1, "wrong horse");
     app.form_submit(0);
     let tab = app.tab().id;
     assert_eq!(launches(&mut app).len(), 1);
     app.on_provider_event(ProviderEvent::WrongPassphrase { tab, device: p("/dev/sdd2") }, Instant::now());
-    let f = app.jobs.form.as_ref().expect("the passphrase is asked again");
+    let f = app.dialogs.form.as_ref().expect("the passphrase is asked again");
     assert!(matches!(&f.kind, Kind::Unlock { device } if *device == p("/dev/sdd2")));
     assert!(matches!(&f.controls[0], Control::Value { value, .. } if value == "Encrypted volume (sdd2)"));
     assert!(matches!(&f.controls[1], Control::Text { field, .. } if field.secret) && f.text(1).is_empty(), "the wrong passphrase is not kept");
     assert_eq!((f.note.as_str(), f.error), (S::ErrorsFsWrongPassphrase.t(), true));
     assert!(app.tab().error.is_none());
-    app.jobs.form.as_mut().unwrap().set_text(1, "correct horse");
+    app.dialogs.form.as_mut().unwrap().set_text(1, "correct horse");
     app.form_submit(0);
     assert_eq!(launches(&mut app), [Launch::Unlock { device: p("/dev/sdd2"), passphrase: Secret("correct horse".into()) }]);
 
     app.on_provider_event(ProviderEvent::WrongPassphrase { tab, device: p("/dev/sdd2") }, Instant::now());
     app.form_submit(1);
-    assert!(app.jobs.form.is_none() && launches(&mut app).is_empty(), "cancelling stops the attempts");
+    assert!(app.dialogs.form.is_none() && launches(&mut app).is_empty(), "cancelling stops the attempts");
 
     let busy = "Cannot unlock /dev/sdd2: The drive is in use".to_owned();
     app.on_provider_event(ProviderEvent::OpDone { tab, id: 0, error: Some(busy.clone().into()), report: None }, Instant::now());
-    assert!(app.jobs.form.is_none(), "a busy, gone or forbidden volume does not ask for the passphrase again");
+    assert!(app.dialogs.form.is_none(), "a busy, gone or forbidden volume does not ask for the passphrase again");
     assert_eq!(app.tab().error.as_deref(), Some(busy.as_str()));
     assert!(launches(&mut app).is_empty());
 }

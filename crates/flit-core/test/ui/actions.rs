@@ -387,15 +387,15 @@ fn search_filter_and_address_follow_section_9() {
 fn tab_cycles_panels_only_while_the_list_has_focus() {
     let mut app = crate::ui::harness::app(&["a.txt", "b.txt"]);
     assert!(app.run_action("panel.split_right", Instant::now()));
-    let first = app.panels.active;
+    let first = app.tabs.panels.active;
     app.focus = crate::ui::Focus::List;
     press(&mut app, key(Key::Tab));
-    assert_ne!(app.panels.active, first, "Tab moves to the next panel");
+    assert_ne!(app.tabs.panels.active, first, "Tab moves to the next panel");
     press(&mut app, shift(Key::Tab));
-    assert_eq!(app.panels.active, first, "Shift+Tab comes back");
+    assert_eq!(app.tabs.panels.active, first, "Shift+Tab comes back");
     press(&mut app, ctrl(Key::Char('F')));
     press(&mut app, key(Key::Tab));
-    assert_eq!(app.panels.active, first, "in a text field Tab never changes the panel");
+    assert_eq!(app.tabs.panels.active, first, "in a text field Tab never changes the panel");
 }
 
 #[test]
@@ -438,17 +438,17 @@ fn tabs_shift_and_get_selected_by_number() {
     }
     assert_eq!(app.tabs().len(), 4);
     press(&mut app, ctrl(Key::Char('2')));
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
     press(&mut app, ctrl(Key::Char('9')));
-    assert_eq!(app.cur, 3);
+    assert_eq!(app.tabs.cur, 3);
     let id = app.tab().id;
     press(&mut app, ctrl_shift(Key::PageUp));
-    assert_eq!((app.cur, app.tab().id), (2, id));
+    assert_eq!((app.tabs.cur, app.tab().id), (2, id));
     press(&mut app, ctrl_shift(Key::PageDown));
     press(&mut app, ctrl_shift(Key::PageDown));
-    assert_eq!((app.cur, app.tab().id), (3, id), "the last tab stays last");
+    assert_eq!((app.tabs.cur, app.tab().id), (3, id), "the last tab stays last");
     press(&mut app, ctrl(Key::Char('8')));
-    assert_eq!(app.cur, 3, "a missing tab is not selected");
+    assert_eq!(app.tabs.cur, 3, "a missing tab is not selected");
 }
 
 #[test]
@@ -569,7 +569,7 @@ fn without_a_command_bar_its_commands_stay_on_keys_and_in_the_palette() {
         assert!(index(id).is_none(), "{id}");
     }
     for (id, keys) in [("file.cut", "Ctrl+X"), ("file.copy", "Ctrl+C"), ("file.paste", "Ctrl+V"), ("file.new_folder", "Ctrl+Shift+N")] {
-        assert_eq!(a.keymap.first_text(id).as_deref(), Some(keys), "{id}");
+        assert_eq!(a.settings.keymap.first_text(id).as_deref(), Some(keys), "{id}");
     }
     a.open_palette();
     let ids: Vec<&str> = a.nav.palette.as_ref().unwrap().ids.iter().map(|&i| ACTIONS[i].id).collect();
@@ -666,7 +666,7 @@ fn ctrl_plus_minus_and_zero_size_items_and_leave_the_font_alone() {
     press(&mut app, ctrl(c('0')));
     assert_eq!(app.tab().zoom, ZOOM_DETAILS, "Ctrl+0 keeps Details");
     assert_eq!(app.ui_scale(), scale);
-    assert_eq!(index("view.columns.fit").map(|i| app.keymap.keys(i).to_vec()), Some(vec![ctrl(Key::NumPlus)]));
+    assert_eq!(index("view.columns.fit").map(|i| app.settings.keymap.keys(i).to_vec()), Some(vec![ctrl(Key::NumPlus)]));
 }
 
 #[test]
@@ -690,7 +690,7 @@ fn ctrl_home_end_and_page_keys_move_the_cursor_without_selecting() {
     press(&mut app, ctrl(Key::PageDown));
     let down = state(&app);
     assert!(down.0.is_some_and(|r| r > 0) && down.1 == picked, "{down:?}");
-    assert_eq!(app.cur, 0, "Ctrl+PageDown stays in the tab on Windows");
+    assert_eq!(app.tabs.cur, 0, "Ctrl+PageDown stays in the tab on Windows");
     let unix = crate::ui::keymap::defaults_for(true);
     assert_eq!(unix.owner(ctrl(Key::PageDown)).map(|i| ACTIONS[i].id), Some("tab.next"));
     assert_eq!(unix.owner(ctrl(Key::PageUp)).map(|i| ACTIONS[i].id), Some("tab.previous"));
@@ -753,7 +753,7 @@ fn each_action_keeps_the_app_consistent_in_edge_states() {
                 a.builtin_archives = true;
                 a.set_caps(crate::caps::Caps { unix_paths: unix });
                 match scenario {
-                    "no tabs" => a.tabs.clear(),
+                    "no tabs" => a.tabs.items.clear(),
                     "multi-selection" => {
                         assert!(a.run_action("select.all", now));
                     }
@@ -772,13 +772,13 @@ fn each_action_keeps_the_app_consistent_in_edge_states() {
                         executed.insert(action.id);
                     }
                     if scenario == "no tabs" {
-                        assert!(a.tabs.is_empty());
+                        assert!(a.tabs.items.is_empty());
                         assert!(a.drain_effects().next().is_none());
                         return;
                     }
-                    assert!(a.cur < a.tabs.len());
-                    assert_eq!(a.tabs.iter().map(|tab| tab.id).collect::<std::collections::HashSet<_>>().len(), a.tabs.len());
-                    for tab in &a.tabs {
+                    assert!(a.tabs.cur < a.tabs.items.len());
+                    assert_eq!(a.tabs.items.iter().map(|tab| tab.id).collect::<std::collections::HashSet<_>>().len(), a.tabs.items.len());
+                    for tab in &a.tabs.items {
                         if let Some(view) = &tab.view {
                             let count = view.listing().len() as u32;
                             assert!(view.focus.is_none_or(|index| index < count));

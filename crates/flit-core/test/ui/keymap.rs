@@ -341,11 +341,11 @@ fn a_linux_app_runs_its_own_defaults_and_resets_to_them() {
         a.run_action("tab.duplicate", Instant::now());
     }
     press(&mut a, Key::Char('2'), Mods { alt: true, ..NO });
-    assert_eq!(a.cur, 1);
+    assert_eq!(a.tabs.cur, 1);
     press(&mut a, Key::Char('9'), Mods { alt: true, ..NO });
-    assert_eq!(a.cur, 2);
+    assert_eq!(a.tabs.cur, 2);
     press(&mut a, Key::Char('1'), CTRL);
-    assert_eq!(a.cur, 2, "Ctrl+1 is a view mode on Linux");
+    assert_eq!(a.tabs.cur, 2, "Ctrl+1 is a view mode on Linux");
     press(&mut a, Key::F(9), NO);
     assert!(!a.nav.sidebar.state.sidebar);
     press(&mut a, Key::Char('Q'), CTRL);

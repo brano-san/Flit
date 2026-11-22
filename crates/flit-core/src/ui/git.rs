@@ -116,7 +116,7 @@ impl App {
     }
 
     pub(super) fn ask_git_abort(&mut self) {
-        if self.jobs.form.is_some() { return; }
+        if self.dialogs.form.is_some() { return; }
         let Some(sequence) = self.git_sequence() else { return };
         let Some((tab, dir)) = self.git_target(true) else { return };
         let label = sequence_labels(sequence)[1].t();
@@ -140,11 +140,11 @@ impl App {
     pub(super) fn set_git_integration(&mut self, on: bool) {
         self.prefs.git_integration = on;
         self.each_pane(|a, k| {
-            a.tabs[k].git = None;
-            if let Some(v) = &mut a.tabs[k].view {
+            a.tabs.items[k].git = None;
+            if let Some(v) = &mut a.tabs.items[k].view {
                 v.set_git(None);
             }
-            if a.tabs[k].view_spec.sort.field == crate::sort::SortField::GitHash {
+            if a.tabs.items[k].view_spec.sort.field == crate::sort::SortField::GitHash {
                 a.resort(k);
             }
             if on { a.git_refresh(k, false); }
@@ -155,7 +155,7 @@ impl App {
 
     pub(super) fn git_refresh(&mut self, k: usize, changed: bool) {
         if !self.prefs.git_integration { return; }
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         if changed && t.git.as_ref().is_none_or(|g| g.root.is_none()) {
             return;
         }
@@ -225,7 +225,7 @@ impl App {
         match ev {
             GitEvent::Status { tab, gen, info } => self.git_status_arrived(tab, gen, info),
             GitEvent::Branches { tab, gen, dir, create, branches } => {
-                if self.tab().id == tab && self.tab().gen == gen && git_dir(self.tab().location()).as_ref() == Some(&dir) && self.jobs.form.is_none() {
+                if self.tab().id == tab && self.tab().gen == gen && git_dir(self.tab().location()).as_ref() == Some(&dir) && self.dialogs.form.is_none() {
                     self.git_branches = branches;
                     if create {
                         self.new_git_branch_form(tab, dir);
@@ -243,7 +243,7 @@ impl App {
             }
             GitEvent::SwitchBlocked { tab, dir, from, branch } => {
                 if self.tab().id == tab && git_dir(self.tab().location()).as_ref() == Some(&dir) {
-                    if self.jobs.form.is_none() {
+                    if self.dialogs.form.is_none() {
                         self.ask_git_switch(tab, dir, from, branch);
                     } else {
                         self.status(crate::tr!(S::GitBranchSwitchBlocked, branch = branch));
@@ -293,7 +293,7 @@ impl App {
                 }
                 self.each_pane(|a, k| a.git_refresh(k, true));
                 if op == GitOp::Init {
-                    self.git_refresh(self.cur, false);
+                    self.git_refresh(self.tabs.cur, false);
                 }
             }
         }
@@ -302,12 +302,12 @@ impl App {
     fn git_status_arrived(&mut self, tab: TabId, gen: u64, info: Option<Arc<GitInfo>>) {
         if !self.prefs.git_integration { return; }
         let info = info.filter(|g| g.root.is_some());
-        if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen) {
-            self.tabs[k].git = info;
-            if self.tabs[k].view_spec.sort.field == crate::sort::SortField::GitHash {
+        if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab && t.gen == gen) {
+            self.tabs.items[k].git = info;
+            if self.tabs.items[k].view_spec.sort.field == crate::sort::SortField::GitHash {
                 self.resort(k);
             }
-            if k == self.cur {
+            if k == self.tabs.cur {
                 self.layout();
                 self.dirty = true;
             }
@@ -412,7 +412,7 @@ impl App {
     }
 
     pub(super) fn ask_git_drop_stash(&mut self, stash: crate::git::Stash) {
-        if self.jobs.form.is_some() { return; }
+        if self.dialogs.form.is_some() { return; }
         let Some((tab, dir)) = self.git_target(true) else { return };
         let kind = Kind::GitStashDrop { tab, dir, oid: stash.oid };
         let controls = vec![Control::paragraph(crate::tr!(S::GitStashDropConfirm, stash = stash.message))];
@@ -429,7 +429,7 @@ impl App {
     }
 
     pub(super) fn ask_git_branch(&mut self) {
-        if self.jobs.form.is_some() { return; }
+        if self.dialogs.form.is_some() { return; }
         if let Some((tab, dir)) = self.git_target(true) {
             self.effects.push(Effect::Git(GitRequest::Branches { tab, gen: self.tab().gen, dir, create: true }));
         }
@@ -464,7 +464,7 @@ impl App {
     }
 
     pub(super) fn ask_git_delete(&mut self, k: usize) {
-        if self.jobs.form.is_some() { return; }
+        if self.dialogs.form.is_some() { return; }
         let Some(b) = self.git_branches.get(k).filter(|b| !b.remote && Some(b.name.as_str()) != self.git_branch()).cloned() else { return };
         let Some((tab, dir)) = self.git_target(true) else { return };
         let controls = vec![Control::paragraph(crate::tr!(S::GitBranchConfirm, branch = b.name))];
@@ -485,7 +485,7 @@ impl App {
     }
 
     fn git_form_done(&mut self, tab: TabId, op: &GitOp, error: Option<&str>) -> bool {
-        let Some(mut f) = self.jobs.form.take() else { return false };
+        let Some(mut f) = self.dialogs.form.take() else { return false };
         let handled = match &mut f.kind {
             Kind::GitAbort { tab: t, sequence, pending, .. } if *t == tab && *pending && *op == GitOp::Abort(*sequence) => {
                 *pending = false;
@@ -512,7 +512,7 @@ impl App {
             }
             _ => false,
         };
-        if !handled || error.is_some() { self.jobs.form = Some(f); }
+        if !handled || error.is_some() { self.dialogs.form = Some(f); }
         if handled { self.show_conflict_table(); self.layout(); self.dirty = true; }
         handled
     }
@@ -524,7 +524,7 @@ impl App {
     }
 
     pub(super) fn ask_clone_in(&mut self, tab: TabId, dir: FsPath, url: &str) -> bool {
-        if self.jobs.form.is_some() || git_dir(&Location::from_local(dir.clone())).is_none() {
+        if self.dialogs.form.is_some() || git_dir(&Location::from_local(dir.clone())).is_none() {
             return false;
         }
         let controls = vec![Control::text(S::GitCloneUrl.t(), url, S::GitCloneHint.t()), Control::value(S::GitCloneDestination.t(), &dir.display())];
@@ -575,7 +575,7 @@ impl App {
     fn git_failed(&mut self, tab: TabId, op: &GitOp, e: &str) {
         match crate::git::failure(e) {
             crate::git::Failure::Missing => self.status(if self.caps.unix_paths { S::GitErrorInstallLinux } else { S::GitErrorInstallWindows }.t()),
-            crate::git::Failure::Auth if self.jobs.form.is_none() => {
+            crate::git::Failure::Auth if self.dialogs.form.is_none() => {
                 let Some(dir) = self.git_dir_of(tab) else { return self.status(crate::tr!(S::GitErrorFailed, error = e)) };
                 self.open_git_auth(op, dir, e, None);
             }
@@ -586,7 +586,7 @@ impl App {
     fn open_git_auth(&mut self, op: &GitOp, dir: FsPath, error: &str, github: Option<crate::git::GithubLogin>) {
         use crate::git::GithubLogin;
         self.status(crate::tr!(S::GitErrorFailed, error = error));
-        let Some(command) = crate::git::op_command(op).filter(|_| self.jobs.form.is_none()) else { return };
+        let Some(command) = crate::git::op_command(op).filter(|_| self.dialogs.form.is_none()) else { return };
         let mut controls = vec![Control::paragraph(crate::tr!(S::GitErrorAuthText, command = command)), Control::line(error)];
         let mut buttons = vec![S::GitErrorAuthOpen.t()];
         let login = match github {
@@ -605,7 +605,7 @@ impl App {
     }
 
     fn git_dir_of(&self, tab: TabId) -> Option<FsPath> {
-        let t = self.tabs.iter().find(|t| t.id == tab)?;
+        let t = self.tabs.items.iter().find(|t| t.id == tab)?;
         t.git.as_ref().and_then(|g| g.root.clone()).or_else(|| t.view_loc.to_windows())
     }
 

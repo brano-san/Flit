@@ -29,12 +29,12 @@ fn system_window_buttons_leave_tabs_and_panel_controls_accessible_on_both_sides(
                 ev(&mut app, Event::Resized { width, height: 800 });
                 ev(&mut app, Event::WindowButtons(WindowButtons { left: vec![B::Close, B::Minimize], right: vec![B::Maximize] }));
                 frame(&mut app);
-                let caps = app.panels.caption;
+                let caps = app.tabs.panels.caption;
                 assert_eq!(caps[2].x, 0.0);
                 assert_eq!(caps[0].x, caps[2].right());
                 assert_eq!(caps[1].right(), width as f32);
-                assert!(app.panels.menu.x >= caps[0].right());
-                assert!(app.panels.quick.x >= app.panels.menu.right());
+                assert!(app.tabs.panels.menu.x >= caps[0].right());
+                assert!(app.tabs.panels.quick.x >= app.tabs.panels.menu.right());
                 for id in app.order() {
                     let l = layout_of(&app, id);
                     for r in l.tabs.iter().map(|t| t.0).chain([l.actions, l.new_tab]).filter(|r| r.w > 0.0) {
@@ -59,18 +59,18 @@ fn system_window_buttons_are_runtime_only_and_hidden_controls_cannot_be_invoked(
     let before = app.persisted();
     ev(&mut app, Event::WindowButtons(WindowButtons { left: vec![B::Close], right: vec![] }));
     frame(&mut app);
-    assert_eq!(app.panels.caption[0].w, 0.0);
-    assert_eq!(app.panels.caption[1].w, 0.0);
-    assert!(app.panels.caption[2].w > 0.0);
+    assert_eq!(app.tabs.panels.caption[0].w, 0.0);
+    assert_eq!(app.tabs.panels.caption[1].w, 0.0);
+    assert!(app.tabs.panels.caption[2].w > 0.0);
     let tree = app.accessibility();
     assert!(!tree.nodes.iter().any(|n| n.name == S::A11yButtonMaximize.t() || n.name == S::A11yButtonMinimize.t()));
     assert_eq!(app.persisted(), before);
     frame(&mut other);
-    assert_eq!(other.panels.caption[2].right(), 1200.0);
-    assert!(other.panels.caption.iter().all(|r| r.w > 0.0));
+    assert_eq!(other.tabs.panels.caption[2].right(), 1200.0);
+    assert!(other.tabs.panels.caption.iter().all(|r| r.w > 0.0));
     ev(&mut app, Event::WindowButtons(WindowButtons { left: vec![], right: vec![] }));
-    assert!(app.panels.caption.iter().all(|r| r.w == 0.0));
-    assert_eq!(app.panels.menu.x, app.s(4.0));
+    assert!(app.tabs.panels.caption.iter().all(|r| r.w == 0.0));
+    assert_eq!(app.tabs.panels.menu.x, app.s(4.0));
 }
 
 #[test]
@@ -86,7 +86,7 @@ fn all_left_split_empty_and_default_captions_keep_rendered_tab_strips_in_their_p
             app.frame(&mut g, t0());
             assert!(g.dl.instances.iter().all(|i| i.rect.iter().all(|f| f.is_finite()) && i.rect[2] >= 0.0 && i.rect[3] >= 0.0));
             assert!(!g.dl.instances.iter().any(|i| i.kind == crate::render::kind::GLYPH && i.rect[0] < 0.0 && i.rect[1] < 0.0), "hidden strip controls do not draw glyphs at the origin");
-            let caps = app.panels.caption;
+            let caps = app.tabs.panels.caption;
             for id in app.order() {
                 app.activate_panel(id);
                 app.frame(&mut g, t0());
@@ -98,7 +98,7 @@ fn all_left_split_empty_and_default_captions_keep_rendered_tab_strips_in_their_p
                 } else {
                     assert!(caps.iter().filter(|c| c.w > 0.0).all(|c| clip.w == 0.0 || clip.right() <= c.x || clip.x >= c.right()));
                 }
-                assert_eq!(app.panels.caption, caps, "changing active panel keeps window controls in place");
+                assert_eq!(app.tabs.panels.caption, caps, "changing active panel keeps window controls in place");
             }
         }
     }
@@ -110,18 +110,18 @@ fn disabling_animations_during_a_split_immediately_finishes_the_panels_and_inser
         let mut app = app_at(r"C:\a");
         app.set_animations_wanted(true);
         app.run_action("panel.open_right", t0());
-        assert!(app.panels.growing.is_some());
+        assert!(app.tabs.panels.growing.is_some());
         if system {
             ev(&mut app, Event::Animations(false));
-            assert!(app.animations_wanted);
+            assert!(app.settings.animations_wanted);
         } else {
             app.set_animations_wanted(false);
-            assert!(app.system_animations);
+            assert!(app.settings.system_animations);
         }
         app.layout();
         assert!(!app.animations);
-        assert!(app.panels.growing.is_none() && app.panels.closing.is_none());
-        let rects: Vec<_> = app.panels.list.iter().map(|p| p.rect).collect();
+        assert!(app.tabs.panels.growing.is_none() && app.tabs.panels.closing.is_none());
+        let rects: Vec<_> = app.tabs.panels.list.iter().map(|p| p.rect).collect();
         assert!((rects[0].w - rects[1].w).abs() <= 1.0);
         let tab = app.layout.tabs[0].0;
         assert!(tab.w > 0.0);
@@ -184,15 +184,15 @@ fn tree(n: &Node) -> String {
 }
 
 fn shape(app: &App) -> String {
-    tree(&app.panels.root)
+    tree(&app.tabs.panels.root)
 }
 
 fn rect(app: &App, id: u32) -> Rect {
-    app.panels.list.iter().find(|p| p.id == id).unwrap().rect
+    app.tabs.panels.list.iter().find(|p| p.id == id).unwrap().rect
 }
 
 fn layout_of(app: &App, id: u32) -> &Layout {
-    if id == app.panels.here { &app.layout } else { &app.panels.list.iter().find(|p| p.id == id).unwrap().layout }
+    if id == app.tabs.panels.here { &app.layout } else { &app.tabs.panels.list.iter().find(|p| p.id == id).unwrap().layout }
 }
 
 fn row_in(l: &Layout, row: usize) -> (f32, f32) {
@@ -230,7 +230,7 @@ fn split_right_and_bottom_build_a_tree_and_move_the_focus_to_the_new_panel() {
     let first = app.tab().id;
     key(&mut app, Key::Char('S'), CTRL_SHIFT);
     assert_eq!(shape(&app), "(0|1)");
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
     assert_ne!(app.tab().id, first);
     assert_eq!(app.tab().location(), &loc(r"C:\a"), "the new panel opens the current folder");
     assert_eq!(app.parked_tabs().map(|t| (t.id, t.rows())).collect::<Vec<_>>(), [(first, 1)], "the first panel keeps its listing");
@@ -258,27 +258,27 @@ fn every_panel_has_its_own_tab_row_and_only_the_active_one_a_status_bar() {
     assert_eq!(c.title.y, rect(&app, 2).y);
     assert!(a.tabs[0].0.w > 0.0 && b.tabs[0].0.w > 0.0 && c.tabs[0].0.w > 0.0);
     assert_eq!(a.tabs[0].0.w, app.s(TAB_W), "tabs have one fixed width");
-    let cap = app.panels.caption;
+    let cap = app.tabs.panels.caption;
     assert!(cap[0].x >= b.actions.right() && cap[2].right() == 1200.0 && b.title.contains(cap[1].x + 1.0, 5.0), "the captions end the top right panel's row");
     assert!(a.actions.right() <= rect(&app, 0).right());
-    assert_eq!(app.panels.active, 2);
+    assert_eq!(app.tabs.panels.active, 2);
     assert!(app.layout.status.h > 0.0 && a.status.h == 0.0 && b.status.h == 0.0);
     assert_eq!(app.layout.status.bottom(), 800.0);
     let side = app.nav.sidebar.rect;
     assert_eq!((side.y, side.bottom()), (app.s(TAB_H), 800.0), "Quick Access runs from below the title row to the bottom");
-    assert!(app.panels.menu.right() <= side.right() && app.panels.quick.right() <= side.right(), "the menu and the toggle sit above Quick Access");
+    assert!(app.tabs.panels.menu.right() <= side.right() && app.tabs.panels.quick.right() <= side.right(), "the menu and the toggle sit above Quick Access");
     assert_eq!(rect(&app, 0).x, side.right());
     assert_eq!(app.hit_test(b.new_tab.right() + 30.0, 10.0), HitArea::Caption);
     assert_eq!(app.hit_test(a.new_tab.right() + 30.0, 10.0), HitArea::Caption);
     assert_eq!(app.hit_test(a.tabs[0].0.x + 20.0, 10.0), HitArea::Client, "a tab of an inactive top panel is not a drag area");
-    assert_eq!(app.hit_test((app.panels.menu.right() + app.panels.quick.x) / 2.0, 10.0), HitArea::Caption, "so is the space between the menu and the toggle");
-    assert_eq!(app.hit_test(app.panels.menu.x + 5.0, 10.0), HitArea::Client);
+    assert_eq!(app.hit_test((app.tabs.panels.menu.right() + app.tabs.panels.quick.x) / 2.0, 10.0), HitArea::Caption, "so is the space between the menu and the toggle");
+    assert_eq!(app.hit_test(app.tabs.panels.menu.x + 5.0, 10.0), HitArea::Client);
     assert_eq!(app.hit_test(c.new_tab.right() + 30.0, c.title.y + 10.0), HitArea::Client, "a lower panel's tab row is not a drag area");
     assert_eq!(app.hit_test(cap[2].x + 5.0, 5.0), HitArea::Close);
     key(&mut app, Key::Char('B'), CTRL);
     assert_eq!(app.nav.sidebar.rect.w, 0.0);
     assert_eq!(rect(&app, 0).x, 0.0);
-    assert!(layout_of(&app, 0).tabs[0].0.x > app.panels.quick.right(), "tabs start after the menu and the toggle");
+    assert!(layout_of(&app, 0).tabs[0].0.x > app.tabs.panels.quick.right(), "tabs start after the menu and the toggle");
 }
 
 #[test]
@@ -330,30 +330,30 @@ fn clicks_tab_and_directions_select_panels() {
     let mut app = three(r"C:\a");
     frame(&mut app);
     key(&mut app, Key::Tab, NO);
-    assert_eq!(app.panels.active, 0, "Tab wraps around the panels");
+    assert_eq!(app.tabs.panels.active, 0, "Tab wraps around the panels");
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Title(_))));
     key(&mut app, Key::Tab, SHIFT);
-    assert_eq!(app.panels.active, 2);
+    assert_eq!(app.tabs.panels.active, 2);
     key(&mut app, Key::Tab, SHIFT);
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
     app.run_action("panel.below", t0());
-    assert_eq!(app.panels.active, 2);
+    assert_eq!(app.tabs.panels.active, 2);
     app.run_action("panel.left", t0());
-    assert_eq!(app.panels.active, 0);
+    assert_eq!(app.tabs.panels.active, 0);
     app.run_action("panel.left", t0());
-    assert_eq!(app.panels.active, 0, "nothing on the left");
+    assert_eq!(app.tabs.panels.active, 0, "nothing on the left");
     app.run_action("panel.right", t0());
-    assert_eq!(app.panels.active, 1, "the closest panel on the right overlapping most");
+    assert_eq!(app.tabs.panels.active, 1, "the closest panel on the right overlapping most");
     app.run_action("panel.above", t0());
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
     let r = rect(&app, 2);
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
-    assert_eq!(app.panels.active, 2);
+    assert_eq!(app.tabs.panels.active, 2);
     app.focus = Focus::Nav;
     key(&mut app, Key::Tab, NO);
-    assert_eq!(app.panels.active, 2, "Tab outside the list keeps moving the keyboard focus");
+    assert_eq!(app.tabs.panels.active, 2, "Tab outside the list keeps moving the keyboard focus");
     assert_ne!(app.focus, Focus::Nav);
 }
 
@@ -375,7 +375,7 @@ fn a_click_in_an_inactive_panel_activates_it_and_lands_on_its_row() {
     assert_eq!(v.selected().map(|i| v.listing().name(i).to_vec()).collect::<Vec<_>>(), [b"b.txt".to_vec()]);
     let tab = layout_of(&app, 1).tabs[0].0;
     ev(&mut app, Event::MouseMove { x: tab.x + 20.0, y: tab.y + 10.0 });
-    assert_eq!(app.panels.hover, Some((1, Hit::Tab(0))), "tabs of an inactive panel react to the pointer");
+    assert_eq!(app.tabs.panels.hover, Some((1, Hit::Tab(0))), "tabs of an inactive panel react to the pointer");
 }
 
 #[test]
@@ -414,13 +414,13 @@ fn closing_the_last_tab_closes_the_panel_and_the_last_panel_closes_the_window() 
     assert_eq!(shape(&app), "(0|(1/2))", "a panel with tabs left stays");
     key(&mut app, Key::Char('W'), CTRL);
     assert_eq!(shape(&app), "(0|1)", "the group of one collapses");
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Watch { tab, path: None, .. }, .. } if tab == gone)));
     key(&mut app, Key::Char('S'), CTRL);
     key(&mut app, Key::Char('T'), CTRL);
     key(&mut app, Key::Char('W'), CTRL_SHIFT);
     assert_eq!(shape(&app), "(0|1)", "Close All Tabs closes the panel with all its tabs");
-    assert!(app.nav.closed.len() >= 2);
+    assert!(app.tabs.closed.len() >= 2);
     app.activate_panel(0);
     key(&mut app, Key::Char('W'), CTRL);
     assert_eq!(shape(&app), "1");
@@ -434,7 +434,7 @@ fn separators_drag_with_a_minimum_and_a_double_click_centres_them() {
     let mut app = app_at(r"C:\a");
     key(&mut app, Key::Char('S'), CTRL_SHIFT);
     frame(&mut app);
-    let bar = app.panels.seps[0].rect;
+    let bar = app.tabs.panels.seps[0].rect;
     let (x, y) = (bar.x, 400.0);
     ev(&mut app, Event::MouseMove { x, y });
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Cursor(CursorIcon::ResizeHorizontal))));
@@ -446,7 +446,7 @@ fn separators_drag_with_a_minimum_and_a_double_click_centres_them() {
     assert_eq!(rect(&app, 0).w, app.s(75.0), "a panel keeps its minimum size");
     ev(&mut app, Event::MouseUp { x: 0.0, y, button: MouseButton::Left });
     assert!(app.session_rev() > rev);
-    let bar = app.panels.seps[0].rect;
+    let bar = app.tabs.panels.seps[0].rect;
     ev(&mut app, Event::MouseDown { x: bar.x, y, button: MouseButton::Left, clicks: 2 });
     ev(&mut app, Event::MouseUp { x: bar.x, y, button: MouseButton::Left });
     assert!((rect(&app, 0).w - rect(&app, 1).w).abs() <= 1.0, "{} vs {}", rect(&app, 0).w, rect(&app, 1).w);
@@ -487,7 +487,7 @@ fn shift_wheel_moves_the_separator_of_the_innermost_group_of_the_panel() {
     let before = sizes(&app);
     wheel(&mut app, 2, 1.0);
     assert!(sizes(&app).1 < before.1 && sizes(&app).0 == before.0, "over C too");
-    assert_eq!(app.panels.active, 2, "the wheel does not change the active panel");
+    assert_eq!(app.tabs.panels.active, 2, "the wheel does not change the active panel");
 }
 
 #[test]
@@ -537,7 +537,7 @@ fn the_wheel_scrolls_an_inactive_panel_without_activating_it() {
     let (x, y) = row_in(layout_of(&app, 0), 3);
     ev(&mut app, Event::MouseMove { x, y });
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -3.0 });
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
     assert!(app.parked_tabs().next().unwrap().scroll_target > 0.0);
     assert_eq!(app.tab().scroll_target, 0.0);
 }
@@ -552,7 +552,7 @@ fn dragging_files_over_an_inactive_panel_activates_it_for_the_drop() {
     let (x, y) = row_in(layout_of(&app, 0), 0);
     let paths = vec![FsPath::parse(r"D:\in\f.txt").unwrap()];
     let effect = app.drag(&DragEvent::Enter { paths, x, y, mods: NO, allowed: drop_effect::COPY | drop_effect::MOVE, right: false }, t0());
-    assert_eq!(app.panels.active, 0);
+    assert_eq!(app.tabs.panels.active, 0);
     assert_ne!(effect, drop_effect::NONE);
 }
 
@@ -610,11 +610,11 @@ fn the_wheel_over_a_blank_spot_of_an_inactive_panel_does_not_recurse() {
     key(&mut app, Key::Char('S'), CTRL_SHIFT);
     let strip = layout_of(&app, 0).title;
     let (x, y) = (strip.right() - 40.0, strip.y + strip.h / 2.0);
-    app.panels.active = 1;
+    app.tabs.panels.active = 1;
     ev(&mut app, Event::MouseMove { x, y });
     assert_eq!(app.visit(0, |a| a.hit(x, y)), Hit::None, "a blank spot of the tab row");
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -1.0 });
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
 }
 
 fn click(app: &mut App, r: Rect) {
@@ -647,7 +647,7 @@ fn breadcrumb_scroll_and_header_glow_belong_to_their_own_panel() {
     assert!(app.head_hot.is_some());
     app.frame(&mut g, t + Duration::from_millis(500));
     assert!(!app.frame(&mut g, t + Duration::from_secs(2)), "the header glow settles instead of restarting every frame");
-    assert_eq!(app.head_glow.alpha((app.panels.here, 1, false), t + Duration::from_secs(2)), 1.0);
+    assert_eq!(app.head_glow.alpha((app.tabs.panels.here, 1, false), t + Duration::from_secs(2)), 1.0);
 }
 
 #[test]
@@ -656,21 +656,21 @@ fn a_tab_drag_ends_on_focus_loss_and_ignores_other_buttons_and_shortcuts() {
     key(&mut app, Key::Char('S'), CTRL_SHIFT);
     app.open_new_tab(t0());
     app.layout();
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.tabs.items.len(), 2);
     let left = rect(&app, 0);
     let (x, y) = (left.x + 100.0, left.y + left.h / 2.0);
     start_tab_drag(&mut app, x, y);
-    assert!(app.docking.is_some());
+    assert!(app.tabs.docking.is_some());
     key(&mut app, Key::Char('W'), CTRL);
-    assert_eq!(app.tabs.len(), 2, "shortcuts wait for the drag to end");
+    assert_eq!(app.tabs.items.len(), 2, "shortcuts wait for the drag to end");
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 });
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Right });
-    assert_eq!((app.panels.active, app.tabs.len()), (1, 2), "another button neither activates the panel below nor drops");
-    assert!(app.docking.is_some());
+    assert_eq!((app.tabs.panels.active, app.tabs.items.len()), (1, 2), "another button neither activates the panel below nor drops");
+    assert!(app.tabs.docking.is_some());
     ev(&mut app, Event::Focus(false));
-    assert!(app.docking.is_none() && app.drag == Drag::None);
+    assert!(app.tabs.docking.is_none() && app.drag == Drag::None);
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
-    assert_eq!((shape(&app).as_str(), app.tabs.len()), ("(0|1)", 2));
+    assert_eq!((shape(&app).as_str(), app.tabs.items.len()), ("(0|1)", 2));
 }
 
 #[test]
@@ -694,8 +694,8 @@ fn a_session_with_more_tabs_than_one_open_request_keeps_them_all_and_its_panels(
     assert_eq!(back.session(), s);
     let t = Instant::now();
     back.frame(&mut Gfx::new(Mono, 1024), t);
-    let ids: Vec<TabId> = back.tabs.iter().chain(back.panels.list.iter().flat_map(|p| &p.tabs)).map(|t| t.id).collect();
-    assert!(ids.iter().all(|&id| back.strip.arrival(id, t) == 1.0), "restored panels do not slide their tabs in");
+    let ids: Vec<TabId> = back.tabs.items.iter().chain(back.tabs.panels.list.iter().flat_map(|p| &p.tabs)).map(|t| t.id).collect();
+    assert!(ids.iter().all(|&id| back.tabs.strip.arrival(id, t) == 1.0), "restored panels do not slide their tabs in");
 }
 
 #[test]
@@ -708,17 +708,17 @@ fn a_tab_from_another_window_lands_in_the_panel_it_is_dropped_on() {
     key(&mut app, Key::Char('S'), CTRL_SHIFT);
     let strip = layout_of(&app, 0).title;
     app.insert_tab(moved, Some((strip.x + 40.0, strip.y + strip.h / 2.0)), t0());
-    assert_eq!((app.panels.active, app.tabs.len()), (0, 2));
+    assert_eq!((app.tabs.panels.active, app.tabs.items.len()), (0, 2));
 }
 
 fn start_tab_drag(app: &mut App, x: f32, y: f32) {
-    let r = app.layout.tabs[app.cur].0;
+    let r = app.layout.tabs[app.tabs.cur].0;
     ev(app, Event::MouseDown { x: r.x + 30.0, y: r.y + r.h / 2.0, button: MouseButton::Left, clicks: 1 });
     ev(app, Event::MouseMove { x, y });
 }
 
 fn offered(app: &App) -> Vec<Dock> {
-    app.docking.as_ref().map_or(Vec::new(), |d| d.zones.iter().map(|z| z.dock).collect())
+    app.tabs.docking.as_ref().map_or(Vec::new(), |d| d.zones.iter().map(|z| z.dock).collect())
 }
 
 #[test]
@@ -730,12 +730,12 @@ fn a_tab_dropped_on_a_junction_becomes_a_column_along_the_whole_separator() {
     assert_eq!(shape(&app), "((0/2)|1)");
     let (low, right) = (rect(&app, 2), rect(&app, 1));
     start_tab_drag(&mut app, low.right() - 5.0, low.y + low.h / 2.0);
-    let z = app.docking.as_ref().unwrap().zones.iter().find(|z| matches!(z.dock, Dock::Between { .. })).copied().expect("junction zone");
+    let z = app.tabs.docking.as_ref().unwrap().zones.iter().find(|z| matches!(z.dock, Dock::Between { .. })).copied().expect("junction zone");
     assert_eq!((z.area.y, z.area.bottom()), (0.0, right.bottom()), "the column spans the separator, not just the lower half beside the cursor");
     assert!(z.area.x < low.right() && z.area.right() > right.x);
     let (x, y) = (z.button.x + 2.0, z.button.y + 2.0);
     ev(&mut app, Event::MouseMove { x, y });
-    assert!(app.docking.as_ref().unwrap().hot.is_some());
+    assert!(app.tabs.docking.as_ref().unwrap().hot.is_some());
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
     assert_eq!(shape(&app), "(0|3|1)", "the lower panel had one tab: it becomes the middle column");
 }
@@ -773,12 +773,12 @@ fn only_the_dragged_tab_lights_up_while_it_docks() {
     let mut g = Gfx::new(Mono, 1024);
     let far = rect(&app, 0);
     start_tab_drag(&mut app, far.x + 100.0, far.y + far.h / 2.0);
-    assert!(app.docking.is_some());
+    assert!(app.tabs.docking.is_some());
     app.frame(&mut g, t0());
     for id in [0, 1] {
         assert!(!lit(&g, layout_of(&app, id).tabs[0].0), "panel {id} is not the source");
     }
-    assert!(lit(&g, app.layout.tabs[app.cur].0), "the source tab is lit");
+    assert!(lit(&g, app.layout.tabs[app.tabs.cur].0), "the source tab is lit");
 }
 
 #[test]
@@ -820,7 +820,7 @@ fn closing_a_split_panel_slides_it_shut_and_the_neighbour_takes_the_room() {
     let half = rect(&app, 0).w;
     app.animations = true;
     app.close_panel();
-    let t = app.panels.closing.as_ref().unwrap().2;
+    let t = app.tabs.panels.closing.as_ref().unwrap().2;
     app.frame(&mut g, t);
     let start = rect(&app, 0).w;
     app.frame(&mut g, t + Duration::from_millis(50));
@@ -828,7 +828,7 @@ fn closing_a_split_panel_slides_it_shut_and_the_neighbour_takes_the_room() {
     app.frame(&mut g, t + Duration::from_millis(400));
     let end = rect(&app, 0).w;
     assert!(start <= half + 1.0 && start < mid && mid < end, "{half} {start} {mid} {end}");
-    assert!(app.panels.closing.is_none());
+    assert!(app.tabs.panels.closing.is_none());
     key(&mut app, Key::Char('S'), CTRL_SHIFT);
     app.animations = false;
     app.close_panel();
@@ -862,7 +862,7 @@ fn the_tab_search_button_lines_up_with_the_window_buttons() {
     for scale in [1.0, 0.9, 1.25, 1.5] {
         a.on_event(&Event::ScaleChanged(scale), Instant::now());
         a.layout();
-        let (actions, close) = (a.layout.actions, a.panels.caption[2]);
+        let (actions, close) = (a.layout.actions, a.tabs.panels.caption[2]);
         assert!(actions.w > 0.0);
         let centre = |r: crate::render::Rect| r.y + r.h / 2.0;
         assert!((centre(actions) - centre(close)).abs() <= 0.5, "at {scale}: {} vs {}", centre(actions), centre(close));
@@ -874,20 +874,20 @@ fn f6_walks_every_panel_and_then_the_sidebar() {
     let mut app = app_at(r"C:\a");
     deliver(&mut app, &[("one", false)]);
     app.run_action("panel.open_right", t0());
-    assert_eq!(app.panels.list.len(), 2);
+    assert_eq!(app.tabs.panels.list.len(), 2);
     let (first, second) = (app.order()[0], app.order()[1]);
-    assert_eq!(app.panels.active, second, "the new panel is focused at once");
+    assert_eq!(app.tabs.panels.active, second, "the new panel is focused at once");
     assert_eq!(app.focus, Focus::List);
     key(&mut app, Key::F(6), NO);
-    assert_eq!(app.panels.active, first, "F6 moves to the next panel");
+    assert_eq!(app.tabs.panels.active, first, "F6 moves to the next panel");
     assert_eq!(app.focus, Focus::List);
     key(&mut app, Key::F(6), NO);
     assert_eq!(app.focus, Focus::Sidebar, "after the full turn F6 reaches the sidebar");
     key(&mut app, Key::F(6), NO);
     assert_eq!(app.focus, Focus::List);
-    assert_eq!(app.panels.active, first);
+    assert_eq!(app.tabs.panels.active, first);
     key(&mut app, Key::F(6), NO);
-    assert_eq!(app.panels.active, second, "and the cycle continues");
+    assert_eq!(app.tabs.panels.active, second, "and the cycle continues");
 }
 
 #[test]
@@ -898,7 +898,7 @@ fn with_one_panel_f6_still_toggles_the_sidebar() {
     assert_eq!(app.focus, Focus::Sidebar);
     key(&mut app, Key::F(6), NO);
     assert_eq!(app.focus, Focus::List);
-    assert_eq!(app.panels.list.len(), 1);
+    assert_eq!(app.tabs.panels.list.len(), 1);
 }
 
 fn choose_title(app: &mut App, system: bool) {
@@ -941,8 +941,8 @@ fn a_system_title_on_kde_hides_the_window_buttons_and_the_strip_stops_moving_the
     assert_eq!(decorations_asked(&mut app), vec![true]);
     assert!(app.system_title());
     frame(&mut app);
-    assert!(app.panels.caption.iter().all(|r| r.w == 0.0), "the compositor draws the buttons");
-    assert_eq!(app.panels.right, 1200.0, "the tab strip reaches the window edge");
+    assert!(app.tabs.panels.caption.iter().all(|r| r.w == 0.0), "the compositor draws the buttons");
+    assert_eq!(app.tabs.panels.right, 1200.0, "the tab strip reaches the window edge");
     for px in (0..1200).step_by(3) {
         let h = app.hit_test(px as f32, y);
         assert!(matches!(h, HitArea::Client), "{px}: {h:?}");
@@ -956,7 +956,7 @@ fn a_system_title_on_kde_hides_the_window_buttons_and_the_strip_stops_moving_the
     choose_title(&mut app, false);
     assert_eq!(decorations_asked(&mut app), vec![false], "switching back works without a restart");
     frame(&mut app);
-    assert!(app.panels.caption.iter().all(|r| r.w > 0.0));
+    assert!(app.tabs.panels.caption.iter().all(|r| r.w > 0.0));
     assert_eq!(app.hit_test(x, y), HitArea::Caption);
 }
 
@@ -968,8 +968,8 @@ fn the_flit_title_bar_and_a_maximized_window_behave_as_before() {
     frame(&mut app);
     assert!(decorations_asked(&mut app).is_empty());
     assert!(!app.system_title());
-    assert!(app.panels.caption.iter().all(|r| r.w > 0.0));
-    let caps = app.panels.caption;
+    assert!(app.tabs.panels.caption.iter().all(|r| r.w > 0.0));
+    let caps = app.tabs.panels.caption;
     assert_eq!(app.hit_test(caps[1].x + 1.0, 4.0), HitArea::Maximize);
     let (x, y) = maximizing_double_click(&mut app).expect("empty strip space still moves the window");
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 });
@@ -986,7 +986,7 @@ fn a_system_title_on_gnome_wayland_falls_back_to_flit_and_says_why() {
     assert!(decorations_asked(&mut app).is_empty());
     assert!(!app.system_title());
     frame(&mut app);
-    assert!(app.panels.caption.iter().all(|r| r.w > 0.0), "Flit keeps drawing its buttons");
+    assert!(app.tabs.panels.caption.iter().all(|r| r.w > 0.0), "Flit keeps drawing its buttons");
     let i = crate::ui::settings::index(crate::ui::settings::WINDOW_TITLE).unwrap();
     let setting = &crate::ui::settings::SETTINGS[i];
     assert!(!setting.enabled(&app), "the settings page shows the choice as unavailable");
@@ -1014,7 +1014,7 @@ fn an_x11_window_without_a_wm_keeps_flits_controls_and_repaints_the_disabled_set
     assert_eq!(setting.get(&app), crate::ui::settings::Value::Choice(1));
     assert!(decorations_asked(&mut app).is_empty());
     frame(&mut app);
-    let close = app.panels.caption[2];
+    let close = app.tabs.panels.caption[2];
     assert_eq!(app.hit_test(close.x + 1.0, close.y + 1.0), HitArea::Close);
 }
 
@@ -1025,10 +1025,10 @@ fn windows_never_offers_the_title_setting_and_ignores_it_in_a_shared_settings_fi
     let i = crate::ui::settings::index(crate::ui::settings::WINDOW_TITLE).unwrap();
     assert!(!crate::ui::settings::SETTINGS[i].offered(app.caps));
     assert!(crate::ui::settings::SETTINGS[i].offered(crate::caps::Caps { unix_paths: true }));
-    let before = app.panels.caption;
+    let before = app.tabs.panels.caption;
     choose_title(&mut app, true);
     frame(&mut app);
     assert!(decorations_asked(&mut app).is_empty());
-    assert_eq!(app.panels.caption, before);
+    assert_eq!(app.tabs.panels.caption, before);
     assert!(app.tab().error.is_none());
 }

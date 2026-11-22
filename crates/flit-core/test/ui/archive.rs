@@ -48,7 +48,7 @@ fn deliver(app: &mut App, items: &[(&str, u32)]) {
 }
 
 fn select(app: &mut App, names: &[&str]) {
-    let v = app.tabs[app.cur].view.as_mut().unwrap();
+    let v = app.tabs.items[app.tabs.cur].view.as_mut().unwrap();
     v.clear_selection();
     for n in names {
         let i = v.find(n.as_bytes()).unwrap();
@@ -101,7 +101,7 @@ fn extract_delete_keeps_the_archive_on_failure_and_trashes_it_only_on_success() 
 }
 
 fn form(app: &App) -> &Form {
-    app.jobs.form.as_ref().unwrap()
+    app.dialogs.form.as_ref().unwrap()
 }
 
 fn finish(app: &mut App, id: OpId, op: FileOp, items: &[(&str, &str)], error: Option<OpError>) {
@@ -143,12 +143,12 @@ fn a_password_for_tar_is_refused_inside_the_dialog() {
     deliver(&mut app, &[("a.txt", FILE)]);
     select(&mut app, &["a.txt"]);
     app.compress_dialog();
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     if let Some(Control::Choice { sel, .. }) = f.controls.get_mut(C_FORMAT) {
         *sel = 2;
     }
     app.form_changed(C_FORMAT);
-    app.jobs.form.as_mut().unwrap().set_text(C_PASSWORD, "pw");
+    app.dialogs.form.as_mut().unwrap().set_text(C_PASSWORD, "pw");
     key(&mut app, Key::Enter, NO);
     assert_eq!(app.asking(), Some("compress"));
     assert!(form(&app).error && ops(&mut app).is_empty());
@@ -197,7 +197,7 @@ fn extraction_keys_dialog_history_and_opening_the_folder_when_done() {
     assert_eq!(form(&app).text(E_DEST), r"C:\ext");
     key(&mut app, Key::Down, NO);
     key(&mut app, Key::Right, NO);
-    app.jobs.form.as_mut().unwrap().set_text(E_DEST, r"D:\out");
+    app.dialogs.form.as_mut().unwrap().set_text(E_DEST, r"D:\out");
     key(&mut app, Key::Enter, NO);
     let (_, op) = only(&mut app);
     assert_eq!(op, FileOp::Archive(ArchiveOp::Extract { archives: vec![p(r"C:\ext\a.zip"), p(r"C:\ext\b.7z")], dest: Some(p(r"D:\out")), place: Place::OwnFolder }));
@@ -338,7 +338,7 @@ fn with_builtin_handling_off_archives_go_to_the_system_app_and_flits_archive_com
     assert!(labels_deep(&app.build_menu(true)).contains(&"Hashes…".to_owned()), "Hashes stays without the archive commands");
     select(&mut app, &["a.zip"]);
     key(&mut app, Key::Char('E'), Mods { alt: true, ..NO });
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     for id in ["archive.compress", "archive.zip", "archive.extract", "archive.extract_here", "archive.open"] {
         assert!(!app.run_action(id, t0()), "{id}");
         assert!(!app.available(id), "{id}");
@@ -535,16 +535,16 @@ fn hashes_are_computed_in_one_request_and_compared_with_a_value_or_another_file(
     typed(&mut app, &format!("SHA256: {}", "C".repeat(64)));
     key(&mut app, Key::Enter, NO);
     assert!(!form(&app).error && form(&app).note.contains("SHA-256"));
-    app.jobs.form.as_mut().unwrap().set_text(H_COMPARE, &"d".repeat(40));
+    app.dialogs.form.as_mut().unwrap().set_text(H_COMPARE, &"d".repeat(40));
     key(&mut app, Key::Enter, NO);
     assert!(form(&app).error);
-    app.jobs.form.as_mut().unwrap().set_text(H_COMPARE, r"C:\hash\copy.bin");
+    app.dialogs.form.as_mut().unwrap().set_text(H_COMPARE, r"C:\hash\copy.bin");
     key(&mut app, Key::Enter, NO);
     let [(other, file, _)] = requests(&mut app).try_into().unwrap();
     assert_eq!(file, p(r"C:\hash\copy.bin"));
     app.on_provider_event(ProviderEvent::Hashed { tab: app.tab().id, id: other, result: Ok(values) }, t0());
     assert!(!form(&app).error && form(&app).note.contains("identical"));
-    if let Some(Control::Flags { items, .. }) = app.jobs.form.as_mut().unwrap().controls.get_mut(H_KINDS) {
+    if let Some(Control::Flags { items, .. }) = app.dialogs.form.as_mut().unwrap().controls.get_mut(H_KINDS) {
         items[5].1 = true;
     }
     key(&mut app, Key::Enter, NO);
@@ -593,7 +593,7 @@ fn every_dialog_draws_inside_its_frame_with_buttons_below_the_rows() {
     for (k, show) in open.iter().enumerate() {
         select(&mut app, &[if k == 2 { "b.txt" } else { "a.zip" }]);
         show(&mut app);
-        assert!(app.jobs.form.is_some(), "dialog {k}");
+        assert!(app.dialogs.form.is_some(), "dialog {k}");
         app.frame(&mut g, t0());
         let f = form(&app);
         let last = *f.rows.last().unwrap();
@@ -606,7 +606,7 @@ fn every_dialog_draws_inside_its_frame_with_buttons_below_the_rows() {
             }
         }
         key(&mut app, Key::Escape, NO);
-        assert!(app.jobs.form.is_none());
+        assert!(app.dialogs.form.is_none());
     }
 }
 

@@ -42,13 +42,13 @@ impl App {
     }
 
     pub fn on_portable_metadata(&mut self, id: u64, result: Result<Metadata, String>) {
-        let Some(f) = self.jobs.form.take() else { return; };
+        let Some(f) = self.dialogs.form.take() else { return; };
         let Kind::PortableMetaWait { id: expected, path, sidecar } = f.kind else {
-            self.jobs.form = Some(f);
+            self.dialogs.form = Some(f);
             return;
         };
         if id != expected {
-            self.jobs.form = Some(Form { kind: Kind::PortableMetaWait { id: expected, path, sidecar }, ..f });
+            self.dialogs.form = Some(Form { kind: Kind::PortableMetaWait { id: expected, path, sidecar }, ..f });
             return;
         }
         let value = match result {
@@ -61,7 +61,7 @@ impl App {
             }
         };
         if let Some(parent) = path.parent() {
-            for tab in self.tabs.iter_mut().filter(|t| t.view_loc.to_windows().is_some_and(|dir| dir.same(&parent))) {
+            for tab in self.tabs.items.iter_mut().filter(|t| t.view_loc.to_windows().is_some_and(|dir| dir.same(&parent))) {
                 tab.props.forget(path.file_name(), None);
             }
         }
@@ -113,15 +113,15 @@ impl App {
     }
 
     pub fn metadata_enabled(&self) -> bool {
-        self.caps.unix_paths || self.metadata_ads
+        self.caps.unix_paths || self.settings.metadata_ads
     }
 }
 
 impl App {
     pub(super) fn set_metadata_ads(&mut self, on: bool) {
-        if self.metadata_ads == on { return; }
-        self.metadata_ads = on;
-        for tab in &mut self.tabs {
+        if self.settings.metadata_ads == on { return; }
+        self.settings.metadata_ads = on;
+        for tab in &mut self.tabs.items {
             tab.props.invalidate();
         }
         self.dirty = true;

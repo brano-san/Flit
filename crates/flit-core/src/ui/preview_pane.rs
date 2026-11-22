@@ -659,7 +659,7 @@ impl App {
     fn show_inspector(&mut self, on: bool) {
         let p = &mut self.preview;
         if on && !p.state.visible {
-            p.look.at = self.opts.inspector_at;
+            p.look.at = self.settings.opts.inspector_at;
         }
         p.state.visible = on;
         if !on {
@@ -746,7 +746,7 @@ impl App {
             look.zoom = next.clamp(ZOOM_RANGE.0, ZOOM_RANGE.1);
             look.scale = Scale::Custom;
         } else {
-            let size = i64::from(self.opts.inspector_size) + if up { 1 } else { -1 };
+            let size = i64::from(self.settings.opts.inspector_size) + if up { 1 } else { -1 };
             self.set_inspector_size(size.clamp(INSPECTOR_SIZE.0, INSPECTOR_SIZE.2) as u8);
             self.preview.doc = None;
         }
@@ -911,7 +911,7 @@ impl App {
     }
 
     fn extend_preview_pick(&mut self, key: Key, ctrl: bool) {
-        let fonts = (self.scale, super::options::mono_px(self.opts.inspector_size));
+        let fonts = (self.scale, super::options::mono_px(self.settings.opts.inspector_size));
         let p = &mut self.preview;
         let (Content::Doc(d), Some(lay)) = (&p.content, p.doc.as_ref()) else { return };
         let (Some(first), Some(last)) = (lay.lines.first(), lay.lines.last()) else { return };
@@ -976,7 +976,7 @@ impl App {
         let Content::Doc(d) = &p.content else { return None };
         let lay = p.doc.as_ref()?;
         let last = lay.lines.last()?;
-        let fonts = (self.scale, super::options::mono_px(self.opts.inspector_size));
+        let fonts = (self.scale, super::options::mono_px(self.settings.opts.inspector_size));
         let b = p.r.body;
         let along = y - b.y + p.scroll;
         if along < 0.0 {
@@ -1268,7 +1268,7 @@ impl App {
             PaneHit::Pretty => self.toggle_pretty(),
             PaneHit::SvgBackground => {
                 use preview::SvgBackground as Bg;
-                self.opts.svg_background = Bg::ALL[(self.opts.svg_background as usize + 1) % Bg::ALL.len()];
+                self.settings.opts.svg_background = Bg::ALL[(self.settings.opts.svg_background as usize + 1) % Bg::ALL.len()];
             }
             PaneHit::Play => {
                 let p = &mut self.preview;
@@ -1650,7 +1650,7 @@ impl App {
         if p.host.gen == 0 {
             return;
         }
-        let covered = self.nav.palette.is_some() || self.jobs.open || self.jobs.modal() || self.search.active || p.look.card;
+        let covered = self.nav.palette.is_some() || self.ops.jobs.open || self.dialogs.modal() || self.search.active || p.look.card;
         let want = match () {
             _ if covered || p.r.pane.w <= 0.0 => None,
             _ if p.host.handler => Some(p.r.body),
@@ -1796,7 +1796,7 @@ impl App {
     fn foot_blocks(&self) -> (Vec<FootBlock>, Option<(S, usize)>) {
         match &self.preview.content {
             Content::Doc(d) => {
-                let mut v = vec![("", self.opts.inspector_size.to_string(), Some(PaneHit::Size)), (G_LINES, super::thousands(d.paras.len() as u64), None)];
+                let mut v = vec![("", self.settings.opts.inspector_size.to_string(), Some(PaneHit::Size)), (G_LINES, super::thousands(d.paras.len() as u64), None)];
                 if self.pretty_available() {
                     let (label, hit) = match self.preview.pretty {
                         Pretty::Off => (S::PreviewPrettyButton, Some(PaneHit::Pretty)),
@@ -1816,7 +1816,7 @@ impl App {
                 let k = image_factor(self.preview.look.scale, self.preview.look.zoom, (w, h), (b.w, b.h));
                 let mut blocks = vec![("", format!("{}%", (k * 100.0).round()), Some(PaneHit::Size)), ("", format!("{} \u{D7} {}", w as u32, h as u32), None)];
                 if self.preview_is_svg() {
-                    blocks.insert(0, ("", self.opts.svg_background.label().t().to_owned(), Some(PaneHit::SvgBackground)));
+                    blocks.insert(0, ("", self.settings.opts.svg_background.label().t().to_owned(), Some(PaneHit::SvgBackground)));
                 }
                 (blocks, None)
             }
@@ -2258,7 +2258,7 @@ impl App {
         self.preview.hmax = (dw - b.w).max(0.0);
         let x0 = if dw <= b.w { (b.x + (b.w - dw) / 2.0).round() } else { (b.x - self.preview.hscroll.min(self.preview.hmax)).round() };
         let r = Rect::new(x0, y0, dw, dh);
-        let background = if self.preview_is_svg() { Some(self.opts.svg_background) } else { look.grid.then_some(Bg::Checker) };
+        let background = if self.preview_is_svg() { Some(self.settings.opts.svg_background) } else { look.grid.then_some(Bg::Checker) };
         if let Some(Bg::Black | Bg::White) = background {
             g.dl.rect(r, if background == Some(Bg::Black) { theme::BLACK } else { theme::WHITE });
         }
@@ -2406,7 +2406,7 @@ impl App {
     }
 
     fn draw_doc<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) -> f32 {
-        let (sc, dark, mono) = (self.scale, self.dark, super::options::mono_px(self.opts.inspector_size));
+        let (sc, dark, mono) = (self.scale, self.dark, super::options::mono_px(self.settings.opts.inspector_size));
         let b = self.preview.r.body;
         let note_font = self.ui_font(12.0);
         let num_font = FontStyle::new(FontFamily::Mono, mono * sc, false);

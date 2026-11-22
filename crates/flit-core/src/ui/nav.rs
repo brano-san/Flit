@@ -7,7 +7,6 @@ use super::settings_page::{SHit, SettingPick};
 use super::sidebar::Sidebar;
 use super::{App, Focus, Hit};
 use crate::input::{Key, Mods, MouseButton};
-use crate::location::Location;
 use crate::render::Rect;
 use std::time::Instant;
 
@@ -49,22 +48,9 @@ pub(super) struct Nav {
     pub palette: Option<Palette>,
     pub back: Option<Box<Palette>>,
     pub filter: FilterRects,
-    pub closed: Vec<Closed>,
     pub home: Home,
     streak: Option<(Instant, f32, f32)>,
     clipboard_text: Option<bool>,
-}
-
-pub(super) struct Closed {
-    pub history: crate::nav::History,
-    pub view: Option<crate::nav::Restore>,
-    pub at: Instant,
-}
-
-impl Closed {
-    pub fn location(&self) -> &Location {
-        self.history.current()
-    }
 }
 
 fn is_field(h: Hit) -> bool {
@@ -233,7 +219,7 @@ impl App {
         if let Some(k) = self.form_text_focus() {
             return Some(Hit::Form(k));
         }
-        if self.jobs.modal() {
+        if self.dialogs.modal() {
             return None;
         }
         if let Some(p) = &self.nav.palette {
@@ -266,7 +252,7 @@ impl App {
 
     fn text_field_mut(&mut self, h: Hit) -> Option<&mut Field> {
         match h {
-            Hit::FilterField => self.tabs[self.cur].filter.as_mut(),
+            Hit::FilterField => self.tabs.items[self.tabs.cur].filter.as_mut(),
             Hit::PaletteField => self.nav.palette.as_mut().map(|p| &mut p.field),
             Hit::QuickField => Some(&mut self.nav.sidebar.filter),
             Hit::Preview(PaneHit::Filter) => self.inspector_filter_mut(),
@@ -296,11 +282,11 @@ impl App {
     pub(super) fn middle_paste(&mut self, ev: &crate::input::Event, now: Instant) -> bool {
         use crate::input::Event;
         let Event::MouseDown { x, y, button: MouseButton::Middle, .. } = *ev else { return false };
-        if self.confirm.is_some() || self.own_menu_open() {
+        if self.dialogs.confirm.is_some() || self.own_menu_open() {
             return false;
         }
         let hit = self.hit(x, y);
-        let over_search = self.search.active && !self.jobs.modal();
+        let over_search = self.search.active && !self.dialogs.modal();
         let field = match hit {
             Hit::QuickField if over_search => PasteField::Field(hit),
             _ if over_search && self.search_field_at(x, y) => PasteField::Search,

@@ -250,7 +250,7 @@ fn the_system_animation_setting_switches_flits_animations_without_touching_the_u
     let mut a = app();
     a.on_event(&Event::Animations(false), Instant::now());
     assert!(!a.animations, "animations are off while the system turns them off");
-    assert!(a.animations_wanted, "the user's choice stays as it was");
+    assert!(a.settings.animations_wanted, "the user's choice stays as it was");
     a.on_event(&Event::Animations(true), Instant::now());
     assert!(a.animations);
     a.set_animations_wanted(false);

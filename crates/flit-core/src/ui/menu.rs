@@ -349,7 +349,7 @@ impl App {
     }
 
     pub(super) fn collect(&mut self, fill: impl FnOnce(&Self, &mut Menu)) -> Vec<MenuItem> {
-        let mut m = Menu { hidden: &self.menu_hidden, caps: self.caps, builtin_archives: self.builtin_archives, keys: &self.keymap, items: Vec::new(), cmds: Vec::new() };
+        let mut m = Menu { hidden: &self.menu_hidden, caps: self.caps, builtin_archives: self.builtin_archives, keys: &self.settings.keymap, items: Vec::new(), cmds: Vec::new() };
         fill(self, &mut m);
         let (items, cmds) = (trimmed(m.items), m.cmds);
         self.menu = cmds;
@@ -430,7 +430,7 @@ impl App {
 
     pub(super) fn build_tab_menu(&mut self) -> Vec<MenuItem> {
         self.collect(|a, m| {
-            let (n, cur) = (a.tabs.len(), a.cur);
+            let (n, cur) = (a.tabs.items.len(), a.tabs.cur);
             let groups: [&[(&'static str, S, &'static str, bool)]; 4] = [
                 &[("tab.shift_left", S::ActionsTabShiftLeft, "\u{E76B}", cur > 0), ("tab.shift_right", S::ActionsTabShiftRight, "\u{E76C}", cur + 1 < n)],
                 &[("tab.duplicate", S::ActionsTabDuplicate, "\u{E8C8}", true), ("tab.duplicate_window", S::ActionsTabDuplicateWindow, "\u{E72A}", true)],
@@ -441,7 +441,7 @@ impl App {
                     ("tab.close_right", S::ActionsTabCloseRight, "\u{E8BB}", cur + 1 < n),
                     ("tab.close_all", S::ActionsTabCloseAll, "\u{E8BB}", true),
                 ],
-                &[("tab.move_to_window", S::MenuMoveTabToWindow, "", n > 1), ("tab.reopen", S::MenuReopenClosedTab, "", !a.nav.closed.is_empty())],
+                &[("tab.move_to_window", S::MenuMoveTabToWindow, "", n > 1), ("tab.reopen", S::MenuReopenClosedTab, "", !a.tabs.closed.is_empty())],
             ];
             for group in groups {
                 for &(id, label, icon, live) in group {

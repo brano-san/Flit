@@ -31,7 +31,7 @@ fn status(app: &App) -> Option<String> {
 }
 
 fn stage(app: &App) -> Option<Stage> {
-    match &app.jobs.form.as_ref()?.kind {
+    match &app.dialogs.form.as_ref()?.kind {
         Kind::Update(u) => Some(u.stage),
         _ => None,
     }
@@ -47,9 +47,9 @@ fn start_up_check_is_quiet_unless_there_is_a_new_version() {
     a.on_update(found(false, None));
     a.on_update(UpdateEvent::Checked { manual: false, found: Err("offline".into()) });
     assert_eq!(status(&a), None);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     a.on_update(found(false, Some("9.0.0")));
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert_eq!(f.title, crate::tr!(S::UpdateDialogTitle, version = "9.0.0"));
     assert_eq!(f.buttons, vec![S::UpdateDialogInstall.t(), S::UpdateDialogSkip.t(), S::UpdateDialogLater.t()]);
     assert!(matches!(f.controls.last(), Some(Control::Line(l)) if l == "• Faster copies"));
@@ -73,16 +73,16 @@ fn skipped_version_is_remembered_and_only_the_start_up_check_honours_it() {
     let mut a = app();
     a.on_update(found(false, Some("9.0.0")));
     a.form_submit(1);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     let i = index("updates.skipped").unwrap();
     assert_eq!(SETTINGS[i].get(&a), Value::Strings(vec!["9.0.0".into()]));
     a.on_update(found(false, Some("9.0.0")));
-    assert!(a.jobs.form.is_none(), "start-up check stays quiet about a skipped version");
+    assert!(a.dialogs.form.is_none(), "start-up check stays quiet about a skipped version");
     a.on_update(found(false, Some("9.0.1")));
-    assert!(a.jobs.form.is_some(), "a newer one is offered again");
+    assert!(a.dialogs.form.is_some(), "a newer one is offered again");
     a.form_submit(2);
     a.on_update(found(true, Some("9.0.0")));
-    assert!(a.jobs.form.is_some(), "Check for updates still offers it");
+    assert!(a.dialogs.form.is_some(), "Check for updates still offers it");
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn running_file_operations_hold_the_install_back() {
     key(&mut a, Key::Enter);
     assert_eq!(stage(&a), Some(Stage::Ask));
     assert!(requests(&mut a).is_empty(), "nothing downloads while a copy runs");
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert!(f.error && f.note == crate::trn!(P::UpdateDialogJobs, 1), "{}", f.note);
     a.job_done(1, None, false, Instant::now());
     key(&mut a, Key::Enter);
@@ -108,18 +108,18 @@ fn download_shows_progress_and_can_be_cancelled() {
     let mut a = app();
     a.on_update(found(false, Some("9.0.0")));
     a.form_submit(0);
-    assert_eq!(a.jobs.form.as_ref().unwrap().buttons, vec![S::WidgetsCancel.t()]);
+    assert_eq!(a.dialogs.form.as_ref().unwrap().buttons, vec![S::WidgetsCancel.t()]);
     a.on_update(UpdateEvent::Progress { received: 42, total: Some(100) });
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert_eq!(f.note, crate::tr!(S::UpdateDialogDownloading, version = "9.0.0", percent = 42));
     assert_eq!(f.progress, Some(0.42));
     a.on_update(UpdateEvent::Progress { received: 50, total: None });
-    assert_eq!(a.jobs.form.as_ref().unwrap().note, crate::tr!(S::UpdateDialogDownloadingPlain, version = "9.0.0"));
+    assert_eq!(a.dialogs.form.as_ref().unwrap().note, crate::tr!(S::UpdateDialogDownloadingPlain, version = "9.0.0"));
     a.on_update(UpdateEvent::Installing);
-    assert_eq!(a.jobs.form.as_ref().unwrap().note, crate::tr!(S::UpdateDialogInstalling, version = "9.0.0"));
+    assert_eq!(a.dialogs.form.as_ref().unwrap().note, crate::tr!(S::UpdateDialogInstalling, version = "9.0.0"));
     a.drain_effects().for_each(drop);
     key(&mut a, Key::Escape);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert_eq!(requests(&mut a), vec![UpdateRequest::Cancel]);
 }
 
@@ -130,16 +130,16 @@ fn failure_returns_to_the_question_and_read_only_folder_points_to_the_releases()
     a.form_submit(0);
     a.on_update(UpdateEvent::Failed("disk full".into()));
     assert_eq!(stage(&a), Some(Stage::Ask));
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert!(f.error && f.note.contains("disk full") && f.progress.is_none());
     assert_eq!(f.buttons.len(), 3);
     a.form_submit(0);
     a.on_update(UpdateEvent::ReadOnly(r"C:\Program Files\Flit".into()));
     assert_eq!(stage(&a), Some(Stage::ReadOnly));
-    assert_eq!(a.jobs.form.as_ref().unwrap().buttons, vec![S::UpdateDialogOpenReleases.t(), S::UpdateDialogLater.t()]);
+    assert_eq!(a.dialogs.form.as_ref().unwrap().buttons, vec![S::UpdateDialogOpenReleases.t(), S::UpdateDialogLater.t()]);
     a.drain_effects().for_each(drop);
     a.form_submit(0);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: crate::provider::ProviderRequest::Launch { launch: Launch::Run { program, .. }, .. }, .. } if program == RELEASES_URL)));
 }
 
@@ -148,7 +148,7 @@ fn late_events_without_the_dialog_go_to_the_status_line() {
     let mut a = app();
     a.on_update(UpdateEvent::Progress { received: 1, total: Some(2) });
     a.on_update(UpdateEvent::Failed("gone".into()));
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(status(&a).unwrap().contains("gone"));
 }
 
@@ -177,7 +177,7 @@ fn the_dialog_leaves_room_between_its_parts_and_keeps_buttons_to_their_text() {
     let mut a = app();
     a.on_update(found(true, Some("9.0.0")));
     a.frame(&mut crate::text::Gfx::new(crate::text::tests::Mono, 1024), Instant::now());
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     let values = f.controls.iter().position(|c| matches!(c, Control::Line(_))).unwrap();
     assert!(f.rows[values].y >= f.rows[values - 1].bottom() + 8.0, "release notes are set apart from the versions");
     let last = f.rows.last().unwrap();
@@ -192,7 +192,7 @@ fn w3_sys_a_managed_package_keeps_version_checks_and_shows_an_upgrade_command() 
     let mut a = app();
     let command = "sudo apt install --only-upgrade flit";
     a.on_update(UpdateEvent::Managed { manual: true, release: release("9.0.0"), installation: ManagedInstallation::Package(command.into()) });
-    let form = a.jobs.form.as_ref().unwrap();
+    let form = a.dialogs.form.as_ref().unwrap();
     assert_eq!(stage(&a), Some(Stage::Package));
     assert!(!form.buttons.contains(&S::UpdateDialogInstall.t()));
     assert!(form.controls.iter().any(|control| matches!(control, Control::Line(value) if value == command)));

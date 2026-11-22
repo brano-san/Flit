@@ -78,15 +78,15 @@ impl App {
     pub(super) fn refilter_tab(&mut self, k: usize) {
         let clock = Clock::system(self.utc_offset_min);
         let tags = self.tags().clone();
-        self.tabs[k].refilter_view(clock, &tags.defs);
+        self.tabs.items[k].refilter_view(clock, &tags.defs);
     }
 
     pub(super) fn save_current_filter(&mut self) {
         let Some(text) = self.tab().filter.as_ref().map(Field::text).filter(|t| !t.trim().is_empty() && t.len() <= MAX_FILTER_LEN) else { return };
         let text = text.to_owned();
-        self.saved_filters.retain(|s| *s != text);
-        self.saved_filters.insert(0, text);
-        self.saved_filters.truncate(MAX_SAVED);
+        self.settings.saved_filters.retain(|s| *s != text);
+        self.settings.saved_filters.insert(0, text);
+        self.settings.saved_filters.truncate(MAX_SAVED);
         self.dirty = true;
     }
 
@@ -99,19 +99,19 @@ impl App {
     }
 
     pub(super) fn open_saved_filters(&mut self) {
-        let items = self.saved_filters.iter().map(|s| (s.clone(), String::new())).collect();
+        let items = self.settings.saved_filters.iter().map(|s| (s.clone(), String::new())).collect();
         self.open_pick(super::palette::Palette::new(super::palette::Pick::SavedFilters, items, ""));
     }
 
     pub(super) fn remove_saved_filter(&mut self, text: &str) {
-        self.saved_filters.retain(|s| s != text);
+        self.settings.saved_filters.retain(|s| s != text);
     }
 
     pub(super) fn set_saved_filters(&mut self, mut items: Vec<String>) {
         let mut seen = crate::hash::FxHashSet::default();
         items.retain(|s| !s.trim().is_empty() && s.len() <= MAX_FILTER_LEN && seen.insert(s.clone()));
         items.truncate(MAX_SAVED);
-        self.saved_filters = items;
+        self.settings.saved_filters = items;
     }
 
     fn complete_filter(&mut self) -> bool {
@@ -147,7 +147,7 @@ impl App {
     }
 
     fn filter_changed(&mut self) {
-        self.refilter_tab(self.cur);
+        self.refilter_tab(self.tabs.cur);
         let t = self.tab_mut();
         t.scroll = 0.0;
         t.scroll_target = 0.0;
@@ -158,7 +158,7 @@ impl App {
         if key == Key::Tab && m == Mods::default() && self.complete_filter() {
             return true;
         }
-        let Some(f) = self.tabs[self.cur].filter.as_mut() else {
+        let Some(f) = self.tabs.items[self.tabs.cur].filter.as_mut() else {
             self.focus = Focus::List;
             return false;
         };
@@ -195,7 +195,7 @@ impl App {
     }
 
     pub(super) fn filter_insert(&mut self, s: &str) -> bool {
-        let Some(f) = self.tabs[self.cur].filter.as_mut() else { return false };
+        let Some(f) = self.tabs.items[self.tabs.cur].filter.as_mut() else { return false };
         f.insert(s);
         self.filter_changed();
         true
@@ -205,7 +205,7 @@ impl App {
         if self.tab().filter.is_none() {
             self.open_filter();
         }
-        if let Some(f) = self.tabs[self.cur].filter.as_mut() {
+        if let Some(f) = self.tabs.items[self.tabs.cur].filter.as_mut() {
             f.click(x, clicks, extend);
             self.focus = Focus::Filter;
         }
@@ -289,7 +289,7 @@ impl App {
                 g.text(r.x + self.s(8.0), y, &text, font, t.text, (r.w - self.s(16.0)).max(0.0));
             }
         }
-        match self.tabs[self.cur].filter.as_mut() {
+        match self.tabs.items[self.tabs.cur].filter.as_mut() {
             Some(f) => f.draw(g, t, inner, font, focused, &placeholder, scale, Some(&self.preedit)),
             None => {
                 let m = g.metrics(font);

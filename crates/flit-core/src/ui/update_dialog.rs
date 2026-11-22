@@ -118,10 +118,10 @@ pub(super) fn wrapped<B: TextBackend>(g: &mut Gfx<B>, text: &str, font: FontStyl
 
 impl App {
     fn update_document(&mut self) -> Option<&mut Document> {
-        if !self.jobs.asks.is_empty() {
+        if !self.dialogs.asks.is_empty() {
             return None;
         }
-        self.jobs.form.as_mut().map(|f| &mut f.document)
+        self.dialogs.form.as_mut().map(|f| &mut f.document)
     }
 
     pub(super) fn update_wheel(&mut self, dy: f32) -> bool {
@@ -184,7 +184,7 @@ impl App {
         let heading = FontStyle::new(FontFamily::Ui, 14.0 * sc, true);
         let title_font = FontStyle::new(FontFamily::Ui, 16.0 * sc, true);
         let lit = [self.lit(Hit::Form(0)), self.lit(Hit::Form(1))];
-        let Some(f) = &mut self.jobs.form else { return false };
+        let Some(f) = &mut self.dialogs.form else { return false };
         if !matches!(f.kind, Kind::Update(_)) {
             return false;
         }

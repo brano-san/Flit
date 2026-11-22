@@ -56,9 +56,9 @@ impl App {
 
         let tabs = t.add(0, TABS, Role::TabList, S::A11yRegionTabs.t(), l.title);
         for (i, &(r, _)) in l.tabs.iter().enumerate() {
-            let k = put(&mut t, &mut targets, tabs, Hit::Tab(i), Role::Tab, &self.tabs[i].title(), r);
-            t.nodes[k].selected = i == self.cur;
-            t.nodes[k].help = self.tabs[i].location().display().into_owned();
+            let k = put(&mut t, &mut targets, tabs, Hit::Tab(i), Role::Tab, &self.tabs.items[i].title(), r);
+            t.nodes[k].selected = i == self.tabs.cur;
+            t.nodes[k].help = self.tabs.items[i].location().display().into_owned();
             if self.focus == Focus::TabBar && kb == Some(i) {
                 focus = Some(k);
             }
@@ -79,13 +79,13 @@ impl App {
         }
         let max = if self.maximized { S::A11yButtonRestore } else { S::A11yButtonMaximize };
         for (i, name) in [S::A11yButtonMinimize, max, S::A11yButtonClose].into_iter().enumerate() {
-            if self.panels.caption[i].w <= 0.0 {
+            if self.tabs.panels.caption[i].w <= 0.0 {
                 continue;
             }
-            put(&mut t, &mut targets, tabs, Hit::Caption(i), Role::Button, name.t(), self.panels.caption[i]);
+            put(&mut t, &mut targets, tabs, Hit::Caption(i), Role::Button, name.t(), self.tabs.panels.caption[i]);
         }
-        put(&mut t, &mut targets, tabs, Hit::Menu, Role::Button, S::A11yButtonMainMenu.t(), self.panels.menu);
-        put(&mut t, &mut targets, tabs, Hit::QuickToggle, Role::Button, S::A11yButtonQuickAccess.t(), self.panels.quick);
+        put(&mut t, &mut targets, tabs, Hit::Menu, Role::Button, S::A11yButtonMainMenu.t(), self.tabs.panels.menu);
+        put(&mut t, &mut targets, tabs, Hit::QuickToggle, Role::Button, S::A11yButtonQuickAccess.t(), self.tabs.panels.quick);
 
         let nav = t.add(0, NAV, Role::ToolBar, S::A11yRegionNavigation.t(), union(l.nav.iter().copied().chain([l.view, l.bookmark, l.more])));
         let tab = self.tab();
@@ -158,7 +158,7 @@ impl App {
                     put(&mut t, &mut targets, head, Hit::Header(c), Role::HeaderItem, col.title(), l.cols[c]);
                 }
             }
-            let tab = &self.tabs[self.cur];
+            let tab = &self.tabs.items[self.tabs.cur];
             if let Some(v) = &tab.view {
                 let arena = Bump::new();
                 let f = self.flow();
@@ -217,7 +217,7 @@ impl App {
             focus = Some(d);
             for (k, (label, r)) in self.dialog_buttons().into_iter().zip(buttons).enumerate() {
                 let b = put(&mut t, &mut targets, d, Hit::DialogButton(k), Role::Button, label, r);
-                if k == self.jobs.sel {
+                if k == self.dialogs.sel {
                     focus = Some(b);
                 }
             }
@@ -279,7 +279,7 @@ impl App {
             Hit::Settings(sh) => self.settings_a11y_focus(sh),
             Hit::Form(k) => self.form_a11y_focus(k),
             Hit::FormFlag(k, j) => self.form_a11y_flag(k, j, false),
-            Hit::DialogButton(k) => self.jobs.sel = k,
+            Hit::DialogButton(k) => self.dialogs.sel = k,
             Hit::PaletteRow(row) => {
                 if let Some(p) = &mut self.nav.palette {
                     p.select_row(row);
@@ -288,7 +288,7 @@ impl App {
             }
             Hit::Row(row) => {
                 self.focus = Focus::List;
-                if let Some(v) = &mut self.tabs[self.cur].view {
+                if let Some(v) = &mut self.tabs.items[self.tabs.cur].view {
                     v.focus = v.rows().get(row).copied();
                 }
             }
@@ -310,7 +310,7 @@ impl App {
         match self.a11y_hit(id) {
             Some(Hit::Row(row)) => {
                 self.focus = Focus::List;
-                self.tabs[self.cur].focus_row(row, crate::input::Mods::default());
+                self.tabs.items[self.tabs.cur].focus_row(row, crate::input::Mods::default());
                 self.dirty = true;
             }
             Some(Hit::PaletteRow(_)) => self.a11y_focus(id),

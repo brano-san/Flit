@@ -64,5 +64,5 @@ fn enter_on_the_new_tab_button_opens_a_tab() {
     a.enter_focus(Focus::TabBar);
     press(&mut a, Key::End, false);
     press(&mut a, Key::Enter, false);
-    assert_eq!(a.tabs.len(), 2);
+    assert_eq!(a.tabs.items.len(), 2);
 }

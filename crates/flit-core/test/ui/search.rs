@@ -104,7 +104,7 @@ fn a_search_view_rule_lays_out_results_in_a_selectable_grid() {
     frame(&mut a);
     let table = a.search_layout();
     assert_eq!(a.search_hit(table.list.x + table.list.w / 2.0, table.list.y + 6.0), SHit::Row(0));
-    a.opts.view_rules.search_grid = true;
+    a.settings.opts.view_rules.search_grid = true;
     frame(&mut a);
     let grid = a.search_layout();
     assert!(grid.tiles > 1);

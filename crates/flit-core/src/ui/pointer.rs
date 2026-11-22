@@ -55,7 +55,7 @@ impl App {
     }
 
     pub(super) fn wheel(&mut self, ev: &Event, now: Instant) {
-        let flip = if self.opts.reverse_scroll { -1.0 } else { 1.0 };
+        let flip = if self.settings.opts.reverse_scroll { -1.0 } else { 1.0 };
         let (dx, dy, pinch) = match *ev {
             Event::Wheel { dx, dy } => (dx * flip, dy * flip, false),
             Event::Pinch(scale) if scale.is_finite() => (0.0, scale / PINCH_PER_STEP, true),
@@ -143,12 +143,12 @@ impl App {
             let Some(folder) = here.parent() else { return };
             (Route { folder, select: self.select_previous.then(|| here.file_name().to_vec()) }, None)
         };
-        let before = self.tabs.len();
+        let before = self.tabs.items.len();
         self.open_in_tabs(vec![route], now);
-        if let (Some(mut h), true) = (history, self.tabs.len() > before) {
-            let k = self.tabs.len() - 1;
-            h.replace(self.tabs[k].location().clone());
-            self.tabs[k].history = h;
+        if let (Some(mut h), true) = (history, self.tabs.items.len() > before) {
+            let k = self.tabs.items.len() - 1;
+            h.replace(self.tabs.items[k].location().clone());
+            self.tabs.items[k].history = h;
         }
     }
 
@@ -162,7 +162,7 @@ impl App {
             (true, false, false, Some(folder)) => Some(folder),
             _ => return false,
         };
-        if let Some(v) = &mut self.tabs[self.cur].view {
+        if let Some(v) = &mut self.tabs.items[self.tabs.cur].view {
             v.clear_selection();
             v.set_selected(i, true);
             (v.focus, v.anchor) = (Some(i), Some(i));

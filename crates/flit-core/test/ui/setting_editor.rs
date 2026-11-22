@@ -140,7 +140,7 @@ fn the_inspector_font_editor_waits_for_fonts_and_lists_monospaced_ones_first() {
     assert_eq!(verdict(&a), Tone::Bad);
     typed(&mut a, "Nope Mono");
     key(&mut a, Key::Enter);
-    assert_eq!(a.opts.inspector_font, "Nope Mono", "a missing font is a warning, not a refusal");
+    assert_eq!(a.settings.opts.inspector_font, "Nope Mono", "a missing font is a warning, not a refusal");
 }
 
 #[test]

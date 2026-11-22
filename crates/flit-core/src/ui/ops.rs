@@ -239,6 +239,7 @@ struct Asked {
 
 #[derive(Default)]
 pub(super) struct Ops {
+    pub(super) jobs: super::jobs::Jobs,
     link_generation: u64,
     link_probe: Option<LinkProbe>,
     next_id: OpId,
@@ -615,13 +616,13 @@ impl App {
     }
 
     fn start_op_with_ctl(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then, ctl: OpCtl) {
-        if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
+        if let Some(t) = self.tabs.items.iter_mut().find(|t| t.id == tab) {
             t.undo = None;
         }
         let routed = if ctl.replay().is_some() { Some((provider, op)) } else { route(self.admin_route(provider, tab), op, self.caps.unix_paths) };
         let Some((provider, op)) = routed else { return self.status(MIXED_PATHS.t()) };
         let id = self.allocate_op_id();
-        if self.hide_companions && provider == ProviderId::Local && origin == Origin::Fresh
+        if self.settings.hide_companions && provider == ProviderId::Local && origin == Origin::Fresh
             && matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Paste { .. })
             && op.all_paths(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unix))
         {
@@ -630,7 +631,7 @@ impl App {
         self.track_job(id, &provider, &op, &ctl);
         let optimistic_removal = ctl.replay().is_none() && provider == ProviderId::Local
             && match &op {
-                FileOp::Trash(items) | FileOp::Delete(items) => self.tabs.iter().find(|t| t.id == tab).is_some_and(|t| {
+                FileOp::Trash(items) | FileOp::Delete(items) => self.tabs.items.iter().find(|t| t.id == tab).is_some_and(|t| {
                     let (Some(view), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return false };
                     let listing = view.listing();
                     items.iter().any(|path| {
@@ -647,7 +648,7 @@ impl App {
                 _ => unreachable!(),
             };
             let report = OpReport::new(op.clone(), sources.iter().cloned().map(|path| (path.clone(), path)).collect());
-            if let Some(k) = self.tabs.iter().position(|t| t.id == tab) {
+            if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab) {
                 self.drop_gone(k, &provider, &report);
             }
         }
@@ -1015,7 +1016,7 @@ impl App {
         if n < 2 || items.is_empty() {
             return;
         }
-        let at = order.iter().position(|&id| id == self.panels.active).unwrap_or(0);
+        let at = order.iter().position(|&id| id == self.tabs.panels.active).unwrap_or(0);
         let target = order[if back { (at + n - 1) % n } else { (at + 1) % n }];
         let dest = self.visit(target, |a| a.shell_dir());
         match (self.item_paths(&items), dest) {
@@ -1061,7 +1062,7 @@ impl App {
         if let Err(e) = self.shell_dir() {
             return self.status(e);
         }
-        let folder_keys = self.keymap.text_of("file.new_folder");
+        let folder_keys = self.settings.keymap.text_of("file.new_folder");
         let mut items = vec![(S::MenuFolder.t().to_owned(), folder_keys), (S::MenuShortcut.t().to_owned(), String::new())];
         items.extend(self.nav.sidebar.places.templates.iter().map(|t| (t.label().to_owned(), t.ext.clone())));
         self.open_pick(Palette::new(Pick::NewItem, items, ""));
@@ -1371,20 +1372,20 @@ impl App {
             self.effects.push(Effect::RefreshPlaces);
         }
         let pending = self.ops.pending.iter().position(|p| p.id == id && p.tab == tab).map(|k| self.ops.pending.swap_remove(k));
-        let k = self.tabs.iter().position(|t| t.id == tab);
+        let k = self.tabs.items.iter().position(|t| t.id == tab);
         let retry = self.ops.retry.take_if(|r| r.id == id && r.tab == tab);
         if let Some(message) = error.as_ref().filter(|_| !cancelled) {
             if retry.is_some_and(|r| self.rename_again(r, message)) {
                 self.dirty = true;
             } else {
-                let k = k.unwrap_or(self.cur);
-                self.tabs[k].error = Some(message.clone());
-                self.dirty |= k == self.cur;
+                let k = k.unwrap_or(self.tabs.cur);
+                self.tabs.items[k].error = Some(message.clone());
+                self.dirty |= k == self.tabs.cur;
             }
         }
         let any_done = report.as_ref().is_some_and(|r| !r.items.is_empty());
         let unwatched = |l: &Location| matches!(l, Location::Wsl { .. }) || l.path().kind() == PathKind::Unc || archive::split(l.path()).is_some();
-        if let Some(k) = k.filter(|&k| (error.is_none() || any_done) && unwatched(self.tabs[k].location())) {
+        if let Some(k) = k.filter(|&k| (error.is_none() || any_done) && unwatched(self.tabs.items[k].location())) {
             self.reload(k, now);
         }
         if let Some(r) = &report {
@@ -1401,8 +1402,8 @@ impl App {
         };
         if error.is_none() {
             if let FileOp::Trash(items) = &report.op {
-                let owner = k.unwrap_or(self.cur);
-                self.tabs[owner].undo = Some((items.len(), now));
+                let owner = k.unwrap_or(self.tabs.cur);
+                self.tabs.items[owner].undo = Some((items.len(), now));
                 self.arm_timer(now, now + UNDO_BAR_FOR);
                 self.dirty = true;
             }
@@ -1429,7 +1430,7 @@ impl App {
             }
         }
         self.each_pane(|a, k| {
-            let t = &mut a.tabs[k];
+            let t = &mut a.tabs.items[k];
             if t.view_loc.provider() != p.provider {
                 return;
             }
@@ -1465,17 +1466,17 @@ impl App {
             };
         }
         if let (FileOp::NewStream { item, name }, Some(k), None) = (&report.op, k, &error) {
-            self.tabs[k].error = Some(crate::tr!(S::UiOpsStreamCreated, name = format_args!("{}:{}", item.display(), crate::name::display(name))));
-            self.dirty |= k == self.cur;
+            self.tabs.items[k].error = Some(crate::tr!(S::UiOpsStreamCreated, name = format_args!("{}:{}", item.display(), crate::name::display(name))));
+            self.dirty |= k == self.tabs.cur;
         }
         if let (FileOp::FolderIcon { folder, icon, .. }, None) = (&report.op, &error) {
             self.icon_epoch += 1;
             let done = if icon.is_some() { S::UiOpsIconChanged } else { S::UiOpsIconRestored };
-            self.tabs[k.unwrap_or(self.cur)].error = Some(crate::tr!(done, folder = folder.display()));
+            self.tabs.items[k.unwrap_or(self.tabs.cur)].error = Some(crate::tr!(done, folder = folder.display()));
             self.dirty = true;
         }
         let Some(k) = k.filter(|_| p.then != Then::Nothing && !matches!(report.op, FileOp::Trash(_))) else { return };
-        let dir = self.tabs[k].view_loc.clone();
+        let dir = self.tabs.items[k].view_loc.clone();
         let names: Vec<Vec<u8>> = match &p.then {
             Then::Reveal(name) => vec![name.clone()],
             _ => report
@@ -1490,12 +1491,12 @@ impl App {
             self.ops.reveal.retain(|r| r.tab != tab);
             let rename = matches!(p.then, Then::Rename | Then::Reveal(_));
             self.ops.reveal.push(Reveal { tab, dir, names, rename, started: false, until: now + REVEAL_FOR });
-            self.dirty |= k == self.cur;
+            self.dirty |= k == self.tabs.cur;
         }
     }
 
     fn drop_gone(&mut self, k: usize, provider: &ProviderId, report: &OpReport) {
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         let dir = &t.view_loc;
         let gone: Vec<DirChange> = report
             .items
@@ -1505,7 +1506,7 @@ impl App {
             .map(|from| DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Removed, name: from.file_name().to_vec(), meta: None })
             .collect();
         t.pending_diffs.extend(gone);
-        self.dirty |= t.apply_diffs() && k == self.cur;
+        self.dirty |= t.apply_diffs() && k == self.tabs.cur;
     }
 
     pub(super) fn ops_frame(&mut self, now: Instant) {
@@ -1519,7 +1520,7 @@ impl App {
         self.ops.reveal.retain(|r| r.until > now);
         let cur = self.tab().id;
         let Some(k) = self.ops.reveal.iter().position(|r| r.tab == cur) else { return };
-        let App { ops, tabs, cur, .. } = self;
+        let App { ops, tabs: super::tabbar::Tabs { items: tabs, cur, .. }, .. } = self;
         let (r, t) = (&mut ops.reveal[k], &mut tabs[*cur]);
         if !same_location(&r.dir, &t.view_loc) {
             ops.reveal.swap_remove(k);
@@ -1588,7 +1589,7 @@ impl App {
         if volume.is_none() && self.tab().view_loc.path().kind() == PathKind::Computer {
             return;
         }
-        let t = &mut self.tabs[self.cur];
+        let t = &mut self.tabs.items[self.tabs.cur];
         let Some(v) = t.view.as_mut() else { return };
         if v.listing().entries[idx as usize].attrs & attr::STREAM != 0 {
             t.error = Some(STREAMS_VIEW_ONLY.t().into());
@@ -1672,13 +1673,13 @@ impl App {
         };
         let edit = match edit {
             Some(e) => Some(e),
-            None if self.focus == Focus::Filter => self.tabs[self.cur].filter.as_mut().map(|f| &mut f.edit),
+            None if self.focus == Focus::Filter => self.tabs.items[self.tabs.cur].filter.as_mut().map(|f| &mut f.edit),
             None => self.inspector_field(),
         };
         let Some(edit) = edit else { return };
         if edit.change_case(upper) {
             if self.focus == Focus::Filter && self.ops.rename.is_none() {
-                self.refilter_tab(self.cur);
+                self.refilter_tab(self.tabs.cur);
             }
             self.dirty = true;
         }
@@ -2034,7 +2035,7 @@ impl App {
             return;
         }
         if p.toggle {
-            if let Some(v) = &mut self.tabs[self.cur].view {
+            if let Some(v) = &mut self.tabs.items[self.tabs.cur].view {
                 if let Some(&i) = v.rows().get(p.row) {
                     v.set_selected(i, false);
                 }
@@ -2048,7 +2049,7 @@ impl App {
             return self.open_entry(i, now);
         }
         let (tab, wait) = (self.tab().id, self.double_click);
-        let Some(v) = &mut self.tabs[self.cur].view else { return };
+        let Some(v) = &mut self.tabs.items[self.tabs.cur].view else { return };
         let Some(&i) = v.rows().get(p.row) else { return };
         v.clear_selection();
         v.set_selected(i, true);
@@ -2113,7 +2114,7 @@ impl App {
         let m = self.mods;
         let settled = self.focused_at.is_none_or(|t| now.duration_since(t) >= self.double_click);
         let on_name = self.on_name(x, y, row);
-        let Some(v) = &mut self.tabs[self.cur].view else { return false };
+        let Some(v) = &mut self.tabs.items[self.tabs.cur].view else { return false };
         let Some(&i) = v.rows().get(row) else { return false };
         let deferred = !m.ctrl && !m.shift && v.is_selected(i);
         let toggle = m.ctrl && !m.shift && v.is_selected(i);
@@ -2130,7 +2131,7 @@ impl App {
         if let DragEvent::DropRepository { x, y, url } = ev {
             if let Some(Target::Into { dest, spot }) = self.drop_target(*x, *y) {
                 let tab = match spot {
-                    Spot::Tab(i) => &self.tabs[i],
+                    Spot::Tab(i) => &self.tabs.items[i],
                     Spot::Row(r) => {
                         let t = self.tab();
                         let is_dir = t.view.as_ref().and_then(|v| v.rows().get(r).map(|&i| v.listing().entries[i as usize].is_dir()));
@@ -2258,7 +2259,7 @@ impl App {
                 }
             }
             Hit::ListEmpty | Hit::Group(_) | Hit::Track | Hit::Thumb | Hit::HTrack | Hit::HThumb => here(),
-            Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.get(i)?.location(), Spot::Tab(i)),
+            Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.items.get(i)?.location(), Spot::Tab(i)),
             Hit::Crumb(i) => into(&t.crumb(i)?.1, Spot::Crumb(i)),
             Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.dragging_out && self.nav.sidebar.items.get(i).is_some_and(|it| it.section == Section::Bookmarks) => Some(Target::Pin),
             Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.items.get(i).is_some_and(|it| it.glyph != super::G_FILE) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
@@ -2391,7 +2392,7 @@ impl App {
     fn spring_spot(&self, x: f32, y: f32) -> Option<Spot> {
         let t = self.tab();
         match self.hit(x, y) {
-            Hit::Tab(i) | Hit::TabClose(i) if i != self.cur => Some(Spot::Tab(i)),
+            Hit::Tab(i) | Hit::TabClose(i) if i != self.tabs.cur => Some(Spot::Tab(i)),
             Hit::Crumb(i) if i + 1 != t.crumbs.len() => Some(Spot::Crumb(i)),
             Hit::Row(row) if !self.in_bin() => {
                 let v = t.view.as_ref()?;

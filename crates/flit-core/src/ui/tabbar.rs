@@ -12,6 +12,37 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::{Duration, Instant};
 
+#[derive(Default)]
+pub(super) struct Tabs {
+    pub(super) items: Vec<Tab>,
+    pub(super) cur: usize,
+    pub(super) tab_use: u64,
+    pub(super) tab_cycle: bool,
+    pub(super) next_tab: crate::provider::TabId,
+    pub(super) docking: Option<super::dock::Docking>,
+    pub(super) strip: Strip,
+    pub(super) panels: super::panels::Panels,
+    pub(super) closed: Vec<Closed>,
+}
+
+impl Tabs {
+    pub(super) fn new(tab_base: crate::provider::TabId) -> Self {
+        Self { next_tab: tab_base + 1, ..Self::default() }
+    }
+}
+
+pub(super) struct Closed {
+    pub history: crate::nav::History,
+    pub view: Option<crate::nav::Restore>,
+    pub at: Instant,
+}
+
+impl Closed {
+    pub fn location(&self) -> &Location {
+        self.history.current()
+    }
+}
+
 pub const G_TAB_ACTIONS: &str = "\u{E70D}";
 const G_COMPUTER: &str = "\u{E7F4}";
 const G_LINUX: &str = "\u{E756}";
@@ -286,39 +317,39 @@ impl App {
     }
 
     pub fn session_rev(&self) -> u64 {
-        self.strip.rev
+        self.tabs.strip.rev
     }
 
     pub fn restore_tabs(&mut self, tabs: &[Location], cur: usize) {
-        if self.tabs.len() != 1 || tabs.is_empty() {
+        if self.tabs.items.len() != 1 || tabs.is_empty() {
             return;
         }
         let cur = cur.min(tabs.len() - 1);
-        let mut live = self.tabs.pop();
+        let mut live = self.tabs.items.pop();
         let (view, show_hidden) = live.as_ref().map(|t| (t.folder_view(), t.view_spec.show_hidden)).unwrap_or_default();
         for (i, loc) in tabs.iter().enumerate() {
             match live.take_if(|_| i == cur) {
-                Some(t) => self.tabs.push(t),
+                Some(t) => self.tabs.items.push(t),
                 None => {
-                    let mut t = Tab::new(self.next_tab, loc.clone(), ViewSpec { show_hidden, ..ViewSpec::default() });
-                    self.next_tab += 1;
+                    let mut t = Tab::new(self.tabs.next_tab, loc.clone(), ViewSpec { show_hidden, ..ViewSpec::default() });
+                    self.tabs.next_tab += 1;
                     t.set_folder_view(view);
                     t.crumbs = loc.crumbs();
-                    self.tabs.push(t);
+                    self.tabs.items.push(t);
                 }
             }
         }
-        self.cur = cur;
-        self.strip.rev += 1;
+        self.tabs.cur = cur;
+        self.tabs.strip.rev += 1;
         self.effects.push(Effect::Title(self.window_title()));
         self.dirty = true;
     }
 
     pub fn restore_trails(&mut self, trails: &[Location]) {
-        if trails.len() != self.tabs.len() {
+        if trails.len() != self.tabs.items.len() {
             return;
         }
-        for (t, trail) in self.tabs.iter_mut().zip(trails) {
+        for (t, trail) in self.tabs.items.iter_mut().zip(trails) {
             t.trail = trail.clone();
             t.follow_trail();
         }
@@ -327,19 +358,19 @@ impl App {
 
     pub fn tab_incoming(&mut self, at: Option<(f32, f32)>) -> bool {
         let spot = at.map(|(x, y)| {
-            let id = self.panel_at(x, y).unwrap_or(self.panels.active);
+            let id = self.panel_at(x, y).unwrap_or(self.tabs.panels.active);
             (id, self.visit(id, |a| a.layout.tabs.iter().filter(|(r, _)| x > r.x + r.w / 2.0).count()))
         });
-        if spot == self.strip.incoming {
+        if spot == self.tabs.strip.incoming {
             return false;
         }
-        self.strip.incoming = spot;
+        self.tabs.strip.incoming = spot;
         self.dirty = true;
         true
     }
 
     pub(super) fn insert_mark(&self) -> Option<Rect> {
-        let slot = if self.dragged_tab().is_some() { self.cur } else { self.strip.incoming.filter(|s| s.0 == self.panels.here)?.1 };
+        let slot = if self.dragged_tab().is_some() { self.tabs.cur } else { self.tabs.strip.incoming.filter(|s| s.0 == self.tabs.panels.here)?.1 };
         let tabs = &self.layout.tabs;
         let x = tabs.get(slot).map(|t| t.0.x).or_else(|| tabs.last().map(|t| t.0.right()))?;
         let r = tabs.first()?.0;
@@ -348,42 +379,42 @@ impl App {
     }
 
     fn tab_out(&mut self, at: Option<(f32, f32)>) {
-        if at.is_some() || self.strip.out {
+        if at.is_some() || self.tabs.strip.out {
             self.effects.push(Effect::TabOver(at));
         }
-        self.strip.out = at.is_some();
+        self.tabs.strip.out = at.is_some();
     }
 
     pub fn insert_tab(&mut self, moved: MovedTab, at: Option<(f32, f32)>, now: Instant) {
-        self.strip.incoming = None;
+        self.tabs.strip.incoming = None;
         if let Some(id) = at.and_then(|(x, y)| self.panel_at(x, y)) {
             self.activate_panel(id);
         }
         let mut t = *moved.0;
-        t.id = self.next_tab;
-        self.next_tab += 1;
-        self.tabs.push(t);
-        self.cur = self.tabs.len() - 1;
+        t.id = self.tabs.next_tab;
+        self.tabs.next_tab += 1;
+        self.tabs.items.push(t);
+        self.tabs.cur = self.tabs.items.len() - 1;
         if let Some((x, _)) = at {
             self.move_tab(self.tab_slot(x));
         }
-        self.reload(self.cur, now);
+        self.reload(self.tabs.cur, now);
         self.after_tab_change();
     }
 
     pub fn adopt_tab(&mut self, moved: MovedTab, now: Instant) {
-        if self.tabs.len() == 1 {
-            let mut old = self.tabs.remove(0);
+        if self.tabs.items.len() == 1 {
+            let mut old = self.tabs.items.remove(0);
             old.shutdown(&mut self.effects);
         }
         self.insert_tab(moved, None, now);
     }
 
     pub(super) fn wake_tab(&mut self) {
-        self.strip.rev += 1;
+        self.tabs.strip.rev += 1;
         self.tip_hide();
         if self.tab().gen == 0 {
-            self.load_tab(self.cur, None, Instant::now());
+            self.load_tab(self.tabs.cur, None, Instant::now());
         }
         self.wake_panels();
     }
@@ -393,28 +424,28 @@ impl App {
             return None;
         }
         let l = &self.layout;
-        let targets = &mut self.strip.targets;
+        let targets = &mut self.tabs.strip.targets;
         targets.clear();
-        targets.extend(self.tabs.iter().zip(&l.tabs).map(|(t, &(r, _))| (Part::Tab(t.id), r)));
+        targets.extend(self.tabs.items.iter().zip(&l.tabs).map(|(t, &(r, _))| (Part::Tab(t.id), r)));
         targets.push((Part::Plus, l.new_tab));
         if l.tab_arrows[0].w > 0.0 {
             targets.extend([(Part::Arrow(false), l.tab_arrows[0]), (Part::Arrow(true), l.tab_arrows[1])]);
         }
-        let k = self.strip.settle(self.panels.here, now);
-        let part = Part::Tab(self.tabs[self.cur].id);
+        let k = self.tabs.strip.settle(self.tabs.panels.here, now);
+        let part = Part::Tab(self.tabs.items[self.tabs.cur].id);
         if matches!(self.drag, Drag::Tab { .. }) {
-            self.strip.lanes[k].slides.retain(|s| s.part != part);
-        } else if let Some(from) = self.strip.floating.take_if(|_| self.panels.here == self.panels.active) {
-            let lane = &mut self.strip.lanes[k];
+            self.tabs.strip.lanes[k].slides.retain(|s| s.part != part);
+        } else if let Some(from) = self.tabs.strip.floating.take_if(|_| self.tabs.panels.here == self.tabs.panels.active) {
+            let lane = &mut self.tabs.strip.lanes[k];
             lane.slides.retain(|s| s.part != part);
             lane.slides.push(Slide { part, from, to: None, since: now });
         }
-        self.motion |= self.strip.busy(Some(k));
+        self.motion |= self.tabs.strip.busy(Some(k));
         Some(k)
     }
 
     pub(super) fn dragged_tab(&self) -> Option<Rect> {
-        (self.panels.here == self.panels.active && matches!(self.drag, Drag::Tab { moved: true, torn: false, .. })).then_some(self.strip.floating).flatten()
+        (self.tabs.panels.here == self.tabs.panels.active && matches!(self.drag, Drag::Tab { moved: true, torn: false, .. })).then_some(self.tabs.strip.floating).flatten()
     }
 
     pub(super) fn strip_clip(&self, tabs: bool) -> Rect {
@@ -427,7 +458,7 @@ impl App {
     }
 
     pub(super) fn scroll_tabs(&mut self, right: bool) {
-        let n = self.tabs.len();
+        let n = self.tabs.items.len();
         self.layout.strip.scroll(right, n);
         self.layout();
         self.dirty = true;
@@ -447,14 +478,14 @@ impl App {
 
     pub(super) fn press_arrow(&mut self, right: bool, at: (f32, f32), held: Held, now: Instant) {
         self.step_arrow(right);
-        self.strip.hold = Some(Hold { held, right, at, next: now + HOLD_DELAY });
+        self.tabs.strip.hold = Some(Hold { held, right, at, next: now + HOLD_DELAY });
         self.arm_timer(now, now + HOLD_DELAY);
     }
 
     fn step_arrow(&mut self, right: bool) {
         self.scroll_tabs(right);
         if matches!(self.drag, Drag::Tab { .. }) {
-            let edge = self.layout.strip.edge(right, self.tabs.len());
+            let edge = self.layout.strip.edge(right, self.tabs.items.len());
             self.move_tab(edge);
             self.layout();
         }
@@ -462,12 +493,12 @@ impl App {
 
     pub(super) fn hover_arrow(&mut self, x: f32, y: f32, held: Held, now: Instant) -> bool {
         let Some(right) = self.arrow_at(x, y) else {
-            self.strip.hold = None;
+            self.tabs.strip.hold = None;
             return false;
         };
-        let live = self.strip.hold.filter(|h| h.held == held && h.right == right && self.hold_live(h));
+        let live = self.tabs.strip.hold.filter(|h| h.held == held && h.right == right && self.hold_live(h));
         match live {
-            Some(h) => self.strip.hold = Some(Hold { at: (x, y), ..h }),
+            Some(h) => self.tabs.strip.hold = Some(Hold { at: (x, y), ..h }),
             None => self.press_arrow(right, (x, y), held, now),
         }
         true
@@ -478,13 +509,13 @@ impl App {
             super::DragEvent::Enter { x, y, .. } | super::DragEvent::Over { x, y, .. } => {
                 self.hover_arrow(*x, *y, Held::Files, now);
             }
-            super::DragEvent::Leave | super::DragEvent::Drop { .. } | super::DragEvent::DropData { .. } | super::DragEvent::DropRepository { .. } => self.strip.hold = None,
+            super::DragEvent::Leave | super::DragEvent::Drop { .. } | super::DragEvent::DropData { .. } | super::DragEvent::DropRepository { .. } => self.tabs.strip.hold = None,
         }
     }
 
     pub(super) fn strip_timer(&mut self, now: Instant) {
-        let Some(h) = self.strip.hold.filter(|h| self.hold_live(h)) else {
-            self.strip.hold = None;
+        let Some(h) = self.tabs.strip.hold.filter(|h| self.hold_live(h)) else {
+            self.tabs.strip.hold = None;
             return;
         };
         if now + super::ops::TIMER_SLACK < h.next {
@@ -493,35 +524,35 @@ impl App {
         let next = now + HOLD_REPEAT;
         let over = self.arrow_at(h.at.0, h.at.1) == Some(h.right);
         if !over && h.held != Held::Press {
-            self.strip.hold = None;
+            self.tabs.strip.hold = None;
             return;
         }
         if over {
             self.step_arrow(h.right);
         }
-        self.strip.hold = Some(Hold { next, ..h });
-        if !over || self.layout.strip.hidden(h.right, self.tabs.len()) > 0 {
+        self.tabs.strip.hold = Some(Hold { next, ..h });
+        if !over || self.layout.strip.hidden(h.right, self.tabs.items.len()) > 0 {
             self.arm_timer(now, next);
         }
     }
 
     pub(super) fn tab_arrow_text(&self, right: bool) -> (&'static str, Option<String>) {
-        let hidden = self.layout.strip.hidden(right, self.tabs.len());
+        let hidden = self.layout.strip.hidden(right, self.tabs.items.len());
         let name = if right { S::TooltipTabsRight } else { S::TooltipTabsLeft };
         (name.t(), (hidden > 0).then(|| crate::trn!(P::TooltipTabsHidden, hidden)))
     }
 
     fn tab_slot(&self, x: f32) -> usize {
-        let before = self.layout.tabs.iter().enumerate().filter(|&(j, (r, _))| j != self.cur && x > r.x + r.w / 2.0).count();
-        before.min(self.tabs.len() - 1)
+        let before = self.layout.tabs.iter().enumerate().filter(|&(j, (r, _))| j != self.tabs.cur && x > r.x + r.w / 2.0).count();
+        before.min(self.tabs.items.len() - 1)
     }
 
     pub(super) fn move_tab(&mut self, to: usize) {
-        if to != self.cur {
-            let t = self.tabs.remove(self.cur);
-            self.tabs.insert(to, t);
-            self.cur = to;
-            self.strip.rev += 1;
+        if to != self.tabs.cur {
+            let t = self.tabs.items.remove(self.tabs.cur);
+            self.tabs.items.insert(to, t);
+            self.tabs.cur = to;
+            self.tabs.strip.rev += 1;
             self.dirty = true;
         }
     }
@@ -529,9 +560,9 @@ impl App {
     pub(super) fn press_tab(&mut self, i: usize, x: f32, y: f32, button: MouseButton) {
         self.select_tab(i);
         if button == MouseButton::Left {
-            self.strip.grab = self.layout.tabs.get(self.cur).map_or(0.0, |t| x - t.0.x);
-            self.strip.floating = None;
-            self.drag = Drag::Tab { origin: self.cur, x, y, moved: false, torn: false };
+            self.tabs.strip.grab = self.layout.tabs.get(self.tabs.cur).map_or(0.0, |t| x - t.0.x);
+            self.tabs.strip.floating = None;
+            self.drag = Drag::Tab { origin: self.tabs.cur, x, y, moved: false, torn: false };
         }
     }
 
@@ -543,41 +574,41 @@ impl App {
         let torn = x < 0.0 || y < 0.0 || x >= self.size.0 || y >= self.size.1;
         let on_strip = self.layout.title.contains(x, y);
         let arrow = on_strip && self.hover_arrow(x, y, Held::Tab, self.clock());
-        self.strip.floating = if on_strip && !torn {
-            self.layout.tabs.get(self.cur).map(|t| {
+        self.tabs.strip.floating = if on_strip && !torn {
+            self.layout.tabs.get(self.tabs.cur).map(|t| {
                 let clip = self.strip_clip(true);
-                Rect::new((x - self.strip.grab).clamp(clip.x, (clip.right() - t.0.w).max(clip.x)), t.0.y, t.0.w, t.0.h)
+                Rect::new((x - self.tabs.strip.grab).clamp(clip.x, (clip.right() - t.0.w).max(clip.x)), t.0.y, t.0.w, t.0.h)
             })
         } else { None };
         self.tab_out(torn.then_some((x, y)));
         if !on_strip {
-            self.strip.hold = None;
+            self.tabs.strip.hold = None;
         }
         if torn || on_strip {
-            self.docking = None;
+            self.tabs.docking = None;
             if on_strip && !arrow {
                 self.move_tab(self.tab_slot(x));
             }
         } else {
-            let panels: Vec<(u32, Rect)> = self.panels.list.iter().map(|p| (p.id, p.rect)).collect();
-            let area = Rect::new(self.panels.left, 0.0, (self.size.0 - self.panels.left).max(0.0), self.size.1);
+            let panels: Vec<(u32, Rect)> = self.tabs.panels.list.iter().map(|p| (p.id, p.rect)).collect();
+            let area = Rect::new(self.tabs.panels.left, 0.0, (self.size.0 - self.tabs.panels.left).max(0.0), self.size.1);
             let copy = self.mods.ctrl;
             let zones = super::dock::zones(&panels, &self.junctions(), area, (x, y), self.scale, |d| self.dock_moves(d, copy));
             let hot = super::dock::zone_at(&zones, x, y);
-            self.docking = Some(super::dock::Docking { zones, hot, at: (x, y) });
+            self.tabs.docking = Some(super::dock::Docking { zones, hot, at: (x, y) });
         }
         self.drag = Drag::Tab { origin, x: x0, y: y0, moved: true, torn };
         self.dirty = true;
     }
 
     pub(super) fn redock(&mut self) {
-        if let Some((x, y)) = self.docking.as_ref().map(|d| d.at) {
+        if let Some((x, y)) = self.tabs.docking.as_ref().map(|d| d.at) {
             self.drag_tab(x, y);
         }
     }
 
     pub(super) fn draw_tab_dock<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let Some(d) = self.docking.as_ref() else { return };
+        let Some(d) = self.tabs.docking.as_ref() else { return };
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
         let mut p = Paint::new(g, t, sc);
@@ -597,7 +628,7 @@ impl App {
                 }
             }
         }
-        let tab = &self.tabs[self.cur];
+        let tab = &self.tabs.items[self.tabs.cur];
         let (font, small) = (self.ui_font(12.5), self.ui_font(11.5));
         let label = tab.title();
         let caption = if self.mods.ctrl { S::TabbarDragCopy.t() } else { S::TabbarDragMove.t() };
@@ -633,9 +664,9 @@ impl App {
     pub(super) fn cancel_tab_drag(&mut self) {
         let Drag::Tab { origin, .. } = self.drag else { return };
         self.tab_out(None);
-        self.strip.hold = None;
-        self.move_tab(origin.min(self.tabs.len() - 1));
-        self.docking = None;
+        self.tabs.strip.hold = None;
+        self.move_tab(origin.min(self.tabs.items.len() - 1));
+        self.tabs.docking = None;
         self.drag = Drag::None;
         self.pressed = Hit::None;
         self.dirty = true;
@@ -646,18 +677,18 @@ impl App {
     }
 
     fn detach_tab(&mut self, at: Option<(f32, f32)>) {
-        self.strip.floating = None;
-        self.strip.out = false;
-        let alone = self.tabs.len() == 1;
+        self.tabs.strip.floating = None;
+        self.tabs.strip.out = false;
+        let alone = self.tabs.items.len() == 1;
         let last = alone && self.panel_count() == 1;
         let mut t = if last {
             let loc = self.tab().location().clone();
-            let mut stand_in = Tab::new(self.next_tab, loc.clone(), self.tab().view_spec);
-            self.next_tab += 1;
+            let mut stand_in = Tab::new(self.tabs.next_tab, loc.clone(), self.tab().view_spec);
+            self.tabs.next_tab += 1;
             stand_in.crumbs = loc.crumbs();
-            std::mem::replace(&mut self.tabs[0], stand_in)
+            std::mem::replace(&mut self.tabs.items[0], stand_in)
         } else {
-            self.tabs.remove(self.cur)
+            self.tabs.items.remove(self.tabs.cur)
         };
         t.shutdown(&mut self.effects);
         if last {
@@ -665,27 +696,27 @@ impl App {
         } else if alone {
             self.close_panel();
         } else {
-            self.cur = self.cur.min(self.tabs.len() - 1);
+            self.tabs.cur = self.tabs.cur.min(self.tabs.items.len() - 1);
             self.after_tab_change();
         }
         self.effects.push(Effect::MoveTab { tab: MovedTab(Box::new(t)), at, last });
     }
 
     pub(super) fn move_tab_to_window(&mut self) {
-        if self.tabs.len() == 1 && self.panel_count() == 1 {
+        if self.tabs.items.len() == 1 && self.panel_count() == 1 {
             return self.status(crate::i18n::S::TabbarOnlyTab.t());
         }
         self.detach_tab(None);
     }
 
     pub(super) fn close_tabs(&mut self, keep: impl Fn(usize, usize) -> bool) {
-        let cur = self.cur;
-        for (i, mut t) in std::mem::take(&mut self.tabs).into_iter().enumerate() {
+        let cur = self.tabs.cur;
+        for (i, mut t) in std::mem::take(&mut self.tabs.items).into_iter().enumerate() {
             if keep(i, cur) {
                 if i == cur {
-                    self.cur = self.tabs.len();
+                    self.tabs.cur = self.tabs.items.len();
                 }
-                self.tabs.push(t);
+                self.tabs.items.push(t);
             } else {
                 t.shutdown(&mut self.effects);
                 self.remember_closed(t);
@@ -699,21 +730,21 @@ impl App {
     }
 
     pub(super) fn strip_wheel(&mut self, dy: f32) -> bool {
-        let Some((x, y)) = self.strip.pointer else { return false };
+        let Some((x, y)) = self.tabs.strip.pointer else { return false };
         if matches!(self.drag, Drag::Tab { .. }) || !self.layout.title.contains(x, y) || self.caption_hit(x, y) != Hit::None {
             return false;
         }
-        self.strip.wheel += if self.tab_wheel_reversed { -dy } else { dy };
-        let steps = self.strip.wheel.trunc();
-        self.strip.wheel -= steps;
-        let to = (self.cur as isize - steps as isize).clamp(0, self.tabs.len() as isize - 1);
+        self.tabs.strip.wheel += if self.tab_wheel_reversed { -dy } else { dy };
+        let steps = self.tabs.strip.wheel.trunc();
+        self.tabs.strip.wheel -= steps;
+        let to = (self.tabs.cur as isize - steps as isize).clamp(0, self.tabs.items.len() as isize - 1);
         self.select_tab(to as usize);
         true
     }
 
     pub(super) fn strip_pointer(&mut self, x: f32, y: f32) {
-        self.strip.pointer = Some((x, y));
-        if let Some(h) = self.strip.hold.as_mut().filter(|h| h.held == Held::Press) {
+        self.tabs.strip.pointer = Some((x, y));
+        if let Some(h) = self.tabs.strip.hold.as_mut().filter(|h| h.held == Held::Press) {
             h.at = (x, y);
         }
     }
@@ -744,7 +775,7 @@ impl App {
     pub(super) fn strip_mouse_up(&mut self, x: f32, y: f32, button: MouseButton) {
         self.addr.press = None;
         if button == MouseButton::Left && matches!(self.drag, Drag::Tab { .. }) {
-            self.strip.hold = None;
+            self.tabs.strip.hold = None;
         }
         if button != MouseButton::Right {
             return;
@@ -769,9 +800,9 @@ impl App {
     }
 
     pub(super) fn open_tab_menu(&mut self) {
-        let Some(&(r, _)) = self.layout.tabs.get(self.cur) else { return };
+        let Some(&(r, _)) = self.layout.tabs.get(self.tabs.cur) else { return };
         let menu = self.build_tab_menu();
-        self.button_menu(Hit::Tab(self.cur), r.x, r.bottom(), menu);
+        self.button_menu(Hit::Tab(self.tabs.cur), r.x, r.bottom(), menu);
     }
 
     pub(super) fn open_many(&mut self, now: Instant) {

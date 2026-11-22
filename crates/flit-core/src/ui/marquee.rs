@@ -73,7 +73,7 @@ impl App {
         let rows = self.layout.mode.rows();
         let hits: Vec<usize> = f.lines_in(a, b).filter(|&n| overlaps(if rows { f.cell(n) } else { self.item_parts(f.cell(n)).body }, band)).collect();
         let (start, stop) = (self.nearest_line(&f, m.start.0, m.start.1), self.nearest_line(&f, end.0, end.1));
-        let App { marquee, tabs, cur, .. } = self;
+        let App { marquee, tabs: super::tabbar::Tabs { items: tabs, cur, .. }, .. } = self;
         let Some(m) = marquee.as_ref() else { return };
         let Some(v) = tabs[*cur].view.as_mut() else { return };
         v.clear_selection();

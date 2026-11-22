@@ -176,19 +176,19 @@ pub fn closed_ago(elapsed: Duration) -> String {
 
 impl App {
     pub(super) fn open_main_menu(&mut self) {
-        let r = self.panels.menu;
+        let r = self.tabs.panels.menu;
         let menu = self.collect(|a, m| {
             let title = |id: &str| ACTIONS.iter().find(|x| x.id == id).map_or("", |x| x.title.t());
             m.action("goto.open", title("goto.open"));
             m.action("palette.show", title("palette.show"));
             m.separator();
-            m.entry(Cmd::Action("layout.load"), title("layout.load"), String::new(), Mark::None, false, a.opts.layouts.is_empty());
+            m.entry(Cmd::Action("layout.load"), title("layout.load"), String::new(), Mark::None, false, a.settings.opts.layouts.is_empty());
             m.action("layout.save", title("layout.save"));
             m.action("options.open", title("options.open"));
             m.action("app.check_updates", title("app.check_updates"));
             m.separator();
             m.action("tab.duplicate_window", S::MenuNewWindow.t());
-            if a.tabs.len() > 1 {
+            if a.tabs.items.len() > 1 {
                 m.action("tab.move_to_window", S::MenuMoveTabToWindow.t());
             }
             m.action("window.compact", S::MenuMiniWindow.t());
@@ -241,7 +241,7 @@ impl App {
         let r = self.layout.more;
         let right = self.layout.title.right().max(r.right());
         self.panel_menu_at(r.x, r.bottom(), Some(right.min(self.panel_right())));
-        (self.menu_owner, self.menu_panel) = (Some(Hit::PanelMenu), self.panels.here);
+        (self.menu_owner, self.menu_panel) = (Some(Hit::PanelMenu), self.tabs.panels.here);
     }
 
     fn panel_right(&self) -> f32 {
@@ -269,7 +269,7 @@ impl App {
 
     pub(super) fn set_pin(&mut self, kind: MenuKind, key: String, pin: bool) {
         let Some(k) = kind.pins() else { return };
-        let list = &mut self.opts.pins[k];
+        let list = &mut self.settings.opts.pins[k];
         list.retain(|p| *p != key);
         if pin {
             list.insert(0, key);
@@ -282,11 +282,11 @@ impl App {
     }
 
     pub(super) fn step_spacing(&mut self, d: i32) {
-        self.set_spacing((self.opts.spacing as i32 + d).clamp(0, 100) as u8);
+        self.set_spacing((self.settings.opts.spacing as i32 + d).clamp(0, 100) as u8);
     }
 
     pub(super) fn set_spacing(&mut self, v: u8) {
-        self.opts.spacing = v.min(100);
+        self.settings.opts.spacing = v.min(100);
         self.layout();
         self.dirty = true;
     }
@@ -300,7 +300,7 @@ impl App {
     }
 
     pub(super) fn new_tab_location(&self) -> Location {
-        match self.opts.new_tab {
+        match self.settings.opts.new_tab {
             NewTabShow::Current => self.current_location().clone(),
             NewTabShow::Root => Location::home_page(),
             NewTabShow::Home => self.known_folder(KnownFolder::Home).unwrap_or_else(Location::home_page),
@@ -317,12 +317,12 @@ impl App {
         let mut items = Vec::new();
         let mut descs = Vec::new();
         let mut rows = Vec::new();
-        for (i, t) in self.tabs.iter().enumerate() {
+        for (i, t) in self.tabs.items.iter().enumerate() {
             items.push((t.title(), String::new()));
             descs.push(super::tabbar::full_name(t));
             rows.push(TabRow::Open(i));
         }
-        for (k, c) in self.nav.closed.iter().enumerate().rev().take(SHOWN_CLOSED) {
+        for (k, c) in self.tabs.closed.iter().enumerate().rev().take(SHOWN_CLOSED) {
             let loc = c.location();
             let name = crate::name::display(loc.file_name()).into_owned();
             let title = if name.is_empty() { loc.display().into_owned() } else { name };
@@ -335,8 +335,8 @@ impl App {
         let mut p = Palette::new(Pick::Tabs, items, "");
         p.set_descs(descs);
         p.placeholder = Some(crate::tr!(S::MenusSearchTabs, n = n));
-        let cur = self.cur;
-        self.opts.tab_rows = rows;
+        let cur = self.tabs.cur;
+        self.settings.opts.tab_rows = rows;
         p.select_row(cur);
         self.open_pick(p);
     }
@@ -347,19 +347,19 @@ impl App {
     }
 
     pub(super) fn tab_row_glyph(&self, row: usize) -> &'static str {
-        match self.opts.tab_rows.get(row) {
-            Some(TabRow::Open(i)) => self.tabs.get(*i).map_or(super::G_FOLDER, |t| super::tabbar::tab_glyph(t.location())),
-            Some(TabRow::Closed(k)) => self.nav.closed.get(*k).map_or(super::G_FOLDER, |c| super::tabbar::tab_glyph(c.location())),
+        match self.settings.opts.tab_rows.get(row) {
+            Some(TabRow::Open(i)) => self.tabs.items.get(*i).map_or(super::G_FOLDER, |t| super::tabbar::tab_glyph(t.location())),
+            Some(TabRow::Closed(k)) => self.tabs.closed.get(*k).map_or(super::G_FOLDER, |c| super::tabbar::tab_glyph(c.location())),
             None => super::G_FOLDER,
         }
     }
 
     pub(super) fn tab_row_closed(&self, row: usize) -> bool {
-        matches!(self.opts.tab_rows.get(row), Some(TabRow::Closed(_)))
+        matches!(self.settings.opts.tab_rows.get(row), Some(TabRow::Closed(_)))
     }
 
     pub(super) fn choose_tab_row(&mut self, row: usize, now: Instant) {
-        match self.opts.tab_rows.get(row).cloned() {
+        match self.settings.opts.tab_rows.get(row).cloned() {
             Some(TabRow::Open(i)) => self.select_tab(i),
             Some(TabRow::Closed(k)) => self.reopen_closed(k, now),
             None => {}
@@ -371,10 +371,10 @@ impl App {
     }
 
     pub(super) fn ask_load_layout(&mut self) {
-        if self.opts.layouts.is_empty() {
+        if self.settings.opts.layouts.is_empty() {
             return self.status(S::MenusNoLayouts.t());
         }
-        let items = self.opts.layouts.iter().map(|n| (n.clone(), String::new())).collect();
+        let items = self.settings.opts.layouts.iter().map(|n| (n.clone(), String::new())).collect();
         self.open_pick(Palette::new(Pick::LoadLayout, items, ""));
     }
 
@@ -386,9 +386,9 @@ impl App {
     pub(super) fn save_layout(&mut self, name: &str) {
         let Some(name) = clean_layout_name(name) else { return self.status(S::MenusBadLayoutName.t()) };
         let layout = self.saved_layout();
-        if !self.opts.layouts.contains(&name) {
-            self.opts.layouts.push(name.clone());
-            self.opts.layouts.sort_by_key(|n| n.to_lowercase());
+        if !self.settings.opts.layouts.contains(&name) {
+            self.settings.opts.layouts.push(name.clone());
+            self.settings.opts.layouts.sort_by_key(|n| n.to_lowercase());
         }
         self.status(crate::tr!(S::MenusLayoutSaved, name = name));
         self.effects.push(Effect::Layout(LayoutCmd::Save(name, Box::new(layout))));
@@ -399,19 +399,19 @@ impl App {
     }
 
     pub(super) fn delete_layout(&mut self, name: &str) {
-        self.opts.layouts.retain(|n| n != name);
+        self.settings.opts.layouts.retain(|n| n != name);
         self.effects.push(Effect::Layout(LayoutCmd::Delete(name.to_owned())));
     }
 
     pub fn set_layouts(&mut self, names: Vec<String>) {
-        if self.opts.layouts != names {
-            self.opts.layouts = names;
+        if self.settings.opts.layouts != names {
+            self.settings.opts.layouts = names;
             self.dirty = true;
         }
     }
 
     pub fn layouts(&self) -> &[String] {
-        &self.opts.layouts
+        &self.settings.opts.layouts
     }
 
     pub fn apply_layout(&mut self, layout: &SavedLayout, now: Instant) {
@@ -430,24 +430,24 @@ impl App {
         if let Some(p) = &layout.panels {
             self.restore_panels(p);
         }
-        self.strip.rev += 1;
+        self.tabs.strip.rev += 1;
         self.layout();
         self.dirty = true;
     }
 
     pub(super) fn set_scheme(&mut self, mode: Mode) {
-        self.opts.scheme = mode;
+        self.settings.opts.scheme = mode;
         if self.look.mode != Mode::System {
             self.set_theme_mode(mode);
         }
     }
 
     pub(super) fn set_system_scheme(&mut self, on: bool) {
-        self.set_theme_mode(if on { Mode::System } else { self.opts.scheme });
+        self.set_theme_mode(if on { Mode::System } else { self.settings.opts.scheme });
     }
 
     pub(super) fn thumbs_choice(&self) -> usize {
-        match (self.prefs.thumbnails, self.opts.thumbs) {
+        match (self.prefs.thumbnails, self.settings.opts.thumbs) {
             (false, _) | (_, Thumbs::Never) => 2,
             (true, Thumbs::Local) => 0,
             (true, Thumbs::Always) => 1,
@@ -455,8 +455,8 @@ impl App {
     }
 
     pub(super) fn set_thumbs_choice(&mut self, i: usize) {
-        self.opts.thumbs = [Thumbs::Local, Thumbs::Always, Thumbs::Never][i.min(2)];
-        let on = self.opts.thumbs != Thumbs::Never;
+        self.settings.opts.thumbs = [Thumbs::Local, Thumbs::Always, Thumbs::Never][i.min(2)];
+        let on = self.settings.opts.thumbs != Thumbs::Never;
         if self.prefs.thumbnails != on {
             self.set_pref(|p| &mut p.thumbnails, on);
         }
@@ -464,17 +464,17 @@ impl App {
 
     pub(super) fn set_inspector_font(&mut self, name: String) {
         let name = name.trim();
-        self.opts.inspector_font = if name.is_empty() { INSPECTOR_FONT.to_owned() } else { name.to_owned() };
+        self.settings.opts.inspector_font = if name.is_empty() { INSPECTOR_FONT.to_owned() } else { name.to_owned() };
         self.dirty = true;
     }
 
     pub(super) fn set_inspector_size(&mut self, size: u8) {
-        self.opts.inspector_size = size.clamp(INSPECTOR_SIZE.0 as u8, INSPECTOR_SIZE.2 as u8);
+        self.settings.opts.inspector_size = size.clamp(INSPECTOR_SIZE.0 as u8, INSPECTOR_SIZE.2 as u8);
         self.dirty = true;
     }
 
     pub(super) fn set_compact_paths(&mut self, on: bool) {
-        self.opts.compact_paths = on;
+        self.settings.opts.compact_paths = on;
         self.nav.sidebar.full_paths = !on;
         self.nav.sidebar.rebuild();
         self.dirty = true;
@@ -486,31 +486,31 @@ impl App {
     }
 
     pub(super) fn sizes_allowed(&self, loc: &Location) -> bool {
-        if self.network_place(loc) { self.opts.sizes_network } else { self.opts.sizes_ssd || self.opts.sizes_hdd || self.opts.sizes_network }
+        if self.network_place(loc) { self.settings.opts.sizes_network } else { self.settings.opts.sizes_ssd || self.settings.opts.sizes_hdd || self.settings.opts.sizes_network }
     }
 
     pub(super) fn measure_allowed(&self, loc: &Location) -> bool {
-        if self.network_place(loc) { self.opts.sizes_network } else { self.opts.sizes_ssd || self.opts.sizes_hdd }
+        if self.network_place(loc) { self.settings.opts.sizes_network } else { self.settings.opts.sizes_ssd || self.settings.opts.sizes_hdd }
     }
 
     pub(super) fn set_sizes_allowed(&mut self, kind: usize, on: bool) {
         match kind {
-            0 => self.opts.sizes_ssd = on,
-            1 => self.opts.sizes_hdd = on,
-            _ => self.opts.sizes_network = on,
+            0 => self.settings.opts.sizes_ssd = on,
+            1 => self.settings.opts.sizes_hdd = on,
+            _ => self.settings.opts.sizes_network = on,
         }
-        self.each_pane(|a, k| a.tabs[k].stop_sizes());
+        self.each_pane(|a, k| a.tabs.items[k].stop_sizes());
         self.compute_dir_sizes();
         self.dirty = true;
     }
 
     pub(super) fn dim_alpha(&self) -> u8 {
-        ((100 - u32::from(self.opts.inactive_opacity.min(100))) * 255 / 100) as u8
+        ((100 - u32::from(self.settings.opts.inactive_opacity.min(100))) * 255 / 100) as u8
     }
 
     pub(super) fn scheme(&self) -> Mode {
         match self.look.mode {
-            Mode::System => self.opts.scheme,
+            Mode::System => self.settings.opts.scheme,
             m => m,
         }
     }

@@ -306,31 +306,31 @@ pub fn parse_for(j: &Json, unix: bool) -> Option<(Arc<Keymap>, Vec<String>)> {
 
 impl App {
     pub fn keymap(&self) -> &Arc<Keymap> {
-        &self.keymap
+        &self.settings.keymap
     }
 
     pub(super) fn set_keymap(&mut self, k: Arc<Keymap>) {
         let unix = self.caps.unix_paths;
-        self.keymap = if k.unix == unix { k } else { Arc::new(k.rebased(unix)) };
+        self.settings.keymap = if k.unix == unix { k } else { Arc::new(k.rebased(unix)) };
         self.dirty = true;
     }
 
     pub fn set_caps(&mut self, caps: crate::caps::Caps) {
         self.caps = caps;
-        let k = self.keymap.clone();
+        let k = self.settings.keymap.clone();
         self.set_keymap(k);
         self.layout();
     }
 
     pub(super) fn edit_keys<R>(&mut self, f: impl FnOnce(&mut Keymap) -> R) -> R {
-        let r = f(Arc::make_mut(&mut self.keymap));
+        let r = f(Arc::make_mut(&mut self.settings.keymap));
         self.layout();
         self.dirty = true;
         r
     }
 
     fn rest_text(&self, j: usize, without: Option<Chord>) -> String {
-        let rest: Vec<String> = self.keymap.keys(j).iter().filter(|&&k| Some(k) != without).map(chord_text).collect();
+        let rest: Vec<String> = self.settings.keymap.keys(j).iter().filter(|&&k| Some(k) != without).map(chord_text).collect();
         let command = ACTIONS[j].title;
         match rest.is_empty() {
             true => tr!(S::KeymapStatusLeftWithout, command = command),
@@ -339,7 +339,7 @@ impl App {
     }
 
     fn assign_chord(&mut self, i: usize, old: Option<Chord>, c: Chord) {
-        let rest = self.keymap.owner(c).filter(|&j| j != i).map(|j| format!("; {}", self.rest_text(j, Some(c))));
+        let rest = self.settings.keymap.owner(c).filter(|&j| j != i).map(|j| format!("; {}", self.rest_text(j, Some(c))));
         self.edit_keys(|k| k.assign(i, old, c));
         self.status(tr!(S::KeymapStatusAssigned, key = chord_text(&c), command = ACTIONS[i].title) + &rest.unwrap_or_default());
     }
@@ -347,7 +347,7 @@ impl App {
     pub(super) fn remove_chord(&mut self, i: usize, c: Chord) {
         self.edit_keys(|k| k.remove(i, c));
         let title = ACTIONS[i].title;
-        match self.keymap.keys(i).is_empty() {
+        match self.settings.keymap.keys(i).is_empty() {
             true => self.status(tr!(S::KeymapStatusNoShortcut, command = title)),
             false => self.status(tr!(S::KeymapStatusRemoved, key = chord_text(&c), command = title)),
         }
@@ -363,7 +363,7 @@ impl App {
     }
 
     pub(super) fn restore_all_keys(&mut self) {
-        self.keymap = defaults_for(self.caps.unix_paths);
+        self.settings.keymap = defaults_for(self.caps.unix_paths);
         self.layout();
         self.dirty = true;
         self.status(S::KeymapStatusRestoredAll.t());
@@ -377,10 +377,10 @@ impl App {
         if self.nav.palette.as_ref().is_some_and(|p| p.commands.is_some()) {
             self.nav.back = self.nav.palette.take().map(Box::new);
         }
-        let mut rows: Vec<(String, String)> = self.keymap.keys(action).iter().map(|c| (tr!(S::KeymapEditorChange, key = chord_text(c)), S::KeymapEditorRemoves.t().to_owned())).collect();
+        let mut rows: Vec<(String, String)> = self.settings.keymap.keys(action).iter().map(|c| (tr!(S::KeymapEditorChange, key = chord_text(c)), S::KeymapEditorRemoves.t().to_owned())).collect();
         rows.push((S::A11yButtonAddShortcut.t().to_owned(), String::new()));
-        if self.keymap.is_custom(action) {
-            rows.push((S::A11yButtonRestoreShortcut.t().to_owned(), self.keymap.defaults_of(action).iter().map(chord_text).collect::<Vec<_>>().join(", ")));
+        if self.settings.keymap.is_custom(action) {
+            rows.push((S::A11yButtonRestoreShortcut.t().to_owned(), self.settings.keymap.defaults_of(action).iter().map(chord_text).collect::<Vec<_>>().join(", ")));
         }
         rows.push((S::SettingsPageButtonRestoreKeys.t().to_owned(), String::new()));
         let mut p = Palette::new(Pick::Keys(action), rows, "");
@@ -391,18 +391,18 @@ impl App {
     }
 
     pub(super) fn shortcut_choose(&mut self, action: usize, row: usize) {
-        let keys = self.keymap.keys(action).to_vec();
+        let keys = self.settings.keymap.keys(action).to_vec();
         let n = keys.len();
         match row {
             k if k < n => self.open_capture(action, Some(keys[k])),
             k if k == n => self.open_capture(action, None),
-            k if k == n + 1 && self.keymap.is_custom(action) => self.restore_keys(action),
+            k if k == n + 1 && self.settings.keymap.is_custom(action) => self.restore_keys(action),
             _ => self.ask_reset_keys(),
         }
     }
 
     pub(super) fn shortcut_remove(&mut self, action: usize, row: usize) {
-        if let Some(&c) = self.keymap.keys(action).get(row) {
+        if let Some(&c) = self.settings.keymap.keys(action).get(row) {
             self.remove_chord(action, c);
             self.edit_shortcuts(action);
         }
@@ -415,7 +415,7 @@ impl App {
             None => rows.push((tr!(S::KeymapCapturePress, command = title), S::KeymapCaptureEscCancels.t().into())),
             Some(c) => {
                 let name = chord_text(&c);
-                rows.push(match (refusal(c), self.keymap.owner(c)) {
+                rows.push(match (refusal(c), self.settings.keymap.owner(c)) {
                     (Some(why), _) => (tr!(S::KeymapCaptureCannot, key = name, why = i18n::localize(&why)), S::KeymapCaptureOtherKeys.t().into()),
                     (None, Some(j)) if j == action => (tr!(S::KeymapCaptureAlready, key = name, command = title), String::new()),
                     (None, Some(j)) => (tr!(S::KeymapCaptureReassign, key = name, from = ACTIONS[j].title, command = title), self.rest_text(j, Some(c))),
@@ -452,7 +452,7 @@ impl App {
         match (chord, old) {
             (_, Some(o)) if row == remove_row => self.remove_chord(action, o),
             (Some(c), _) if row == 0 && refusal(c).is_none() => {
-                if self.keymap.owner(c) != Some(action) {
+                if self.settings.keymap.owner(c) != Some(action) {
                     self.assign_chord(action, old, c);
                 }
             }

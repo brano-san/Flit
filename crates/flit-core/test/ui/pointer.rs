@@ -59,7 +59,7 @@ fn center(r: Rect) -> (f32, f32) {
 }
 
 fn locations(app: &App) -> Vec<Location> {
-    app.tabs.iter().map(|t| t.location().clone()).collect()
+    app.tabs.items.iter().map(|t| t.location().clone()).collect()
 }
 
 fn empty_strip(app: &App) -> (f32, f32) {
@@ -76,7 +76,7 @@ fn level(app: &App) -> usize {
 #[test]
 fn sideways_wheel_with_ctrl_or_alt_keeps_zoom_font_and_spacing() {
     let mut app = harness::app(&["a.txt", "b.txt"]);
-    let (size, font, spacing) = (level(&app), app.ui_scale(), app.opts.spacing);
+    let (size, font, spacing) = (level(&app), app.ui_scale(), app.settings.opts.spacing);
     for mods in [CTRL, ALT, ALT_SHIFT] {
         hold(&mut app, mods);
         for d in [1.0, -1.0] {
@@ -84,7 +84,7 @@ fn sideways_wheel_with_ctrl_or_alt_keeps_zoom_font_and_spacing() {
         }
     }
     hold(&mut app, NO);
-    assert_eq!((level(&app), app.ui_scale(), app.opts.spacing), (size, font, spacing));
+    assert_eq!((level(&app), app.ui_scale(), app.settings.opts.spacing), (size, font, spacing));
     hold(&mut app, ALT);
     wheel(&mut app, 0.0, 1.0);
     hold(&mut app, NO);
@@ -181,11 +181,11 @@ fn changed_system_mouse_settings_apply_without_a_restart_and_keep_the_users_reve
     let refs: Vec<&str> = names.iter().map(String::as_str).collect();
     let mut app = harness::app(&refs);
     let rh = app.layout.row_h;
-    app.opts.reverse_scroll = true;
+    app.settings.opts.reverse_scroll = true;
     app.on_event(&Event::MouseSettings { double_click: Duration::from_millis(900), wheel_lines: 6 }, Instant::now());
     wheel(&mut app, 0.0, 1.0);
     assert_eq!(app.tab().scroll_target, 6.0 * rh, "the new line count, still reversed as the user chose");
-    assert!(app.opts.reverse_scroll);
+    assert!(app.settings.opts.reverse_scroll);
     let t = Instant::now();
     assert_eq!(app.text_clicks((10.0, 10.0), 2, t), 2);
     assert_eq!(app.text_clicks((10.0, 10.0), 1, t + Duration::from_millis(800)), 3, "the slower double-click time stretches the triple click");
@@ -206,37 +206,37 @@ fn middle_click_on_back_forward_up_and_crumbs_opens_new_tabs() {
     let (x, y) = center(app.layout.nav[1]);
     press(&mut app, x, y, MouseButton::Middle, 1);
     assert_eq!(locations(&app), [loc(r"C:\work"), loc(r"C:\work\src")]);
-    let fresh = &app.tabs[1].history;
+    let fresh = &app.tabs.items[1].history;
     assert!(fresh.can_back() && !fresh.can_forward(), "the new tab keeps the history behind it");
     app.select_tab(1);
     harness::frame(&mut app);
     let (x, y) = center(app.layout.nav[0]);
     press(&mut app, x, y, MouseButton::Middle, 1);
-    assert_eq!(app.tabs.last().map(|t| t.location().clone()), Some(loc(r"C:\work")));
-    assert!(app.tabs.last().unwrap().history.can_forward());
+    assert_eq!(app.tabs.items.last().map(|t| t.location().clone()), Some(loc(r"C:\work")));
+    assert!(app.tabs.items.last().unwrap().history.can_forward());
     app.select_tab(1);
     harness::frame(&mut app);
     let (x, y) = center(app.layout.nav[2]);
     press(&mut app, x, y, MouseButton::Middle, 1);
-    assert_eq!(app.tabs.len(), 4, "the new tab lands right of the current one");
-    assert_eq!(app.tabs[2].location(), &loc(r"C:\work"));
+    assert_eq!(app.tabs.items.len(), 4, "the new tab lands right of the current one");
+    assert_eq!(app.tabs.items[2].location(), &loc(r"C:\work"));
     app.select_tab(1);
     harness::frame(&mut app);
-    assert_eq!(app.tabs[1].location(), &loc(r"C:\work\src"), "middle clicks never move the tab itself");
+    assert_eq!(app.tabs.items[1].location(), &loc(r"C:\work\src"), "middle clicks never move the tab itself");
     let first = app.tab().crumb(0).map(|c| c.1.clone()).unwrap();
     let (x, y) = center(app.layout.crumbs[0]);
     press(&mut app, x, y, MouseButton::Middle, 1);
-    assert_eq!(app.tabs.len(), 5);
-    assert_eq!(app.tabs[2].location(), &first);
+    assert_eq!(app.tabs.items.len(), 5);
+    assert_eq!(app.tabs.items[2].location(), &first);
     app.select_tab(1);
     harness::frame(&mut app);
     hold(&mut app, CTRL);
     let (x, y) = center(app.layout.crumbs[0]);
     press(&mut app, x, y, MouseButton::Left, 1);
     hold(&mut app, NO);
-    assert_eq!(app.tabs.len(), 6);
-    assert_eq!(app.tabs[2].location(), &first);
-    assert_eq!(app.tabs[1].location(), &loc(r"C:\work\src"));
+    assert_eq!(app.tabs.items.len(), 6);
+    assert_eq!(app.tabs.items[2].location(), &first);
+    assert_eq!(app.tabs.items[1].location(), &loc(r"C:\work\src"));
 }
 
 #[test]
@@ -244,14 +244,14 @@ fn middle_or_double_click_on_the_empty_tab_strip_opens_a_tab() {
     let mut app = app_at(r"C:\work", &[("a.txt", false)]);
     let (x, y) = empty_strip(&app);
     press(&mut app, x, y, MouseButton::Middle, 1);
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.tabs.items.len(), 2);
     harness::frame(&mut app);
     app.drain_effects().for_each(drop);
     let (x, y) = empty_strip(&app);
     press(&mut app, x, y, MouseButton::Left, 1);
-    assert_eq!(app.tabs.len(), 2);
+    assert_eq!(app.tabs.items.len(), 2);
     press(&mut app, x, y, MouseButton::Left, 2);
-    assert_eq!(app.tabs.len(), 3);
+    assert_eq!(app.tabs.items.len(), 3);
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::ToggleMaximize))));
 }
 
@@ -261,7 +261,7 @@ fn a_double_click_on_the_caption_outside_the_strip_still_maximizes() {
     let y = 4.0;
     let x = (0..app.layout.title.x as usize).map(|x| x as f32).find(|&x| app.hit(x, y) == Hit::None && app.in_title(y)).expect("free caption room above the sidebar");
     press(&mut app, x, y, MouseButton::Left, 2);
-    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.tabs.items.len(), 1);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::ToggleMaximize))));
 }
 
@@ -274,9 +274,9 @@ fn custom_window_buttons_preserve_empty_strip_drag_and_double_click_behaviour() 
         harness::frame(&mut app);
         let (x, y) = empty_strip(&app);
         assert_eq!(app.hit_test(x, y), crate::input::HitArea::Caption);
-        let n = app.tabs.len();
+        let n = app.tabs.items.len();
         press(&mut app, x, y, MouseButton::Left, 2);
-        assert_eq!(app.tabs.len(), n + 1);
+        assert_eq!(app.tabs.items.len(), n + 1);
         assert!(!app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::ToggleMaximize))));
         harness::frame(&mut app);
         let y = 4.0;

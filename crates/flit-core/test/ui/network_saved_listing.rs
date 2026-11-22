@@ -65,7 +65,7 @@ fn a_saved_server_can_be_opened_before_discovery_but_history_does_not_reconnect(
     restored.poll();
     assert_eq!(restored.current_location(), &network_location(SFTP));
     assert!(launches(&mut restored).is_empty());
-    assert!(restored.jobs.form.is_none());
+    assert!(restored.dialogs.form.is_none());
 }
 
 #[test]

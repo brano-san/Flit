@@ -15,7 +15,7 @@ fn access_denied_requires_an_explicit_confirmation_before_elevation() {
     }).unwrap();
     app.on_disk_changes(id, Reply::Read(Err(Error::Denied)));
     assert!(!app.drain_effects().any(|effect| matches!(effect, Effect::DiskChanges { .. })));
-    let form = app.jobs.form.as_ref().unwrap();
+    let form = app.dialogs.form.as_ref().unwrap();
     assert_eq!(form.focus, form.controls.len() + 1);
     app.form_submit(0);
     assert!(app.drain_effects().any(|effect| matches!(effect, Effect::DiskChanges { request: Request::Read { elevated: true, .. }, .. })));

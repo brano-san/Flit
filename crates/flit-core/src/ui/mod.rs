@@ -727,8 +727,6 @@ pub struct App {
     pub switch_to_new_tab: bool,
     pub smooth_scroll: bool,
     pub animations: bool,
-    pub(super) animations_wanted: bool,
-    pub(super) system_animations: bool,
     pub round_corners: bool,
     pub tooltips: bool,
     pub touch_input: bool,
@@ -740,29 +738,20 @@ pub struct App {
     pub confirm_delete: ConfirmDelete,
     pub style: format::Style,
     pub show_hidden: bool,
-    hide_companions: bool,
-    metadata_ads: bool,
     metadata_request_id: u64,
     disk_changes_id: u64,
     pub startup: Startup,
     pub startup_pages: Vec<Location>,
     pub about: About,
-    archive_offer_pending: bool,
     pub log_level: usize,
     pub default_manager: bool,
     pub autostart: bool,
     pub protocol_links: bool,
     pub quick_access_sync: bool,
-    pub(super) background: bool,
     pub(super) tray_available: bool,
-    pub(super) portal_picker: bool,
-    picker: Option<picker::Picker>,
     pub updates: update::UpdatePrefs,
     pub language: usize,
-    shown_lang: crate::i18n::Lang,
     pub prefs: ViewPrefs,
-    folders: FolderViews,
-    settings: Option<settings_page::SettingsUi>,
     clicked_open: bool,
     menu: Vec<menu::Cmd>,
     focused_at: Option<Instant>,
@@ -771,23 +760,13 @@ pub struct App {
     scale: f32,
     system_scale: f32,
     system_text: f32,
-    ui_scale: u32,
-    content_scale: u32,
     size: (f32, f32),
     maximized: bool,
-    pub(super) system_title_wanted: bool,
     pub(super) server_frames: Option<bool>,
     pub(super) system_title: bool,
     active: bool,
 
-    tabs: Vec<Tab>,
-    cur: usize,
-    tab_use: u64,
-    tab_cycle: bool,
     quick_tags: bool,
-    saved_filters: Vec<String>,
-    search_exclusions: Vec<Location>,
-    next_tab: TabId,
     next_gen: u64,
     timer_at: Option<Instant>,
     error_shown: Option<(TabId, String, Instant)>,
@@ -797,7 +776,6 @@ pub struct App {
     menu_right: Option<f32>,
     tip: Option<tooltip::Tip>,
     quick: Option<quick::QuickTip>,
-    confirm: Option<confirm::Confirm>,
     motion: bool,
     pub preedit: crate::input::Preedit,
 
@@ -805,7 +783,6 @@ pub struct App {
     kb: usize,
     a11y_targets: Vec<(u64, Hit)>,
     mods: Mods,
-    docking: Option<dock::Docking>,
     hover: Hit,
     pressed: Hit,
     drag: Drag,
@@ -825,16 +802,12 @@ pub struct App {
     last_frame: Option<Instant>,
     moving: bool,
     dirty: bool,
-    ops: ops::Ops,
     group_press: Option<usize>,
     nav: nav::Nav,
     marquee: Option<marquee::Marquee>,
-    search: search::SearchView,
-    jobs: jobs::Jobs,
     details: details::Details,
     touch: touch::Touch,
     archive: archive::ArchiveUi,
-    strip: tabbar::Strip,
     addr: address::Address,
     primary: String,
     paste_after_layout: Option<PrimaryPaste>,
@@ -849,10 +822,12 @@ pub struct App {
     prefetch: prefetch::Prefetch,
     shapes: own_menu::Shapes,
     tag_fixes: Vec<(FsPath, u32, Instant)>,
+    tabs: tabbar::Tabs,
+    ops: ops::Ops,
+    search: search::SearchView,
+    dialogs: form::Dialogs,
     preview: preview_pane::PreviewPane,
-    panels: panels::Panels,
-    keymap: Arc<Keymap>,
-    opts: options::Opts,
+    settings: settings::SettingsState,
 }
 
 impl App {
@@ -886,8 +861,6 @@ impl App {
             switch_to_new_tab: true,
             smooth_scroll: true,
             animations: true,
-            animations_wanted: true,
-            system_animations: true,
             round_corners: true,
             tooltips: true,
             touch_input: false,
@@ -899,8 +872,6 @@ impl App {
             confirm_delete: ConfirmDelete::default(),
             style: format::Style { system: ("yyyy-MM-dd".into(), "HH:mm".into()), ..Default::default() },
             show_hidden: state.show_hidden,
-            hide_companions: false,
-            metadata_ads: false,
             metadata_request_id: 0,
             disk_changes_id: 0,
             startup_pages: match &state.startup {
@@ -909,22 +880,15 @@ impl App {
             },
             startup: state.startup,
             about: About::default(),
-            archive_offer_pending: false,
             log_level: settings::LOG_DEFAULT,
             default_manager: false,
             autostart: false,
             protocol_links: false,
             quick_access_sync: false,
-            background: false,
             tray_available: false,
-            portal_picker: false,
-            picker: None,
             updates: update::UpdatePrefs::default(),
             language: 0,
-            shown_lang: crate::i18n::lang(),
             prefs: state.prefs,
-            folders: state.folders,
-            settings: None,
             clicked_open: false,
             menu: Vec::new(),
             focused_at: None,
@@ -933,22 +897,12 @@ impl App {
             scale,
             system_scale: scale,
             system_text: 1.0,
-            ui_scale: 100,
-            content_scale: 100,
             size: (size.0 as f32, size.1 as f32),
             maximized: false,
-            system_title_wanted: false,
             server_frames: None,
             system_title: false,
             active: true,
-            tabs: Vec::new(),
-            cur: 0,
-            tab_use: 0,
-            tab_cycle: false,
             quick_tags: false,
-            saved_filters: Vec::new(),
-            search_exclusions: Vec::new(),
-            next_tab: tab_base + 1,
             next_gen: 0,
             timer_at: None,
             error_shown: None,
@@ -958,14 +912,12 @@ impl App {
             menu_right: None,
             tip: None,
             quick: None,
-            confirm: None,
             motion: false,
             preedit: Default::default(),
             focus: Focus::List,
             kb: 0,
             a11y_targets: Vec::new(),
             mods: Mods::default(),
-            docking: None,
             hover: Hit::None,
             pressed: Hit::None,
             drag: Drag::None,
@@ -983,16 +935,12 @@ impl App {
             last_frame: None,
             moving: false,
             dirty: true,
-            ops: ops::Ops::default(),
             group_press: None,
             nav: nav::Nav::default(),
             marquee: None,
-            search: Default::default(),
-            jobs: Default::default(),
             details: Default::default(),
             touch: Default::default(),
             archive: archive::ArchiveUi::new(state.archive),
-            strip: Default::default(),
             addr: Default::default(),
             primary: String::new(),
             paste_after_layout: None,
@@ -1007,10 +955,12 @@ impl App {
             prefetch: Default::default(),
             shapes: Default::default(),
             tag_fixes: Vec::new(),
+            tabs: tabbar::Tabs::new(tab_base),
+            ops: Default::default(),
+            search: Default::default(),
+            dialogs: Default::default(),
             preview: Default::default(),
-            panels: Default::default(),
-            keymap: keymap::defaults(),
-            opts: Default::default(),
+            settings: settings::SettingsState::new(state.folders),
         };
         let mut start = if start.is_empty() { vec![Route { folder: state.path, select: None }] } else { start };
         let total = start.len();
@@ -1030,7 +980,7 @@ impl App {
     }
 
     pub fn shutdown(&mut self) {
-        for t in self.tabs.iter_mut().chain(self.panels.list.iter_mut().flat_map(|p| p.tabs.iter_mut())) {
+        for t in self.tabs.items.iter_mut().chain(self.tabs.panels.list.iter_mut().flat_map(|p| p.tabs.iter_mut())) {
             t.shutdown(&mut self.effects);
         }
         self.cancel_ops();
@@ -1038,19 +988,19 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.folders.clone(), archive: self.archive.prefs.clone(), startup: self.startup.clone() }
+        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.settings.folders.clone(), archive: self.archive.prefs.clone(), startup: self.startup.clone() }
     }
 
     pub fn tab(&self) -> &Tab {
-        &self.tabs[self.cur]
+        &self.tabs.items[self.tabs.cur]
     }
 
     fn tab_mut(&mut self) -> &mut Tab {
-        &mut self.tabs[self.cur]
+        &mut self.tabs.items[self.tabs.cur]
     }
 
     pub fn tabs(&self) -> &[Tab] {
-        &self.tabs
+        &self.tabs.items
     }
 
     pub fn current_location(&self) -> &Location {
@@ -1088,26 +1038,26 @@ impl App {
     }
 
     pub fn ui_scale(&self) -> u32 {
-        self.ui_scale
+        self.settings.ui_scale
     }
 
     pub fn set_ui_scale(&mut self, percent: u32) {
-        self.ui_scale = percent.clamp(UI_SCALE.0, UI_SCALE.1);
+        self.settings.ui_scale = percent.clamp(UI_SCALE.0, UI_SCALE.1);
         self.rescale();
     }
 
     pub fn content_scale(&self) -> u32 {
-        self.content_scale
+        self.settings.content_scale
     }
 
     pub fn set_content_scale(&mut self, percent: u32) {
-        self.content_scale = percent.clamp(UI_SCALE.0, UI_SCALE.1);
+        self.settings.content_scale = percent.clamp(UI_SCALE.0, UI_SCALE.1);
         self.layout();
         self.dirty = true;
     }
 
     fn content_px(&self) -> f32 {
-        self.system_scale * self.system_text * self.content_scale as f32 / 100.0
+        self.system_scale * self.system_text * self.settings.content_scale as f32 / 100.0
     }
 
     fn cs(&self, v: f32) -> f32 {
@@ -1149,7 +1099,7 @@ impl App {
     }
 
     fn rescale(&mut self) {
-        self.scale = self.system_scale * self.system_text * self.ui_scale as f32 / 100.0;
+        self.scale = self.system_scale * self.system_text * self.settings.ui_scale as f32 / 100.0;
         self.layout();
         self.dirty = true;
     }
@@ -1249,12 +1199,12 @@ impl App {
                 let Some(first) = it.next() else { return };
                 self.route_here(first, now);
                 if connect {
-                    self.begin_network(self.cur);
+                    self.begin_network(self.tabs.cur);
                 }
                 for r in it {
                     self.add_tab_like_current(r, now);
                     if connect {
-                        self.begin_network(self.cur);
+                        self.begin_network(self.tabs.cur);
                     }
                 }
             }
@@ -1262,7 +1212,7 @@ impl App {
                 for r in routes {
                     self.add_tab_like_current(r, now);
                     if connect {
-                        self.begin_network(self.cur);
+                        self.begin_network(self.tabs.cur);
                     }
                 }
             }
@@ -1272,10 +1222,10 @@ impl App {
     }
 
     fn route_here(&mut self, mut r: Route, now: Instant) {
-        let k = self.cur;
-        r.folder = admin::stays_admin(self.tabs[k].location(), r.folder);
-        let keep = self.tabs[k].capture();
-        let t = &mut self.tabs[k];
+        let k = self.tabs.cur;
+        r.folder = admin::stays_admin(self.tabs.items[k].location(), r.folder);
+        let keep = self.tabs.items[k].capture();
+        let t = &mut self.tabs.items[k];
         if !t.history.go(r.folder, keep) {
             let current = t.gen;
             if let (Some(name), Some(v)) = (&r.select, t.view.as_mut().filter(|v| v.snap().gen == current)) {
@@ -1299,51 +1249,51 @@ impl App {
     }
 
     fn add_tab(&mut self, r: Route, view: FolderView, show_hidden: bool, now: Instant) {
-        let id = self.next_tab;
-        self.next_tab += 1;
-        let shown = self.tabs.get(self.cur).and_then(|c| c.view.as_ref().filter(|v| v.snap().done && v.snap().error.is_none() && c.view_loc == r.folder && *c.location() == r.folder).map(|v| v.snap().clone()));
+        let id = self.tabs.next_tab;
+        self.tabs.next_tab += 1;
+        let shown = self.tabs.items.get(self.tabs.cur).and_then(|c| c.view.as_ref().filter(|v| v.snap().done && v.snap().error.is_none() && c.view_loc == r.folder && *c.location() == r.folder).map(|v| v.snap().clone()));
         let mut t = Tab::new(id, r.folder, ViewSpec { show_hidden, ..ViewSpec::default() });
         t.set_folder_view(view);
         if let Some(snap) = shown {
             t.view = Some(crate::view::DirView::new(snap));
         }
-        let at = (self.cur + 1).min(self.tabs.len());
-        self.tabs.insert(at, t);
-        self.cur = at;
-        self.load_tab(self.cur, r.select, now);
+        let at = (self.tabs.cur + 1).min(self.tabs.items.len());
+        self.tabs.items.insert(at, t);
+        self.tabs.cur = at;
+        self.load_tab(self.tabs.cur, r.select, now);
         self.after_tab_change();
     }
 
     fn after_tab_change(&mut self) {
-        self.tab_cycle = false;
+        self.tabs.tab_cycle = false;
         self.record_tab_use();
         self.show_selected_tab();
     }
 
     fn record_tab_use(&mut self) {
-        self.tab_use += 1;
-        self.tab_mut().last_used = self.tab_use;
+        self.tabs.tab_use += 1;
+        self.tab_mut().last_used = self.tabs.tab_use;
     }
 
     fn finish_tab_cycle(&mut self) {
-        if std::mem::take(&mut self.tab_cycle) {
+        if std::mem::take(&mut self.tabs.tab_cycle) {
             self.record_tab_use();
         }
     }
 
     fn cycle_recent_tabs(&mut self, backward: bool) {
-        if self.tabs.len() < 2 {
+        if self.tabs.items.len() < 2 {
             return;
         }
-        if !self.tab_cycle {
+        if !self.tabs.tab_cycle {
             self.record_tab_use();
-            self.tab_cycle = true;
+            self.tabs.tab_cycle = true;
         }
-        let mut order: Vec<usize> = (0..self.tabs.len()).collect();
-        order.sort_by_key(|&i| (std::cmp::Reverse(self.tabs[i].last_used), i));
-        let at = order.iter().position(|&i| i == self.cur).unwrap_or(0);
+        let mut order: Vec<usize> = (0..self.tabs.items.len()).collect();
+        order.sort_by_key(|&i| (std::cmp::Reverse(self.tabs.items[i].last_used), i));
+        let at = order.iter().position(|&i| i == self.tabs.cur).unwrap_or(0);
         let step = if backward { order.len() - 1 } else { 1 };
-        self.cur = order[(at + step) % order.len()];
+        self.tabs.cur = order[(at + step) % order.len()];
         self.show_selected_tab();
     }
 
@@ -1356,24 +1306,24 @@ impl App {
     }
 
     fn select_tab(&mut self, i: usize) {
-        if i < self.tabs.len() && i != self.cur {
-            self.cur = i;
+        if i < self.tabs.items.len() && i != self.tabs.cur {
+            self.tabs.cur = i;
             self.after_tab_change();
         }
     }
 
     fn close_tab(&mut self, i: usize) {
-        if i >= self.tabs.len() {
+        if i >= self.tabs.items.len() {
             return;
         }
-        if self.tabs.len() == 1 {
+        if self.tabs.items.len() == 1 {
             return self.close_panel();
         }
-        let mut t = self.tabs.remove(i);
+        let mut t = self.tabs.items.remove(i);
         t.shutdown(&mut self.effects);
         self.remember_closed(t);
-        if self.cur > i || self.cur >= self.tabs.len() {
-            self.cur = self.cur.saturating_sub(1);
+        if self.tabs.cur > i || self.tabs.cur >= self.tabs.items.len() {
+            self.tabs.cur = self.tabs.cur.saturating_sub(1);
         }
         self.after_tab_change();
     }
@@ -1395,9 +1345,9 @@ impl App {
     }
 
     fn jump_history(&mut self, n: isize, now: Instant) {
-        let (k, previous) = (self.cur, self.select_previous);
-        let keep = self.tabs[k].capture();
-        let t = &mut self.tabs[k];
+        let (k, previous) = (self.tabs.cur, self.select_previous);
+        let keep = self.tabs.items[k].capture();
+        let t = &mut self.tabs.items[k];
         let from = t.location().clone();
         if t.history.jump(n, keep) {
             let restore = t.history.take_here();
@@ -1409,17 +1359,17 @@ impl App {
     }
 
     pub fn refresh(&mut self, now: Instant) {
-        self.reload(self.cur, now);
-        self.begin_network(self.cur);
+        self.reload(self.tabs.cur, now);
+        self.begin_network(self.tabs.cur);
     }
 
     fn reload(&mut self, k: usize, now: Instant) {
-        if let Some(dir) = self.tabs[k].view_loc.to_windows() {
+        if let Some(dir) = self.tabs.items[k].view_loc.to_windows() {
             self.shell_overlays.forget_dir(dir.as_bytes());
         }
-        let keep = self.tabs[k].capture();
+        let keep = self.tabs.items[k].capture();
         self.load_tab_restored(k, None, keep, now);
-        self.dirty |= k == self.cur;
+        self.dirty |= k == self.tabs.cur;
     }
 
     fn open_entry(&mut self, i: u32, now: Instant) {
@@ -1507,10 +1457,10 @@ impl App {
 
     fn poll_here(&mut self) -> bool {
         let mut visible = false;
-        for k in 0..self.tabs.len() {
+        for k in 0..self.tabs.items.len() {
             visible |= self.poll_tab(k);
-            let changed = self.tabs[k].apply_diffs();
-            if changed && k == self.cur {
+            let changed = self.tabs.items[k].apply_diffs();
+            if changed && k == self.tabs.cur {
                 self.compute_dir_sizes();
                 visible = true;
             }
@@ -1519,7 +1469,7 @@ impl App {
     }
 
     fn poll_tab(&mut self, k: usize) -> bool {
-        let Some(snap) = self.tabs[k].slot.take() else { return false };
+        let Some(snap) = self.tabs.items[k].slot.take() else { return false };
         self.apply_snapshot(k, snap)
     }
 
@@ -1528,9 +1478,9 @@ impl App {
             return false;
         }
         self.sync_spec(k);
-        let current = snap.gen == self.tabs[k].gen;
-        let (loaded, fresh) = (snap.done && current, current && self.tabs[k].view.as_ref().is_none_or(|v| v.snap().gen != snap.gen));
-        if fresh && self.tabs[k].look == LayoutMode::Columns {
+        let current = snap.gen == self.tabs.items[k].gen;
+        let (loaded, fresh) = (snap.done && current, current && self.tabs.items[k].view.as_ref().is_none_or(|v| v.snap().gen != snap.gen));
+        if fresh && self.tabs.items[k].look == LayoutMode::Columns {
             self.keep_as_pane(k);
         }
         let snap = self.with_saved_servers(k, snap);
@@ -1539,11 +1489,11 @@ impl App {
         }
         let clock = crate::query_attrs::Clock::system(self.utc_offset_min);
         let tags = self.tags().clone();
-        let resort = self.tabs[k].on_snapshot(snap, clock, &tags.defs);
+        let resort = self.tabs.items[k].on_snapshot(snap, clock, &tags.defs);
         if current {
             self.apply_pick_filter(k);
         }
-        if std::mem::take(&mut self.tabs[k].properties_due) && k == self.cur {
+        if std::mem::take(&mut self.tabs.items[k].properties_due) && k == self.tabs.cur {
             self.properties_dialog();
         }
         if fresh || loaded {
@@ -1558,7 +1508,7 @@ impl App {
         if loaded {
             self.on_loaded(k);
         }
-        k == self.cur
+        k == self.tabs.cur
     }
 
     pub fn on_provider_event(&mut self, ev: ProviderEvent, now: Instant) {
@@ -1568,44 +1518,44 @@ impl App {
         let tab_of = |tabs: &[Tab], id: TabId, gen: u64| tabs.iter().position(|t| t.id == id && t.gen == gen);
         match ev {
             ProviderEvent::Changes { tab, gen, changes } => {
-                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                if let Some(k) = tab_of(&self.tabs.items, tab, gen) {
                     if self.picker_uses_mime() {
                         self.reload(k, now);
                         return;
                     }
-                    if let Some(dir) = self.tabs[k].view_loc.to_windows() {
+                    if let Some(dir) = self.tabs.items[k].view_loc.to_windows() {
                         for c in &changes {
                             self.shell_overlays.forget(dir.as_bytes(), &c.name);
                         }
                     }
-                    self.tabs[k].pending_diffs.extend(changes);
+                    self.tabs.items[k].pending_diffs.extend(changes);
                     self.git_refresh(k, true);
-                    if self.tabs[k].pending_diffs.len() > MAX_PENDING_DIFFS {
+                    if self.tabs.items[k].pending_diffs.len() > MAX_PENDING_DIFFS {
                         return self.on_provider_event(ProviderEvent::Rescan { tab, gen }, now);
                     }
-                    self.dirty |= k == self.cur;
+                    self.dirty |= k == self.tabs.cur;
                 }
             }
             ProviderEvent::Rescan { tab, gen } => {
-                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                if let Some(k) = tab_of(&self.tabs.items, tab, gen) {
                     self.reload(k, now);
                 }
             }
             ProviderEvent::SizesSkipped { tab, gen, items } => {
-                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                if let Some(k) = tab_of(&self.tabs.items, tab, gen) {
                     for idx in items {
-                        self.tabs[k].sizing.1.remove(&idx);
+                        self.tabs.items[k].sizing.1.remove(&idx);
                     }
-                    self.dirty |= k == self.cur;
+                    self.dirty |= k == self.tabs.cur;
                 }
             }
             ProviderEvent::DirSize { tab, gen, idx, stats } => {
-                if let Some(k) = tab_of(&self.tabs, tab, gen) {
-                    if let Some(v) = self.tabs[k].view.as_mut().filter(|v| v.snap().gen == gen) {
+                if let Some(k) = tab_of(&self.tabs.items, tab, gen) {
+                    if let Some(v) = self.tabs.items[k].view.as_mut().filter(|v| v.snap().gen == gen) {
                         v.set_dir_stats(idx, stats);
                     }
-                    self.tabs[k].sizing.1.remove(&idx);
-                    self.dirty |= k == self.cur;
+                    self.tabs.items[k].sizing.1.remove(&idx);
+                    self.dirty |= k == self.tabs.cur;
                 }
             }
             ProviderEvent::OpDone { tab, id, error, report } => self.op_done(tab, id, error, report, now),
@@ -1622,7 +1572,7 @@ impl App {
                 if self.tab().id == tab {
                     if network::network_address(&path).is_some() {
                         self.route_here(Route { folder: Location::from_local(path), select: None }, now);
-                        let t = &mut self.tabs[self.cur];
+                        let t = &mut self.tabs.items[self.tabs.cur];
                         t.slot.take();
                         t.list_network(self.case, &mut self.effects);
                     } else {
@@ -1631,14 +1581,14 @@ impl App {
                 }
             }
             ProviderEvent::NetworkConnected { tab, gen, result } => {
-                if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                if let Some(k) = tab_of(&self.tabs.items, tab, gen) {
                     self.network_connected(k, result, now);
                 }
             }
             ProviderEvent::NetworkDiscovery { tab, gen, warning } => {
-                if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.discovery == network::DiscoveryCheck::Pending(gen)) {
-                    self.tabs[k].discovery = network::DiscoveryCheck::Checked(warning);
-                    self.dirty |= k == self.cur;
+                if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab && t.discovery == network::DiscoveryCheck::Pending(gen)) {
+                    self.tabs.items[k].discovery = network::DiscoveryCheck::Checked(warning);
+                    self.dirty |= k == self.tabs.cur;
                 }
             }
             ProviderEvent::Reveal { tab, path, new_tab } => {
@@ -1653,23 +1603,23 @@ impl App {
                 }
             }
             ProviderEvent::OpNotice { tab, text } => {
-                if let Some(k) = self.tabs.iter().position(|t| t.id == tab) {
-                    self.tabs[k].error = Some(crate::i18n::localize(&text).into_owned());
-                    self.dirty |= k == self.cur;
+                if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab) {
+                    self.tabs.items[k].error = Some(crate::i18n::localize(&text).into_owned());
+                    self.dirty |= k == self.tabs.cur;
                 }
             }
             ProviderEvent::Status { tab, gen, text } => {
-                if let Some(k) = tab_of(&self.tabs, tab, gen) {
-                    if let Some(l) = self.tabs[k].loading.as_mut() {
+                if let Some(k) = tab_of(&self.tabs.items, tab, gen) {
+                    if let Some(l) = self.tabs.items[k].loading.as_mut() {
                         l.note = Some(crate::redact::passwords(&crate::i18n::localize(&text)).into_owned());
-                        self.dirty |= k == self.cur;
+                        self.dirty |= k == self.tabs.cur;
                     }
                 }
             }
             ProviderEvent::Unwatched { tab, gen, limit } => {
-                if let Some(k) = tab_of(&self.tabs, tab, gen) {
-                    self.tabs[k].live_off = Some(if limit { tab::LiveOff::Limit } else { tab::LiveOff::Failed });
-                    self.dirty |= k == self.cur;
+                if let Some(k) = tab_of(&self.tabs.items, tab, gen) {
+                    self.tabs.items[k].live_off = Some(if limit { tab::LiveOff::Limit } else { tab::LiveOff::Failed });
+                    self.dirty |= k == self.tabs.cur;
                 }
             }
             ProviderEvent::Access { id, items, accounts, .. } => self.properties_access(id, items, accounts),
@@ -1677,7 +1627,7 @@ impl App {
             ProviderEvent::WrongPassphrase { tab, device } => self.unlock_again(tab, device),
             ProviderEvent::OpenAsk { tab, path, ask } => self.open_ask(tab, path, ask),
             ProviderEvent::MountAsk { tab, gen, ask, answer } => {
-                if gen.is_none_or(|gen| tab_of(&self.tabs, tab, gen).is_some()) {
+                if gen.is_none_or(|gen| tab_of(&self.tabs.items, tab, gen).is_some()) {
                     self.mount_ask(ask, answer);
                 } else {
                     answer.send(crate::provider::MountReply::Cancel);
@@ -1692,13 +1642,13 @@ impl App {
         if let Some(id) = self.parked_of(tab) {
             return self.visit(id, |a| a.on_resorted(tab, gen, view, base_len, order));
         }
-        if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.gen == gen && t.view_spec == view) {
-            if let Some(v) = &mut self.tabs[k].view {
+        if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab && t.gen == gen && t.view_spec == view) {
+            if let Some(v) = &mut self.tabs.items[k].view {
                 if base_len > v.listing().len() {
                     return self.resort(k);
                 }
                 v.merge_order(order, view, base_len);
-                self.dirty |= k == self.cur;
+                self.dirty |= k == self.tabs.cur;
             }
         }
     }
@@ -1760,7 +1710,7 @@ impl App {
                 return;
             }
         }
-        if self.form_insert(text) || self.jobs.modal() || self.settings_insert(text.lines().next().unwrap_or("")) {
+        if self.form_insert(text) || self.dialogs.modal() || self.settings_insert(text.lines().next().unwrap_or("")) {
             return;
         }
         if self.search.active {
@@ -1774,7 +1724,7 @@ impl App {
 
     fn resort(&mut self, k: usize) {
         self.sync_spec(k);
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         if let Some(v) = &mut t.view {
             v.set_git(if t.view_spec.sort.field == SortField::GitHash { t.git.clone() } else { None });
             self.effects.push(Effect::Resort { tab: t.id, gen: t.gen, snap: v.snap().clone(), view: t.view_spec });
@@ -1782,7 +1732,7 @@ impl App {
     }
 
     fn layout(&mut self) {
-        if self.panels.here != self.panels.active {
+        if self.tabs.panels.here != self.tabs.panels.active {
             let r = self.panel_rect();
             return self.layout_panel(r);
         }
@@ -1792,16 +1742,16 @@ impl App {
     }
 
     fn layout_panel(&mut self, area: Rect) {
-        let active = self.panels.here == self.panels.active;
+        let active = self.tabs.panels.here == self.tabs.panels.active;
         let (caption, inset) = self.panel_edges(area);
         let ops_button = active && self.ops_button_visible();
-        let status_bar = active && (self.picker.is_some() || self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
-        let (n, actions) = (self.tabs.len(), self.tab_actions_button);
-        let at = if active && self.focus == Focus::TabBar && self.kb < n { self.kb } else { self.cur };
-        let target = (at, self.tabs[at].id);
+        let status_bar = active && (self.dialogs.picker.is_some() || self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
+        let (n, actions) = (self.tabs.items.len(), self.tab_actions_button);
+        let at = if active && self.focus == Focus::TabBar && self.kb < n { self.kb } else { self.tabs.cur };
+        let target = (at, self.tabs.items[at].id);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
-        let status_h = if active && self.picker.is_some() {
+        let status_h = if active && self.dialogs.picker.is_some() {
             s(self.picker_height(area.w))
         } else {
             self.status_slide(if status_bar { s(STATUS_H) } else { 0.0 })
@@ -2010,7 +1960,7 @@ impl App {
     }
 
     pub fn hit_test(&self, x: f32, y: f32) -> HitArea {
-        if self.over_own_menu(x, y) || self.confirm.as_ref().is_some_and(|c| c.rect.contains(x, y)) {
+        if self.over_own_menu(x, y) || self.dialogs.confirm.as_ref().is_some_and(|c| c.rect.contains(x, y)) {
             return HitArea::Client;
         }
         match self.hit(x, y) {
@@ -2031,7 +1981,7 @@ impl App {
     }
 
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
-        if self.tab_cycle && match ev {
+        if self.tabs.tab_cycle && match ev {
             Event::Key { key, mods, pressed } => !mods.ctrl || (*pressed && *key != Key::Tab && *key != Key::Other),
             Event::Focus(false) | Event::MouseDown { .. } | Event::Wheel { .. } => true,
             _ => false,
@@ -2045,8 +1995,8 @@ impl App {
             return;
         }
         if let Event::WindowButtons(buttons) = ev {
-            if self.panels.buttons != *buttons {
-                self.panels.buttons = buttons.clone();
+            if self.tabs.panels.buttons != *buttons {
+                self.tabs.panels.buttons = buttons.clone();
                 self.hover = Hit::None;
                 self.pressed = Hit::None;
                 self.layout();
@@ -2088,7 +2038,7 @@ impl App {
         if self.confirm_event(ev, now) || self.own_menu_event(ev, now) {
             return;
         }
-        if self.search.active && !self.jobs.modal() && self.search_event(ev, now) {
+        if self.search.active && !self.dialogs.modal() && self.search_event(ev, now) {
             return;
         }
         match ev {
@@ -2186,7 +2136,7 @@ impl App {
             Event::DevicesChanged => {
                 self.effects.push(Effect::RefreshPlaces);
                 self.each_pane(|a, k| {
-                    if a.tabs[k].location().path().kind() == PathKind::Computer {
+                    if a.tabs.items[k].location().path().kind() == PathKind::Computer {
                         a.reload(k, now);
                     }
                 });
@@ -2411,7 +2361,7 @@ impl App {
         if button != MouseButton::Left && matches!(self.drag, Drag::Tab { .. } | Drag::Network) {
             return;
         }
-        if let Some(f) = &mut self.jobs.form {
+        if let Some(f) = &mut self.dialogs.form {
             f.document.grab = None;
         }
         if self.autoscroll_up(x, y, button) {
@@ -2445,12 +2395,12 @@ impl App {
             return self.drop_menu_row(from, to);
         }
         if let Drag::PanelSep { .. } = was {
-            self.strip.rev += 1;
+            self.tabs.strip.rev += 1;
         }
         if let Drag::Tab { torn: true, .. } = was {
             return self.tear_off(x, y);
         }
-        if let (Drag::Tab { .. }, Some(d)) = (was, self.docking.take()) {
+        if let (Drag::Tab { .. }, Some(d)) = (was, self.tabs.docking.take()) {
             if let Some(z) = d.hot.and_then(|k| d.zones.get(k)) {
                 return self.dock_tab(z.dock, self.mods.ctrl, now);
             }
@@ -2551,12 +2501,12 @@ impl App {
         let plain = !m.ctrl && !m.shift;
         let opened_by_first_click = std::mem::take(&mut self.clicked_open);
         let entry = self.tab().view.as_ref().and_then(|v| v.rows().get(row).copied());
-        if let Some(i) = entry.filter(|_| self.picker.is_none() && button == MouseButton::Left && clicks >= 2 && !opened_by_first_click) {
+        if let Some(i) = entry.filter(|_| self.dialogs.picker.is_none() && button == MouseButton::Left && clicks >= 2 && !opened_by_first_click) {
             if self.modified_double_click(i, now) {
                 return;
             }
         }
-        let Some(v) = &mut self.tabs[self.cur].view else { return };
+        let Some(v) = &mut self.tabs.items[self.tabs.cur].view else { return };
         let i = v.rows()[row];
         if button == MouseButton::Right {
             if !v.is_selected(i) {
@@ -2592,7 +2542,7 @@ impl App {
     }
 
     fn single_click_opens(&self, i: u32) -> bool {
-        if self.picker.is_some() {
+        if self.dialogs.picker.is_some() {
             return false;
         }
         let t = self.tab();
@@ -2613,9 +2563,9 @@ impl App {
     }
 
     fn open_routes_in_tabs(&mut self, routes: Vec<Route>, connect: bool, now: Instant) {
-        let back = self.cur;
+        let back = self.tabs.cur;
         self.dispatch_routes(routes, OpenTarget::NewTab, connect, now);
-        if !self.switch_to_new_tab && self.cur != back {
+        if !self.switch_to_new_tab && self.tabs.cur != back {
             self.select_tab(back);
         }
     }
@@ -2675,7 +2625,7 @@ impl App {
             self.dirty = true;
             return;
         }
-        if self.opts.char_key == options::CharKey::Filter && self.focus == Focus::List {
+        if self.settings.opts.char_key == options::CharKey::Filter && self.focus == Focus::List {
             self.open_filter();
             self.filter_insert(c.encode_utf8(&mut [0; 4]));
             return;
@@ -2709,7 +2659,7 @@ impl App {
             t.sizing = (gen, Default::default());
         }
         t.sizing.1.extend(pending);
-        let allowed = [self.opts.sizes_ssd, self.opts.sizes_hdd, self.opts.sizes_network];
+        let allowed = [self.settings.opts.sizes_ssd, self.settings.opts.sizes_hdd, self.settings.opts.sizes_network];
         let req = ProviderRequest::DirSizes { tab: id, gen, dir: loc.path().clone(), items, cancel, allowed };
         self.effects.push(Effect::Provider { provider: loc.provider(), req });
     }
@@ -2729,11 +2679,11 @@ impl App {
     }
 
     pub(super) fn folder_stats_visible(&self) -> bool {
-        self.folder_stats_visible_in(self.cur)
+        self.folder_stats_visible_in(self.tabs.cur)
     }
 
     fn folder_stats_visible_in(&self, k: usize) -> bool {
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         if t.look.table() {
             [Column::Folders, Column::Files, Column::Size].into_iter().any(|c| self.stat_enabled(c) && t.columns.shown(c))
         } else {
@@ -2785,16 +2735,16 @@ impl App {
         self.fit_sidebar(g);
         self.fit_settings(g);
         self.look.font_missing = !g.set_ui_family(&self.look.font);
-        g.set_mono_family(&self.opts.inspector_font);
-        let hot = (self.drag == Drag::None && self.hover != Hit::None).then_some((self.panels.active, self.hover));
+        g.set_mono_family(&self.settings.opts.inspector_font);
+        let hot = (self.drag == Drag::None && self.hover != Hit::None).then_some((self.tabs.panels.active, self.hover));
         self.motion |= self.hover_glow.aim(hot, self.animations, now);
         let palette = self.look.palette;
         let (th, files) = (&palette.base, palette.area(Area::Files));
-        let ids: Vec<TabId> = self.tabs.iter().chain(self.panels.list.iter().filter(|p| p.id != self.panels.here).flat_map(|p| &p.tabs)).map(|t| t.id).collect();
-        if self.strip.arrivals(&ids, self.animations, now) {
+        let ids: Vec<TabId> = self.tabs.items.iter().chain(self.tabs.panels.list.iter().filter(|p| p.id != self.tabs.panels.here).flat_map(|p| &p.tabs)).map(|t| t.id).collect();
+        if self.tabs.strip.arrivals(&ids, self.animations, now) {
             self.motion = true;
         }
-        self.strip.begin(self.panels.list.iter().map(|p| p.id), self.animations);
+        self.tabs.strip.begin(self.tabs.panels.list.iter().map(|p| p.id), self.animations);
         for _ in 0..2 {
             arena.reset();
             g.begin(files.bg);
@@ -2826,7 +2776,7 @@ impl App {
             if !g.atlas_reset {
                 break;
             }
-            self.strip.drop_ghosts();
+            self.tabs.strip.drop_ghosts();
         }
         self.arena = arena;
         self.request_primary_after_layout();
@@ -2844,7 +2794,7 @@ impl App {
     }
 
     fn lit(&self, h: Hit) -> f32 {
-        self.hover_glow.alpha((self.panels.here, h), self.last_frame.unwrap_or_else(Instant::now))
+        self.hover_glow.alpha((self.tabs.panels.here, h), self.last_frame.unwrap_or_else(Instant::now))
     }
 
     fn button(&self, h: Hit, open: bool, enabled: bool) -> widgets::Button {
@@ -2871,11 +2821,11 @@ impl App {
 
     fn glide_overlays(&mut self, dt: f32) -> bool {
         let smooth = self.smooth();
-        let settings = self.settings.as_mut().is_some_and(|ui| ui.scroll.step(dt, smooth));
+        let settings = self.settings.screen.as_mut().is_some_and(|ui| ui.scroll.step(dt, smooth));
         let palette = self.nav.palette.as_mut().is_some_and(|p| p.scroll.step(dt, smooth));
         let side = self.nav.sidebar.scroll.step(dt, smooth);
         let home = self.nav.home.scroll.step(dt, smooth);
-        let update = self.jobs.form.as_mut().is_some_and(|f| f.document.scroll.step(dt, smooth));
+        let update = self.dialogs.form.as_mut().is_some_and(|f| f.document.scroll.step(dt, smooth));
         settings | palette | side | home | update
     }
 
@@ -2888,7 +2838,7 @@ impl App {
         let base = l.title.bottom() - border;
         let foot = if g.dl.round { self.s(3.0) } else { 0.0 };
         let start = l.title.x + if l.title.x == self.nav.sidebar.rect.right() && l.title.x > 0.0 { foot } else { 0.0 };
-        if let Some(r) = l.tabs.get(self.cur).map(|&(r, _)| self.dragged_tab().unwrap_or_else(|| self.strip.at(lane, tabbar::Part::Tab(self.tabs[self.cur].id), r, now))).filter(|r| r.w > 0.0) {
+        if let Some(r) = l.tabs.get(self.tabs.cur).map(|&(r, _)| self.dragged_tab().unwrap_or_else(|| self.tabs.strip.at(lane, tabbar::Part::Tab(self.tabs.items[self.tabs.cur].id), r, now))).filter(|r| r.w > 0.0) {
             g.dl.rect(Rect::new(start, base, (r.x - foot - start).max(0.0), border), t.separator);
             g.dl.rect(Rect::new(r.right() + foot, base, (l.title.right() - r.right() - foot).max(0.0), border), t.separator);
         } else {
@@ -2901,22 +2851,22 @@ impl App {
         let l = &self.layout;
         let mut requests: Vec<IconRequest> = Vec::new();
         let ghosts_from = g.dl.instances.len();
-        self.strip.ghosts(lane, &mut g.dl, now);
+        self.tabs.strip.ghosts(lane, &mut g.dl, now);
         let floating = self.dragged_tab();
-        let order = (0..l.tabs.len()).filter(|&i| floating.is_none() || i != self.cur).chain(floating.map(|_| self.cur));
+        let order = (0..l.tabs.len()).filter(|&i| floating.is_none() || i != self.tabs.cur).chain(floating.map(|_| self.tabs.cur));
         for i in order {
             let (target, c) = l.tabs[i];
-            let part = tabbar::Part::Tab(self.tabs[i].id);
-            let r = floating.filter(|_| i == self.cur).unwrap_or_else(|| self.strip.at(lane, part, target, now));
+            let part = tabbar::Part::Tab(self.tabs.items[i].id);
+            let r = floating.filter(|_| i == self.tabs.cur).unwrap_or_else(|| self.tabs.strip.at(lane, part, target, now));
             let from = g.dl.instances.len();
             if r.w <= 0.0 {
-                self.strip.record(lane, part, r, &[]);
+                self.tabs.strip.record(lane, part, r, &[]);
                 continue;
             }
             let c = if c.w > 0.0 { Rect::new(c.x + r.right() - target.right(), c.y, c.w, c.h) } else { c };
-            let active = i == self.cur;
+            let active = i == self.tabs.cur;
             let hovered = self.lit(Hit::Tab(i)).max(self.lit(Hit::TabClose(i)));
-            let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.docking.is_some() && self.panels.here == self.panels.active);
+            let accented = self.menu_open_from(Hit::Tab(i)) || (active && self.tabs.docking.is_some() && self.tabs.panels.here == self.tabs.panels.active);
             if active {
                 g.dl.outline(Rect::new(r.x, r.y, r.w, r.h + self.s(8.0)), t.separator, self.s(6.0), border);
                 g.dl.confine(from, Rect::new(r.x, r.y, r.w, base - foot - r.y + border));
@@ -2946,11 +2896,11 @@ impl App {
                 g.dl.outline(target, t.accent, self.s(6.0), self.s(1.0).max(1.0));
             }
             let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-            let label = self.tabs[i].title();
+            let label = self.tabs.items[i].title();
             let torn = active && matches!(self.drag, Drag::Tab { torn: true, .. });
             let color = if accented { theme::ink_on(t.accent) } else if torn { t.text_dim.alpha(0x60) } else if active { t.text } else { t.text_dim };
             let icon = Rect::new(r.x + self.s(10.0), r.y + (r.h - self.s(16.0)) / 2.0, self.s(16.0), self.s(16.0));
-            let loc = self.tabs[i].location();
+            let loc = self.tabs.items[i].location();
             if loc.is_admin() {
                 admin::draw_tab_mark(g, t, r, icon, self.icon_font(12.0), self.s(2.0), if torn || accented { Some(color) } else { None });
             } else if !self.system_icon(g, sidebar::folder_icon(loc, &self.nav.sidebar, icon.w as u32), icon, icon.w, if torn { 0x60 } else { 0xFF }, &mut requests) {
@@ -2962,19 +2912,19 @@ impl App {
                 let ink = if accented { color } else { t.text_dim };
                 widgets::Paint::new(g, t, self.scale).icon_button(c, G_CLOSE, close_font, state, if active { ink } else { widgets::faded(ink, hovered) });
             }
-            let shown = self.strip.arrival(self.tabs[i].id, now);
+            let shown = self.tabs.strip.arrival(self.tabs.items[i].id, now);
             if shown < 1.0 {
                 g.dl.grow(from, shown, (r.x, r.y + r.h / 2.0), 0.6);
             }
             if r.w != target.w {
                 g.dl.confine(from, Rect::new(r.x - foot, l.title.y, r.w + 2.0 * foot, l.title.h));
             }
-            self.strip.record(lane, part, r, &g.dl.instances[from..]);
+            self.tabs.strip.record(lane, part, r, &g.dl.instances[from..]);
         }
-        if self.strip.busy(lane) {
+        if self.tabs.strip.busy(lane) {
             g.dl.confine(ghosts_from, self.strip_clip(true));
         }
-        let new_tab_dx = self.strip.at(lane, tabbar::Part::Plus, l.new_tab, now).x - l.new_tab.x;
+        let new_tab_dx = self.tabs.strip.at(lane, tabbar::Part::Plus, l.new_tab, now).x - l.new_tab.x;
         let new_tab_from = g.dl.instances.len();
         let mut w = widgets::Paint::new(g, t, self.scale);
         if l.new_tab.w > 0.0 {
@@ -2986,22 +2936,22 @@ impl App {
             }
         }
         w.g.dl.shift(new_tab_from, new_tab_dx.round(), 0.0);
-        self.strip.record(lane, tabbar::Part::Plus, Rect::new(l.new_tab.x + new_tab_dx.round(), l.new_tab.y, l.new_tab.w, l.new_tab.h), &[]);
+        self.tabs.strip.record(lane, tabbar::Part::Plus, Rect::new(l.new_tab.x + new_tab_dx.round(), l.new_tab.y, l.new_tab.w, l.new_tab.h), &[]);
         if l.tab_arrows[0].w > 0.0 {
-            let n = self.tabs.len();
+            let n = self.tabs.items.len();
             for (k, glyph) in [G_CRUMB_LEFT, G_CRUMB_RIGHT].into_iter().enumerate() {
                 let on = l.strip.hidden(k == 1, n) > 0;
-                let r = self.strip.at(lane, tabbar::Part::Arrow(k == 1), l.tab_arrows[k], now);
+                let r = self.tabs.strip.at(lane, tabbar::Part::Arrow(k == 1), l.tab_arrows[k], now);
                 w.icon_button(r, glyph, self.icon_font(8.0), self.button(Hit::TabScroll(k == 1), false, on), t.text_dim);
-                self.strip.record(lane, tabbar::Part::Arrow(k == 1), r, &[]);
+                self.tabs.strip.record(lane, tabbar::Part::Arrow(k == 1), r, &[]);
             }
         }
-        if self.strip.busy(lane) {
+        if self.tabs.strip.busy(lane) {
             let clip = self.strip_clip(false);
             w.g.dl.confine(ghosts_from, clip);
         }
         if l.actions.w > 0.0 {
-            let open = self.panels.here == self.panels.active && self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs);
+            let open = self.tabs.panels.here == self.tabs.panels.active && self.nav.palette.as_ref().is_some_and(|p| p.pick == palette::Pick::Tabs);
             let state = self.button(Hit::TabActions, open, true);
             w.icon_button(l.actions, tabbar::G_TAB_ACTIONS, self.icon_font(12.0), state, t.text_dim);
         }
@@ -3013,7 +2963,7 @@ impl App {
 
     fn draw_body<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, palette: &theme::Palette) {
         let (th, files) = (&palette.base, palette.area(Area::Files));
-        let active = self.panels.here == self.panels.active;
+        let active = self.tabs.panels.here == self.tabs.panels.active;
         if self.on_home() {
             self.draw_home(g, files);
         } else {
@@ -3033,7 +2983,7 @@ impl App {
         self.draw_toolbar(g, palette.area(Area::Toolbar));
         if self.layout.status.h > 0.0 {
             let from = g.dl.instances.len();
-            if self.picker.is_some() {
+            if self.dialogs.picker.is_some() {
                 self.draw_picker(g, th);
             } else {
                 self.draw_status(g, arena, th);
@@ -3097,11 +3047,11 @@ impl App {
             self.addr.shift = 0.0;
             self.addr.shift_for = Some(here);
         }
-        let tab = &self.tabs[self.cur];
+        let tab = &self.tabs.items[self.tabs.cur];
         let real = tab.crumbs.len();
-        let ghosts = if self.opts.breadcrumbs { &tab.ghosts[..] } else { &[] };
+        let ghosts = if self.settings.opts.breadcrumbs { &tab.ghosts[..] } else { &[] };
         let crumbs: Vec<&(String, Location)> = tab.crumbs.iter().chain(ghosts).collect();
-        let own = self.panels.here == self.panels.active;
+        let own = self.tabs.panels.here == self.tabs.panels.active;
         let open = match self.nav.palette.as_ref().map(|p| &p.pick) {
             Some(palette::Pick::Crumb(i)) if own => Some(*i),
             _ => None,
@@ -3175,7 +3125,7 @@ impl App {
     }
 
     fn compact_skip(&self, crumbs: &[(String, Location)]) -> usize {
-        let home = self.known_folder(sidebar::KnownFolder::Home).filter(|_| self.opts.compact_paths);
+        let home = self.known_folder(sidebar::KnownFolder::Home).filter(|_| self.settings.opts.compact_paths);
         home.and_then(|h| crumbs.iter().position(|(_, l)| *l == h)).unwrap_or(0)
     }
 
@@ -3218,7 +3168,7 @@ impl App {
         let baseline = (l.header.y + (l.header.h + m.ascent - m.descent) / 2.0).round();
         let pad = self.cs(10.0);
         let sort = self.tab().view_spec.sort;
-        let here = self.panels.here;
+        let here = self.tabs.panels.here;
         let hot = self.head_hot.filter(|h| self.hover == Hit::Header(h.0) && self.drag == Drag::None).map(|(i, funnel)| (here, i, funnel));
         if hot.is_some() || self.head_glow.touches(|k| k.0 == here) {
             self.motion |= self.head_glow.aim(hot, self.animations, now);
@@ -3297,7 +3247,7 @@ impl App {
         let pad = self.cs(10.0);
         let icon_px = l.icon;
         let list_focused = self.active && self.focus == Focus::List;
-        let tab = &self.tabs[self.cur];
+        let tab = &self.tabs.items[self.tabs.cur];
         let spin = widgets::spin_phase(now, self.animations);
         let mut spinning = false;
         let in_bin = tab.view_loc.is_recycle_bin();
@@ -3322,7 +3272,7 @@ impl App {
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         let mut checks: Vec<(u32, bool)> = Vec::new();
         let mut elided: Vec<usize> = Vec::new();
-        let want_thumbs = self.prefs.thumbnails && icon_px >= self.cs(THUMB_MIN_ICON) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !self.network_place(&tab.view_loc));
+        let want_thumbs = self.prefs.thumbnails && icon_px >= self.cs(THUMB_MIN_ICON) && !in_bin && (self.settings.opts.thumbs != options::Thumbs::Local || !self.network_place(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
             if let Some(warning) = self.discovery_warning() {
@@ -3380,7 +3330,7 @@ impl App {
                 if v.is_selected(i) {
                     g.dl.round_rect(rr, if list_focused { t.selection } else { t.selection_inactive }, self.cs(4.0));
                 } else {
-                    if self.opts.alternating && mode.table() && row % 2 == 1 && glow < 1.0 {
+                    if self.settings.opts.alternating && mode.table() && row % 2 == 1 && glow < 1.0 {
                         g.dl.round_rect(rr, t.text.alpha(0x08), self.cs(4.0));
                     }
                     if glow > 0.0 {

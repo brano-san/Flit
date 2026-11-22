@@ -250,7 +250,7 @@ pub(super) struct EntryAt {
 
 impl App {
     fn user_actions(&self) -> impl Iterator<Item = (EntryAt, Option<&UserEntry>, &UserEntry)> {
-        self.opts.user_menu.iter().enumerate().flat_map(|(top, e)| match &e.submenu {
+        self.settings.opts.user_menu.iter().enumerate().flat_map(|(top, e)| match &e.submenu {
             Some(items) => items.iter().enumerate().map(|(child, c)| (EntryAt { top, child: Some(child) }, Some(e), c)).collect::<Vec<_>>(),
             None => vec![(EntryAt { top, child: None }, None, e)],
         })
@@ -276,7 +276,7 @@ impl App {
     }
 
     pub(super) fn user_entries(&self, m: &mut Menu, on_items: bool) {
-        let list = &self.opts.user_menu;
+        let list = &self.settings.opts.user_menu;
         let t = self.tab();
         let (Some(v), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return };
         if list.is_empty() || self.archive_view().is_some() {
@@ -309,7 +309,7 @@ impl App {
 
     pub(super) fn user_lines(&self) -> Vec<EntryAt> {
         let mut out = Vec::new();
-        for (top, e) in self.opts.user_menu.iter().enumerate() {
+        for (top, e) in self.settings.opts.user_menu.iter().enumerate() {
             out.push(EntryAt { top, child: None });
             out.extend((0..e.submenu.as_ref().map_or(0, Vec::len)).map(|c| EntryAt { top, child: Some(c) }));
         }
@@ -317,7 +317,7 @@ impl App {
     }
 
     fn user_entry(&self, at: EntryAt) -> Option<&UserEntry> {
-        let top = self.opts.user_menu.get(at.top)?;
+        let top = self.settings.opts.user_menu.get(at.top)?;
         match at.child {
             Some(c) => top.submenu.as_ref()?.get(c),
             None => Some(top),
@@ -360,12 +360,12 @@ impl App {
 
     pub(super) fn request_user_line_images<B: TextBackend>(&mut self, g: &Gfx<B>) {
         let px = super::context::image_px(self.scale);
-        let images: Vec<MenuImage> = self.opts.user_menu.iter().flat_map(|e| std::iter::once(e).chain(e.submenu.iter().flatten())).filter_map(UserEntry::image).collect();
+        let images: Vec<MenuImage> = self.settings.opts.user_menu.iter().flat_map(|e| std::iter::once(e).chain(e.submenu.iter().flatten())).filter_map(UserEntry::image).collect();
         self.request_menu_images(&images, px, |k| g.has_image(k));
     }
 
     pub(super) fn new_user_entry(&mut self, submenu: bool) {
-        if self.opts.user_menu.len() >= MAX_ENTRIES {
+        if self.settings.opts.user_menu.len() >= MAX_ENTRIES {
             return self.status(S::UserMenuTooMany.t());
         }
         self.open_user_form(None, submenu);
@@ -377,7 +377,7 @@ impl App {
     }
 
     pub(super) fn delete_user_entry(&mut self, at: EntryAt) {
-        let list = &mut self.opts.user_menu;
+        let list = &mut self.settings.opts.user_menu;
         match at.child {
             Some(c) => {
                 if let Some(items) = list.get_mut(at.top).and_then(|e| e.submenu.as_mut()).filter(|i| c < i.len()) {
@@ -394,7 +394,7 @@ impl App {
     }
 
     pub(super) fn raise_user_entry(&mut self, at: EntryAt) {
-        let list = &mut self.opts.user_menu;
+        let list = &mut self.settings.opts.user_menu;
         match at.child {
             Some(c) if c > 0 => {
                 if let Some(items) = list.get_mut(at.top).and_then(|e| e.submenu.as_mut()).filter(|i| c < i.len()) {
@@ -409,7 +409,7 @@ impl App {
     }
 
     fn submenus(&self) -> Vec<usize> {
-        self.opts.user_menu.iter().enumerate().filter(|(_, e)| e.submenu.is_some()).map(|(k, _)| k).collect()
+        self.settings.opts.user_menu.iter().enumerate().filter(|(_, e)| e.submenu.is_some()).map(|(k, _)| k).collect()
     }
 
     fn open_user_form(&mut self, at: Option<EntryAt>, submenu: bool) {
@@ -423,7 +423,7 @@ impl App {
             let image = if glyph(&e.icon).is_some() { "" } else { e.icon.as_str() };
             let mut places = vec![S::UserMenuTopLevel.t().to_owned()];
             let subs = self.submenus();
-            places.extend(subs.iter().map(|&k| self.opts.user_menu[k].name.clone()));
+            places.extend(subs.iter().map(|&k| self.settings.opts.user_menu[k].name.clone()));
             let place = at.and_then(|a| a.child.and_then(|_| subs.iter().position(|&k| k == a.top))).map_or(0, |k| k + 1);
             controls.push(Control::choice(S::UserMenuIcon.t(), icons, sel));
             controls.push(Control::text(S::UserMenuImage.t(), image, S::UserMenuImageHint.t()));
@@ -490,7 +490,7 @@ impl App {
                     f.say(S::UserMenuBadShortcut.t(), true);
                     return Some(f);
                 };
-                let builtin = self.keymap.owner(chord).filter(|&i| self.supports(super::actions::ACTIONS[i].id)).map(|i| super::actions::ACTIONS[i].title.t().to_owned());
+                let builtin = self.settings.keymap.owner(chord).filter(|&i| self.supports(super::actions::ACTIONS[i].id)).map(|i| super::actions::ACTIONS[i].title.t().to_owned());
                 let custom = || self.user_actions().find(|(other, _, o)| Some(*other) != at && action_chord(&o.shortcut) == Some(chord)).map(|(_, _, o)| o.name.clone());
                 if let Some(command) = builtin.or_else(custom) {
                     f.say(crate::tr!(S::KeymapCaptureAlready, key = &e.shortcut, command = command), true);
@@ -505,7 +505,7 @@ impl App {
             if !categories.iter().all(|on| *on) { e.categories = CATEGORY_IDS.iter().zip(categories).filter(|(_, on)| *on).map(|(id, _)| (*id).to_owned()).collect(); }
         }
         let same_parent = at.is_some_and(|a| a.child.map(|_| a.top) == parent);
-        let destination_len = parent.and_then(|p| self.opts.user_menu.get(p)).and_then(|p| p.submenu.as_ref()).map_or(self.opts.user_menu.len(), Vec::len);
+        let destination_len = parent.and_then(|p| self.settings.opts.user_menu.get(p)).and_then(|p| p.submenu.as_ref()).map_or(self.settings.opts.user_menu.len(), Vec::len);
         if !same_parent && destination_len >= MAX_ENTRIES {
             f.say(S::UserMenuTooMany.t(), true);
             return Some(f);
@@ -517,7 +517,7 @@ impl App {
     }
 
     fn place_user_entry(&mut self, at: Option<EntryAt>, parent: Option<usize>, e: UserEntry) {
-        let list = &mut self.opts.user_menu;
+        let list = &mut self.settings.opts.user_menu;
         let same = at.is_some_and(|a| a.child.map(|_| a.top) == parent);
         match at {
             Some(EntryAt { top, child: Some(c) }) if same => {

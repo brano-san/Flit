@@ -230,7 +230,7 @@ impl App {
         let (mode, level) = self.shown_look();
         let depth = if mode == LayoutMode::Columns { pane_depth(&self.tab().view_loc) } else { 0 };
         let back = self.tab().panes_back;
-        let (sc, spread) = (self.content_px(), super::options::spacing_factor(self.opts.spacing));
+        let (sc, spread) = (self.content_px(), super::options::spacing_factor(self.settings.opts.spacing));
         let s = |v: f32| (v * sc).round();
         let l = &mut self.layout;
         l.mode = mode;
@@ -299,7 +299,7 @@ impl App {
     }
 
     pub(super) fn max_scroll_of(&self, f: &Flow) -> f32 {
-        let beyond = if self.opts.scroll_beyond && f.extent() > 0.0 { (self.view_len() / 2.0).round() } else { 0.0 };
+        let beyond = if self.settings.opts.scroll_beyond && f.extent() > 0.0 { (self.view_len() / 2.0).round() } else { 0.0 };
         (f.extent() + beyond - self.view_len()).max(0.0)
     }
 
@@ -541,7 +541,7 @@ impl App {
     }
 
     fn concrete(&self, k: usize, mode: LayoutMode) -> LayoutMode {
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         match (mode, &t.view) {
             (LayoutMode::Adaptive, Some(v)) => self.adaptive.get(&folder_key(&t.view_loc)).copied().unwrap_or_else(|| adaptive_layout(t.slot.kind(v.snap().gen), v)),
             (LayoutMode::Adaptive, None) => LayoutMode::Details,
@@ -554,7 +554,7 @@ impl App {
         if shared {
             self.toggle_pref(|p| &mut p.same_for_all);
         }
-        let look = self.concrete(self.cur, mode);
+        let look = self.concrete(self.tabs.cur, mode);
         let zoom = zoom_of(mode, self.tab().zoom);
         let t = self.tab_mut();
         if t.look != look {
@@ -606,23 +606,23 @@ impl App {
 
     pub(super) fn settle_look(&mut self, k: usize, fresh: bool, done: bool) {
         if let Some(layout) = self.rule_layout(k, done) {
-            self.tabs[k].look = layout;
+            self.tabs.items[k].look = layout;
             return;
         }
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         let (Some(v), LayoutMode::Adaptive) = (&t.view, t.mode) else {
             if fresh || done {
-                self.tabs[k].look = self.tabs[k].mode;
+                self.tabs.items[k].look = self.tabs.items[k].mode;
             }
             return;
         };
         let key = folder_key(&t.view_loc);
         let decided = adaptive_layout(t.slot.kind(v.snap().gen), v);
         if fresh || done {
-            self.tabs[k].look = self.adaptive.get(&key).copied().unwrap_or(decided);
+            self.tabs.items[k].look = self.adaptive.get(&key).copied().unwrap_or(decided);
         }
         if done {
-            self.tabs[k].look = decided;
+            self.tabs.items[k].look = decided;
             if self.adaptive.len() >= ADAPTIVE_CAP {
                 self.adaptive.clear();
             }

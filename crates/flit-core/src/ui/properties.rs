@@ -260,13 +260,13 @@ impl App {
     }
 
     pub(super) fn measured(&mut self, id: OpId, totals: Totals, file_system: Option<String>, done: bool) {
-        let Some(mut f) = self.jobs.form.take() else { return };
+        let Some(mut f) = self.dialogs.form.take() else { return };
         let Kind::Properties(m) = &f.kind else {
-            self.jobs.form = Some(f);
+            self.dialogs.form = Some(f);
             return;
         };
         if m.id != id {
-            self.jobs.form = Some(f);
+            self.dialogs.form = Some(f);
             return;
         }
         let size = if m.packed { totals.size + totals.unpacked } else { totals.size };
@@ -290,12 +290,12 @@ impl App {
         if done {
             f.say(String::new(), false);
         }
-        self.jobs.form = Some(f);
+        self.dialogs.form = Some(f);
         self.dirty = true;
     }
 
     pub(super) fn properties_props(&mut self, gen: u64, groups: &[PropGroup]) -> bool {
-        let Some(Form { kind: Kind::Properties(m), controls, focus, .. }) = &mut self.jobs.form else { return false };
+        let Some(Form { kind: Kind::Properties(m), controls, focus, .. }) = &mut self.dialogs.form else { return false };
         if m.props != gen {
             return false;
         }

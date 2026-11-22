@@ -753,7 +753,7 @@ impl App {
         let old = std::mem::replace(&mut self.nav.sidebar.places, places);
         self.nav.sidebar.rebuild();
         self.places_changed(&old, Instant::now());
-        if self.opts.view_rules.location_rules() {
+        if self.settings.opts.view_rules.location_rules() {
             self.refresh_view_rules();
         }
         self.go_refresh();
@@ -973,21 +973,21 @@ impl App {
     }
 
     pub(super) fn count_visit(&mut self, loc: &Location) {
-        if !loc.is_home_page() && self.opts.recents != super::options::Recents::Never {
+        if !loc.is_home_page() && self.settings.opts.recents != super::options::Recents::Never {
             self.nav.sidebar.prefs.count_visit(loc);
         }
     }
 
     pub(super) fn cycle_sidebar_focus(&mut self) {
-        if self.focus == Focus::List && self.panels.list.len() > 1 {
+        if self.focus == Focus::List && self.tabs.panels.list.len() > 1 {
             let order = self.order();
-            let at = order.iter().position(|&id| id == self.panels.active).unwrap_or(0);
+            let at = order.iter().position(|&id| id == self.tabs.panels.active).unwrap_or(0);
             let next = order[(at + 1) % order.len()];
-            let from = self.panels.cycle_from.replace(self.panels.active);
+            let from = self.tabs.panels.cycle_from.replace(self.tabs.panels.active);
             if from != Some(next) {
                 return self.activate_panel(next);
             }
-            self.panels.cycle_from = None;
+            self.tabs.panels.cycle_from = None;
         }
         if self.focus == Focus::Sidebar {
             self.focus = Focus::List;
@@ -1727,7 +1727,7 @@ impl App {
         let m = g.metrics(font);
         let mh = g.metrics(header_font);
         let (s4, s8) = (self.s(4.0), self.s(8.0));
-        let here = self.tabs[self.cur].location();
+        let here = self.tabs.items[self.tabs.cur].location();
         let focused = self.active && self.focus == Focus::Sidebar;
         if sb.field.w > 0.0 {
             let typing = focused && sb.typing;
@@ -1862,7 +1862,7 @@ impl App {
                 self.draw_usage(g, t, bar, used);
             }
             if trash {
-                let open = self.confirm.as_ref().is_some_and(|c| c.anchor == pin_r);
+                let open = self.dialogs.confirm.as_ref().is_some_and(|c| c.anchor == pin_r);
                 Paint::new(g, t, self.scale).icon_button(pin_r, G_TRASH, pin_font, self.button(Hit::SidePin(i), open, true), ink);
             }
         }
@@ -1883,7 +1883,7 @@ impl App {
             Drag::PlaceMove { from, .. } => sb.items.get(sb.first_place() + from),
             _ => None,
         };
-        if let (Some(it), Some((x, y))) = (moving, self.strip.pointer) {
+        if let (Some(it), Some((x, y))) = (moving, self.tabs.strip.pointer) {
             let r = Rect::new(x + s8, y + s8, area.w.min(self.s(240.0)), self.s(ROW_H));
             g.dl.round_rect(r, t.bg, s4);
             g.dl.outline(r, t.accent, s4, 1.0);

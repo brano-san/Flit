@@ -95,7 +95,7 @@ impl App {
     }
 
     pub fn on_disk_changes(&mut self, id: u64, reply: Reply) {
-        let Some(form) = self.jobs.form.take() else { return; };
+        let Some(form) = self.dialogs.form.take() else { return; };
         match (&form.kind, reply) {
             (Kind::DiskChanges(DiskForm::Pending { id: expected, root, output, filter, elevated, .. }), Reply::Read(result)) if *expected == id => {
                 match result {
@@ -114,7 +114,7 @@ impl App {
                 Ok(path) => self.status(crate::tr!(S::DiskChangesExported, path = path.display())),
                 Err(error) => self.disk_status(error),
             },
-            _ => self.jobs.form = Some(form),
+            _ => self.dialogs.form = Some(form),
         }
         self.layout();
         self.dirty = true;

@@ -28,7 +28,7 @@ fn wrapping_preserves_unicode_long_words_and_every_word() {
 fn long_changelog_scrolls_without_moving_header_or_footer_at_any_scale() {
     for (w, h, scale) in [(1000, 800, 1.0), (600, 400, 1.0), (400, 260, 1.0), (800, 600, 2.0), (1200, 900, 1.5)] {
         let mut a = app(w, h, scale);
-        let f = a.jobs.form.as_ref().unwrap();
+        let f = a.dialogs.form.as_ref().unwrap();
         let bounds = f.rect;
         let buttons = f.button_rects.clone();
         let header = f.rows[..2].to_vec();
@@ -39,37 +39,37 @@ fn long_changelog_scrolls_without_moving_header_or_footer_at_any_scale() {
         assert!(buttons.iter().all(|r| r.y >= bounds.y && r.bottom() <= bounds.bottom() && r.x >= bounds.x && r.right() <= bounds.right()));
         a.on_event(&Event::Wheel { dx: 0.0, dy: -4.0 }, Instant::now());
         a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-        assert!(a.jobs.form.as_ref().unwrap().document.scroll.pos > 0.0);
+        assert!(a.dialogs.form.as_ref().unwrap().document.scroll.pos > 0.0);
         a.update_scroll_key(Key::End, Mods::default());
-        let f = a.jobs.form.as_ref().unwrap();
+        let f = a.dialogs.form.as_ref().unwrap();
         assert_eq!(f.document.scroll.pos, f.document.max());
         assert_eq!(f.rect, bounds);
         assert_eq!(f.button_rects, buttons);
         assert_eq!(&f.rows[..2], &header);
         a.update_scroll_key(Key::Home, Mods::default());
-        assert_eq!(a.jobs.form.as_ref().unwrap().document.scroll.pos, 0.0);
+        assert_eq!(a.dialogs.form.as_ref().unwrap().document.scroll.pos, 0.0);
     }
 }
 
 #[test]
 fn scrollbar_drag_and_copy_feedback_preserve_dialog_state() {
     let mut a = app(1000, 800, 1.0);
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     let thumb = f.document.thumb();
     let end = f.document.track().bottom();
     let note = f.note.clone();
     let buttons = f.button_rects.clone();
     let value = f.rows[0];
     a.on_event(&Event::MouseDown { x: thumb.x + 2.0, y: thumb.y + 2.0, button: MouseButton::Left, clicks: 1 }, Instant::now());
-    assert!(a.jobs.form.as_ref().unwrap().document.grab.is_some());
+    assert!(a.dialogs.form.as_ref().unwrap().document.grab.is_some());
     a.on_event(&Event::MouseMove { x: thumb.x + 2.0, y: end }, Instant::now());
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert_eq!(f.document.scroll.pos, f.document.max());
     a.on_event(&Event::MouseUp { x: thumb.x, y: end, button: MouseButton::Left }, Instant::now());
-    assert!(a.jobs.form.as_ref().unwrap().document.grab.is_none());
+    assert!(a.dialogs.form.as_ref().unwrap().document.grab.is_none());
     a.form_down(value.x + 2.0, value.y + 2.0, MouseButton::Left, 1, Instant::now());
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert!(f.document.copied.is_some());
     assert_eq!(f.note, note);
     assert_eq!(f.button_rects, buttons);

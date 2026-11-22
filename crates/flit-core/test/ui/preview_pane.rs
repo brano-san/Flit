@@ -250,7 +250,7 @@ fn svg_background_changes_without_loading_another_preview() {
         let r = a.preview_rect(PaneHit::SvgBackground).unwrap();
         mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
         frame(&mut a);
-        assert_eq!(a.opts.svg_background, bg);
+        assert_eq!(a.settings.opts.svg_background, bg);
         assert_eq!(a.preview_image().0, rev);
         assert!(requests(&mut a).is_empty());
     }
@@ -374,11 +374,11 @@ three", None)));
     assert!(a.run_action("inspector.line_numbers", Instant::now()));
     assert!(a.run_action("inspector.whitespace", Instant::now()));
     assert_eq!((a.preview.look.lines, a.preview.look.spaces), (!lines, !spaces));
-    let size = a.opts.inspector_size;
+    let size = a.settings.opts.inspector_size;
     assert!(a.run_action("inspector.zoom_in", Instant::now()));
-    assert_eq!(a.opts.inspector_size, size + 1);
+    assert_eq!(a.settings.opts.inspector_size, size + 1);
     assert!(a.run_action("inspector.zoom_out", Instant::now()));
-    assert_eq!(a.opts.inspector_size, size);
+    assert_eq!(a.settings.opts.inspector_size, size);
     assert!(a.run_action("inspector.filter", Instant::now()));
     assert!(a.inspector_field_focused());
     a.on_event(&Event::Char('t'), Instant::now());
@@ -958,11 +958,11 @@ fn the_wheel_scrolls_unwrapped_text_and_large_images_sideways() {
     a.on_event(&Event::Key { key: Key::Other, mods: shift, pressed: false }, Instant::now());
     a.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, Instant::now());
     assert!(a.preview.hscroll > right, "Shift+wheel scrolls sideways");
-    let size = a.opts.inspector_size;
+    let size = a.settings.opts.inspector_size;
     let ctrl = Mods { ctrl: true, ..NO };
     a.on_event(&Event::Key { key: Key::Other, mods: ctrl, pressed: false }, Instant::now());
     a.on_event(&Event::Wheel { dx: -1.0, dy: 0.0 }, Instant::now());
-    assert_eq!(a.opts.inspector_size, size, "a sideways Ctrl+wheel does not resize the text");
+    assert_eq!(a.settings.opts.inspector_size, size, "a sideways Ctrl+wheel does not resize the text");
     a.on_event(&Event::Key { key: Key::Other, mods: NO, pressed: false }, Instant::now());
     a.preview.look.wrap = Some(true);
     frame(&mut a);

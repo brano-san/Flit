@@ -151,7 +151,7 @@ fn labels<T>(items: &[(&str, T)], zero: S) -> Vec<String> {
 
 impl App {
     pub(super) fn relabel_form(&mut self, from: Lang) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         let moved = |s: &mut String| *s = i18n::relocalize(s, from).into_owned();
         moved(&mut f.title);
         moved(&mut f.note);
@@ -351,7 +351,7 @@ impl App {
     }
 
     fn compress_changed(&mut self, k: usize) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         let Kind::Compress { single, .. } = f.kind else { return };
         if k != C_FORMAT {
             return;
@@ -408,7 +408,7 @@ impl App {
     }
 
     fn extract_changed(&mut self, k: usize) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         if k == E_RECENT && matches!(f.kind, Kind::Extract { .. }) {
             if let Some(path) = f.choice(E_RECENT).checked_sub(1).and_then(|i| self.archive.prefs.history.get(i)) {
                 f.set_text(E_DEST, &path.clone());
@@ -505,7 +505,7 @@ impl App {
     }
 
     fn ask_password(&mut self, archive: FsPath, retry: Retry) {
-        if self.jobs.form.is_some() {
+        if self.dialogs.form.is_some() {
             return;
         }
         let wrong = archive::password(&archive).is_some();
@@ -523,7 +523,7 @@ impl App {
         match retry {
             Retry::Op(op, then) => self.start_op(op, Origin::Fresh, then),
             Retry::Reload(tab) => {
-                if let Some(k) = self.tabs.iter().position(|t| t.id == tab) {
+                if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab) {
                     self.reload(k, Instant::now());
                 }
             }
@@ -557,7 +557,7 @@ impl App {
                 }
             }
             Then::Reload => {
-                if let Some(k) = self.tabs.iter().position(|t| t.id == tab).filter(|_| error.is_none()) {
+                if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab).filter(|_| error.is_none()) {
                     self.reload(k, now);
                 }
             }
@@ -577,9 +577,9 @@ impl App {
     }
 
     pub(super) fn archive_loaded(&mut self, k: usize) {
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         let locked = t.view.as_ref().and_then(|v| v.snap().error.as_ref()).is_some_and(|e| e.code == archive::PASSWORD_CODE);
-        if !locked || k != self.cur {
+        if !locked || k != self.tabs.cur {
             return;
         }
         let tab = t.id;
@@ -620,7 +620,7 @@ impl App {
     pub(super) fn set_encoding(&mut self, archive: &FsPath, id: usize, now: Instant) {
         archive::choose_encoding(archive, id.checked_sub(1).and_then(|i| Encoding::ALL.get(i).copied()));
         self.each_pane(|a, k| {
-            if a.tabs[k].view_loc.to_windows().is_some_and(|p| archive::splits(&p).iter().any(|(z, _)| z == archive)) {
+            if a.tabs.items[k].view_loc.to_windows().is_some_and(|p| archive::splits(&p).iter().any(|(z, _)| z == archive)) {
                 a.reload(k, now);
             }
         });
@@ -712,24 +712,24 @@ impl App {
     }
 
     pub(super) fn form_progress(&mut self, id: OpId, p: &OpProgress) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         if matches!(&f.kind, Kind::Hashes(Hashing { run: Some(r), .. }) if r.id == id) && p.total_bytes > 0 {
             f.progress = Some((p.bytes as f64 / p.total_bytes as f64) as f32);
         }
     }
 
     pub(super) fn hashing(&self) -> bool {
-        matches!(self.jobs.form.as_ref().map(|f| &f.kind), Some(Kind::Hashes(Hashing { run: Some(_), .. })))
+        matches!(self.dialogs.form.as_ref().map(|f| &f.kind), Some(Kind::Hashes(Hashing { run: Some(_), .. })))
     }
 
     pub(super) fn hashed(&mut self, id: OpId, result: Result<Vec<String>, String>) {
-        let Some(mut f) = self.jobs.form.take() else { return };
+        let Some(mut f) = self.dialogs.form.take() else { return };
         let Kind::Hashes(h) = &mut f.kind else {
-            self.jobs.form = Some(f);
+            self.dialogs.form = Some(f);
             return;
         };
         let Some(run) = h.run.take_if(|r| r.id == id) else {
-            self.jobs.form = Some(f);
+            self.dialogs.form = Some(f);
             return;
         };
         f.progress = None;
@@ -755,7 +755,7 @@ impl App {
                 }
             }
         }
-        self.jobs.form = Some(f);
+        self.dialogs.form = Some(f);
         self.layout();
         self.dirty = true;
     }
@@ -770,7 +770,7 @@ impl App {
     }
 
     pub(super) fn form_submit(&mut self, b: usize) {
-        let Some(f) = self.jobs.form.take() else { return };
+        let Some(f) = self.dialogs.form.take() else { return };
         if b + 1 == f.buttons.len() {
             return self.form_closed(f);
         }
@@ -817,8 +817,8 @@ impl App {
                 None
             }
         };
-        if self.jobs.form.is_none() {
-            self.jobs.form = keep;
+        if self.dialogs.form.is_none() {
+            self.dialogs.form = keep;
         }
         self.show_conflict_table();
     }

@@ -126,7 +126,7 @@ fn conflicts_are_answered_in_flits_own_dialog_with_the_keyboard() {
     let mut app = app_at(r"C:\x");
     let (id, ctl) = paste(&mut app);
     let waiting = asked(&mut app, id, &ctl);
-    assert_eq!((app.asking(), app.jobs.sel), (Some("conflict"), 1), "keep both is the default button");
+    assert_eq!((app.asking(), app.dialogs.sel), (Some("conflict"), 1), "keep both is the default button");
     assert!(app.job_states()[0].0.starts_with("Pasting into"));
     letter(&mut app, 'R', 'r', NO);
     assert_eq!((waiting.join().unwrap(), app.asking()), (Some(Resolve::Replace), None));
@@ -154,12 +154,12 @@ fn the_conflict_dialog_is_modal_and_works_with_the_mouse() {
     click(&mut app, |a| a.layout.new_tab);
     app.on_event(&Event::Char('x'), t0());
     assert_eq!((app.tabs().len(), app.asking()), (tabs, Some("conflict")), "the rest of the window waits for the answer");
-    let close = app.panels.caption[2];
+    let close = app.tabs.panels.caption[2];
     assert_eq!(app.hit_test(close.x + 4.0, close.y + 4.0), crate::input::HitArea::Close, "the window can still be closed or moved");
     assert_eq!(app.hit_test(app.layout.new_tab.right() + 40.0, 10.0), crate::input::HitArea::Caption);
-    click(&mut app, |a| a.jobs.r.check);
-    assert!(app.jobs.all);
-    click(&mut app, |a| a.jobs.r.buttons[2]);
+    click(&mut app, |a| a.ops.jobs.r.check);
+    assert!(app.dialogs.all);
+    click(&mut app, |a| a.ops.jobs.r.buttons[2]);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::Skip));
     assert_eq!(ctl.resolve(&sizes(1, 2), || panic!("asked again")), Some(Resolve::Skip));
     let mut g = Gfx::new(Mono, 2048);
@@ -168,7 +168,7 @@ fn the_conflict_dialog_is_modal_and_works_with_the_mouse() {
     app.open_search();
     app.frame(&mut g, t0());
     assert!(!g.dl.instances.is_empty());
-    click(&mut app, |a| *a.jobs.r.buttons.last().unwrap());
+    click(&mut app, |a| *a.ops.jobs.r.buttons.last().unwrap());
     assert_eq!((waiting.join().unwrap(), ctl.is_cancelled()), (None, true), "the dialog answers over the search view too");
 }
 
@@ -184,30 +184,30 @@ fn the_operations_panel_shows_progress_results_and_cancels() {
     let tab = app.tab().id;
     let progress = OpProgress { stage: Stage::Running, bytes: 50, total_bytes: 200, items: 1, total_items: 4 };
     app.on_provider_event(ProviderEvent::OpProgress { tab, id, progress }, t0());
-    let j = &app.jobs.list[0];
+    let j = &app.ops.jobs.list[0];
     assert_eq!((j.fraction(), j.status()), (0.25, "25%".to_owned()));
     assert!(j.detail(false).starts_with("50 B of 200 B") && j.detail(false).ends_with("1 of 4 items"), "{}", j.detail(false));
     let mut g = Gfx::new(Mono, 2048);
     app.frame(&mut g, t0());
-    click(&mut app, |a| Jobs::cancel_rect(a.jobs.r.rows[0], unscaled));
+    click(&mut app, |a| Jobs::cancel_rect(a.ops.jobs.r.rows[0], unscaled));
     assert!(ctl.is_cancelled() && app.jobs_open());
-    assert_eq!(app.jobs.list[0].detail(false), "Cancelling…");
+    assert_eq!(app.ops.jobs.list[0].detail(false), "Cancelling…");
     finish(&mut app, id, Some("The operation was cancelled"));
     let (failed, _) = paste(&mut app);
     finish(&mut app, failed, Some("Access is denied"));
     let (fine, _) = paste(&mut app);
     finish(&mut app, fine, None);
     assert_eq!(states(&app), [JobState::Cancelled, JobState::Failed("Access is denied".into()), JobState::Done]);
-    assert!(!app.jobs.unseen_failure, "a failure shown in the open panel is seen");
+    assert!(!app.ops.jobs.unseen_failure, "a failure shown in the open panel is seen");
     app.frame(&mut g, t0());
 
     key(&mut app, Key::Escape);
     let (late, _) = paste(&mut app);
     finish(&mut app, late, Some("boom"));
-    assert!(!app.jobs_open() && app.jobs.unseen_failure && app.layout.ops_button.w > 0.0, "an unseen failure keeps the button");
+    assert!(!app.jobs_open() && app.ops.jobs.unseen_failure && app.layout.ops_button.w > 0.0, "an unseen failure keeps the button");
     click(&mut app, |a| a.layout.ops_button);
-    assert!(app.jobs_open() && !app.jobs.unseen_failure);
-    click(&mut app, |a| a.jobs.r.clear);
+    assert!(app.jobs_open() && !app.ops.jobs.unseen_failure);
+    click(&mut app, |a| a.ops.jobs.r.clear);
     assert!(app.job_states().is_empty());
 }
 
@@ -216,19 +216,19 @@ fn the_more_menu_opens_the_destination_or_removes_the_entry() {
     let mut app = app_at(r"C:\x");
     app.run_action("ops.show", t0());
     let (id, ctl) = paste(&mut app);
-    click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[0], unscaled));
-    assert_eq!((app.jobs.menu, app.job_menu_items(0)), (Some(0), vec!["Open destination", "Pause", "Cancel"]));
-    click(&mut app, |a| a.jobs.r.menu[2]);
+    click(&mut app, |a| Jobs::more_rect(a.ops.jobs.r.rows[0], unscaled));
+    assert_eq!((app.ops.jobs.menu, app.job_menu_items(0)), (Some(0), vec!["Open destination", "Pause", "Cancel"]));
+    click(&mut app, |a| a.ops.jobs.r.menu[2]);
     assert!(ctl.is_cancelled());
     finish(&mut app, id, None);
-    click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[0], unscaled));
+    click(&mut app, |a| Jobs::more_rect(a.ops.jobs.r.rows[0], unscaled));
     assert_eq!(app.job_menu_items(0), ["Open destination", "Remove from the list"]);
     let tabs = app.tabs().len();
-    click(&mut app, |a| a.jobs.r.menu[0]);
+    click(&mut app, |a| a.ops.jobs.r.menu[0]);
     assert_eq!((app.tabs().len(), app.current_location().clone()), (tabs + 1, Location::parse(r"C:\x").unwrap()));
     app.run_action("ops.show", t0());
-    click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[0], unscaled));
-    click(&mut app, |a| a.jobs.r.menu[1]);
+    click(&mut app, |a| Jobs::more_rect(a.ops.jobs.r.rows[0], unscaled));
+    click(&mut app, |a| a.ops.jobs.r.menu[1]);
     assert!(app.job_states().is_empty());
 }
 
@@ -240,12 +240,12 @@ fn fine_touchpad_deltas_over_the_operations_panel_add_up_to_whole_rows() {
         paste(&mut app);
     }
     app.frame(&mut Gfx::new(Mono, 2048), t0());
-    let r = app.jobs.r.panel;
+    let r = app.ops.jobs.r.panel;
     app.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, t0());
     let (t, ms) = (t0(), Duration::from_millis);
     let wheel = |app: &mut App, dy: f32, at: u64| {
         app.on_event(&Event::Wheel { dx: 0.0, dy }, t + ms(at));
-        app.jobs.first
+        app.ops.jobs.first
     };
     assert_eq!([wheel(&mut app, -0.25, 0), wheel(&mut app, -0.25, 10), wheel(&mut app, -0.25, 20)], [0, 0, 0], "a quarter notch moves nothing yet");
     assert_eq!(wheel(&mut app, -0.25, 30), 1, "four quarters make one row");
@@ -260,10 +260,10 @@ fn permanent_deletion_waits_for_the_confirmation_button() {
     let mut app = app_at(r"C:\x");
     app.empty_bin();
     assert_eq!(app.asking(), Some("confirm"));
-    click(&mut app, |a| a.jobs.r.buttons[1]);
+    click(&mut app, |a| a.ops.jobs.r.buttons[1]);
     assert!(app.asking().is_none() && started(&mut app).is_none());
     app.empty_bin();
-    click(&mut app, |a| a.jobs.r.buttons[0]);
+    click(&mut app, |a| a.ops.jobs.r.buttons[0]);
     assert!(started(&mut app).is_some());
     assert_eq!(app.job_states()[0].0, "Emptying the Recycle Bin");
 }
@@ -308,10 +308,10 @@ fn a_dialog_queued_behind_a_conflict_keeps_the_conflicts_default_button() {
     let waiting = asked(&mut app, id, &ctl);
     app.ask_confirm(FileOp::Trash(vec![p(r"C:\x\a.txt")]));
     app.offer_restore();
-    assert_eq!((app.asking(), app.jobs.sel), (Some("conflict"), 1));
+    assert_eq!((app.asking(), app.dialogs.sel), (Some("conflict"), 1));
     key(&mut app, Key::Enter);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth));
-    assert_eq!((app.asking(), app.jobs.sel), (Some("confirm"), 0));
+    assert_eq!((app.asking(), app.dialogs.sel), (Some("confirm"), 0));
 }
 
 #[test]
@@ -324,7 +324,7 @@ fn a_finished_job_drops_its_conflict_and_resets_the_default_button() {
     key(&mut app, Key::Right);
     ctl.cancel();
     finish(&mut app, id, Some("cancelled"));
-    assert_eq!((app.asking(), app.jobs.sel), (Some("restore"), 0));
+    assert_eq!((app.asking(), app.dialogs.sel), (Some("restore"), 0));
     drop(waiting);
 }
 
@@ -341,14 +341,14 @@ fn items_too_large_for_the_drive_are_skipped_or_cancel_without_setting_a_policy(
     };
     let (id, ctl) = paste(&mut app);
     let waiting = ask(&mut app, &ctl, id, crate::limits::over_limit(&p(r"C:\a\big.iso"), &p(r"E:\big.iso"), 5 << 30, crate::limits::FAT_MAX_FILE));
-    assert_eq!((app.asking(), app.jobs.sel, app.dialog_buttons()), (Some("too_large"), 0, vec!["Skip", "Cancel"]));
+    assert_eq!((app.asking(), app.dialogs.sel, app.dialog_buttons()), (Some("too_large"), 0, vec!["Skip", "Cancel"]));
     letter(&mut app, 'A', 'a', NO);
     key(&mut app, Key::Enter);
     assert_eq!((waiting.join().unwrap(), ctl.policy(), app.asking()), (Some(Resolve::Skip), None, None));
 
     let waiting = ask(&mut app, &ctl, id, crate::limits::short_of_space(&p(r"E:\"), 10, 3));
-    assert_eq!((app.asking(), app.jobs.sel, app.dialog_buttons()), (Some("too_large"), 0, vec!["Copy anyway", "Retry", "Cancel"]));
-    click(&mut app, |a| a.jobs.r.buttons[1]);
+    assert_eq!((app.asking(), app.dialogs.sel, app.dialog_buttons()), (Some("too_large"), 0, vec!["Copy anyway", "Retry", "Cancel"]));
+    click(&mut app, |a| a.ops.jobs.r.buttons[1]);
     assert_eq!((waiting.join().unwrap(), ctl.policy()), (Some(crate::limits::ROOM_RETRY), None), "retry measures the free space again and sets no policy");
     let waiting = ask(&mut app, &ctl, id, crate::limits::short_of_space(&p(r"E:\"), 10, 3));
     key(&mut app, Key::Enter);
@@ -407,7 +407,7 @@ fn user_cancelled_operations_are_shown_as_cancelled_without_a_code() {
     let (other, _) = paste(&mut app);
     finish(&mut app, other, Some("Access is denied (0x800704C7)"));
     assert_eq!(states(&app), [JobState::Cancelled, JobState::Failed("Access is denied (0x800704C7)".into())]);
-    assert_eq!(app.jobs.list[0].status(), "Cancelled");
+    assert_eq!(app.ops.jobs.list[0].status(), "Cancelled");
     assert_eq!(app.tab().error.as_deref(), Some("Access is denied (0x800704C7)"), "only the real failure reaches the status bar");
 }
 
@@ -440,9 +440,9 @@ fn the_operations_button_shows_a_warning_after_a_failure_and_the_list_marks_the_
     let mut app = app_at(r"C:\x");
     let mut g = Gfx::new(Mono, 1024);
     let (id, _) = paste(&mut app);
-    assert_eq!(app.jobs.outcome(), Outcome::None);
+    assert_eq!(app.ops.jobs.outcome(), Outcome::None);
     finish(&mut app, id, Some("Access is denied"));
-    assert_eq!(app.jobs.outcome(), Outcome::Failed);
+    assert_eq!(app.ops.jobs.outcome(), Outcome::Failed);
     app.frame(&mut g, t0());
     let error = app.look.palette.base.error.0;
     let b = app.layout.ops_button;
@@ -452,11 +452,11 @@ fn the_operations_button_shows_a_warning_after_a_failure_and_the_list_marks_the_
     for s in 1..3 {
         app.frame(&mut g, t0() + Duration::from_secs(s));
     }
-    let row = app.jobs.r.rows[0];
+    let row = app.ops.jobs.r.rows[0];
     assert!(red_in(&g, row) >= 3, "the failed row has a red stripe, a warning glyph and a red status");
     let (id, _) = paste(&mut app);
     finish(&mut app, id, None);
-    assert_eq!(app.jobs.outcome(), Outcome::Done, "the latest outcome decides the icon");
+    assert_eq!(app.ops.jobs.outcome(), Outcome::Done, "the latest outcome decides the icon");
 }
 
 fn failed(app: &mut App, id: OpId, ctl: &OpCtl, fatal: bool) -> JoinHandle<Option<Recover>> {
@@ -475,21 +475,21 @@ fn a_failing_item_asks_to_retry_skip_skip_all_or_cancel() {
     let mut g = Gfx::new(Mono, 2048);
     let (id, ctl) = paste(&mut app);
     let waiting = failed(&mut app, id, &ctl, false);
-    assert_eq!((app.asking(), app.jobs.sel, app.dialog_buttons()), (Some("failure"), 0, vec!["Retry", "Skip", "Skip all", "Cancel"]));
+    assert_eq!((app.asking(), app.dialogs.sel, app.dialog_buttons()), (Some("failure"), 0, vec!["Retry", "Skip", "Skip all", "Cancel"]));
     let (title, lines) = app.dialog_text().unwrap();
     assert_eq!(title, "Cannot copy \u{201C}locked.txt\u{201D}");
     assert!(lines[0].starts_with("The process cannot access") && lines[1] == r"In C:\a", "{lines:?}");
-    assert_eq!(app.jobs.list[0].status(), "Problem");
+    assert_eq!(app.ops.jobs.list[0].status(), "Problem");
     app.frame(&mut g, t0());
     key(&mut app, Key::Enter);
     assert_eq!((waiting.join().unwrap(), app.asking()), (Some(Recover::Retry), None), "Retry is the default button");
-    assert!(!app.jobs.list[0].asking && app.jobs.list[0].status() != "Problem");
+    assert!(!app.ops.jobs.list[0].asking && app.ops.jobs.list[0].status() != "Problem");
 
     let waiting = failed(&mut app, id, &ctl, false);
-    click(&mut app, |a| a.jobs.r.buttons[1]);
+    click(&mut app, |a| a.ops.jobs.r.buttons[1]);
     assert_eq!((waiting.join().unwrap(), ctl.skips_failures()), (Some(Recover::Skip), false));
     let waiting = failed(&mut app, id, &ctl, false);
-    click(&mut app, |a| a.jobs.r.buttons[2]);
+    click(&mut app, |a| a.ops.jobs.r.buttons[2]);
     assert_eq!((waiting.join().unwrap(), ctl.skips_failures()), (Some(Recover::Skip), true));
     assert_eq!(ctl.recover(false, || panic!("asked after Skip all")), Some(Recover::Skip));
 
@@ -521,22 +521,22 @@ fn closes(app: &mut App) -> bool {
 fn closing_a_window_with_running_operations_asks_and_cancels_them_only_when_told() {
     let mut app = app_at(r"C:\x");
     app.on_event(&Event::CloseRequested, t0());
-    assert!(closes(&mut app) && app.confirm.is_none(), "nothing runs, so the window closes at once");
+    assert!(closes(&mut app) && app.dialogs.confirm.is_none(), "nothing runs, so the window closes at once");
     let (first, a) = paste(&mut app);
     let (_, b) = paste(&mut app);
     app.on_event(&Event::CloseRequested, t0());
-    let c = app.confirm.clone().expect("closing asks first");
+    let c = app.dialogs.confirm.clone().expect("closing asks first");
     assert_eq!((c.question.as_str(), c.yes.as_str()), ("2 operations are still running", "Cancel and close"));
     assert!(!closes(&mut app) && !a.is_cancelled());
-    click(&mut app, |a| a.confirm.as_ref().unwrap().buttons[1]);
+    click(&mut app, |a| a.dialogs.confirm.as_ref().unwrap().buttons[1]);
     let commands: Vec<_> = app.drain_effects().filter_map(|e| if let Effect::Window(cmd) = e { Some(cmd) } else { None }).collect();
     assert_eq!(commands, [WindowCmd::KeepOpen]);
-    assert!(app.confirm.is_none() && !a.is_cancelled() && !b.is_cancelled(), "Keep window open leaves everything running");
+    assert!(app.dialogs.confirm.is_none() && !a.is_cancelled() && !b.is_cancelled(), "Keep window open leaves everything running");
 
     finish(&mut app, first, None);
     app.run_action("window.close", t0());
-    assert_eq!(app.confirm.as_ref().map(|c| c.question.as_str()), Some("1 operation is still running"), "finished operations do not count");
-    click(&mut app, |a| a.confirm.as_ref().unwrap().buttons[0]);
+    assert_eq!(app.dialogs.confirm.as_ref().map(|c| c.question.as_str()), Some("1 operation is still running"), "finished operations do not count");
+    click(&mut app, |a| a.dialogs.confirm.as_ref().unwrap().buttons[0]);
     assert!(b.is_cancelled() && closes(&mut app), "Cancel and close cancels what runs and closes");
 }
 
@@ -567,7 +567,7 @@ fn items_the_trash_refuses_can_be_deleted_permanently_instead() {
     let (title, lines) = app.dialog_text().unwrap();
     assert_eq!((title.as_str(), lines[0].as_str(), lines[1].as_str()), ("Delete permanently?", "2 items can't be moved to the Trash.", "This cannot be undone."));
     assert_eq!(app.dialog_buttons(), ["Delete permanently", "Cancel"]);
-    assert_eq!(app.jobs.sel, 0);
+    assert_eq!(app.dialogs.sel, 0);
     key(&mut app, Key::Enter);
     let deletes: Vec<FileOp> = app.drain_effects().filter_map(|e| match e {
         crate::ui::Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { op, .. } } => Some(op),
@@ -649,9 +649,9 @@ fn dialog_buttons_answer_by_localized_first_letters_and_shift_tab_walks_back() {
     let waiting = asked(&mut app, id, &ctl);
     assert_eq!(app.dialog_buttons(), ["Replace", "Keep both", "Skip", "Skip identical", "Replace older", "Cancel"]);
     key(&mut app, Key::Tab);
-    assert_eq!(app.jobs.sel, 2, "Tab advances");
+    assert_eq!(app.dialogs.sel, 2, "Tab advances");
     shift(&mut app, Key::Tab);
-    assert_eq!(app.jobs.sel, 1, "Shift+Tab walks back");
+    assert_eq!(app.dialogs.sel, 1, "Shift+Tab walks back");
     letter(&mut app, 'S', 's', NO);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::Skip), "the first letter of the localized button answers, in either case");
     crate::i18n::set_lang(crate::i18n::Lang::Ru);
@@ -678,7 +678,7 @@ fn replace_older_answers_this_conflict_by_date_and_decides_the_rest_without_aski
     let (id, ctl) = paste(&mut app);
     let waiting = asked(&mut app, id, &ctl);
     let k = button(&app, "Replace older");
-    click(&mut app, |a| a.jobs.r.buttons[k]);
+    click(&mut app, |a| a.ops.jobs.r.buttons[k]);
     assert_eq!((waiting.join().unwrap(), ctl.policy(), app.asking()), (Some(Resolve::Skip), Some(Resolve::ReplaceOlder), None), "the new file is not newer, so it is skipped");
     let mut newer = sizes(3, 5);
     newer.from.modified = 600_000_000;
@@ -692,11 +692,11 @@ fn skip_identical_skips_same_files_from_now_on_and_still_asks_about_a_different_
     let (id, ctl) = paste(&mut app);
     let (waiting, again) = asked_about(&mut app, id, &ctl, sizes(3, 5));
     let k = button(&app, "Skip identical");
-    click(&mut app, |a| a.jobs.r.buttons[k]);
+    click(&mut app, |a| a.ops.jobs.r.buttons[k]);
     again.recv().unwrap();
     conflict(&mut app, id);
     assert_eq!(app.dialog_buttons(), ["Replace", "Keep both", "Skip", "Replace older", "Cancel"], "a different file is asked about again, without the choice already made");
-    assert_eq!(app.jobs.sel, 1);
+    assert_eq!(app.dialogs.sel, 1);
     key(&mut app, Key::Enter);
     assert_eq!(waiting.join().unwrap(), Some(Resolve::KeepBoth));
     assert_eq!(ctl.resolve(&sizes(4, 4), || panic!("asked about an identical file")), Some(Resolve::Skip));
@@ -728,7 +728,7 @@ fn conflict_buttons_never_overlap_even_in_a_narrow_window() {
         app.on_event(&Event::Resized { width, height: 600 }, t0());
         let (id, ctl) = paste(&mut app);
         let waiting = asked(&mut app, id, &ctl);
-        let (d, b, check) = (app.jobs.r.dialog, app.jobs.r.buttons.clone(), app.jobs.r.check);
+        let (d, b, check) = (app.ops.jobs.r.dialog, app.ops.jobs.r.buttons.clone(), app.ops.jobs.r.check);
         let apart = |a: &Rect, c: &Rect| a.right() <= c.x || c.right() <= a.x || a.bottom() <= c.y || c.bottom() <= a.y;
         for (i, r) in b.iter().enumerate() {
             assert!(r.x >= d.x && r.right() <= d.right() && r.y >= d.y && r.bottom() <= d.bottom() && r.w > 0.0, "{width}: button {i} {r:?} leaves {d:?}");
@@ -758,22 +758,22 @@ fn one_conflict_review_applies_file_and_folder_choices_independently() {
         app.on_event(&Event::Resized { width, height: 450 }, t0());
         let mut draw = Gfx::new(Mono, 2048);
         app.frame(&mut draw, t0());
-        let form = app.jobs.form.as_ref().unwrap();
+        let form = app.dialogs.form.as_ref().unwrap();
         assert!(form.button_rects.iter().all(|r| r.x >= form.rect.x && r.right() <= form.rect.right() && r.w > 0.0));
     }
     let choose = |app: &mut App, row: usize, value: usize| {
-        let Control::Choice { sel, .. } = &mut app.jobs.form.as_mut().unwrap().controls[row] else { panic!("expected a conflict choice") };
+        let Control::Choice { sel, .. } = &mut app.dialogs.form.as_mut().unwrap().controls[row] else { panic!("expected a conflict choice") };
         *sel = value;
         app.form_changed(row);
     };
     choose(&mut app, 0, 2);
     choose(&mut app, 1, 1);
-    let form = app.jobs.form.as_ref().unwrap();
+    let form = app.dialogs.form.as_ref().unwrap();
     assert_eq!((form.choice(2), form.choice(3)), (1, 0));
     choose(&mut app, 2, 3);
-    assert!(app.jobs.form.as_ref().unwrap().note.contains("15 B"));
+    assert!(app.dialogs.form.as_ref().unwrap().note.contains("15 B"));
     app.form_submit(0);
-    assert!(app.jobs.form.as_ref().unwrap().error);
+    assert!(app.dialogs.form.as_ref().unwrap().error);
     choose(&mut app, 2, 1);
 
     let (ready, shown) = std::sync::mpsc::channel();
@@ -782,7 +782,7 @@ fn one_conflict_review_applies_file_and_folder_choices_independently() {
     shown.recv_timeout(Duration::from_secs(2)).unwrap();
     app.form_submit(0);
     assert_eq!(worker.join().unwrap(), Some(vec![Resolve::Skip, Resolve::Replace]));
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -792,7 +792,7 @@ fn closing_a_conflict_review_cancels_the_transfer() {
     app.on_provider_event(ProviderEvent::OpConflicts { tab: app.tab().id, id, conflicts: vec![sizes(10, 20)] }, t0());
     key(&mut app, Key::Escape);
     assert!(ctl.is_cancelled());
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -802,12 +802,12 @@ fn speed_limit_from_the_operations_panel_changes_only_that_copy() {
     let (id, ctl) = paste(&mut app);
     ctl.set_copy_limit_available(true);
     let (_, other) = paste(&mut app);
-    let row = app.jobs.list.iter().position(|j| j.id == id).map(|k| app.jobs.row_of(k)).unwrap();
+    let row = app.ops.jobs.list.iter().position(|j| j.id == id).map(|k| app.ops.jobs.row_of(k)).unwrap();
     let set_rate = |app: &mut App, value: &str| {
-        click(app, |a| Jobs::more_rect(a.jobs.r.rows[row], unscaled));
+        click(app, |a| Jobs::more_rect(a.ops.jobs.r.rows[row], unscaled));
         let option = app.job_menu_items(row).iter().position(|&s| s == "Limit speed…").expect("running copy has a speed limit");
-        click(app, |a| a.jobs.r.menu[option]);
-        app.jobs.form.as_mut().unwrap().set_text(0, value);
+        click(app, |a| a.ops.jobs.r.menu[option]);
+        app.dialogs.form.as_mut().unwrap().set_text(0, value);
         app.form_submit(0);
     };
     set_rate(&mut app, "7");
@@ -829,26 +829,26 @@ fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
     let tab = app.tab().id;
     let progress = OpProgress { stage: Stage::Running, bytes: 50, total_bytes: 200, items: 1, total_items: 4 };
     app.on_provider_event(ProviderEvent::OpProgress { tab, id: first, progress }, t0());
-    let row = app.jobs.list.iter().position(|j| j.id == first).map(|k| app.jobs.row_of(k)).unwrap();
+    let row = app.ops.jobs.list.iter().position(|j| j.id == first).map(|k| app.ops.jobs.row_of(k)).unwrap();
     let mut g = Gfx::new(Mono, 2048);
     app.frame(&mut g, t0());
     assert!(app.keeps_awake());
-    click(&mut app, |a| Jobs::pause_rect(a.jobs.r.rows[row], unscaled));
+    click(&mut app, |a| Jobs::pause_rect(a.ops.jobs.r.rows[row], unscaled));
     assert!(ctl.is_paused() && !other.is_paused(), "only that operation pauses");
-    let j = app.jobs.list.iter().find(|j| j.id == first).unwrap();
+    let j = app.ops.jobs.list.iter().find(|j| j.id == first).unwrap();
     assert_eq!(j.status(), "Paused");
     assert!(j.detail(false).starts_with("50 B of 200 B"));
     assert_eq!(app.overall_progress().map(|p| p.1), Some(true), "the taskbar shows the paused state");
     app.frame(&mut g, t0());
-    click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[row], unscaled));
+    click(&mut app, |a| Jobs::more_rect(a.ops.jobs.r.rows[row], unscaled));
     assert_eq!(app.job_menu_items(row), ["Open destination", "Resume", "Cancel", "Limit speed…"]);
-    click(&mut app, |a| a.jobs.r.menu[1]);
+    click(&mut app, |a| a.ops.jobs.r.menu[1]);
     assert!(!ctl.is_paused() && !ctl.is_cancelled());
     app.pause_job(row);
     finish(&mut app, first, None);
     app.frame(&mut g, t0());
-    let done = app.jobs.list.iter().position(|j| j.id == first).map(|k| app.jobs.row_of(k)).unwrap();
-    let r = Jobs::pause_rect(app.jobs.r.rows[done], unscaled);
+    let done = app.ops.jobs.list.iter().position(|j| j.id == first).map(|k| app.ops.jobs.row_of(k)).unwrap();
+    let r = Jobs::pause_rect(app.ops.jobs.r.rows[done], unscaled);
     assert_ne!(app.jobs_hit(r.x + 2.0, r.y + 2.0), Some(Hit::OpsPause(done)), "a finished operation has nothing to pause");
     assert!(!app.job_menu_items(done).contains(&"Resume"));
 }
@@ -869,7 +869,7 @@ fn symlink_privilege_text_alone_keeps_the_regular_retry_button() {
 fn review_for_a_missing_job_releases_the_waiting_operation() {
     let mut app = app_at(r"C:\x");
     let (id, ctl) = paste(&mut app);
-    app.jobs.list.clear();
+    app.ops.jobs.list.clear();
     let (ready, started) = mpsc::channel();
     let observer = ctl.clone();
     let waiting = std::thread::spawn(move || observer.confirm_conflicts(vec![sizes(1, 2)], |_| ready.send(()).unwrap()));
@@ -877,7 +877,7 @@ fn review_for_a_missing_job_releases_the_waiting_operation() {
     app.job_conflicts(id, vec![sizes(1, 2)]);
     assert!(ctl.is_cancelled());
     assert_eq!(waiting.join().unwrap(), None);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -887,12 +887,12 @@ fn a_speed_limit_form_preserves_an_open_conflict_review() {
     ctl.set_copy_limit_available(true);
     app.job_conflicts(id, vec![sizes(1, 2)]);
     let option = app.job_menu(0).iter().position(|&s| s == S::UiJobCopyLimit).unwrap();
-    app.jobs.menu = Some(0);
+    app.ops.jobs.menu = Some(0);
     app.run_job_menu(option, t0());
-    assert!(matches!(app.jobs.form.as_ref().unwrap().kind, super::super::archive::Kind::CopyLimit(_)));
-    app.jobs.form.as_mut().unwrap().set_text(0, "3");
+    assert!(matches!(app.dialogs.form.as_ref().unwrap().kind, super::super::archive::Kind::CopyLimit(_)));
+    app.dialogs.form.as_mut().unwrap().set_text(0, "3");
     app.form_submit(0);
-    assert!(matches!(app.jobs.form.as_ref().unwrap().kind, super::super::archive::Kind::ConflictTable { .. }));
+    assert!(matches!(app.dialogs.form.as_ref().unwrap().kind, super::super::archive::Kind::ConflictTable { .. }));
     assert_eq!(ctl.copy_limit(), 3);
     assert!(!ctl.is_cancelled());
 }
@@ -903,13 +903,13 @@ fn a_transfer_outside_the_flit_engine_has_no_speed_limit_controls() {
     let (_, ctl) = paste(&mut app);
     ctl.set_copy_limit(7);
     assert!(!app.job_menu(0).contains(&S::UiJobCopyLimit));
-    assert!(!app.jobs.list[0].detail(false).contains("7"));
+    assert!(!app.ops.jobs.list[0].detail(false).contains("7"));
     ctl.set_copy_limit_available(true);
     assert!(app.job_menu(0).contains(&S::UiJobCopyLimit));
-    assert!(app.jobs.list[0].detail(false).contains("7"));
+    assert!(app.ops.jobs.list[0].detail(false).contains("7"));
     ctl.set_copy_limit_available(false);
     assert!(!app.job_menu(0).contains(&S::UiJobCopyLimit));
-    assert!(!app.jobs.list[0].detail(false).contains("7"));
+    assert!(!app.ops.jobs.list[0].detail(false).contains("7"));
 }
 
 #[test]
@@ -923,24 +923,24 @@ fn folder_review_defaults_to_merge_and_hides_children_when_the_folder_is_renamed
     };
     let file = Conflict { source: folder.source.join(b"file"), target: folder.target.join(b"file"), ..sizes(1, 2) };
     app.job_conflicts(id, vec![folder, file, sizes(1, 2)]);
-    let form = app.jobs.form.as_mut().unwrap();
+    let form = app.dialogs.form.as_mut().unwrap();
     let Control::Choice { sel, options, .. } = &mut form.controls[2] else { panic!("expected a folder choice") };
     assert_eq!(options[*sel], "Merge");
     assert!(!options.iter().any(|s| s == "Replace"));
     let choose = |app: &mut App, index: usize, choice: usize| {
-        let Control::Choice { sel, .. } = &mut app.jobs.form.as_mut().unwrap().controls[index] else { panic!("expected a choice") };
+        let Control::Choice { sel, .. } = &mut app.dialogs.form.as_mut().unwrap().controls[index] else { panic!("expected a choice") };
         *sel = choice;
         app.form_changed(index);
     };
     choose(&mut app, 3, 1);
     choose(&mut app, 2, 2);
-    assert_eq!(app.jobs.form.as_ref().unwrap().controls.len(), 4);
+    assert_eq!(app.dialogs.form.as_ref().unwrap().controls.len(), 4);
     choose(&mut app, 2, 0);
-    let form = app.jobs.form.as_ref().unwrap();
+    let form = app.dialogs.form.as_ref().unwrap();
     assert_eq!(form.controls.len(), 5);
     assert_eq!(form.choice(3), 1);
     app.form_submit(0);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -951,5 +951,5 @@ fn a_git_transfer_never_offers_a_speed_limit() {
     job.ctl.set_copy_limit_available(true);
     job.ctl.set_copy_limit(5);
     assert!(!app.job_menu(0).contains(&S::UiJobCopyLimit));
-    assert!(!app.jobs.list[0].detail(false).contains('5'));
+    assert!(!app.ops.jobs.list[0].detail(false).contains('5'));
 }

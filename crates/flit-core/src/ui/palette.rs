@@ -297,14 +297,14 @@ impl Palette {
     fn commands(app: &App) -> Self {
         let mut ids: Vec<usize> = (0..ACTIONS.len()).filter(|&i| app.supports(ACTIONS[i].id)).collect();
         ids.sort_by_key(|&i| Group::ALL.iter().position(|&g| g == ACTIONS[i].group));
-        let mut p = Self::new(Pick::Commands, ids.iter().map(|&i| (ACTIONS[i].title.t().to_owned(), app.keymap.text(i))).collect(), "");
+        let mut p = Self::new(Pick::Commands, ids.iter().map(|&i| (ACTIONS[i].title.t().to_owned(), app.settings.keymap.text(i))).collect(), "");
         p.alts = ids.iter().map(|&i| ACTIONS[i].title.en()).collect();
         p.descs = ids.iter().map(|&i| searched_description(i)).collect();
         p.commands = Some(Commands {
             descriptions: app.prefs.command_descriptions,
             groups: ids.iter().map(|&i| ACTIONS[i].group).collect(),
             shown: ids.iter().map(|&i| if ACTIONS[i].id == "git.sync" && !app.git_can_sync() { S::GitErrorNoUpstream.t() } else { ACTIONS[i].desc.t() }).collect(),
-            caps: ids.iter().map(|&i| app.keymap.shown(i)).collect(),
+            caps: ids.iter().map(|&i| app.settings.keymap.shown(i)).collect(),
             live: ids.iter().map(|&i| app.available(ACTIONS[i].id)).collect(),
             ..Default::default()
         });
@@ -576,7 +576,7 @@ impl App {
             return;
         }
         let Some(mut p) = self.nav.back.take() else { return };
-        p.reload_keys(&self.keymap);
+        p.reload_keys(&self.settings.keymap);
         self.nav.palette = Some(*p);
         self.layout();
         self.dirty = true;
@@ -699,7 +699,7 @@ impl App {
                 let name = p.titles[id].clone();
                 self.delete_layout(&name);
             }
-            if !self.opts.layouts.is_empty() {
+            if !self.settings.opts.layouts.is_empty() {
                 self.ask_load_layout();
             }
             return true;
@@ -728,7 +728,7 @@ impl App {
         if self.go_key(key, m, now) {
             return true;
         }
-        let closes = self.keymap.runs(key, m, "palette.show");
+        let closes = self.settings.keymap.runs(key, m, "palette.show");
         let mut changed_go = false;
         let Some(p) = &mut self.nav.palette else { return false };
         let page = p.page as isize;
@@ -815,7 +815,7 @@ impl App {
     }
 
     pub(super) fn palette_has_accessible_command(&self, row: usize, id: u64) -> bool {
-        !self.search.active && !self.jobs.modal()
+        !self.search.active && !self.dialogs.modal()
             && self.nav.palette.as_ref().and_then(|p| p.accessible_command(row)).is_some_and(|(current, _, _)| current == id)
     }
 
@@ -845,7 +845,7 @@ impl App {
     pub(super) fn layout_palette(&mut self) {
         let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
-        let left = self.panels.left;
+        let left = self.tabs.panels.left;
         let anchor = match self.nav.palette.as_ref().map(|p| &p.pick) {
             Some(Pick::Crumb(i)) => self.crumb_rect(*i),
             Some(Pick::Tabs) => Some(self.tab_list_anchor()),

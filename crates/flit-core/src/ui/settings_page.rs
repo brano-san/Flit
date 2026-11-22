@@ -681,7 +681,7 @@ fn size_text(bytes: Option<u64>, decimal: bool) -> String {
 
 impl App {
     pub fn settings_open(&self) -> bool {
-        self.settings.is_some()
+        self.settings.screen.is_some()
     }
 
     pub fn set_about(&mut self, about: About) {
@@ -693,11 +693,11 @@ impl App {
     }
 
     pub fn settings_page(&self) -> Option<Page> {
-        self.settings.as_ref().map(|s| s.page)
+        self.settings.screen.as_ref().map(|s| s.page)
     }
 
     pub fn settings_lines(&self) -> Vec<String> {
-        let Some(ui) = &self.settings else { return Vec::new() };
+        let Some(ui) = &self.settings.screen else { return Vec::new() };
         ui.lines
             .iter()
             .map(|l| match l {
@@ -715,11 +715,11 @@ impl App {
     }
 
     pub(super) fn open_settings(&mut self, page: Option<Page>) {
-        if self.settings.is_some() && page.is_none() {
+        if self.settings.screen.is_some() && page.is_none() {
             return self.close_settings();
         }
         self.nav.palette = None;
-        let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface), self.scale));
+        let ui = self.settings.screen.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface), self.scale));
         if let Some(p) = page {
             ui.page = p;
             ui.jump = Some((p, false));
@@ -733,7 +733,7 @@ impl App {
     }
 
     pub(super) fn close_settings(&mut self) {
-        self.settings = None;
+        self.settings.screen = None;
         self.layout();
         self.dirty = true;
     }
@@ -804,7 +804,7 @@ impl App {
 
     pub(super) fn open_log_folder(&mut self, now: Instant) {
         let Some(dir) = self.about.logs.clone() else { return self.status(NO_LOGS.t()) };
-        if self.settings.is_some() {
+        if self.settings.screen.is_some() {
             self.close_settings();
         }
         self.dispatch(vec![Route { folder: Location::from_local(dir), select: Some(LOG_FILE.as_bytes().to_vec()) }], OpenTarget::NewTab, now);
@@ -839,13 +839,13 @@ impl App {
     }
 
     pub fn offer_archive_registration(&mut self) {
-        self.archive_offer_pending = true;
+        self.settings.archive_offer_pending = true;
         self.dirty = true;
     }
 
     pub(super) fn show_pending_archive_offer(&mut self) {
-        if self.archive_offer_pending && self.jobs.form.is_none() && self.nav.palette.is_none() {
-            self.archive_offer_pending = false;
+        if self.settings.archive_offer_pending && self.dialogs.form.is_none() && self.nav.palette.is_none() {
+            self.settings.archive_offer_pending = false;
             let items = vec![
                 (S::SettingsPageSystemArchivePrompt.t().to_owned(), S::SettingsPageSystemArchivePromptNote.t().to_owned()),
                 (S::SettingsPageDialogCancel.t().to_owned(), String::new()),
@@ -948,7 +948,7 @@ impl App {
             Page::Menu => {
                 out.push(Line::Group(S::MenuEditorOwn.t()));
                 out.push(Line::Buttons(None, USER_BUTTONS));
-                if self.opts.user_menu.is_empty() {
+                if self.settings.opts.user_menu.is_empty() {
                     out.push(Line::Note(S::UserMenuEmpty.t()));
                 }
                 out.extend(self.user_lines().into_iter().map(Line::Entry));
@@ -1024,7 +1024,7 @@ impl App {
     }
 
     pub(super) fn layout_settings(&mut self) {
-        let Some(mut ui) = self.settings.take() else { return };
+        let Some(mut ui) = self.settings.screen.take() else { return };
         let mut lines = Vec::new();
         let mut starts = Vec::new();
         match ui.query().to_owned().as_str() {
@@ -1039,7 +1039,7 @@ impl App {
         }
         ui.lines = lines;
         ui.starts = starts;
-        let (w, h, sc, describe) = (self.size.0, self.size.1, self.scale, self.opts.describe);
+        let (w, h, sc, describe) = (self.size.0, self.size.1, self.scale, self.settings.opts.describe);
         let s = |v: f32| (v * sc).round();
         let room_w = w - 2.0 * s(EDGE);
         let want = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W));
@@ -1133,11 +1133,11 @@ impl App {
             let next = ui.starts.get(at + 1).map_or(f32::INFINITY, |st| ui.rects[st.line].y);
             (line, Rect::new(ui.list.x, ui.list.y.min(next - group_h), row_w, group_h))
         });
-        self.settings = Some(ui);
+        self.settings.screen = Some(ui);
     }
 
     pub(super) fn settings_hit(&self, x: f32, y: f32) -> Option<Hit> {
-        let ui = self.settings.as_ref()?;
+        let ui = self.settings.screen.as_ref()?;
         if self.in_title(y) {
             return None;
         }
@@ -1198,7 +1198,7 @@ impl App {
     }
 
     pub(super) fn settings_a11y(&self, t: &mut Tree, targets: &mut Vec<(u64, Hit)>) -> Option<usize> {
-        let ui = self.settings.as_ref()?;
+        let ui = self.settings.screen.as_ref()?;
         let s = |v: f32| (v * self.scale).round();
         let at = Hit::Settings;
         let d = t.add(0, SETTINGS_ID, Role::Dialog, S::SettingsPageLineTitle.t(), ui.panel);
@@ -1207,7 +1207,7 @@ impl App {
         t.nodes[search].value = ui.search.text().to_owned();
         let searching = !ui.query().is_empty();
         let describe = put(t, targets, d, at(SHit::Describe), Role::Button, S::OptionsDescriptions.t(), ui.describe);
-        t.nodes[describe].selected = self.opts.describe;
+        t.nodes[describe].selected = self.settings.opts.describe;
         let mut focus = if ui.searching() { search } else { d };
         if !ui.nav_rects.is_empty() {
             let nav = t.add(d, CATEGORIES_ID, Role::List, S::SettingsPageLineCategories.t(), ui.nav);
@@ -1306,7 +1306,7 @@ impl App {
     }
 
     pub(super) fn settings_a11y_focus(&mut self, sh: SHit) {
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         match sh {
             SHit::Search => ui.zone = Zone::Search,
             SHit::Nav(k) => (ui.zone, ui.nav_at) = (Zone::Nav, k),
@@ -1317,11 +1317,11 @@ impl App {
     }
 
     pub(super) fn settings_ime_area(&self) -> Option<Rect> {
-        self.settings.as_ref().filter(|s| s.searching() && self.nav.palette.is_none()).map(|s| s.search_rect)
+        self.settings.screen.as_ref().filter(|s| s.searching() && self.nav.palette.is_none()).map(|s| s.search_rect)
     }
 
     pub(super) fn settings_nav_tip(&self, k: usize) -> Option<(Rect, String)> {
-        let ui = self.settings.as_ref().filter(|ui| ui.rail)?;
+        let ui = self.settings.screen.as_ref().filter(|ui| ui.rail)?;
         let (r, st) = (*ui.nav_rects.get(k)?, ui.starts.get(k)?);
         let text = match ui.query() {
             "" => st.page.title().to_owned(),
@@ -1332,27 +1332,27 @@ impl App {
 
     fn jump_to(&mut self, page: Page) {
         self.hide_settings_tip();
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         ui.jump = Some((page, true));
         self.layout();
         self.dirty = true;
     }
 
     pub(super) fn settings_search(&self) -> Option<&Field> {
-        self.settings.as_ref().map(|ui| &ui.search)
+        self.settings.screen.as_ref().map(|ui| &ui.search)
     }
 
     pub(super) fn settings_search_mut(&mut self) -> Option<&mut Field> {
-        self.settings.as_mut().map(|ui| &mut ui.search)
+        self.settings.screen.as_mut().map(|ui| &mut ui.search)
     }
 
     pub(super) fn settings_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) -> bool {
         let Hit::Settings(sh) = h else { return false };
-        if self.settings.is_none() {
+        if self.settings.screen.is_none() {
             return false;
         }
         let clicks = if sh == SHit::Search && button == MouseButton::Left { self.text_clicks((x, y), clicks, now) } else { clicks };
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         if self.nav.palette.is_some() {
             self.nav.palette = None;
         }
@@ -1406,13 +1406,13 @@ impl App {
     }
 
     pub(super) fn settings_click(&mut self, sh: SHit, x: f32, y: f32) {
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         let line = |k: usize| ui.lines.get(k).cloned();
         match sh {
             SHit::Outside | SHit::Close => self.close_settings(),
             SHit::Describe => {
-                self.opts.describe = !self.opts.describe;
-                if let Some(ui) = &mut self.settings {
+                self.settings.opts.describe = !self.settings.opts.describe;
+                if let Some(ui) = &mut self.settings.screen {
                     ui.reveal = true;
                 }
                 self.layout();
@@ -1458,7 +1458,7 @@ impl App {
     }
 
     pub(super) fn slide_setting(&mut self, k: usize, x: f32) {
-        let Some(ui) = &self.settings else { return };
+        let Some(ui) = &self.settings.screen else { return };
         let (Some(&Line::Setting(i)), Some(&r)) = (ui.lines.get(k), ui.rects.get(k)) else { return };
         let track = slider_track(r, |v| (v * self.scale).round());
         if let Some(v) = slide_value(i, track, x).filter(|&v| SETTINGS[i].get(self) != Value::Number(v)) {
@@ -1469,7 +1469,7 @@ impl App {
 
     pub(super) fn drag_settings_thumb(&mut self, y: f32, grab: f32) {
         let sc = self.scale;
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         let Some(t) = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, |v| (v * sc).round()) else { return };
         let frac = ((y - grab - ui.list.y) / (ui.list.h - t.h).max(1.0)).clamp(0.0, 1.0);
         ui.scroll.snap(frac * (ui.content_h - ui.list.h));
@@ -1489,8 +1489,8 @@ impl App {
                     it
                 });
                 let (x, y) = self.menu_spot(i, at);
-                let k = self.settings.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
-                match k.zip(self.settings.as_ref()).map(|(k, ui)| (k, control_rect(ui.rects[k], |v| (v * self.scale).round()))) {
+                let k = self.settings.screen.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
+                match k.zip(self.settings.screen.as_ref()).map(|(k, ui)| (k, control_rect(ui.rects[k], |v| (v * self.scale).round()))) {
                     Some((k, r)) => {
                         self.button_menu(Hit::Settings(SHit::Control(k)), r.x, r.bottom() + self.s(4.0), items.collect());
                         self.menu_right = Some(r.right());
@@ -1507,8 +1507,8 @@ impl App {
     }
 
     fn menu_spot(&self, i: usize, at: Option<(f32, f32)>) -> (f32, f32) {
-        let k = self.settings.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
-        let r = k.and_then(|k| self.settings.as_ref().map(|ui| control_rect(ui.rects[k], |v| (v * self.scale).round())));
+        let k = self.settings.screen.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
+        let r = k.and_then(|k| self.settings.screen.as_ref().map(|ui| control_rect(ui.rects[k], |v| (v * self.scale).round())));
         r.map(|r| (r.x, r.bottom())).or(at).unwrap_or_default()
     }
 
@@ -1591,7 +1591,7 @@ impl App {
     }
 
     fn activate_line(&mut self, k: usize) {
-        let Some(ui) = &self.settings else { return };
+        let Some(ui) = &self.settings.screen else { return };
         let sub = ui.sub;
         match ui.lines.get(k).cloned() {
             Some(Line::Setting(i)) => self.activate_setting(i, None),
@@ -1605,9 +1605,9 @@ impl App {
         if self.nav.palette.is_some() {
             return false;
         }
-        let closes = self.keymap.runs(key, m, "options.open");
+        let closes = self.settings.keymap.runs(key, m, "options.open");
         self.hide_settings_tip();
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         self.dirty = true;
         let plain = !m.ctrl && !m.alt;
         let line = ui.lines.get(ui.focus).cloned();
@@ -1735,7 +1735,7 @@ impl App {
 
     fn focus_menu_row(&mut self, path: &str) {
         self.layout();
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         if let Some(k) = ui.lines.iter().position(|l| matches!(l, Line::MenuItem(row) if row.path == path)) {
             (ui.focus, ui.reveal) = (k, true);
             self.layout();
@@ -1743,7 +1743,7 @@ impl App {
     }
 
     fn menu_top_lines(&self) -> Vec<(usize, Rect)> {
-        let Some(ui) = &self.settings else { return Vec::new() };
+        let Some(ui) = &self.settings.screen else { return Vec::new() };
         ui.lines.iter().zip(&ui.rects).enumerate().filter(|(_, (l, _))| matches!(l, Line::MenuItem(row) if row.depth == 0)).map(|(k, (_, r))| (k, *r)).collect()
     }
 
@@ -1756,7 +1756,7 @@ impl App {
     pub(super) fn drop_menu_row(&mut self, from: usize, to: Option<usize>) {
         let tops = self.menu_top_lines();
         let (Some(to), Some(at)) = (to, tops.iter().position(|(k, _)| *k == from)) else { return };
-        let Some(Line::MenuItem(row)) = self.settings.as_ref().and_then(|ui| ui.lines.get(from).cloned()) else { return };
+        let Some(Line::MenuItem(row)) = self.settings.screen.as_ref().and_then(|ui| ui.lines.get(from).cloned()) else { return };
         let target = if to > at { to - 1 } else { to };
         self.move_menu_item(&row.path, target);
         self.focus_menu_row(&row.path);
@@ -1771,7 +1771,7 @@ impl App {
         if self.nav.palette.is_some() {
             return false;
         }
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         if s.is_empty() || (s == " " && !ui.searching()) {
             return true;
         }
@@ -1785,12 +1785,12 @@ impl App {
     }
 
     pub(super) fn settings_pans_at(&self, x: f32, y: f32) -> bool {
-        self.settings.as_ref().is_some_and(|ui| ui.list.contains(x, y) && !ui.bar.contains(x, y)) && !matches!(self.settings_hit(x, y), Some(Hit::Settings(SHit::Slide(_))))
+        self.settings.screen.as_ref().is_some_and(|ui| ui.list.contains(x, y) && !ui.bar.contains(x, y)) && !matches!(self.settings_hit(x, y), Some(Hit::Settings(SHit::Slide(_))))
     }
 
     pub(super) fn touch_pan_settings(&mut self, dy: f32) -> bool {
         self.hide_settings_tip();
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         let was = ui.scroll.pos;
         ui.scroll.snap((was - dy).clamp(0.0, (ui.content_h - ui.list.h).max(0.0)));
         let moved = ui.scroll.pos != was;
@@ -1806,7 +1806,7 @@ impl App {
         }
         let step = 3.0 * (ITEM_H * self.scale).round();
         self.hide_settings_tip();
-        if let Some(ui) = &mut self.settings {
+        if let Some(ui) = &mut self.settings.screen {
             ui.scroll.by(-dy * step, ui.content_h - ui.list.h);
         }
         self.layout();
@@ -1838,7 +1838,7 @@ impl App {
     }
 
     pub(super) fn fit_settings<B: TextBackend>(&mut self, g: &mut Gfx<B>) {
-        if self.settings.is_none() {
+        if self.settings.screen.is_none() {
             return;
         }
         let font = self.ui_font(13.0);
@@ -1849,14 +1849,14 @@ impl App {
             labels: Btn::ALL.map(|b| g.measure(b.label(), font)),
             titles: Page::ALL.iter().map(|p| g.measure(p.title(), font)).fold(0.0, f32::max),
         };
-        if let Some(ui) = self.settings.as_mut().filter(|ui| ui.fit != fit) {
+        if let Some(ui) = self.settings.screen.as_mut().filter(|ui| ui.fit != fit) {
             ui.fit = fit;
             self.layout_settings();
         }
     }
 
     pub(super) fn draw_settings<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let Some(mut ui) = self.settings.take() else { return };
+        let Some(mut ui) = self.settings.screen.take() else { return };
         let open = match self.menu_owner {
             Some(Hit::Settings(SHit::Control(k))) if self.own_menu_open() => Some(k),
             _ => None,
@@ -1870,7 +1870,7 @@ impl App {
         }
         self.paint_settings(g, t, &mut ui);
         self.motion |= ui.knob_motion;
-        self.settings = Some(ui);
+        self.settings.screen = Some(ui);
     }
 
     fn paint_settings<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, ui: &mut SettingsUi) {
@@ -1885,7 +1885,7 @@ impl App {
         let mid = |r: Rect, m: crate::text::FontMetrics| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
         let hover = self.hover;
         let query = ui.query().to_owned();
-        let describe = self.opts.describe;
+        let describe = self.settings.opts.describe;
         let sr = ui.search_rect;
         let focused_search = ui.searching() && self.active && self.nav.palette.is_none();
         Paint::new(g, t, sc).field(sr, focused_search);
@@ -2142,7 +2142,7 @@ impl App {
 
     pub(super) fn settings_tip(&mut self, x: f32, y: f32) {
         let blocked = self.nav.palette.is_some();
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         let over = if blocked || !ui.list.contains(x, y) { None } else { ui.cut.iter().find(|(_, r)| r.contains(x, y)).map(|&(k, _)| k) };
         match (over, ui.tip) {
             (Some(k), Some((was, _))) if k == was => {}
@@ -2156,7 +2156,7 @@ impl App {
     }
 
     pub(super) fn hide_settings_tip(&mut self) {
-        if let Some(ui) = self.settings.as_mut().filter(|ui| ui.tip.is_some()) {
+        if let Some(ui) = self.settings.screen.as_mut().filter(|ui| ui.tip.is_some()) {
             ui.tip = None;
             self.dirty = true;
         }

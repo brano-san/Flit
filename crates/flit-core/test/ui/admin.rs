@@ -44,7 +44,7 @@ fn deliver(app: &mut App, items: &[(&str, bool)]) {
 }
 
 fn select(app: &mut App, names: &[&str]) {
-    let v = app.tabs[app.cur].view.as_mut().unwrap();
+    let v = app.tabs.items[app.tabs.cur].view.as_mut().unwrap();
     v.clear_selection();
     for n in names {
         let i = v.find(n.as_bytes()).unwrap();
@@ -236,7 +236,7 @@ fn a_refused_password_closes_the_root_tab_and_says_why() {
     assert_eq!(app.tabs().len(), 1, "no empty root tab is left behind");
     assert_eq!(app.current_location(), &Location::parse("/home/u").unwrap());
     assert_eq!(app.tab().error.as_deref(), Some("Cannot open the folder as administrator: the password prompt was dismissed"));
-    assert!(app.nav.closed.is_empty(), "the refused tab is not offered for reopening");
+    assert!(app.tabs.closed.is_empty(), "the refused tab is not offered for reopening");
     open_root_tab(&mut app, "etc");
     assert_eq!(listed(&requests(&mut app)), [(ProviderId::Admin, p("/home/u/etc"))], "opening again asks the root agent, and so the password, again");
 }

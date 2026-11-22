@@ -186,7 +186,7 @@ pub(super) fn held_rows(probe: &mut Probe, controls: &mut Vec<Control>, focus: &
 
 impl App {
     pub(super) fn properties_access(&mut self, id: OpId, found: Vec<Option<Access>>, accounts: Accounts) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         let Form { kind: Kind::Properties(m), controls, focus, .. } = f else { return };
         if m.id != id {
             return;
@@ -208,7 +208,7 @@ impl App {
     }
 
     pub(super) fn permissions_changed(&mut self, k: usize) {
-        let Some(Form { kind: Kind::Properties(m), controls, .. }) = &mut self.jobs.form else { return };
+        let Some(Form { kind: Kind::Properties(m), controls, .. }) = &mut self.dialogs.form else { return };
         let Probe::Editing(e) = &m.probe else { return };
         let mode = bits(controls, e.at);
         match e.exec_at() {
@@ -252,7 +252,7 @@ impl App {
     }
 
     pub(super) fn ask_allow_run(&mut self, tab: TabId, path: FsPath) {
-        if self.jobs.form.is_some() {
+        if self.dialogs.form.is_some() {
             return;
         }
         let shown = crate::tr!(S::UiQuoted, name = name::display(path.file_name()));
@@ -267,7 +267,7 @@ impl App {
     pub(super) fn open_ask(&mut self, tab: TabId, path: FsPath, ask: OpenAsk) {
         match ask {
             OpenAsk::NoApp { mime, apps } => self.choose_app(vec![path], mime, apps),
-            OpenAsk::Script if self.jobs.form.is_none() => {
+            OpenAsk::Script if self.dialogs.form.is_none() => {
                 let shown = crate::tr!(S::UiQuoted, name = name::display(path.file_name()));
                 let controls = vec![Control::line(&crate::tr!(S::PermissionsScript, name = shown)), Control::line(S::PermissionsScriptHint.t())];
                 let title = crate::tr!(S::PermissionsRunTitle, name = shown);

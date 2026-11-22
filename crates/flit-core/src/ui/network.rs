@@ -131,7 +131,7 @@ pub(super) fn split_remote(cmd: &Open) -> Option<(Vec<String>, Open)> {
 
 impl App {
     pub(super) fn check_discovery(&mut self, k: usize, snap: &crate::listing::DirSnapshot) {
-        let tab = &mut self.tabs[k];
+        let tab = &mut self.tabs.items[k];
         if tab.discovery == DiscoveryCheck::Unchecked && empty_network(snap) {
             tab.discovery = DiscoveryCheck::Pending(snap.gen);
             self.effects.push(Effect::NetworkDiscovery { tab: tab.id, gen: snap.gen });
@@ -275,13 +275,13 @@ impl App {
     }
 
     pub fn activate_network_tabs(&mut self) {
-        for k in 0..self.tabs.len() {
+        for k in 0..self.tabs.items.len() {
             self.begin_network(k);
         }
     }
 
     pub(super) fn begin_network(&mut self, k: usize) {
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         let Some(uri) = network_address(t.location().path()).filter(|_| self.caps.unix_paths) else { return };
         t.slot.take();
         self.effects.push(Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab: t.id, launch: Launch::ConnectNetwork { uri, gen: t.gen } } });
@@ -289,30 +289,30 @@ impl App {
 
     pub(super) fn network_connected(&mut self, k: usize, result: Result<Option<FsPath>, String>, now: Instant) {
         match result {
-            Ok(Some(path)) if self.tabs[k].location().path() == &path => {
-                self.tabs[k].list_network(self.case, &mut self.effects);
+            Ok(Some(path)) if self.tabs.items[k].location().path() == &path => {
+                self.tabs.items[k].list_network(self.case, &mut self.effects);
             }
             Ok(Some(path)) => {
-                self.tabs[k].history.replace(Location::from_local(path));
-                self.tabs[k].drop_trail();
+                self.tabs.items[k].history.replace(Location::from_local(path));
+                self.tabs.items[k].drop_trail();
                 self.load_tab(k, None, now);
-                if k == self.cur {
+                if k == self.tabs.cur {
                     self.after_tab_change();
                 } else {
-                    self.strip.rev += 1;
+                    self.tabs.strip.rev += 1;
                 }
             }
             result => {
                 self.load_tab(k, None, now);
                 if let Err(error) = result {
-                    self.tabs[k].error = Some(crate::redact::passwords(&crate::i18n::localize(&error)).into_owned());
+                    self.tabs.items[k].error = Some(crate::redact::passwords(&crate::i18n::localize(&error)).into_owned());
                 }
             }
         }
     }
 
     pub(super) fn mount_ask(&mut self, ask: MountAsk, answer: MountAnswer) {
-        if self.jobs.form.is_some() {
+        if self.dialogs.form.is_some() {
             return;
         }
         let form = match ask {
@@ -333,8 +333,8 @@ impl App {
     }
 
     pub(super) fn mount_ask_done(&mut self, id: u64) {
-        let ours = self.jobs.form.as_ref().is_some_and(|f| matches!(&f.kind, Kind::Login(l) if l.answer.id() == id) || matches!(&f.kind, Kind::MountQuestion(q) if q.answer.id() == id));
-        if let Some(mut f) = ours.then(|| self.jobs.form.take()).flatten() {
+        let ours = self.dialogs.form.as_ref().is_some_and(|f| matches!(&f.kind, Kind::Login(l) if l.answer.id() == id) || matches!(&f.kind, Kind::MountQuestion(q) if q.answer.id() == id));
+        if let Some(mut f) = ours.then(|| self.dialogs.form.take()).flatten() {
             f.wipe_secrets();
             self.show_conflict_table();
             self.layout();

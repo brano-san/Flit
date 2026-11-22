@@ -45,7 +45,7 @@ fn focus_follows_the_keyboard_and_invoke_runs_the_control() {
     assert_eq!(t.nodes[t.focus.unwrap()].role, Role::Tab);
     let new_tab = t.by_name(S::A11yButtonNewTab.t()).unwrap().id;
     a.on_event(&Event::Invoke(new_tab), Instant::now());
-    assert_eq!(a.tabs.len(), 2);
+    assert_eq!(a.tabs.items.len(), 2);
 }
 fn setting_title(id: &str) -> &'static str {
     crate::ui::settings::SETTINGS.iter().find(|s| s.id == id).unwrap().title.t()
@@ -89,7 +89,7 @@ fn the_settings_page_exposes_pages_rows_values_and_toggles() {
 #[test]
 fn each_option_of_a_checkbox_group_is_its_own_node() {
     let mut a = app(&["alpha.txt"]);
-    let v = a.tabs[a.cur].view.as_mut().unwrap();
+    let v = a.tabs.items[a.tabs.cur].view.as_mut().unwrap();
     let i = v.find(b"alpha.txt").unwrap();
     v.set_selected(i, true);
     v.focus = Some(i);
@@ -98,7 +98,7 @@ fn each_option_of_a_checkbox_group_is_its_own_node() {
     let t = a.accessibility();
     let group = t.nodes.iter().find(|n| n.role == Role::Group).expect("the algorithms group");
     let options: Vec<_> = group.children.iter().map(|&c| &t.nodes[c]).collect();
-    let before = a.jobs.form.as_ref().unwrap().flags(0);
+    let before = a.dialogs.form.as_ref().unwrap().flags(0);
     assert_eq!(options.len(), before.len());
     assert!(options.iter().all(|n| n.role == Role::CheckBox && !n.name.is_empty()));
     assert_eq!(options.iter().map(|n| n.selected).collect::<Vec<_>>(), before);
@@ -106,7 +106,7 @@ fn each_option_of_a_checkbox_group_is_its_own_node() {
     a.on_event(&Event::A11yFocus(second), Instant::now());
     assert_eq!(a.accessibility().focus.map(|k| a.accessibility().nodes[k].id), Some(second));
     a.on_event(&Event::Invoke(second), Instant::now());
-    let after = a.jobs.form.as_ref().unwrap().flags(0);
+    let after = a.dialogs.form.as_ref().unwrap().flags(0);
     assert_eq!(after[1], !before[1]);
     assert_eq!(after[0], before[0]);
 }
@@ -114,13 +114,13 @@ fn each_option_of_a_checkbox_group_is_its_own_node() {
 #[test]
 fn form_dialogs_expose_fields_with_values_and_their_buttons() {
     let mut a = app(&["alpha.txt"]);
-    let v = a.tabs[a.cur].view.as_mut().unwrap();
+    let v = a.tabs.items[a.tabs.cur].view.as_mut().unwrap();
     let i = v.find(b"alpha.txt").unwrap();
     v.set_selected(i, true);
     a.compress_dialog();
     a.layout();
     let t = a.accessibility();
-    let form = a.jobs.form.as_ref().unwrap();
+    let form = a.dialogs.form.as_ref().unwrap();
     let d = t.by_name(&form.title).unwrap();
     assert_eq!(d.role, Role::Dialog);
     let edit = t.nodes.iter().find(|n| n.role == Role::Edit && n.value == "alpha.zip").unwrap();
@@ -134,7 +134,7 @@ fn form_dialogs_expose_fields_with_values_and_their_buttons() {
     let t = a.accessibility();
     assert_eq!(t.nodes[t.focus.unwrap()].id, cancel);
     a.on_event(&Event::Invoke(cancel), Instant::now());
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
 }
 
 #[test]
@@ -256,7 +256,7 @@ fn a_command_removed_by_filtering_cannot_invoke_a_different_result() {
     press_key(&mut a, Key::Char('A'), ctrl);
     type_text(&mut a, "New Tab");
     a.on_event(&Event::Invoke(hidden), Instant::now());
-    assert_eq!(a.tabs.len(), 1);
+    assert_eq!(a.tabs.items.len(), 1);
     let t = a.accessibility();
     assert!(t.find(hidden).is_none());
     edit_id(&t, S::PalettePlaceholderCommands, "New Tab");

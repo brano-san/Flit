@@ -14,21 +14,21 @@ impl App {
     }
 
     pub(super) fn library_crumbs(&mut self, k: usize) {
-        let loc = self.tabs[k].location().clone();
+        let loc = self.tabs.items[k].location().clone();
         if !library::is_library(loc.path()) {
             return;
         }
         let name = self.nav.sidebar.library(loc.path()).map_or_else(|| library::stem(loc.path()), |l| l.name.clone());
         let mut crumbs: Vec<(String, Location)> = loc.parent().map(|p| (S::SidebarSectionLibraries.t().to_owned(), p)).into_iter().collect();
         crumbs.push((name, loc));
-        self.tabs[k].crumbs = crumbs;
+        self.tabs.items[k].crumbs = crumbs;
     }
 
     pub(super) fn places_changed(&mut self, old: &Places, now: Instant) {
         let new = self.nav.sidebar.places.clone();
         let folders = |p: &Places, path: &FsPath| p.libraries.iter().find(|l| l.path == *path).map(|l| (l.folders.clone(), l.name.clone()));
         self.each_pane(|a, k| {
-            let path = a.tabs[k].location().path().clone();
+            let path = a.tabs.items[k].location().path().clone();
             if !library::is_library(&path) {
                 return;
             }

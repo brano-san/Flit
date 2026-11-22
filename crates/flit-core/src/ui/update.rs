@@ -87,11 +87,11 @@ impl App {
     }
 
     pub fn file_jobs_running(&self) -> usize {
-        self.jobs.list.iter().filter(|j| j.state == JobState::Running).count().max(self.ops_in_flight())
+        self.ops.jobs.list.iter().filter(|j| j.state == JobState::Running).count().max(self.ops_in_flight())
     }
 
     fn busy_update(&mut self) -> Option<(&mut Form, String)> {
-        let f = self.jobs.form.as_mut()?;
+        let f = self.dialogs.form.as_mut()?;
         let version = match &f.kind {
             Kind::Update(u) if u.stage == Stage::Busy => u.release.version.clone(),
             _ => return None,
@@ -135,7 +135,7 @@ impl App {
         if !manual && self.updates.skipped.contains(&release.version) {
             return;
         }
-        if let Some(f) = &self.jobs.form {
+        if let Some(f) = &self.dialogs.form {
             if !matches!(f.kind, Kind::Update(_)) {
                 self.status(if installation.is_some() { crate::tr!(S::UpdateStatusManagedAvailable, version = release.version) } else { crate::tr!(S::UpdateStatusAvailable, version = release.version) });
                 return;
@@ -165,7 +165,7 @@ impl App {
 
     fn update_stopped(&mut self, text: String, stage: Stage) {
         self.status(text.clone());
-        if let Some(f) = self.jobs.form.as_mut() {
+        if let Some(f) = self.dialogs.form.as_mut() {
             let Kind::Update(u) = &mut f.kind else { return };
             u.stage = stage;
             f.buttons = buttons(stage);
