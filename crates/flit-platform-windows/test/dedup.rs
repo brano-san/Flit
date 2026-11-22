@@ -69,7 +69,7 @@ fn replace_and_undo(target_name: &[u8]) {
     let finished = flit_platform::dedup::run(&mut recovery, &op, &job).unwrap();
     assert!(finished.error.is_none(), "{:?}", finished.error);
     assert_eq!(recovery.file_identity(&keep), recovery.file_identity(&target));
-    let report = OpReport { op: job.take_performed().unwrap(), items: finished.items };
+    let report = OpReport::new(job.take_performed().unwrap(), finished.items);
     let Some(Step::Run(undo)) = inverse(&report) else { panic!("no Undo for the replacement") };
     let finished = flit_platform::dedup::run(&mut recovery, &undo, &Job::detached(Resolve::Skip)).unwrap();
     assert!(finished.error.is_none(), "{:?}", finished.error);
@@ -150,7 +150,7 @@ fn replacement_accepts_download_marks_and_round_trips_the_targets_streams() {
     let finished = flit_platform::dedup::run(&mut recovery, &op, &job).unwrap();
     assert!(finished.error.is_none(), "{:?}", finished.error);
     assert!(!std_path(&stream).exists());
-    let report = OpReport { op: job.take_performed().unwrap(), items: finished.items };
+    let report = OpReport::new(job.take_performed().unwrap(), finished.items);
     let Some(Step::Run(undo)) = inverse(&report) else { panic!("no Undo for the replacement") };
     let finished = flit_platform::dedup::run(&mut recovery, &undo, &Job::detached(Resolve::Skip)).unwrap();
     assert!(finished.error.is_none(), "{:?}", finished.error);

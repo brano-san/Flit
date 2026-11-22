@@ -397,9 +397,9 @@ impl LocalProvider {
             let mut sh = S::new();
             for (op, cut, job, reply, turn) in quick_rx {
                 match &mut sh {
-                    Ok(_) if job.cancelled() => reply.done((Some(CANCELLED.into()), Some(OpReport::new(op, Vec::new())))),
+                    Ok(_) if job.cancelled() => reply.done((Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), Some(OpReport::new(op, Vec::new())))),
                     Ok(sh) => reply.finish(perform(sh, op, cut, &job)),
-                    Err(e) => reply.done((Some(e.to_string()), None)),
+                    Err(e) => reply.done((Some(e.operation_error()), None)),
                 }
                 drop(turn);
                 quick_running.fetch_sub(1, Ordering::AcqRel);

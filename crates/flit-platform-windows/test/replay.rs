@@ -46,7 +46,7 @@ impl TransferFixture {
         static SEED: AtomicU64 = AtomicU64::new(1);
         let mut seed = SEED.fetch_add(1, Ordering::Relaxed);
         let mut budget = u64::MAX;
-        crate::recycle::recycle_payload(&self.root, path, &mut budget, &mut seed, true)
+        crate::recycle::recycle_payload(&self.root, path, path, &mut budget, &mut seed, true)
     }
 
     fn apply(&mut self, op: FileOp) -> flit_core::provider::OpReport {

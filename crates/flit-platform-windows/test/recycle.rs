@@ -220,7 +220,7 @@ fn recycling_a_staged_duplicate_records_the_live_name_and_folder() {
     let staged = FsPath::parse(staged.to_str().unwrap()).unwrap();
     let original = FsPath::parse(original.to_str().unwrap()).unwrap();
     let (mut budget, mut seed) = (u64::MAX, 7);
-    let recycled = recycle_from(&bin.path(), &staged, &original, &mut budget, &mut seed).unwrap();
+    let recycled = recycle_payload(&bin.path(), &staged, &original, &mut budget, &mut seed, false).unwrap();
     assert!(!std_path(&staged).exists());
     assert!(recycled.file_name().ends_with(b".jpg"));
     let list = listed(&[bin.path()]);

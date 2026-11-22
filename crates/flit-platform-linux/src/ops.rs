@@ -754,7 +754,7 @@ impl<'a> Engine<'a> {
         let base = self.job.progress().bytes;
         let deferred = {
             let dst = open_at(ddir, dname, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o600)?;
-            let r = (|| {
+            let r = (|| -> io::Result<Option<u64>> {
                 let dev = self.dest_fs.as_ref().map(|(dev, _)| *dev);
                 let writeback = if let Some(dev) = dev {
                     let dir = unsafe { BorrowedFd::borrow_raw(ddir) };
@@ -1463,11 +1463,11 @@ impl<'a> Engine<'a> {
 }
 
 fn pending_state() -> Option<std::path::PathBuf> {
-    use flit_platform::Platform;
+    use flit_platform::IndexPlatform;
     if cfg!(test) {
         Some(std::env::temp_dir().join(format!("flit-pending-state-{}", std::process::id())))
     } else {
-        crate::Linux::state_dir()
+        crate::LinuxIndex::state_dir()
     }
 }
 
