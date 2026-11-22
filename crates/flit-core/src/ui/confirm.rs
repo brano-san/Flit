@@ -52,13 +52,13 @@ impl App {
         let bw = ((w - 2.0 * s(PAD) - s(GAP)) / 2.0).floor();
         let by = rect.bottom() - s(PAD) - s(BUTTON_H);
         let buttons = [Rect::new(x + s(PAD), by, bw, s(BUTTON_H)), Rect::new(rect.right() - s(PAD) - bw, by, bw, s(BUTTON_H))];
-        self.confirm = Some(Confirm { question: question.to_owned(), yes: yes.to_owned(), no, destructive, then, anchor, rect, buttons, hot: None, pressed: None, opened: now });
+        self.dialogs.confirm = Some(Confirm { question: question.to_owned(), yes: yes.to_owned(), no, destructive, then, anchor, rect, buttons, hot: None, pressed: None, opened: now });
         self.tip_hide();
         self.dirty = true;
     }
 
     pub(super) fn confirm_event(&mut self, ev: &Event, now: Instant) -> bool {
-        let Some(c) = &mut self.confirm else { return false };
+        let Some(c) = &mut self.dialogs.confirm else { return false };
         match *ev {
             Event::MouseMove { x, y } => {
                 let hot = c.buttons.iter().position(|b| b.contains(x, y));
@@ -95,7 +95,7 @@ impl App {
         if !yes {
             return self.dismiss_confirm();
         }
-        let Some(c) = self.confirm.take() else { return };
+        let Some(c) = self.dialogs.confirm.take() else { return };
         self.dirty = true;
         match c.then {
             Confirmed::Unpin(loc) => self.unpin(loc, now),
@@ -113,7 +113,7 @@ impl App {
     }
 
     pub(super) fn dismiss_confirm(&mut self) {
-        let Some(c) = self.confirm.take() else { return };
+        let Some(c) = self.dialogs.confirm.take() else { return };
         self.dirty = true;
         if matches!(c.then, Confirmed::Close | Confirmed::Quit) {
             self.effects.push(super::Effect::Window(super::WindowCmd::KeepOpen));
@@ -121,7 +121,7 @@ impl App {
     }
 
     pub(super) fn draw_confirm<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let Some(c) = &self.confirm else { return };
+        let Some(c) = &self.dialogs.confirm else { return };
         let (font, sc) = (self.ui_font(13.0), self.scale);
         let from = g.dl.instances.len();
         let mut p = Paint::new(g, t, sc);

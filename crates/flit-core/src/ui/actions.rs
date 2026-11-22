@@ -209,7 +209,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("panel.split_right", G::Quick, S::ActionsPanelSplitRight, S::DescribePanelSplitRight, &[ctrl_shift(c('S'))], |a, now| a.run_panel("panel.split_right", now)),
     Action::new("panel.split_bottom", G::Quick, S::ActionsPanelSplitBottom, S::DescribePanelSplitBottom, &[ctrl(c('S'))], |a, now| a.run_panel("panel.split_bottom", now)),
     Action::new("tab.new", G::Quick, S::ActionsTabNew, S::DescribeTabNew, &[ctrl(c('T'))], |a, now| a.open_new_tab(now)),
-    Action::new("tab.close", G::Quick, S::ActionsTabClose, S::DescribeTabClose, &[ctrl(c('W')), ctrl(Key::F(4))], |a, _| a.close_tab(a.cur)).also(&["MouseMiddle"]),
+    Action::new("tab.close", G::Quick, S::ActionsTabClose, S::DescribeTabClose, &[ctrl(c('W')), ctrl(Key::F(4))], |a, _| a.close_tab(a.tabs.cur)).also(&["MouseMiddle"]),
     Action::new("options.open", G::Quick, S::ActionsOptionsOpen, S::DescribeOptionsOpen, &[ctrl(c(','))], |a, _| a.open_settings(None)),
     Action::new("folder.explorer", G::Quick, S::ActionsFolderExplorer, S::DescribeFolderExplorer, &[], |a, _| a.open_explorer()),
     Action::new("folder.file_manager", G::Flit, S::ActionsFolderFileManager, S::DescribeFolderFileManager, &[], |a, _| a.open_file_manager()),
@@ -340,8 +340,8 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tab.close_right", G::Tabs, S::ActionsTabCloseRight, S::DescribeTabCloseRight, &[], |a, _| a.close_tabs(|i, cur| i <= cur)),
     Action::new("tab.close_all", G::Tabs, S::ActionsTabCloseAll, S::DescribeTabCloseAll, &[ctrl_shift(c('W'))], |a, _| a.close_all_tabs()),
     Action::new("tab.reopen", G::Tabs, S::ActionsTabReopen, S::DescribeTabReopen, &[ctrl_shift(c('T'))], |a, now| a.reopen_tab(now)),
-    Action::new("tab.next", G::Tabs, S::ActionsTabNext, S::DescribeTabNext, &[ctrl(Key::Tab)], |a, _| a.select_tab((a.cur + 1) % a.tabs.len())).on_unix(&[ctrl(Key::Tab), ctrl(Key::PageDown)]),
-    Action::new("tab.previous", G::Tabs, S::ActionsTabPrevious, S::DescribeTabPrevious, &[ctrl_shift(Key::Tab)], |a, _| a.select_tab((a.cur + a.tabs.len() - 1) % a.tabs.len())).on_unix(&[ctrl_shift(Key::Tab), ctrl(Key::PageUp)]),
+    Action::new("tab.next", G::Tabs, S::ActionsTabNext, S::DescribeTabNext, &[ctrl(Key::Tab)], |a, _| a.select_tab((a.tabs.cur + 1) % a.tabs.items.len())).on_unix(&[ctrl(Key::Tab), ctrl(Key::PageDown)]),
+    Action::new("tab.previous", G::Tabs, S::ActionsTabPrevious, S::DescribeTabPrevious, &[ctrl_shift(Key::Tab)], |a, _| a.select_tab((a.tabs.cur + a.tabs.items.len() - 1) % a.tabs.items.len())).on_unix(&[ctrl_shift(Key::Tab), ctrl(Key::PageUp)]),
     Action::new("tab.select_1", G::Tabs, S::ActionsTabSelect1, S::DescribeTabSelect1, &[ctrl(c('1'))], |a, _| a.select_tab(0)).also(&["Ctrl+Keypad1"]).on_unix(&[alt(c('1'))]).on_unix_extra(&["Alt+Keypad1"]),
     Action::new("tab.select_2", G::Tabs, S::ActionsTabSelect2, S::DescribeTabSelect2, &[ctrl(c('2'))], |a, _| a.select_tab(1)).also(&["Ctrl+Keypad2"]).on_unix(&[alt(c('2'))]).on_unix_extra(&["Alt+Keypad2"]),
     Action::new("tab.select_3", G::Tabs, S::ActionsTabSelect3, S::DescribeTabSelect3, &[ctrl(c('3'))], |a, _| a.select_tab(2)).also(&["Ctrl+Keypad3"]).on_unix(&[alt(c('3'))]).on_unix_extra(&["Alt+Keypad3"]),
@@ -350,7 +350,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tab.select_6", G::Tabs, S::ActionsTabSelect6, S::DescribeTabSelect6, &[ctrl(c('6'))], |a, _| a.select_tab(5)).also(&["Ctrl+Keypad6"]).on_unix(&[alt(c('6'))]).on_unix_extra(&["Alt+Keypad6"]),
     Action::new("tab.select_7", G::Tabs, S::ActionsTabSelect7, S::DescribeTabSelect7, &[ctrl(c('7'))], |a, _| a.select_tab(6)).also(&["Ctrl+Keypad7"]).on_unix(&[alt(c('7'))]).on_unix_extra(&["Alt+Keypad7"]),
     Action::new("tab.select_8", G::Tabs, S::ActionsTabSelect8, S::DescribeTabSelect8, &[ctrl(c('8'))], |a, _| a.select_tab(7)).also(&["Ctrl+Keypad8"]).on_unix(&[alt(c('8'))]).on_unix_extra(&["Alt+Keypad8"]),
-    Action::new("tab.select_last", G::Tabs, S::ActionsTabSelectLast, S::DescribeTabSelectLast, &[ctrl(c('9'))], |a, _| a.select_tab(a.tabs.len() - 1)).also(&["Ctrl+Keypad9"]).on_unix(&[alt(c('9'))]).on_unix_extra(&["Alt+Keypad9"]),
+    Action::new("tab.select_last", G::Tabs, S::ActionsTabSelectLast, S::DescribeTabSelectLast, &[ctrl(c('9'))], |a, _| a.select_tab(a.tabs.items.len() - 1)).also(&["Ctrl+Keypad9"]).on_unix(&[alt(c('9'))]).on_unix_extra(&["Alt+Keypad9"]),
     Action::new("tab.menu", G::Tabs, S::ActionsTabMenu, S::DescribeTabMenu, &[ctrl_shift(Key::Down)], |a, _| a.open_tab_menu()).also(&["MouseRight"]),
     Action::new("tab.search", G::Tabs, S::ActionsTabSearch, S::DescribeTabSearch, &[ctrl_shift(c('A'))], |a, _| a.open_tab_search()),
     Action::held("goto.select", G::GoTo, S::ActionsGotoSelect, S::DescribeGotoSelect, &[ctrl(Key::Enter)], Ctx::GoTo),
@@ -686,14 +686,14 @@ fn smart_quote(text: &str) -> String {
 
 impl App {
     pub(super) fn run_bound(&mut self, key: Key, mods: Mods, now: Instant) -> bool {
-        if self.tabs.is_empty() {
+        if self.tabs.items.is_empty() {
             return false;
         }
         if key == Key::Space && mods == Mods::default() && self.tab().typing(now) {
             return false;
         }
-        let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.supports(ACTIONS[i].id)) else {
-            return self.focus == super::Focus::List && self.nav.palette.is_none() && !self.jobs.modal() && self.user_shortcut(key, mods);
+        let Some(i) = self.settings.keymap.owner(Chord { key, mods }).filter(|&i| self.supports(ACTIONS[i].id)) else {
+            return self.focus == super::Focus::List && self.nav.palette.is_none() && !self.dialogs.modal() && self.user_shortcut(key, mods);
         };
         let id = ACTIONS[i].id;
         if self.mru_tabs && key == Key::Tab && mods.ctrl && !mods.alt
@@ -719,7 +719,7 @@ impl App {
     }
 
     pub fn supports(&self, id: &str) -> bool {
-        if self.tabs.is_empty() || !self.picker_allows(id) {
+        if self.tabs.items.is_empty() || !self.picker_allows(id) {
             return false;
         }
         if id == "drive.add_server" {
@@ -745,8 +745,8 @@ impl App {
             _ if matches!(id, "git.abort" | "git.show_conflicts") => self.git_sequence().is_some(),
             _ if id.ends_with("origin") || id.ends_with(".deleted") => bin,
             _ if id == "home.clear_recent" => true,
-            _ if id == "layout.load" => !self.opts.layouts.is_empty(),
-            _ if id.starts_with("tab.select_") => id == "tab.select_last" || id.trim_start_matches("tab.select_").parse::<usize>().is_ok_and(|n| n <= self.tabs.len()),
+            _ if id == "layout.load" => !self.settings.opts.layouts.is_empty(),
+            _ if id.starts_with("tab.select_") => id == "tab.select_last" || id.trim_start_matches("tab.select_").parse::<usize>().is_ok_and(|n| n <= self.tabs.items.len()),
             "filter" if id == "filter.save" => !no_files && self.tab().filter.as_ref().is_some_and(|f| !f.text().trim().is_empty()),
             "filter" => !no_files,
             "bin" => bin,
@@ -767,28 +767,28 @@ impl App {
     }
 
     pub(super) fn remember_closed(&mut self, t: super::Tab) {
-        if self.nav.closed.len() == MAX_CLOSED {
-            self.nav.closed.remove(0);
+        if self.tabs.closed.len() == MAX_CLOSED {
+            self.tabs.closed.remove(0);
         }
         let view = t.capture();
         let at = self.last_frame.unwrap_or_else(Instant::now);
-        self.nav.closed.push(super::nav::Closed { history: t.history, view, at });
+        self.tabs.closed.push(super::tabbar::Closed { history: t.history, view, at });
     }
 
     fn reopen_tab(&mut self, now: Instant) {
-        if let Some(k) = self.nav.closed.len().checked_sub(1) {
+        if let Some(k) = self.tabs.closed.len().checked_sub(1) {
             self.reopen_closed(k, now);
         }
     }
 
     pub(super) fn reopen_closed(&mut self, k: usize, now: Instant) {
-        if k >= self.nav.closed.len() {
+        if k >= self.tabs.closed.len() {
             return;
         }
-        let c = self.nav.closed.remove(k);
-        let n = self.tabs.len();
+        let c = self.tabs.closed.remove(k);
+        let n = self.tabs.items.len();
         self.dispatch(vec![Route { folder: c.location().clone(), select: None }], OpenTarget::NewTab, now);
-        if self.tabs.len() > n {
+        if self.tabs.items.len() > n {
             let t = self.tab_mut();
             let here = t.location().clone();
             t.history = c.history;
@@ -853,7 +853,7 @@ impl App {
     }
 
     fn toggle_hidden(&mut self) {
-        let k = self.cur;
+        let k = self.tabs.cur;
         let t = self.tab_mut();
         t.view_spec.show_hidden = !t.view_spec.show_hidden;
         self.resort(k);
@@ -972,8 +972,8 @@ impl App {
     }
 
     fn shift_tab(&mut self, right: bool) {
-        let to = if right { self.cur + 1 } else { self.cur.wrapping_sub(1) };
-        if to < self.tabs.len() {
+        let to = if right { self.tabs.cur + 1 } else { self.tabs.cur.wrapping_sub(1) };
+        if to < self.tabs.items.len() {
             self.move_tab(to);
         }
     }

@@ -131,16 +131,16 @@ impl App {
     }
 
     fn menu_index(&self) -> usize {
-        self.opts.menu.kind.min(KINDS.len() - 1)
+        self.settings.opts.menu.kind.min(KINDS.len() - 1)
     }
 
     pub(super) fn menu_rows(&self) -> Vec<MenuRow> {
         let k = self.menu_index();
-        let m = &self.opts.menu;
+        let m = &self.settings.opts.menu;
         let builtins = self.builtin_menu_paths(k);
         let mut all: Vec<&str> = Vec::new();
         let mut known = std::collections::HashSet::new();
-        for p in m.seen[k].iter().chain(&m.hidden[k]).chain(&self.opts.pins[k]).chain(&builtins) {
+        for p in m.seen[k].iter().chain(&m.hidden[k]).chain(&self.settings.opts.pins[k]).chain(&builtins) {
             if known.insert(p.as_str()) {
                 all.push(p);
             }
@@ -163,11 +163,11 @@ impl App {
 
     fn menu_row(&self, path: &str, depth: usize, all: &[&str], out: &mut Vec<MenuRow>) {
         let k = self.menu_index();
-        let m = &self.opts.menu;
+        let m = &self.settings.opts.menu;
         let children: Vec<&str> = all.iter().copied().filter(|c| parent(c) == Some(path)).collect();
         let open = !children.is_empty() && m.unfolded.iter().any(|u| u == path);
         let hidden = m.hidden[k].iter().any(|h| h == path);
-        let pinned = self.opts.pins[k].iter().any(|p| p == path);
+        let pinned = self.settings.opts.pins[k].iter().any(|p| p == path);
         out.push(MenuRow { path: path.to_owned(), depth, submenu: !children.is_empty(), open, hidden, pinned });
         if open {
             for c in children {
@@ -187,7 +187,7 @@ impl App {
 
     pub(super) fn toggle_menu_item(&mut self, path: &str) {
         let k = self.menu_index();
-        let hidden = &mut self.opts.menu.hidden[k];
+        let hidden = &mut self.settings.opts.menu.hidden[k];
         match hidden.iter().position(|h| h == path) {
             Some(at) => {
                 hidden.remove(at);
@@ -200,13 +200,13 @@ impl App {
 
     pub(super) fn pin_menu_item(&mut self, path: &str) {
         let k = self.menu_index();
-        let pinned = self.opts.pins[k].iter().any(|p| p == path);
+        let pinned = self.settings.opts.pins[k].iter().any(|p| p == path);
         self.set_pin(KINDS[k], path.to_owned(), !pinned);
         self.layout();
     }
 
     pub(super) fn fold_menu_item(&mut self, path: &str, open: Option<bool>) {
-        let unfolded = &mut self.opts.menu.unfolded;
+        let unfolded = &mut self.settings.opts.menu.unfolded;
         let was = unfolded.iter().any(|u| u == path);
         let now = open.unwrap_or(!was);
         unfolded.retain(|u| u != path);
@@ -231,7 +231,7 @@ impl App {
         let p = tops.remove(from);
         tops.insert(to, p);
         let k = self.menu_index();
-        self.opts.menu.order[k] = tops;
+        self.settings.opts.menu.order[k] = tops;
         self.layout();
         self.dirty = true;
     }
@@ -247,15 +247,15 @@ impl App {
 
     pub(super) fn reset_menu(&mut self) {
         let k = self.menu_index();
-        self.opts.menu.hidden[k].clear();
-        self.opts.menu.order[k].clear();
+        self.settings.opts.menu.hidden[k].clear();
+        self.settings.opts.menu.order[k].clear();
         self.layout();
         self.dirty = true;
     }
 
     pub(super) fn remember_menu(&mut self, kind: MenuKind, latest: Vec<String>) {
         if let Some(k) = kind.pins() {
-            remember(&mut self.opts.menu.seen[k], latest);
+            remember(&mut self.settings.opts.menu.seen[k], latest);
         }
     }
 

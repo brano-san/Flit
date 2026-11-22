@@ -298,10 +298,10 @@ impl App {
     }
 
     pub(super) fn reopen_tree(&mut self, k: usize) {
-        if k != self.cur || self.tabs[k].mode != LayoutMode::Tree {
+        if k != self.tabs.cur || self.tabs.items[k].mode != LayoutMode::Tree {
             return;
         }
-        let mut open: Vec<Vec<u8>> = self.tabs[k].tree.open.iter().cloned().collect();
+        let mut open: Vec<Vec<u8>> = self.tabs.items[k].tree.open.iter().cloned().collect();
         open.sort_unstable_by_key(|r| r.len());
         for rel in open {
             self.expand(rel, false);
@@ -311,8 +311,8 @@ impl App {
     pub(super) fn poll_tree(&mut self) -> bool {
         let mut changed = false;
         let before = self.shown_rows();
-        for k in 0..self.tabs.len() {
-            let t = &mut self.tabs[k];
+        for k in 0..self.tabs.items.len() {
+            let t = &mut self.tabs.items[k];
             let mut done = Vec::new();
             t.tree.probes.retain(|p| match p.slot.take().filter(|s| s.gen == p.gen && s.done) {
                 Some(snap) => {
@@ -322,20 +322,20 @@ impl App {
                 None => true,
             });
             for (rel, snap, all) in done {
-                let t = &mut self.tabs[k];
+                let t = &mut self.tabs.items[k];
                 t.tree.loaded.insert(rel.clone());
                 if let Some(v) = &mut t.view {
                     v.graft(&rel, &snap.listing);
                 }
-                if all && k == self.cur {
+                if all && k == self.tabs.cur {
                     for child in self.child_dirs(&rel) {
                         self.expand(child, true);
                     }
                 }
-                changed |= k == self.cur;
+                changed |= k == self.tabs.cur;
             }
-            if changed && k == self.cur {
-                self.tabs[k].apply_shape();
+            if changed && k == self.tabs.cur {
+                self.tabs.items[k].apply_shape();
             }
         }
         if changed {
@@ -354,7 +354,7 @@ impl App {
             t.view_spec.deep = on;
         });
         if reload {
-            let k = self.cur;
+            let k = self.tabs.cur;
             self.load_tab(k, self.tab().focused_name(), std::time::Instant::now());
         }
         self.shape_view();

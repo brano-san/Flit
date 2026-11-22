@@ -97,14 +97,14 @@ fn pinning_asks_first_and_the_pins_persist_per_menu_kind() {
     for ev in [Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Event::MouseUp { x, y, button: MouseButton::Left }] {
         a.on_event(&ev, Instant::now());
     }
-    let ask = a.confirm.clone().expect("pinning asks first");
+    let ask = a.dialogs.confirm.clone().expect("pinning asks first");
     assert_eq!((ask.question.as_str(), ask.yes.as_str()), (S::MenusPinQuestion.t(), S::MenusPinYes.t()));
     let b = ask.buttons[0];
     let (x, y) = (b.x + b.w / 2.0, b.y + b.h / 2.0);
     for ev in [Event::MouseMove { x, y }, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, Event::MouseUp { x, y, button: MouseButton::Left }] {
         a.on_event(&ev, Instant::now());
     }
-    assert_eq!(a.opts.pins, [Vec::<String>::new(), vec!["Copy".to_owned()], Vec::new()]);
+    assert_eq!(a.settings.opts.pins, [Vec::<String>::new(), vec!["Copy".to_owned()], Vec::new()]);
     assert_eq!(a.context_menu_open().unwrap().labels()[0], "* Copy");
     let k = settings::index("menu.pins_folder").unwrap();
     let text = settings::render(&a.setting_values(), &Default::default(), None);
@@ -112,9 +112,9 @@ fn pinning_asks_first_and_the_pins_persist_per_menu_kind() {
     assert!(doc.values.contains(&(k, Value::Strings(vec!["Copy".into()]))));
     let mut b = harness::app(&[]);
     b.apply_doc(&doc);
-    assert_eq!(b.opts.pins[1], ["Copy"]);
+    assert_eq!(b.settings.opts.pins[1], ["Copy"]);
     a.set_pin(MenuKind::Folder, "Copy".into(), false);
-    assert!(a.opts.pins[1].is_empty());
+    assert!(a.settings.opts.pins[1].is_empty());
 }
 
 #[test]
@@ -151,15 +151,15 @@ fn option_rows_toggle_step_slide_and_pick() {
     let mut a = harness::app(&["a.txt"]);
     let set = |a: &mut App, id: &str, v: Value| assert!(SETTINGS[settings::index(id).unwrap()].set(a, v));
     set(&mut a, "input.reverse_scroll", Value::Bool(true));
-    assert!(a.opts.reverse_scroll);
+    assert!(a.settings.opts.reverse_scroll);
     set(&mut a, settings::SPACING, Value::Number(80));
-    assert_eq!(a.opts.spacing, 80);
+    assert_eq!(a.settings.opts.spacing, 80);
     set(&mut a, "files.thumbnails", Value::Choice(2));
     assert!(!a.prefs.thumbnails);
     set(&mut a, "files.thumbnails", Value::Choice(0));
-    assert!(a.prefs.thumbnails && a.opts.thumbs == Thumbs::Local);
+    assert!(a.prefs.thumbnails && a.settings.opts.thumbs == Thumbs::Local);
     set(&mut a, "appearance.inspector_font", Value::Text("Courier New".into()));
-    assert_eq!(a.opts.inspector_font, "Courier New");
+    assert_eq!(a.settings.opts.inspector_font, "Courier New");
     set(&mut a, "appearance.system_scheme", Value::Bool(false));
     set(&mut a, "appearance.color_scheme", Value::Choice(1));
     assert_eq!(a.look.mode, Mode::Light);
@@ -185,13 +185,13 @@ fn spacing_commands_change_row_height_within_bounds() {
     let before = a.layout.row_h;
     a.run_action("spacing.increase", Instant::now());
     harness::frame(&mut a);
-    assert_eq!(a.opts.spacing, SPACING_DEFAULT + SPACING_STEP as u8);
+    assert_eq!(a.settings.opts.spacing, SPACING_DEFAULT + SPACING_STEP as u8);
     assert!(a.layout.row_h > before);
     for _ in 0..20 {
         a.run_action("spacing.decrease", Instant::now());
     }
     harness::frame(&mut a);
-    assert_eq!(a.opts.spacing, 0);
+    assert_eq!(a.settings.opts.spacing, 0);
     assert!(a.layout.row_h < before);
 }
 
@@ -200,7 +200,7 @@ fn search_tabs_lists_open_tabs_with_paths_and_opens_the_chosen_one() {
     let mut a = harness::app(&["a.txt"]);
     a.run_action("tab.new", Instant::now());
     harness::frame(&mut a);
-    assert_eq!(a.tabs.len(), 2);
+    assert_eq!(a.tabs.items.len(), 2);
     key(&mut a, Key::Char('A'), Mods { ctrl: true, shift: true, ..Mods::default() });
     let p = a.nav.palette.as_ref().expect("Ctrl+Shift+A opens Search Tabs");
     assert_eq!(p.pick, Pick::Tabs);
@@ -209,7 +209,7 @@ fn search_tabs_lists_open_tabs_with_paths_and_opens_the_chosen_one() {
     assert!(p.rows.len() >= 2 && p.rect.h > 2.0 * 46.0, "both rows fit: {:?}", p.rect);
     assert_eq!(p.placeholder.as_deref(), Some(crate::tr!(S::MenusSearchTabs, n = 2).as_str()));
     a.choose_tab_row(0, Instant::now());
-    assert_eq!(a.cur, 0);
+    assert_eq!(a.tabs.cur, 0);
 }
 
 #[test]
@@ -222,7 +222,7 @@ fn a_saved_layout_restores_tabs_and_quick_access() {
     let mut b = harness::app(&[]);
     b.run_action("tab.new", Instant::now());
     b.apply_layout(&saved.1, Instant::now());
-    assert_eq!(b.tabs.len(), saved.1.tabs.len());
+    assert_eq!(b.tabs.items.len(), saved.1.tabs.len());
     assert_eq!(b.saved_layout(), *saved.1);
     assert_eq!(clean_layout_name("a/b:c"), Some("abc".into()));
     assert_eq!(clean_layout_name(" . "), None);

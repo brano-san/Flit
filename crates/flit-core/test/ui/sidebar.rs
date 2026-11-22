@@ -364,7 +364,7 @@ fn shown_headers(app: &App) -> Vec<String> {
 fn recents_cleared_with_history_off_stay_visible_and_follow_the_sections_toggle() {
     let mut app = app_with_places();
     app.animations = false;
-    app.opts.recents = crate::ui::options::Recents::Never;
+    app.settings.opts.recents = crate::ui::options::Recents::Never;
     let mut places = (*app.nav.sidebar.places).clone();
     places.recent = vec![Recent { name: "r".into(), target: FsPath::parse(r"C:\r").unwrap(), dir: true, at: 5 }];
     app.set_places(Arc::new(places));
@@ -425,7 +425,7 @@ fn every_way_of_toggling_quick_access_slides_it() {
     let full = app.nav.sidebar.rect.w;
     let ways: [(&str, Toggle); 5] = [
         ("toolbar button", |a, _| {
-            let r = a.panels.quick;
+            let r = a.tabs.panels.quick;
             click(r, a, MouseButton::Left);
         }),
         ("shortcut", |a, now| a.on_event(&Event::Key { key: Key::Char('B'), mods: Mods { ctrl: true, ..Mods::default() }, pressed: true }, now)),

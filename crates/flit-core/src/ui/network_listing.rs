@@ -54,16 +54,16 @@ fn combined(raw: &DirSnapshot, saved: &[SavedServer]) -> DirSnapshot {
 
 impl App {
     pub(super) fn with_saved_servers(&mut self, k: usize, raw: Arc<DirSnapshot>) -> Arc<DirSnapshot> {
-        if !self.caps.unix_paths || !raw.path.is_network() || !raw.path.is_root() || self.tabs[k].gen != raw.gen {
+        if !self.caps.unix_paths || !raw.path.is_network() || !raw.path.is_root() || self.tabs.items[k].gen != raw.gen {
             return raw;
         }
-        self.tabs[k].discovered_servers = Some(raw.clone());
+        self.tabs.items[k].discovered_servers = Some(raw.clone());
         let saved = &self.nav.sidebar.prefs.saved_servers;
         if saved.is_empty() { raw } else { Arc::new(combined(&raw, saved)) }
     }
 
     pub(super) fn show_saved_servers(&mut self, k: usize) {
-        let tab = &self.tabs[k];
+        let tab = &self.tabs.items[k];
         let path = tab.location().path();
         if !self.caps.unix_paths || !path.is_network() || !path.is_root() || tab.gen == 0 {
             return;
@@ -76,11 +76,11 @@ impl App {
             (v.selected().map(name).collect::<Vec<_>>(), v.focus.map(name), v.anchor.map(name))
         });
         self.apply_snapshot(k, raw);
-        if let Some(view) = self.tabs[k].view.as_mut().filter(|v| v.is_filtered()) {
+        if let Some(view) = self.tabs.items[k].view.as_mut().filter(|v| v.is_filtered()) {
             view.set_filter("");
             self.refilter_tab(k);
         }
-        if let (Some((selected, focus, anchor)), Some(view)) = (selection, &mut self.tabs[k].view) {
+        if let (Some((selected, focus, anchor)), Some(view)) = (selection, &mut self.tabs.items[k].view) {
             view.clear_selection();
             for name in selected {
                 if let Some(i) = view.find(&name).filter(|&i| view.is_visible(i)) {

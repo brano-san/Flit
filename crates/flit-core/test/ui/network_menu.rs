@@ -35,7 +35,7 @@ fn add_server_from_the_background_or_command_palette_opens_with_saving_selected(
             let row = palette_row(&mut a).expect("Add server in command palette");
             a.run_palette_item(row, Instant::now());
         }
-        assert!(a.jobs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Check { label, on: true } if label == S::SidebarDriveSaveServer.t())));
+        assert!(a.dialogs.form.as_ref().unwrap().controls.iter().any(|c| matches!(c, Control::Check { label, on: true } if label == S::SidebarDriveSaveServer.t())));
     }
 }
 
@@ -66,7 +66,7 @@ fn the_saved_server_menu_renames_and_removes_only_the_bookmarked_address() {
     let menu = context(&mut a, Some("Old"));
     let rename = menu_command(&menu, S::MenuRename).expect("Rename the saved server");
     a.on_event(&Event::MenuCommand(rename), Instant::now());
-    let form = a.jobs.form.as_mut().expect("rename form");
+    let form = a.dialogs.form.as_mut().expect("rename form");
     form.set_text(0, "New");
     a.form_submit(0);
     assert_eq!(a.nav_prefs().saved_servers, [SavedServer { address: uri.into(), name: Some("New".into()) }]);

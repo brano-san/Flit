@@ -57,7 +57,7 @@ fn release(app: &mut App, x: f32, y: f32) {
 }
 
 fn select(app: &mut App, names: &[&str]) {
-    let v = app.tabs[app.cur].view.as_mut().unwrap();
+    let v = app.tabs.items[app.tabs.cur].view.as_mut().unwrap();
     v.clear_selection();
     for n in names {
         let i = v.find(n.as_bytes()).unwrap();

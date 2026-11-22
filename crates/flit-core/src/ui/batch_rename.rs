@@ -252,7 +252,7 @@ impl App {
     }
 
     pub(super) fn batch_rename_changed(&mut self, _k: usize) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         let Kind::BatchRename(b) = &f.kind else { return };
         let (names, plan) = b.plan(&Batch::spec(f));
         let shown = b.items.len().min(PREVIEW_ROWS);

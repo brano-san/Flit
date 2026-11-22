@@ -39,7 +39,7 @@ impl App {
     pub(super) fn enter_focus(&mut self, region: Focus) {
         self.focus = region;
         self.kb = match region {
-            Focus::TabBar => self.cur,
+            Focus::TabBar => self.tabs.cur,
             Focus::Sidebar => {
                 let here = self.current_location().clone();
                 let sb = &mut self.nav.sidebar;

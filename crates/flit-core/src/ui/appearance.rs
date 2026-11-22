@@ -102,17 +102,17 @@ impl App {
     }
 
     pub(super) fn set_system_animations(&mut self, on: bool) {
-        self.system_animations = on;
+        self.settings.system_animations = on;
         self.sync_animations();
     }
 
     pub(super) fn set_animations_wanted(&mut self, on: bool) {
-        self.animations_wanted = on;
+        self.settings.animations_wanted = on;
         self.sync_animations();
     }
 
     fn sync_animations(&mut self) {
-        self.animations = self.animations_wanted && self.system_animations;
+        self.animations = self.settings.animations_wanted && self.settings.system_animations;
         self.dirty = true;
     }
 
@@ -121,11 +121,11 @@ impl App {
     }
 
     pub fn system_title_wanted(&self) -> bool {
-        self.system_title_wanted
+        self.settings.system_title_wanted
     }
 
     pub(super) fn set_system_title_wanted(&mut self, on: bool) {
-        self.system_title_wanted = on;
+        self.settings.system_title_wanted = on;
         if on && self.server_frames == Some(false) {
             self.status(S::SettingsStatusNoSystemTitle.t());
         }
@@ -142,7 +142,7 @@ impl App {
     }
 
     fn sync_title(&mut self) {
-        let on = self.system_title_wanted && self.server_frames == Some(true);
+        let on = self.settings.system_title_wanted && self.server_frames == Some(true);
         if on == self.system_title {
             return;
         }

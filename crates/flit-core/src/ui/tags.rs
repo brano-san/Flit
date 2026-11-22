@@ -84,7 +84,7 @@ impl App {
                 if defs_changed {
                     let clock = crate::query_attrs::Clock::system(self.utc_offset_min);
                     let tags = self.tags().clone();
-                    for tab in self.tabs.iter_mut().chain(self.panels.list.iter_mut().flat_map(|p| &mut p.tabs)) {
+                    for tab in self.tabs.items.iter_mut().chain(self.tabs.panels.list.iter_mut().flat_map(|p| &mut p.tabs)) {
                         if tab.filter.as_ref().is_some_and(|f| crate::tags::has_tag_term(f.text())) {
                             tab.refilter_view(clock, &tags.defs);
                         }
@@ -282,7 +282,7 @@ impl App {
     }
 
     fn drop_tag_bit(&mut self, k: usize) {
-        for v in self.tabs.iter_mut().filter_map(|t| t.view.as_mut()) {
+        for v in self.tabs.items.iter_mut().filter_map(|t| t.view.as_mut()) {
             let changes: Vec<(u32, u32)> = v.listing().entries.iter().enumerate().filter(|(_, e)| e.tags != 0).map(|(i, e)| (i as u32, tags::remove_bit(e.tags, k))).collect();
             v.set_tags(&changes);
         }
@@ -294,7 +294,7 @@ impl App {
         }
         let fixes = std::mem::take(&mut self.tag_fixes);
         let (mut open, mut found) = (vec![false; fixes.len()], vec![false; fixes.len()]);
-        for t in &mut self.tabs {
+        for t in &mut self.tabs.items {
             let (Location::Local(dir), Some(v)) = (&t.view_loc, t.view.as_mut()) else { continue };
             let mut changes = Vec::new();
             for (k, (path, mask, _)) in fixes.iter().enumerate() {

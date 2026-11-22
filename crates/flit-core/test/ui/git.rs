@@ -38,17 +38,17 @@ fn switching_with_changes_asks_twice_before_discard_and_can_be_cancelled() {
     let blocked = GitEvent::SwitchBlocked { tab, dir, from: "main".into(), branch: "dev".into() };
     for (selected, choice) in [(0, SwitchChoice::Merge), (1, SwitchChoice::Stash), (2, SwitchChoice::Discard)] {
         app.on_git(blocked.clone());
-        let f = app.jobs.form.as_mut().unwrap();
+        let f = app.dialogs.form.as_mut().unwrap();
         let Control::Choice { sel, .. } = &mut f.controls[1] else { panic!("switch choices") };
         *sel = selected;
         app.form_submit(0);
         if choice == SwitchChoice::Discard {
-            assert!(matches!(app.jobs.form.as_ref().unwrap().kind, Kind::GitSwitch { confirm_discard: true, .. }));
+            assert!(matches!(app.dialogs.form.as_ref().unwrap().kind, Kind::GitSwitch { confirm_discard: true, .. }));
             assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
             app.form_submit(1);
             assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
             app.on_git(blocked.clone());
-            let Control::Choice { sel, .. } = &mut app.jobs.form.as_mut().unwrap().controls[1] else { panic!("switch choices") };
+            let Control::Choice { sel, .. } = &mut app.dialogs.form.as_mut().unwrap().controls[1] else { panic!("switch choices") };
             *sel = selected;
             app.form_submit(0);
             app.form_submit(0);
@@ -69,7 +69,7 @@ fn dropping_a_repository_prefills_clone_and_other_urls_still_save_a_link() {
     let dropped = DragEvent::DropRepository { x, y, url: url.into() };
     app.drag(&enter, now);
     assert_eq!(app.drag(&dropped, now), drop_effect::COPY);
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert_eq!(f.text(0), url);
     assert!(matches!(&f.kind, Kind::GitClone { dir, .. } if dir.display() == r"C:\x"));
     app.form_submit(1);
@@ -81,7 +81,7 @@ fn dropping_a_repository_prefills_clone_and_other_urls_still_save_a_link() {
         [GitRequest::RunTracked { op: GitOp::Clone { url: got }, dir, .. }] if got == url && dir.display() == r"C:\x"));
     app.drag(&enter, now);
     app.drag(&DragEvent::Drop { x, y, mods: Mods::default(), allowed: drop_effect::COPY }, now);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { op: crate::provider::FileOp::PasteDropped { .. }, .. }, .. })));
 }
 
@@ -96,18 +96,18 @@ fn git_drop_uses_the_destination_tab_and_leaves_archive_links_to_the_platform() 
     assert_eq!(app.hit(x, y), Hit::Row(0));
     let url = "https://github.com/owner/repo";
     assert_eq!(app.drag(&DragEvent::DropRepository { x, y, url: url.into() }, now), drop_effect::NONE);
-    assert!(app.jobs.form.is_none());
-    let current = app.cur;
+    assert!(app.dialogs.form.is_none());
+    let current = app.tabs.cur;
     app.dispatch(vec![crate::open::Route { folder: Location::parse(r"C:\other").unwrap(), select: None }], crate::open::OpenTarget::NewTab, now);
     let other = app.tab().id;
-    let slot = app.cur;
+    let slot = app.tabs.cur;
     app.select_tab(current);
     app.frame(&mut gfx, now);
     let r = app.layout.tabs[slot].0;
     let (x, y) = (r.x + 10.0, r.y + r.h / 2.0);
     assert_eq!(app.hit(x, y), Hit::Tab(slot));
     assert_eq!(app.drag(&DragEvent::DropRepository { x, y, url: url.into() }, now), drop_effect::COPY);
-    assert!(matches!(&app.jobs.form.as_ref().unwrap().kind, Kind::GitClone { tab, dir } if *tab == other && dir.display() == r"C:\other"));
+    assert!(matches!(&app.dialogs.form.as_ref().unwrap().kind, Kind::GitClone { tab, dir } if *tab == other && dir.display() == r"C:\other"));
 }
 
 #[test]
@@ -146,7 +146,7 @@ fn an_in_progress_git_sequence_offers_abort_without_running_it_immediately() {
     if let GitEvent::Status { info: Some(i), .. } = &mut ev { Arc::make_mut(i).sequence = Some(crate::git::Sequence::Merge); }
     app.on_git(ev);
     assert!(app.run_action("git.abort", Instant::now()));
-    assert!(app.jobs.form.is_some());
+    assert!(app.dialogs.form.is_some());
     assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
 }
 
@@ -155,7 +155,7 @@ fn a_repository_without_a_sequence_never_offers_destructive_abort() {
     let (mut app, _) = app_in(r"C:\x", &[]);
     app.on_git(repo(&app));
     assert!(app.run_action("git.abort", Instant::now()));
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
 }
 
@@ -177,7 +177,7 @@ fn abort_requires_confirmation_preserves_errors_and_removes_the_bar_after_refres
         app.on_git(sequence_event(&app, sequence));
         assert!(app.layout.git_bar.iter().all(|r| r.w > 0.0));
         app.ask_git_abort();
-        let f = app.jobs.form.as_ref().unwrap();
+        let f = app.dialogs.form.as_ref().unwrap();
         assert_eq!(f.focus, f.controls.len() + 1);
         app.form_submit(1);
         assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
@@ -188,11 +188,11 @@ fn abort_requires_confirmation_preserves_errors_and_removes_the_bar_after_refres
         app.form_submit(0);
         assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
         app.on_git(GitEvent::Done { tab: app.tab().id, op: GitOp::Abort(sequence), error: Some("permission denied".into()), url: None });
-        assert!(app.jobs.form.as_ref().unwrap().error);
+        assert!(app.dialogs.form.as_ref().unwrap().error);
         assert!(app.layout.git_bar[2].w > 0.0);
         app.form_submit(0);
         app.on_git(GitEvent::Done { tab: app.tab().id, op: GitOp::Abort(sequence), error: None, url: None });
-        assert!(app.jobs.form.is_none());
+        assert!(app.dialogs.form.is_none());
         assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).iter().any(|r| matches!(r, GitRequest::Status { .. })));
         app.on_git(repo(&app));
         assert!(app.layout.git_bar.iter().all(|r| r.w == 0.0));
@@ -255,7 +255,7 @@ fn sequence_bars_and_confirmations_fit_narrow_windows_in_every_language() {
             assert!(tree.nodes.iter().any(|n| n.name == sequence_labels(sequence)[1].t()));
             app.ask_git_abort();
             app.frame(&mut gfx, Instant::now());
-            let f = app.jobs.form.as_ref().unwrap();
+            let f = app.dialogs.form.as_ref().unwrap();
             let Control::Paragraph { text, lines } = &f.controls[0] else { panic!("wrapped warning") };
             assert_eq!(lines.join("").split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>());
             assert!(f.rect.x >= 0.0 && f.rect.right() <= 480.0 && f.rect.bottom() <= 360.0);
@@ -277,7 +277,7 @@ fn creating_a_branch_fetches_choices_in_the_background() {
 fn creating_a_branch_never_opens_a_form_outside_a_repository() {
     let (mut app, _) = app_in(r"C:\x", &[]);
     assert!(app.run_action("git.new_branch", Instant::now()));
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
 }
 
@@ -292,7 +292,7 @@ fn new_branch_form_keeps_errors_and_uses_its_original_repository() {
     app.on_git(repo(&app));
     app.on_git(branch_choices(&app, true));
     let tab = app.tab().id;
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     assert!(f.checked(2));
     assert!(matches!(&f.kind, Kind::GitNewBranch { bases, .. } if bases == &["main", "dev", "origin/topic"]));
     f.set_text(0, "bad name");
@@ -305,7 +305,7 @@ fn new_branch_form_keeps_errors_and_uses_its_original_repository() {
     app.form_submit(0);
     assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty(), "a pending submit cannot start twice");
     app.on_git(GitEvent::Done { tab, op: op.clone(), error: Some("fatal: invalid branch name".into()), url: None });
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     assert!(f.error && f.note.contains("invalid branch"));
     assert_eq!(f.text(0), "bad name");
     f.set_text(0, "topic/new");
@@ -316,7 +316,7 @@ fn new_branch_form_keeps_errors_and_uses_its_original_repository() {
     let [GitRequest::Run { op, .. }] = requests.as_slice() else { panic!("retry request") };
     assert_eq!(op, &GitOp::CreateBranch { name: "topic/new".into(), base: "main".into(), switch: false });
     app.on_git(GitEvent::Done { tab, op: op.clone(), error: None, url: None });
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -326,10 +326,10 @@ fn deleting_an_unmerged_branch_requires_a_second_confirmation_and_defaults_to_ca
     app.on_git(branch_choices(&app, false));
     for k in [1, 2] {
         app.ask_git_delete(k);
-        assert!(app.jobs.form.is_none(), "remote and current branches cannot be deleted");
+        assert!(app.dialogs.form.is_none(), "remote and current branches cannot be deleted");
     }
     app.ask_git_delete(0);
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert_eq!(f.focus, f.controls.len() + 1);
     app.drain_effects().for_each(drop);
     app.form_submit(1);
@@ -340,7 +340,7 @@ fn deleting_an_unmerged_branch_requires_a_second_confirmation_and_defaults_to_ca
     assert!(matches!(requests.as_slice(), [GitRequest::Run { op: GitOp::DeleteBranch { name, force: false }, .. }] if name == "dev"));
     let tab = app.tab().id;
     app.on_git(GitEvent::Done { tab, op: GitOp::DeleteBranch { name: "dev".into(), force: false }, error: Some("error: the branch 'dev' is not fully merged".into()), url: None });
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert!(matches!(&f.kind, Kind::GitDeleteBranch { force: true, pending: false, .. }));
     assert_eq!(f.focus, f.controls.len() + 1);
     assert!(matches!(&f.controls[0], Control::Paragraph { text, .. } if text.contains("dev") && text.contains("may be lost")));
@@ -348,7 +348,7 @@ fn deleting_an_unmerged_branch_requires_a_second_confirmation_and_defaults_to_ca
     app.form_submit(0);
     assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Run { op: GitOp::DeleteBranch { force: true, .. }, .. }]));
     app.on_git(GitEvent::Done { tab, op: GitOp::DeleteBranch { name: "dev".into(), force: true }, error: None, url: None });
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -358,11 +358,11 @@ fn stale_branch_choices_do_not_open_forms_in_other_tabs_or_directories() {
     let old = branch_choices(&app, true);
     app.run_action("tab.new", Instant::now());
     app.on_git(old.clone());
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     app.run_action("tab.previous", Instant::now());
     app.tab_mut().gen += 1;
     app.on_git(old);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -375,7 +375,7 @@ fn changing_the_interface_language_never_translates_branch_names() {
     app.on_git(choices);
     i18n::set_lang(Lang::Fr);
     app.relabel_form(Lang::En);
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert!(matches!(&f.controls[1], Control::Choice { options, .. } if options.iter().any(|s| s == "Cancel")));
     i18n::set_lang(Lang::En);
 }
@@ -391,18 +391,18 @@ fn branch_forms_fit_a_narrow_window_with_every_translation() {
         app.on_git(branch_choices(&app, true));
         let mut gfx = Gfx::new(crate::text::tests::Mono, 2048);
         app.frame(&mut gfx, Instant::now());
-        let f = app.jobs.form.as_ref().unwrap();
+        let f = app.dialogs.form.as_ref().unwrap();
         assert!(f.rect.x >= 0.0 && f.rect.right() <= 480.0 && f.rect.bottom() <= 360.0, "{lang:?}");
         assert!(f.button_rects.iter().all(|r| r.x >= f.rect.x && r.right() <= f.rect.right()), "{lang:?}");
         app.form_submit(1);
         app.ask_git_delete(0);
         app.frame(&mut gfx, Instant::now());
-        let f = app.jobs.form.as_ref().unwrap();
+        let f = app.dialogs.form.as_ref().unwrap();
         assert!(f.rect.x >= 0.0 && f.rect.right() <= 480.0 && f.rect.bottom() <= 360.0, "{lang:?}");
         app.form_submit(0);
         app.on_git(GitEvent::Done { tab: app.tab().id, op: GitOp::DeleteBranch { name: "dev".into(), force: false }, error: Some("not fully merged".into()), url: None });
         app.frame(&mut gfx, Instant::now());
-        let f = app.jobs.form.as_ref().unwrap();
+        let f = app.dialogs.form.as_ref().unwrap();
         let Control::Paragraph { text, lines } = &f.controls[0] else { panic!("wrapped warning") };
         assert!(!lines.is_empty(), "{lang:?}");
         assert_eq!(lines.join("").split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>(), "{lang:?}");
@@ -735,9 +735,9 @@ fn operations_need_a_repository_except_init_and_clone() {
     app.run_action("git.init", Instant::now());
     assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Run { op: GitOp::Init, .. }]));
     app.run_action("git.clone", Instant::now());
-    assert!(app.jobs.form.is_some());
+    assert!(app.dialogs.form.is_some());
     app.form_submit(0);
-    assert!(app.jobs.form.is_some(), "an empty address keeps the dialog open");
+    assert!(app.dialogs.form.is_some(), "an empty address keeps the dialog open");
     let tab = app.tab().id;
     app.on_git(GitEvent::Done { tab, op: GitOp::Push, error: Some("fatal: no remote".into()), url: None });
     assert_eq!(app.tab().error.as_deref(), Some("Git: fatal: no remote"));
@@ -760,14 +760,14 @@ fn a_sign_in_failure_offers_a_terminal_in_the_repository() {
     let tab = app.tab().id;
     let auth = "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
     app.on_git(GitEvent::Done { tab, op: GitOp::Push, error: Some(auth.into()), url: None });
-    let form = app.jobs.form.as_ref().expect("a sign-in failure asks what to do");
+    let form = app.dialogs.form.as_ref().expect("a sign-in failure asks what to do");
     assert!(matches!(&form.kind, Kind::GitAuth { dir, .. } if *dir == FsPath::parse(r"C:\x").unwrap()));
     app.drain_effects().for_each(drop);
     app.form_submit(0);
     assert_eq!(terminals(&mut app), [vec![FsPath::parse(r"C:\x").unwrap()]], "the terminal opens at the repository root");
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     app.on_git(GitEvent::Done { tab, op: GitOp::Pull, error: Some("git@github.com: Permission denied (publickey).".into()), url: None });
-    assert!(app.jobs.form.is_some());
+    assert!(app.dialogs.form.is_some());
     app.form_submit(1);
     assert!(terminals(&mut app).is_empty(), "Cancel opens nothing");
 }
@@ -782,10 +782,10 @@ fn a_missing_git_says_how_to_install_it_and_other_failures_stay_as_they_were() {
     app.on_git(GitEvent::Done { tab, op: GitOp::Fetch, error: Some(S::GitErrorMissing.en().into()), url: None });
     assert_eq!(app.tab().error.as_deref(), Some(S::GitErrorInstallLinux.t()));
     app.on_git(GitEvent::Done { tab, op: GitOp::Switch("dev".into()), error: Some("fatal: Authentication failed".into()), url: None });
-    assert!(app.jobs.form.is_none(), "a switch never talks to a server, so there is nothing to sign in to");
+    assert!(app.dialogs.form.is_none(), "a switch never talks to a server, so there is nothing to sign in to");
     assert_eq!(app.tab().error.as_deref(), Some("Git: fatal: Authentication failed"));
     app.on_git(GitEvent::Done { tab, op: GitOp::Push, error: Some("error: failed to push some refs".into()), url: None });
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert_eq!(crate::git::failure("remote: Invalid username or password."), crate::git::Failure::Auth);
     assert_eq!(crate::git::failure("fatal: not a git repository"), crate::git::Failure::Other);
     assert_eq!(crate::git::op_command(&GitOp::Clone { url: "https://h/r.git".into() }).as_deref(), Some("git clone https://h/r.git"));
@@ -800,7 +800,7 @@ fn github_sign_in_launches_the_selected_command_and_missing_tools_only_show_the_
     let event = |github| GitEvent::AuthFailed { tab, dir: dir.clone(), op: GitOp::Fetch, error: "fatal: Authentication failed".into(), github };
     let argv = ["gh", "auth", "login", "--web"].map(str::to_owned).to_vec();
     app.on_git(event(Some(GithubLogin::Command(argv.clone()))));
-    assert!(app.jobs.form.as_ref().unwrap().buttons.contains(&S::GitErrorGithubLogin.t()));
+    assert!(app.dialogs.form.as_ref().unwrap().buttons.contains(&S::GitErrorGithubLogin.t()));
     app.form_submit(1);
     assert!(app.drain_effects().any(|e| matches!(e,
         Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminalCommand { dir: folder, argv: args }, .. }, .. }
@@ -808,7 +808,7 @@ fn github_sign_in_launches_the_selected_command_and_missing_tools_only_show_the_
     for github in [Some(GithubLogin::Install("github-cli")), None] {
         let show_hint = github.is_some();
         app.on_git(event(github));
-        let f = app.jobs.form.as_ref().unwrap();
+        let f = app.dialogs.form.as_ref().unwrap();
         assert_eq!(f.buttons, [S::GitErrorAuthOpen.t(), S::WidgetsCancel.t()]);
         assert_eq!(f.controls.iter().any(|c| matches!(c, Control::Paragraph { text, .. } if text.contains("github-cli"))), show_hint);
         app.form_submit(1);
@@ -860,14 +860,14 @@ fn git_leftover_index_lock_requires_an_operations_action_and_confirmation() {
     let lock = GitIndexLock { path: r"C:\x\.git\index.lock".into(), file_id: (1, 2), modified: std::time::SystemTime::UNIX_EPOCH, len: 0 };
     app.on_git(GitEvent::TrackedDone { tab: *tab, id: job.id, op: GitOp::Pull, result: GitResult::CancelledWithLock(lock.clone()) });
     assert_eq!(app.job_states()[0].1, crate::ui::JobState::Cancelled);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(app.drain_effects().all(|e| !matches!(e, Effect::Git(GitRequest::RemoveIndexLock { .. }))));
     let now = Instant::now();
     app.jobs_click(Hit::OpsButton, now);
     for button in [1, 0] {
         app.jobs_click(Hit::OpsMore(0), now);
         app.jobs_click(Hit::OpsMenu(1), now);
-        assert!(matches!(&app.jobs.form.as_ref().unwrap().kind, Kind::GitRemoveIndexLock { lock: offered, .. } if *offered == lock));
+        assert!(matches!(&app.dialogs.form.as_ref().unwrap().kind, Kind::GitRemoveIndexLock { lock: offered, .. } if *offered == lock));
         assert!(app.drain_effects().all(|e| !matches!(e, Effect::Git(GitRequest::RemoveIndexLock { .. }))));
         app.form_submit(button);
         let removed = app.drain_effects().any(|e| matches!(e, Effect::Git(GitRequest::RemoveIndexLock { id, lock: requested, .. }) if id == job.id && requested == lock));
@@ -876,7 +876,7 @@ fn git_leftover_index_lock_requires_an_operations_action_and_confirmation() {
     app.on_git(GitEvent::IndexLockRemoved { tab: *tab, id: job.id, error: None });
     app.jobs_click(Hit::OpsMore(0), now);
     app.jobs_click(Hit::OpsMenu(1), now);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]

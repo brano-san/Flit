@@ -102,14 +102,14 @@ impl App {
     }
 
     fn touch_target(&self, x: f32, y: f32) -> Option<Target> {
-        if self.confirm.is_some() {
+        if self.dialogs.confirm.is_some() {
             return None;
         }
         if self.own_menu_open() {
             return self.context_menu_open().is_some_and(|c| c.pans_at(x, y)).then_some(Target::Menu);
         }
         if self.search.active {
-            return (!self.jobs.modal() && self.search_pans_at(x, y)).then_some(Target::Search);
+            return (!self.dialogs.modal() && self.search_pans_at(x, y)).then_some(Target::Search);
         }
         match self.hit(x, y) {
             Hit::Settings(_) => self.settings_pans_at(x, y).then_some(Target::Settings),

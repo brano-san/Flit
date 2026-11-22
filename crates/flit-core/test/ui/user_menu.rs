@@ -153,7 +153,7 @@ fn commands_saved_before_percent_placeholders_keep_their_percent_signs_literal()
 #[test]
 fn custom_shortcuts_need_a_modifier_and_a_free_chord() {
     let mut a = app(&[("notes.md", false)]);
-    a.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Alt+J".into(), ..command("Other", "", "other %f") }];
+    a.settings.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Alt+J".into(), ..command("Other", "", "other %f") }];
     a.new_user_entry(false);
     let keymap = crate::ui::keymap::defaults();
     let taken = (0..crate::ui::actions::ACTIONS.len()).filter(|&i| a.supports(crate::ui::actions::ACTIONS[i].id)).find_map(|i| keymap.keys(i).iter().find(|c| c.mods.ctrl).map(crate::ui::actions::chord_text));
@@ -162,14 +162,14 @@ fn custom_shortcuts_need_a_modifier_and_a_free_chord() {
     for shortcut in tries {
         form_texts(&mut a, &[(NAME, "Preview"), (COMMAND, "preview %F"), (SHORTCUT, shortcut)], &[]);
         a.form_submit(0);
-        assert!(a.jobs.form.as_ref().is_some_and(|f| f.error), "{shortcut} must be refused");
+        assert!(a.dialogs.form.as_ref().is_some_and(|f| f.error), "{shortcut} must be refused");
     }
     form_texts(&mut a, &[(SHORTCUT, "F7")], &[]);
     a.form_submit(0);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     a.edit_user_entry(EntryAt { top: 1, child: None });
     a.form_submit(0);
-    assert!(a.jobs.form.is_none(), "an entry keeps its own shortcut when edited");
+    assert!(a.dialogs.form.is_none(), "an entry keeps its own shortcut when edited");
 }
 
 #[test]
@@ -178,10 +178,10 @@ fn the_editor_refuses_two_list_placeholders_in_one_argument() {
     a.new_user_entry(false);
     form_texts(&mut a, &[(NAME, "Pairs"), (COMMAND, "tool %F:%N")], &[]);
     a.form_submit(0);
-    assert!(a.jobs.form.as_ref().is_some_and(|f| f.error));
+    assert!(a.dialogs.form.as_ref().is_some_and(|f| f.error));
     form_texts(&mut a, &[(COMMAND, "tool %F %N")], &[]);
     a.form_submit(0);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
 }
 
 #[test]
@@ -189,7 +189,7 @@ fn built_in_bindings_win_over_custom_shortcuts() {
     let mut a = app(&[("a.txt", false)]);
     let keymap = crate::ui::keymap::defaults();
     let chord = (0..crate::ui::actions::ACTIONS.len()).filter(|&i| a.supports(crate::ui::actions::ACTIONS[i].id)).find_map(|i| keymap.keys(i).iter().find(|c| c.mods.ctrl && c.key == crate::input::Key::Char('C')).copied()).unwrap();
-    a.opts.user_menu = vec![UserEntry { shortcut: crate::ui::actions::chord_text(&chord), ..command("Shadow", "", "shadow %f") }];
+    a.settings.opts.user_menu = vec![UserEntry { shortcut: crate::ui::actions::chord_text(&chord), ..command("Shadow", "", "shadow %f") }];
     right_click(&mut a, Some(0));
     a.focus = crate::ui::Focus::List;
     a.drain_effects().for_each(drop);
@@ -200,7 +200,7 @@ fn built_in_bindings_win_over_custom_shortcuts() {
 #[test]
 fn custom_shortcut_launches_only_when_appearance_conditions_match() {
     let mut a = app(&[("a b.txt", false)]);
-    a.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Shift+H".into(), startup_notify: true, ..command("Inspect", "text", "inspect %F") }];
+    a.settings.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Shift+H".into(), startup_notify: true, ..command("Inspect", "text", "inspect %F") }];
     right_click(&mut a, Some(0));
     let mods = crate::input::Mods { ctrl: true, shift: true, alt: false };
     assert!(a.user_shortcut(crate::input::Key::Char('H'), mods));
@@ -208,7 +208,7 @@ fn custom_shortcut_launches_only_when_appearance_conditions_match() {
     let Launch::Command { runs, .. } = launch else { panic!("custom actions use argv") };
     assert_eq!(runs[0].0, ["inspect".to_owned(), shown(r"C:\x\a b.txt")]);
     assert_eq!(runs[0].1, [("FLIT_STARTUP_NOTIFY".into(), "1".into())]);
-    a.opts.user_menu[0].patterns = "*.png".into();
+    a.settings.opts.user_menu[0].patterns = "*.png".into();
     assert!(!a.user_shortcut(crate::input::Key::Char('H'), mods));
 }
 
@@ -218,22 +218,22 @@ fn editor_saves_metadata_and_rejects_invalid_shortcuts() {
     a.new_user_entry(false);
     form_texts(&mut a, &[(NAME, "Preview"), (COMMAND, "preview %F"), (DESCRIPTION, "Preview Markdown"), (SHORTCUT, "invalid shortcut"), (PATTERNS, "*.md")], &[(SELECTION, 1)]);
     a.form_submit(0);
-    assert!(a.jobs.form.as_ref().is_some_and(|f| f.error));
+    assert!(a.dialogs.form.as_ref().is_some_and(|f| f.error));
     form_texts(&mut a, &[(SHORTCUT, "Ctrl+Shift+H")], &[]);
-    if let Some(Control::Check { on, .. }) = a.jobs.form.as_mut().unwrap().controls.get_mut(NOTIFY) { *on = true; }
+    if let Some(Control::Check { on, .. }) = a.dialogs.form.as_mut().unwrap().controls.get_mut(NOTIFY) { *on = true; }
     a.form_submit(0);
-    assert!(a.jobs.form.is_none());
-    let e = &a.opts.user_menu[0];
+    assert!(a.dialogs.form.is_none());
+    let e = &a.settings.opts.user_menu[0];
     assert_eq!((&*e.description, &*e.shortcut, &*e.patterns, e.selection, e.startup_notify), ("Preview Markdown", "Ctrl+Shift+H", "*.md", 1, true));
-    assert_eq!(from_json(&to_json(&a.opts.user_menu)), Some(a.opts.user_menu.clone()));
+    assert_eq!(from_json(&to_json(&a.settings.opts.user_menu)), Some(a.settings.opts.user_menu.clone()));
     a.edit_user_entry(EntryAt { top: 0, child: None });
-    assert_eq!(a.jobs.form.as_ref().unwrap().text(DESCRIPTION), "Preview Markdown");
+    assert_eq!(a.dialogs.form.as_ref().unwrap().text(DESCRIPTION), "Preview Markdown");
 }
 
 #[test]
 fn keyboard_events_invoke_custom_actions_only_from_the_file_list() {
     let mut a = app(&[("a.txt", false)]);
-    a.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Shift+H".into(), ..command("Inspect", "", "inspect %f") }];
+    a.settings.opts.user_menu = vec![UserEntry { shortcut: "Ctrl+Shift+H".into(), ..command("Inspect", "", "inspect %f") }];
     right_click(&mut a, Some(0));
     a.focus = crate::ui::Focus::List;
     let event = Event::Key { key: crate::input::Key::Char('H'), mods: crate::input::Mods { ctrl: true, shift: true, alt: false }, pressed: true };
@@ -247,7 +247,7 @@ fn keyboard_events_invoke_custom_actions_only_from_the_file_list() {
 #[test]
 fn chosen_entries_launch_their_command_with_each_path_quoted_for_the_platform() {
     let mut a = app(&[("a b.txt", false), ("notes.md", false), ("sub", true)]);
-    a.opts.user_menu = entries();
+    a.settings.opts.user_menu = entries();
     let rows: Vec<String> = a.tab().view.as_ref().unwrap().rows().iter().map(|&i| String::from_utf8_lossy(a.tab().view.as_ref().unwrap().listing().name(i)).into_owned()).collect();
     let row = |n: &str| rows.iter().position(|r| r == n);
     let menu = right_click(&mut a, row("a b.txt"));
@@ -270,7 +270,7 @@ fn chosen_entries_launch_their_command_with_each_path_quoted_for_the_platform() 
 fn image_icons_are_requested_once_from_the_file_through_the_icon_pipeline() {
     let mut a = app(&[("a.txt", false)]);
     let exe = UserEntry { icon: "C:\\tools\\app.exe".into(), ..command("App", "", "app") };
-    a.opts.user_menu = vec![command("Code", "C:\\icons\\code.png", "code {path}"), exe];
+    a.settings.opts.user_menu = vec![command("Code", "C:\\icons\\code.png", "code {path}"), exe];
     let menu = right_click(&mut a, Some(0));
     a.on_event(&Event::ShowMenu { items: menu.menu, x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: false }, Instant::now());
     let mut g = Gfx::new(Mono, 256);
@@ -281,7 +281,7 @@ fn image_icons_are_requested_once_from_the_file_through_the_icon_pipeline() {
 }
 
 fn form_texts(a: &mut App, texts: &[(usize, &str)], choices: &[(usize, usize)]) {
-    let f = a.jobs.form.as_mut().expect("the editor is open");
+    let f = a.dialogs.form.as_mut().expect("the editor is open");
     for &(k, t) in texts {
         f.set_text(k, t);
     }
@@ -304,23 +304,23 @@ fn the_options_editor_adds_moves_edits_and_deletes_entries() {
     a.new_user_entry(false);
     form_texts(&mut a, &[(NAME, "Code"), (COMMAND, "  ")], &[(ICON, 1)]);
     a.form_submit(0);
-    assert!(a.jobs.form.as_ref().is_some_and(|f| f.error), "an empty command keeps the editor open");
+    assert!(a.dialogs.form.as_ref().is_some_and(|f| f.error), "an empty command keeps the editor open");
     form_texts(&mut a, &[(COMMAND, "code {paths}")], &[]);
     a.form_submit(0);
-    assert_eq!(a.opts.user_menu[1], UserEntry { icon: GLYPHS[0].0.into(), ..command("Code", "", "code {paths}") });
+    assert_eq!(a.settings.opts.user_menu[1], UserEntry { icon: GLYPHS[0].0.into(), ..command("Code", "", "code {paths}") });
     a.edit_user_entry(EntryAt { top: 1, child: None });
     form_texts(&mut a, &[(IMAGE, "\"D:\\i.png\"")], &[(PLACE, 1)]);
     a.form_submit(0);
-    assert_eq!(a.opts.user_menu.len(), 1);
-    assert_eq!(a.opts.user_menu[0].submenu.as_ref().map(|s| (s[0].name.as_str(), s[0].icon.as_str())), Some(("Code", "D:\\i.png")), "moved into the submenu with an image icon");
+    assert_eq!(a.settings.opts.user_menu.len(), 1);
+    assert_eq!(a.settings.opts.user_menu[0].submenu.as_ref().map(|s| (s[0].name.as_str(), s[0].icon.as_str())), Some(("Code", "D:\\i.png")), "moved into the submenu with an image icon");
     a.new_user_entry(false);
     form_texts(&mut a, &[(NAME, "Second"), (COMMAND, "x")], &[]);
     a.form_submit(0);
     a.raise_user_entry(EntryAt { top: 1, child: None });
-    assert_eq!(a.opts.user_menu.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Second", "Dev"]);
+    assert_eq!(a.settings.opts.user_menu.iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), ["Second", "Dev"]);
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert!(a.settings_lines().iter().any(|l| l == "entry   Code"), "{:?}", a.settings_lines());
     a.delete_user_entry(EntryAt { top: 1, child: Some(0) });
     a.delete_user_entry(EntryAt { top: 0, child: None });
-    assert_eq!(a.opts.user_menu.iter().map(|e| (e.name.as_str(), e.submenu.as_ref().map(Vec::len))).collect::<Vec<_>>(), [("Dev", Some(0))]);
+    assert_eq!(a.settings.opts.user_menu.iter().map(|e| (e.name.as_str(), e.submenu.as_ref().map(Vec::len))).collect::<Vec<_>>(), [("Dev", Some(0))]);
 }

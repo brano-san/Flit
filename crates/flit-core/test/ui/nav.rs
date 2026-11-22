@@ -1,6 +1,7 @@
 use super::*;
 use crate::input::{CursorIcon, Event};
 use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, Listing, Meta};
+use crate::location::Location;
 use crate::path::FsPath;
 use crate::provider::{FileOp, ProviderEvent, ProviderRequest, TabId};
 use crate::sort::{self, CaseMode, SortKeys};
@@ -541,7 +542,7 @@ fn shift_delete_in_the_filter_cuts_text_and_never_deletes_files() {
     let copied: Vec<&str> = effects.iter().filter_map(|e| if let Effect::SetClipboard(s) = e { Some(s.as_str()) } else { None }).collect();
     assert_eq!(copied, ["a", "a"], "Ctrl+Insert copies, Shift+Delete cuts");
     assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
-    assert!(!app.jobs.modal(), "no permanent-delete prompt");
+    assert!(!app.dialogs.modal(), "no permanent-delete prompt");
     assert_eq!(app.tab().filter.as_ref().unwrap().text(), "");
     key(&mut app, Key::Insert, SHIFT);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Paste)));
@@ -698,7 +699,7 @@ fn slash_and_tilde_in_the_list_open_the_address_bar_with_the_character_on_linux(
     let later = |s: u64| t0() + Duration::from_secs(s);
     let mut app = app_at("/home/u");
     app.caps.unix_paths = true;
-    app.opts.char_key = crate::ui::options::CharKey::Select;
+    app.settings.opts.char_key = crate::ui::options::CharKey::Select;
     files(&mut app, &["a.txt", "a~b.txt", "b.txt"]);
     app.on_event(&Event::Char('a'), later(0));
     assert!(app.nav.palette.is_none(), "plain letters still go to type-ahead");
@@ -718,7 +719,7 @@ fn slash_and_tilde_in_the_list_open_the_address_bar_with_the_character_on_linux(
 #[test]
 fn a_tilde_in_the_list_on_windows_finds_office_lock_files_by_typing() {
     let mut app = app_at(r"C:\x");
-    app.opts.char_key = crate::ui::options::CharKey::Select;
+    app.settings.opts.char_key = crate::ui::options::CharKey::Select;
     files(&mut app, &["a.txt", "~$report.docx"]);
     app.on_event(&Event::Char('~'), t0());
     assert!(app.nav.palette.is_none(), "Explorer has no slash or tilde shortcut");
@@ -828,7 +829,7 @@ fn dialog_text_fields_pick_words_drag_and_offer_the_field_menu_but_secrets_stay_
     let mut app = app_at(r"C:\x");
     app.open_form(Form::new(Kind::GitClone { tab: app.tab().id, dir: app.tab().location().path().clone() }, "Clone", vec![Control::text("Address", "alpha beta", ""), Control::secret("Password", "")], vec!["OK", "Cancel"]));
     redraw(&mut app);
-    let rows = app.jobs.form.as_ref().unwrap().rows.clone();
+    let rows = app.dialogs.form.as_ref().unwrap().rows.clone();
     let (y, y2) = (rows[0].y + rows[0].h / 2.0, rows[1].y + rows[1].h / 2.0);
     let (start, end) = ((rows[0].x + 2.0, y), (rows[0].right() - 12.0, y));
     let t = t0();

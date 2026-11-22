@@ -82,7 +82,7 @@ impl App {
     }
 
     pub(super) fn quick_hover(&mut self, h: Hit, now: Instant) {
-        let quiet = self.tooltips && self.drag == Drag::None && self.pressed == Hit::None && self.own_menu.is_none() && self.confirm.is_none() && self.nav.palette.is_none();
+        let quiet = self.tooltips && self.drag == Drag::None && self.pressed == Hit::None && self.own_menu.is_none() && self.dialogs.confirm.is_none() && self.nav.palette.is_none();
         let target = match h {
             Hit::Side(i) if quiet => self.quick_subject(i).map(|(loc, subject)| (i, loc, subject)),
             _ => None,

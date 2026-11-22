@@ -343,20 +343,20 @@ fn event_tab(ev: &ProviderEvent) -> Option<TabId> {
 
 impl App {
     pub fn panel_count(&self) -> usize {
-        self.panels.list.len()
+        self.tabs.panels.list.len()
     }
 
     pub fn parked_tabs(&self) -> impl Iterator<Item = &Tab> {
-        self.panels.list.iter().filter(|p| p.id != self.panels.here).filter_map(|p| p.tabs.get(p.cur))
+        self.tabs.panels.list.iter().filter(|p| p.id != self.tabs.panels.here).filter_map(|p| p.tabs.get(p.cur))
     }
 
     pub fn parked_rows(&self) -> impl Iterator<Item = (u64, u32, u32)> + '_ {
-        self.panels.list.iter().filter_map(|p| p.rows)
+        self.tabs.panels.list.iter().filter_map(|p| p.rows)
     }
 
     pub(super) fn status_slide(&mut self, to: f32) -> f32 {
-        let (id, now, animate) = (self.panels.here, self.clock(), self.animations);
-        let slides = &mut self.panels.status;
+        let (id, now, animate) = (self.tabs.panels.here, self.clock(), self.animations);
+        let slides = &mut self.tabs.panels.status;
         let k = slides.iter().position(|e| e.0 == id).unwrap_or_else(|| {
             slides.push((id, super::widgets::Tween::at(to)));
             slides.len() - 1
@@ -373,13 +373,13 @@ impl App {
     }
 
     fn slot(&self, id: u32) -> Option<usize> {
-        self.panels.list.iter().position(|p| p.id == id)
+        self.tabs.panels.list.iter().position(|p| p.id == id)
     }
 
     fn swap_slot(&mut self, i: usize) {
-        let p = &mut self.panels.list[i];
-        std::mem::swap(&mut self.tabs, &mut p.tabs);
-        std::mem::swap(&mut self.cur, &mut p.cur);
+        let p = &mut self.tabs.panels.list[i];
+        std::mem::swap(&mut self.tabs.items, &mut p.tabs);
+        std::mem::swap(&mut self.tabs.cur, &mut p.cur);
         std::mem::swap(&mut self.layout, &mut p.layout);
         std::mem::swap(&mut self.nav.filter, &mut p.filter);
         std::mem::swap(&mut self.nav.home, &mut p.home);
@@ -389,16 +389,16 @@ impl App {
     }
 
     fn enter(&mut self, id: u32) {
-        let (Some(a), Some(b)) = (self.slot(self.panels.here), self.slot(id)) else { return };
+        let (Some(a), Some(b)) = (self.slot(self.tabs.panels.here), self.slot(id)) else { return };
         if a != b {
             self.swap_slot(a);
             self.swap_slot(b);
-            self.panels.here = id;
+            self.tabs.panels.here = id;
         }
     }
 
     pub(super) fn visit<R>(&mut self, id: u32, f: impl FnOnce(&mut App) -> R) -> R {
-        let back = self.panels.here;
+        let back = self.tabs.panels.here;
         if id == back {
             return f(self);
         }
@@ -410,33 +410,33 @@ impl App {
         let tail: Vec<Effect> = self.effects.drain(mark.min(self.effects.len())..).collect();
         let retitle = tail.iter().any(|e| matches!(e, Effect::Title(_)));
         self.effects.extend(tail.into_iter().filter(|e| !matches!(e, Effect::Title(_))));
-        if retitle && self.panels.here == self.panels.active {
+        if retitle && self.tabs.panels.here == self.tabs.panels.active {
             self.effects.push(Effect::Title(self.window_title()));
         }
         r
     }
 
     pub(super) fn parked_ids(&self) -> Vec<u32> {
-        self.panels.list.iter().map(|p| p.id).filter(|&id| id != self.panels.here).collect()
+        self.tabs.panels.list.iter().map(|p| p.id).filter(|&id| id != self.tabs.panels.here).collect()
     }
 
     pub(super) fn order(&self) -> Vec<u32> {
         let mut out = Vec::new();
-        leaves(&self.panels.root, &mut out);
+        leaves(&self.tabs.panels.root, &mut out);
         out
     }
 
     pub(super) fn each_pane(&mut self, f: impl Fn(&mut App, usize)) {
-        for k in 0..self.tabs.len() {
+        for k in 0..self.tabs.items.len() {
             f(self, k);
         }
         for id in self.parked_ids() {
-            self.visit(id, |a| (0..a.tabs.len()).for_each(|k| f(a, k)));
+            self.visit(id, |a| (0..a.tabs.items.len()).for_each(|k| f(a, k)));
         }
     }
 
     pub(super) fn parked_of(&self, tab: TabId) -> Option<u32> {
-        self.panels.list.iter().find(|p| p.id != self.panels.here && p.tabs.iter().any(|t| t.id == tab)).map(|p| p.id)
+        self.tabs.panels.list.iter().find(|p| p.id != self.tabs.panels.here && p.tabs.iter().any(|t| t.id == tab)).map(|p| p.id)
     }
 
     pub(super) fn parked_of_event(&self, ev: &ProviderEvent) -> Option<u32> {
@@ -448,23 +448,23 @@ impl App {
     }
 
     pub(super) fn wake_panels(&mut self) {
-        if self.panels.here != self.panels.active {
+        if self.tabs.panels.here != self.tabs.panels.active {
             return;
         }
-        let asleep: Vec<u32> = self.panels.list.iter().filter(|p| p.id != self.panels.here && p.tabs.get(p.cur).is_some_and(|t| t.gen == 0)).map(|p| p.id).collect();
+        let asleep: Vec<u32> = self.tabs.panels.list.iter().filter(|p| p.id != self.tabs.panels.here && p.tabs.get(p.cur).is_some_and(|t| t.gen == 0)).map(|p| p.id).collect();
         for id in asleep {
-            self.visit(id, |a| a.load_tab(a.cur, None, Instant::now()));
+            self.visit(id, |a| a.load_tab(a.tabs.cur, None, Instant::now()));
         }
     }
 
     pub(super) fn step_split(&mut self, now: Instant) -> bool {
-        if self.panels.growing.is_some_and(|(_, since)| now.saturating_duration_since(since) >= SPLIT) {
-            self.panels.growing = None;
+        if self.tabs.panels.growing.is_some_and(|(_, since)| now.saturating_duration_since(since) >= SPLIT) {
+            self.tabs.panels.growing = None;
         }
-        if self.panels.closing.as_ref().is_some_and(|c| now.saturating_duration_since(c.2) >= SPLIT) {
-            self.panels.closing = None;
+        if self.tabs.panels.closing.as_ref().is_some_and(|c| now.saturating_duration_since(c.2) >= SPLIT) {
+            self.tabs.panels.closing = None;
         }
-        self.panels.growing.is_some() || self.panels.closing.is_some()
+        self.tabs.panels.growing.is_some() || self.tabs.panels.closing.is_some()
     }
 
     pub(super) fn step_parked(&mut self, dt: f32) -> bool {
@@ -483,11 +483,11 @@ impl App {
     }
 
     pub(super) fn activate_panel(&mut self, id: u32) {
-        if id == self.panels.active || self.panels.here != self.panels.active || self.slot(id).is_none() {
+        if id == self.tabs.panels.active || self.tabs.panels.here != self.tabs.panels.active || self.slot(id).is_none() {
             return;
         }
         self.enter(id);
-        self.panels.active = id;
+        self.tabs.panels.active = id;
         self.panel_changed();
     }
 
@@ -498,22 +498,22 @@ impl App {
         self.end_marquee();
         self.end_autoscroll();
         self.hover = Hit::None;
-        self.panels.hover = None;
+        self.tabs.panels.hover = None;
         self.after_tab_change();
         self.layout();
     }
 
     pub(super) fn layout_panels(&mut self) {
         if !self.animations {
-            self.panels.growing = None;
-            self.panels.closing = None;
+            self.tabs.panels.growing = None;
+            self.tabs.panels.closing = None;
         }
         let (w, h) = self.size;
         let top = self.s(TAB_H);
         let side = self.sidebar_width();
         let (cw, bw, pad) = (self.s(CAPTION_W), self.s(BUTTON_W), self.s(4.0));
         let system_title = self.system_title;
-        let p = &mut self.panels;
+        let p = &mut self.tabs.panels;
         p.caption.fill(Rect::default());
         let mut seen = [system_title; 3];
         let (mut left, mut right) = (0.0, 0.0);
@@ -542,18 +542,18 @@ impl App {
         let area = Rect::new(side, 0.0, (w - side).max(0.0), h);
         let (mut rects, mut seps) = (Vec::new(), Vec::new());
         if self.search.active {
-            rects.push((self.panels.active, area));
+            rects.push((self.tabs.panels.active, area));
         } else {
             let now = self.last_frame.unwrap_or_else(Instant::now);
-            let root = match (&self.panels.closing, self.panels.growing) {
+            let root = match (&self.tabs.panels.closing, self.tabs.panels.growing) {
                 (Some((before, id, since)), _) => grown(before, *id, 1.0 - super::widgets::eased(*since, now, SPLIT)),
-                (None, Some((id, since))) => grown(&self.panels.root, id, super::widgets::eased(since, now, SPLIT).max(0.02)),
-                (None, None) => self.panels.root.clone(),
+                (None, Some((id, since))) => grown(&self.tabs.panels.root, id, super::widgets::eased(since, now, SPLIT).max(0.02)),
+                (None, None) => self.tabs.panels.root.clone(),
             };
             place(&root, area, self.s(1.0).max(1.0), &mut Vec::new(), &mut rects, &mut seps);
         }
-        self.panels.seps = seps;
-        for p in &mut self.panels.list {
+        self.tabs.panels.seps = seps;
+        for p in &mut self.tabs.panels.list {
             p.rect = rects.iter().find(|r| r.0 == p.id).map_or(Rect::default(), |r| r.1);
         }
         for id in self.parked_ids() {
@@ -566,18 +566,18 @@ impl App {
     }
 
     pub(super) fn panel_rect(&self) -> Rect {
-        self.slot(self.panels.here).map_or(Rect::default(), |i| self.panels.list[i].rect)
+        self.slot(self.tabs.panels.here).map_or(Rect::default(), |i| self.tabs.panels.list[i].rect)
     }
 
     pub(super) fn panel_edges(&self, r: Rect) -> (f32, f32) {
         let top = r.y <= 0.5;
-        let end = if top { r.right().min(self.panels.right).max(r.x) } else { r.right() };
-        let start = if top { (self.panels.left + self.panels.inset).max(r.x).min(end) } else { r.x };
+        let end = if top { r.right().min(self.tabs.panels.right).max(r.x) } else { r.right() };
+        let start = if top { (self.tabs.panels.left + self.tabs.panels.inset).max(r.x).min(end) } else { r.x };
         (end, start - r.x)
     }
 
     pub(super) fn chrome_hit(&self, x: f32, y: f32) -> Option<Hit> {
-        let p = &self.panels;
+        let p = &self.tabs.panels;
         if let Some(i) = p.caption.iter().position(|r| r.contains(x, y)) {
             return Some(Hit::Caption(i));
         }
@@ -591,7 +591,7 @@ impl App {
     }
 
     pub(super) fn caption_hit(&self, x: f32, y: f32) -> Hit {
-        self.panels.caption.iter().position(|r| r.contains(x, y)).map_or(Hit::None, Hit::Caption)
+        self.tabs.panels.caption.iter().position(|r| r.contains(x, y)).map_or(Hit::None, Hit::Caption)
     }
 
     pub(super) fn in_title(&self, y: f32) -> bool {
@@ -599,38 +599,38 @@ impl App {
     }
 
     pub(super) fn sep_hit(&self, x: f32, y: f32) -> Option<Hit> {
-        if self.panels.closing.is_some() {
+        if self.tabs.panels.closing.is_some() {
             return None;
         }
         let grip = self.s(GRIP);
-        self.panels.seps.iter().position(|s| s.rect.inset(-grip, -grip).contains(x, y)).map(Hit::PanelSep)
+        self.tabs.panels.seps.iter().position(|s| s.rect.inset(-grip, -grip).contains(x, y)).map(Hit::PanelSep)
     }
 
     pub(super) fn sep_cursor(&self, k: usize) -> CursorIcon {
-        if self.panels.seps.get(k).is_some_and(|s| s.down) { CursorIcon::ResizeVertical } else { CursorIcon::ResizeHorizontal }
+        if self.tabs.panels.seps.get(k).is_some_and(|s| s.down) { CursorIcon::ResizeVertical } else { CursorIcon::ResizeHorizontal }
     }
 
     pub(super) fn parked_row_hit(&self, x: f32, y: f32) -> Option<(u32, Hit)> {
-        self.panels.list.iter().filter(|p| p.id != self.panels.here && p.rect.contains(x, y) && p.layout.title.contains(x, y)).map(|p| (p.id, row_hit(&p.layout, x, y))).find(|h| h.1 != Hit::None)
+        self.tabs.panels.list.iter().filter(|p| p.id != self.tabs.panels.here && p.rect.contains(x, y) && p.layout.title.contains(x, y)).map(|p| (p.id, row_hit(&p.layout, x, y))).find(|h| h.1 != Hit::None)
     }
 
     pub(super) fn parked_hover(&mut self, x: f32, y: f32) {
         let h = if self.drag == Drag::None { self.parked_row_hit(x, y) } else { None };
-        if h != self.panels.hover {
-            self.panels.hover = h;
+        if h != self.tabs.panels.hover {
+            self.tabs.panels.hover = h;
             self.dirty = true;
         }
     }
 
     pub(super) fn panel_at(&self, x: f32, y: f32) -> Option<u32> {
-        self.panels.list.iter().find(|p| p.rect.contains(x, y)).map(|p| p.id)
+        self.tabs.panels.list.iter().find(|p| p.rect.contains(x, y)).map(|p| p.id)
     }
 
     pub(super) fn panel_press(&mut self, x: f32, y: f32) {
         if self.is_renaming() || self.hit(x, y) != Hit::None {
             return;
         }
-        if let Some(id) = self.panel_at(x, y).filter(|&id| id != self.panels.active) {
+        if let Some(id) = self.panel_at(x, y).filter(|&id| id != self.tabs.panels.active) {
             self.activate_panel(id);
         }
     }
@@ -642,16 +642,16 @@ impl App {
     }
 
     pub(super) fn panel_wheel(&mut self, ev: &Event, dy: f32, now: Instant) -> bool {
-        let Some((x, y)) = self.strip.pointer else { return false };
-        if self.nav.palette.is_some() || self.jobs.modal() || self.panels.here != self.panels.active {
+        let Some((x, y)) = self.tabs.strip.pointer else { return false };
+        if self.nav.palette.is_some() || self.dialogs.modal() || self.tabs.panels.here != self.tabs.panels.active {
             return false;
         }
         let Some(id) = self.panel_at(x, y) else { return false };
         let upright = matches!(ev, Event::Wheel { dx, .. } if *dx == 0.0);
-        if upright && self.mods.shift && !self.mods.ctrl && !self.mods.alt && self.panels.list.len() > 1 && !matches!(self.hover, Hit::Preview(_)) {
+        if upright && self.mods.shift && !self.mods.ctrl && !self.mods.alt && self.tabs.panels.list.len() > 1 && !matches!(self.hover, Hit::Preview(_)) {
             return self.wheel_sep(id, dy);
         }
-        if id == self.panels.active || self.hit(x, y) != Hit::None {
+        if id == self.tabs.panels.active || self.hit(x, y) != Hit::None {
             return false;
         }
         let hover = self.hover;
@@ -665,16 +665,16 @@ impl App {
 
     fn wheel_sep(&mut self, id: u32, dy: f32) -> bool {
         let mut path = Vec::new();
-        if !path_of(&self.panels.root, id, &mut path) {
+        if !path_of(&self.tabs.panels.root, id, &mut path) {
             return false;
         }
         let Some((&k, parent)) = path.split_last() else { return false };
-        let n = match node_mut(&mut self.panels.root, parent) {
+        let n = match node_mut(&mut self.tabs.panels.root, parent) {
             Node::Group { kids, .. } => kids.len(),
             Node::Leaf(_) => return false,
         };
         let at = if k + 1 < n { k } else { k.saturating_sub(1) };
-        if let Some(s) = self.panels.seps.iter().position(|s| s.path == parent && s.at == at) {
+        if let Some(s) = self.tabs.panels.seps.iter().position(|s| s.path == parent && s.at == at) {
             let first = self.sep_first(s);
             self.set_sep(s, first - dy * self.s(WHEEL_STEP));
         }
@@ -682,11 +682,11 @@ impl App {
     }
 
     fn sep_weights(&mut self, k: usize) -> Option<(&mut Kids, usize, f32, bool)> {
-        if self.panels.closing.is_some() {
+        if self.tabs.panels.closing.is_some() {
             return None;
         }
-        let s = self.panels.seps.get(k)?.clone();
-        match node_mut(&mut self.panels.root, &s.path) {
+        let s = self.tabs.panels.seps.get(k)?.clone();
+        match node_mut(&mut self.tabs.panels.root, &s.path) {
             Node::Group { kids, .. } if s.at + 1 < kids.len() => Some((kids, s.at, s.room, s.down)),
             _ => None,
         }
@@ -710,7 +710,7 @@ impl App {
         }
         kids[at].1 = pair_w * first.clamp(lo, hi) / pair;
         kids[at + 1].1 = pair_w - kids[at].1;
-        self.strip.rev += 1;
+        self.tabs.strip.rev += 1;
         self.layout();
         self.dirty = true;
     }
@@ -721,12 +721,12 @@ impl App {
             let pair = self.sep_weights(k).map_or(0.0, |(kids, at, room, _)| room * (kids[at].1 + kids[at + 1].1) / kids.iter().map(|k| k.1).sum::<f32>().max(f32::EPSILON));
             return self.set_sep(k, pair / 2.0);
         }
-        let down = self.panels.seps.get(k).is_some_and(|s| s.down);
+        let down = self.tabs.panels.seps.get(k).is_some_and(|s| s.down);
         self.drag = Drag::PanelSep { sep: k, start: if down { y } else { x }, first };
     }
 
     pub(super) fn drag_sep(&mut self, k: usize, x: f32, y: f32, start: f32, first: f32) {
-        let down = self.panels.seps.get(k).is_some_and(|s| s.down);
+        let down = self.tabs.panels.seps.get(k).is_some_and(|s| s.down);
         self.set_sep(k, first + if down { y } else { x } - start);
     }
 
@@ -736,40 +736,40 @@ impl App {
         }
         folder.canonicalize(&self.nav.sidebar.places.wsl);
         let t = self.tab();
-        let mut tab = Tab::new(self.next_tab, folder, ViewSpec { show_hidden: t.view_spec.show_hidden, ..ViewSpec::default() });
+        let mut tab = Tab::new(self.tabs.next_tab, folder, ViewSpec { show_hidden: t.view_spec.show_hidden, ..ViewSpec::default() });
         tab.set_folder_view(t.folder_view());
-        self.next_tab += 1;
-        let id = self.panels.next;
-        self.panels.next += 1;
-        self.panels.list.push(Panel { id, tabs: vec![tab], ..Default::default() });
-        insert(&mut self.panels.root, self.panels.active, id, down, false);
-        self.panels.growing = self.animations.then(|| (id, Instant::now()));
-        self.panels.closing = None;
-        self.strip.rev += 1;
+        self.tabs.next_tab += 1;
+        let id = self.tabs.panels.next;
+        self.tabs.panels.next += 1;
+        self.tabs.panels.list.push(Panel { id, tabs: vec![tab], ..Default::default() });
+        insert(&mut self.tabs.panels.root, self.tabs.panels.active, id, down, false);
+        self.tabs.panels.growing = self.animations.then(|| (id, Instant::now()));
+        self.tabs.panels.closing = None;
+        self.tabs.strip.rev += 1;
         self.activate_panel(id);
         if self.tab().gen == 0 {
-            self.load_tab(self.cur, None, now);
+            self.load_tab(self.tabs.cur, None, now);
         }
     }
 
     pub(super) fn junctions(&self) -> Vec<super::dock::Junction> {
-        self.panels.seps.iter().filter(|s| !s.down).map(|s| super::dock::Junction { line: s.rect, before: s.sides[0], after: s.sides[1], left: s.leaves[0], right: s.leaves[1] }).collect()
+        self.tabs.panels.seps.iter().filter(|s| !s.down).map(|s| super::dock::Junction { line: s.rect, before: s.sides[0], after: s.sides[1], left: s.leaves[0], right: s.leaves[1] }).collect()
     }
 
     pub(super) fn dock_moves(&self, dock: Dock, copy: bool) -> bool {
-        let src = self.panels.here;
-        let new = self.panels.next;
-        let mut after = self.panels.root.clone();
-        if src != self.panels.active || !attach(&mut after, dock, new) {
+        let src = self.tabs.panels.here;
+        let new = self.tabs.panels.next;
+        let mut after = self.tabs.panels.root.clone();
+        if src != self.tabs.panels.active || !attach(&mut after, dock, new) {
             return false;
         }
         match dock {
             _ if copy => true,
             Dock::Into(p) => p != src,
-            _ if self.tabs.len() > 1 => true,
+            _ if self.tabs.items.len() > 1 => true,
             _ => {
                 remove(&mut after, src);
-                let mut before = self.panels.root.clone();
+                let mut before = self.tabs.panels.root.clone();
                 rename(&mut before, src, new);
                 !same_shape(&before, &after)
             }
@@ -780,20 +780,20 @@ impl App {
         if !self.dock_moves(dock, copy) {
             return;
         }
-        let src = self.panels.here;
-        let alone = self.tabs.len() == 1;
+        let src = self.tabs.panels.here;
+        let alone = self.tabs.items.len() == 1;
         let tab = if copy {
             let t = self.tab();
             let loc = t.location().clone();
-            let mut tab = Tab::new(self.next_tab, loc.clone(), t.view_spec);
+            let mut tab = Tab::new(self.tabs.next_tab, loc.clone(), t.view_spec);
             tab.set_folder_view(t.folder_view());
             tab.crumbs = loc.crumbs();
-            self.next_tab += 1;
+            self.tabs.next_tab += 1;
             tab
         } else {
-            let tab = self.tabs.remove(self.cur);
+            let tab = self.tabs.items.remove(self.tabs.cur);
             if !alone {
-                self.cur = self.cur.min(self.tabs.len() - 1);
+                self.tabs.cur = self.tabs.cur.min(self.tabs.items.len() - 1);
                 self.after_tab_change();
             }
             tab
@@ -801,32 +801,32 @@ impl App {
         let id = match dock {
             Dock::Into(p) => p,
             _ => {
-                let id = self.panels.next;
-                self.panels.next += 1;
-                self.panels.list.push(Panel { id, ..Default::default() });
-                attach(&mut self.panels.root, dock, id);
-                self.panels.closing = None;
+                let id = self.tabs.panels.next;
+                self.tabs.panels.next += 1;
+                self.tabs.panels.list.push(Panel { id, ..Default::default() });
+                attach(&mut self.tabs.panels.root, dock, id);
+                self.tabs.panels.closing = None;
                 id
             }
         };
         if id == src {
-            self.tabs.push(tab);
-            self.cur = self.tabs.len() - 1;
+            self.tabs.items.push(tab);
+            self.tabs.cur = self.tabs.items.len() - 1;
         } else if let Some(i) = self.slot(id) {
-            let p = &mut self.panels.list[i];
+            let p = &mut self.tabs.panels.list[i];
             p.tabs.push(tab);
             p.cur = p.tabs.len() - 1;
             self.enter(id);
-            self.panels.active = id;
+            self.tabs.panels.active = id;
         }
         if !copy && alone {
-            self.panels.list.retain(|p| p.id != src);
-            remove(&mut self.panels.root, src);
+            self.tabs.panels.list.retain(|p| p.id != src);
+            remove(&mut self.tabs.panels.root, src);
         }
-        self.strip.rev += 1;
+        self.tabs.strip.rev += 1;
         self.panel_changed();
         if self.tab().gen == 0 {
-            self.load_tab(self.cur, None, now);
+            self.load_tab(self.tabs.cur, None, now);
         }
     }
 
@@ -850,31 +850,31 @@ impl App {
     }
 
     pub(super) fn close_panel(&mut self) {
-        if self.panels.list.len() == 1 {
+        if self.tabs.panels.list.len() == 1 {
             return self.effects.push(Effect::Window(WindowCmd::Close));
         }
-        let gone = self.panels.active;
+        let gone = self.tabs.panels.active;
         let order = self.order();
         let pos = order.iter().position(|&id| id == gone).unwrap_or(0);
         let next = order[if pos > 0 { pos - 1 } else { 1 }];
-        for mut t in std::mem::take(&mut self.tabs) {
+        for mut t in std::mem::take(&mut self.tabs.items) {
             t.shutdown(&mut self.effects);
             self.remember_closed(t);
         }
         self.enter(next);
-        self.panels.active = next;
-        self.panels.list.retain(|p| p.id != gone);
-        self.panels.growing = None;
-        self.panels.closing = self.animations.then(|| (self.panels.root.clone(), gone, Instant::now()));
-        remove(&mut self.panels.root, gone);
-        self.strip.rev += 1;
+        self.tabs.panels.active = next;
+        self.tabs.panels.list.retain(|p| p.id != gone);
+        self.tabs.panels.growing = None;
+        self.tabs.panels.closing = self.animations.then(|| (self.tabs.panels.root.clone(), gone, Instant::now()));
+        remove(&mut self.tabs.panels.root, gone);
+        self.tabs.strip.rev += 1;
         self.panel_changed();
     }
 
     fn cycle_panel(&mut self, back: bool) {
         let order = self.order();
         let n = order.len();
-        let at = order.iter().position(|&id| id == self.panels.active).unwrap_or(0);
+        let at = order.iter().position(|&id| id == self.tabs.panels.active).unwrap_or(0);
         self.activate_panel(order[if back { (at + n - 1) % n } else { (at + 1) % n }]);
     }
 
@@ -882,10 +882,10 @@ impl App {
         let me = self.panel_rect();
         let span = |a: f32, b: f32, c: f32, d: f32| b.min(d) - a.max(c);
         let best = self
-            .panels
+            .tabs.panels
             .list
             .iter()
-            .filter(|p| p.id != self.panels.active && p.rect.w > 0.0)
+            .filter(|p| p.id != self.tabs.panels.active && p.rect.w > 0.0)
             .filter_map(|p| {
                 let r = p.rect;
                 let (gap, overlap) = match (down, forward) {
@@ -904,15 +904,15 @@ impl App {
 
     fn even_panels(&mut self, all: bool) {
         if all {
-            even(&mut self.panels.root, true);
+            even(&mut self.tabs.panels.root, true);
         } else {
             let mut path = Vec::new();
-            if path_of(&self.panels.root, self.panels.active, &mut path) {
+            if path_of(&self.tabs.panels.root, self.tabs.panels.active, &mut path) {
                 path.pop();
-                even(node_mut(&mut self.panels.root, &path), false);
+                even(node_mut(&mut self.tabs.panels.root, &path), false);
             }
         }
-        self.strip.rev += 1;
+        self.tabs.strip.rev += 1;
         self.layout();
         self.dirty = true;
     }
@@ -936,17 +936,17 @@ impl App {
     }
 
     pub(super) fn panel_available(&self, id: &str) -> bool {
-        matches!(id, "panel.split_right" | "panel.split_bottom" | "panel.open_right" | "panel.open_bottom") || self.panels.list.len() > 1
+        matches!(id, "panel.split_right" | "panel.split_bottom" | "panel.open_right" | "panel.open_bottom") || self.tabs.panels.list.len() > 1
     }
 
     pub(super) fn cycles_panels(&self) -> bool {
-        self.focus == Focus::List && self.panels.list.len() > 1 && !self.is_renaming()
+        self.focus == Focus::List && self.tabs.panels.list.len() > 1 && !self.is_renaming()
     }
 
     fn panel_tabs(&self, id: u32) -> (&[Tab], usize) {
         match self.slot(id) {
-            Some(i) if id != self.panels.here => (&self.panels.list[i].tabs, self.panels.list[i].cur),
-            _ => (&self.tabs, self.cur),
+            Some(i) if id != self.tabs.panels.here => (&self.tabs.panels.list[i].tabs, self.tabs.panels.list[i].cur),
+            _ => (&self.tabs.items, self.tabs.cur),
         }
     }
 
@@ -955,7 +955,7 @@ impl App {
         if self.current_location() == folder {
             return true;
         }
-        let pane = self.panels.here;
+        let pane = self.tabs.panels.here;
         let found = std::iter::once(pane).chain(self.parked_ids()).find_map(|id| {
             self.panel_tabs(id).0.iter().position(|t| t.location() == folder).map(|tab| (id, tab))
         });
@@ -981,58 +981,58 @@ impl App {
         let order = self.order();
         for &id in &order {
             let (list, c) = self.panel_tabs(id);
-            if id == self.panels.active {
+            if id == self.tabs.panels.active {
                 cur = tabs.len() + c;
             }
             tabs.extend(list.iter().map(|t| t.location().clone()));
             trails.extend(list.iter().map(|t| t.trail.clone()));
         }
-        let active = order.iter().position(|&id| id == self.panels.active).unwrap_or(0) as u32;
-        let panels = (order.len() > 1).then(|| PanelsSession { root: self.shape(&self.panels.root), active });
+        let active = order.iter().position(|&id| id == self.tabs.panels.active).unwrap_or(0) as u32;
+        let panels = (order.len() > 1).then(|| PanelsSession { root: self.shape(&self.tabs.panels.root), active });
         super::WindowSession { tabs, cur, trails, panels }
     }
 
     pub(super) fn reset_panels(&mut self, layout: &super::options::SavedLayout, now: Instant) {
-        for mut t in std::mem::take(&mut self.tabs) {
+        for mut t in std::mem::take(&mut self.tabs.items) {
             t.shutdown(&mut self.effects);
         }
-        for p in &mut self.panels.list {
+        for p in &mut self.tabs.panels.list {
             for mut t in std::mem::take(&mut p.tabs) {
                 t.shutdown(&mut self.effects);
             }
         }
-        let id = self.panels.next;
-        self.panels.list = vec![Panel { id, ..Default::default() }];
-        self.panels.root = Node::Leaf(id);
-        (self.panels.here, self.panels.active, self.panels.next) = (id, id, id + 1);
-        self.panels.seps.clear();
+        let id = self.tabs.panels.next;
+        self.tabs.panels.list = vec![Panel { id, ..Default::default() }];
+        self.tabs.panels.root = Node::Leaf(id);
+        (self.tabs.panels.here, self.tabs.panels.active, self.tabs.panels.next) = (id, id, id + 1);
+        self.tabs.panels.seps.clear();
         let (view, hidden) = (self.prefs.defaults, self.show_hidden);
         for loc in &layout.tabs {
             self.add_tab(super::Route { folder: loc.clone(), select: None }, view, hidden, now);
         }
-        self.cur = layout.cur.min(self.tabs.len().saturating_sub(1));
+        self.tabs.cur = layout.cur.min(self.tabs.items.len().saturating_sub(1));
         self.after_tab_change();
     }
 
     pub fn restore_panels(&mut self, s: &PanelsSession) {
         let mut counts = Vec::new();
         sizes(&s.root, &mut counts);
-        if self.panels.list.len() != 1 || counts.len() < 2 || counts.iter().any(|c| c.0 == 0) || counts.iter().map(|c| c.0).sum::<usize>() != self.tabs.len() {
+        if self.tabs.panels.list.len() != 1 || counts.len() < 2 || counts.iter().any(|c| c.0 == 0) || counts.iter().map(|c| c.0).sum::<usize>() != self.tabs.items.len() {
             return;
         }
-        let base = self.panels.next;
-        let mut rest = std::mem::take(&mut self.tabs).into_iter();
-        self.panels.list = counts.iter().enumerate().map(|(k, &(n, cur))| Panel { id: base + k as u32, tabs: rest.by_ref().take(n).collect(), cur: cur.min(n - 1), ..Default::default() }).collect();
+        let base = self.tabs.panels.next;
+        let mut rest = std::mem::take(&mut self.tabs.items).into_iter();
+        self.tabs.panels.list = counts.iter().enumerate().map(|(k, &(n, cur))| Panel { id: base + k as u32, tabs: rest.by_ref().take(n).collect(), cur: cur.min(n - 1), ..Default::default() }).collect();
         let mut next = base;
-        self.panels.root = node_of(&s.root, &mut next);
-        normalize(&mut self.panels.root);
-        self.panels.next = next;
+        self.tabs.panels.root = node_of(&s.root, &mut next);
+        normalize(&mut self.tabs.panels.root);
+        self.tabs.panels.next = next;
         let active = base + (s.active as usize).min(counts.len() - 1) as u32;
-        (self.panels.here, self.panels.active) = (active, active);
+        (self.tabs.panels.here, self.tabs.panels.active) = (active, active);
         if let Some(i) = self.slot(active) {
             self.swap_slot(i);
         }
-        self.strip.rev += 1;
+        self.tabs.strip.rev += 1;
         self.after_tab_change();
         self.layout();
     }
@@ -1058,7 +1058,7 @@ impl App {
         let saved = (self.hover, self.pressed, self.drag, self.active, self.focus, self.ops.dropping.take());
         (self.drag, self.active, self.focus) = (Drag::None, false, Focus::List);
         for id in self.parked_ids() {
-            let hover = self.panels.hover.filter(|h| h.0 == id).map_or(Hit::None, |h| h.1);
+            let hover = self.tabs.panels.hover.filter(|h| h.0 == id).map_or(Hit::None, |h| h.1);
             let rows = self.visit(id, |a| {
                 (a.hover, a.pressed) = (hover, Hit::None);
                 let from = g.dl.instances.len();
@@ -1069,20 +1069,20 @@ impl App {
                 a.visible_rows()
             });
             if let Some(i) = self.slot(id) {
-                self.panels.list[i].rows = Some(rows);
+                self.tabs.panels.list[i].rows = Some(rows);
             }
         }
         (self.hover, self.pressed, self.drag, self.active, self.focus, self.ops.dropping) = saved;
         let from = g.dl.instances.len();
         self.draw_body(g, arena, palette);
-        if self.panels.list.len() > 1 {
+        if self.tabs.panels.list.len() > 1 {
             g.dl.confine(from, self.panel_rect());
         }
-        if let Some(i) = self.slot(self.panels.here) {
-            self.panels.list[i].rows = None;
+        if let Some(i) = self.slot(self.tabs.panels.here) {
+            self.tabs.panels.list[i].rows = None;
         }
         let th = &palette.base;
-        for (k, s) in self.panels.seps.iter().enumerate() {
+        for (k, s) in self.tabs.panels.seps.iter().enumerate() {
             let hot = self.hover == Hit::PanelSep(k) || matches!(self.drag, Drag::PanelSep { sep, .. } if sep == k);
             let w = if hot { self.s(2.0).max(1.0) } else { s.rect.w.min(s.rect.h).max(1.0) };
             let line = if s.down { Rect::new(s.rect.x, (s.rect.y + (s.rect.h - w) / 2.0).round(), s.rect.w, w) } else { Rect::new((s.rect.x + (s.rect.w - w) / 2.0).round(), s.rect.y, w, s.rect.h) };
@@ -1091,11 +1091,11 @@ impl App {
     }
 
     pub(super) fn clear_parked_rows(&mut self) {
-        self.panels.list.iter_mut().for_each(|p| p.rows = None);
+        self.tabs.panels.list.iter_mut().for_each(|p| p.rows = None);
     }
 
     pub(super) fn draw_chrome<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let p = &self.panels;
+        let p = &self.tabs.panels;
         let (side, top) = (p.left, self.s(TAB_H));
         if side > 0.0 {
             g.dl.rect(Rect::new(0.0, 0.0, side, top), t.chrome);
@@ -1109,7 +1109,7 @@ impl App {
         let caption_icons = self.icon_font(10.0);
         let max_glyph = if self.maximized { G_RESTORE } else { G_MAX };
         for (i, glyph) in [G_MIN, max_glyph, G_CLOSE].into_iter().enumerate() {
-            let r = self.panels.caption[i];
+            let r = self.tabs.panels.caption[i];
             if r.w <= 0.0 {
                 continue;
             }

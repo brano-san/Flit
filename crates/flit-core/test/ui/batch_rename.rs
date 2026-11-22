@@ -116,13 +116,13 @@ fn the_dialog_previews_the_new_names_and_renames_the_selection() {
     typed(&mut app, "img");
     app.on_event(&Event::Key { key: Key::Tab, mods: Mods::default(), pressed: true }, Instant::now());
     typed(&mut app, "Trip");
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     let lines: Vec<&str> = f.controls.iter().filter_map(|c| if let Control::Line(t) = c { Some(t.as_str()) } else { None }).collect();
     assert_eq!(&lines[..3], ["IMG_1.jpg → Trip_1.jpg", "IMG_2.jpg → Trip_2.jpg", "notes.txt (unchanged)"]);
     assert_eq!((f.note.as_str(), f.error), ("2 items will be renamed", false));
     app.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, Instant::now());
     assert_eq!(renamed(&mut app).unwrap_or_default(), [("IMG_1.jpg".into(), "Trip_1.jpg".into()), ("IMG_2.jpg".into(), "Trip_2.jpg".into())]);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
 }
 
 #[test]
@@ -133,11 +133,11 @@ fn a_clash_keeps_the_dialog_open_and_renames_nothing() {
     typed(&mut app, "a");
     app.on_event(&Event::Key { key: Key::Tab, mods: Mods::default(), pressed: true }, Instant::now());
     typed(&mut app, "b");
-    assert!(app.jobs.form.as_ref().unwrap().error);
+    assert!(app.dialogs.form.as_ref().unwrap().error);
     app.on_event(&Event::Key { key: Key::Enter, mods: Mods::default(), pressed: true }, Instant::now());
-    let f = app.jobs.form.as_ref().expect("the dialog stays open");
+    let f = app.dialogs.form.as_ref().expect("the dialog stays open");
     assert_eq!((f.note.as_str(), f.error), ("Two items would be named b.txt", true));
     assert!(renamed(&mut app).is_none());
     app.on_event(&Event::Key { key: Key::Escape, mods: Mods::default(), pressed: true }, Instant::now());
-    assert!(app.jobs.form.is_none() && renamed(&mut app).is_none());
+    assert!(app.dialogs.form.is_none() && renamed(&mut app).is_none());
 }

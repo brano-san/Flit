@@ -24,7 +24,7 @@ fn app_with(paths: &[&str]) -> App {
 }
 
 fn names(app: &App) -> Vec<String> {
-    app.tabs.iter().map(|t| t.location().display().into_owned()).collect()
+    app.tabs.items.iter().map(|t| t.location().display().into_owned()).collect()
 }
 
 fn deliver(app: &mut App, items: &[(&str, bool)]) {
@@ -84,15 +84,15 @@ fn mru_tab_cycle_keeps_the_same_order_until_control_is_released() {
         app.select_tab(i);
     }
     key(&mut app, Key::Tab, CTRL);
-    assert_eq!(app.cur, 0);
+    assert_eq!(app.tabs.cur, 0);
     ev(&mut app, Event::Key { key: Key::Tab, mods: CTRL, pressed: false });
     key(&mut app, Key::Tab, CTRL);
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     key(&mut app, Key::Tab, Mods { shift: true, ..CTRL });
-    assert_eq!(app.cur, 0);
+    assert_eq!(app.tabs.cur, 0);
     ev(&mut app, Event::Key { key: Key::Other, mods: NO, pressed: false });
     key(&mut app, Key::Tab, CTRL);
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
 }
 
 #[test]
@@ -104,13 +104,13 @@ fn mru_tab_cycle_can_be_disabled_and_control_page_keys_use_the_tab_strip() {
         app.select_tab(i);
     }
     key(&mut app, Key::PageDown, CTRL);
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     key(&mut app, Key::PageUp, CTRL);
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
     let row = settings::index("general.mru_tabs").unwrap();
     assert!(SETTINGS[row].set(&mut app, Value::Bool(false)));
     key(&mut app, Key::Tab, CTRL);
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
 }
 
 #[test]
@@ -119,7 +119,7 @@ fn tab_menu_closes_other_left_and_right_tabs_and_remembers_them() {
     let (x, y) = tab_xy(&app, 2);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 });
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Right });
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     let labels = menu_labels(&mut app);
     assert_eq!(
         labels,
@@ -136,7 +136,7 @@ fn tab_menu_closes_other_left_and_right_tabs_and_remembers_them() {
     assert_eq!(names(&app), [r"C:\a", r"C:\b", r"C:\c"]);
     app.run_action("tab.close_left", Instant::now());
     assert_eq!(names(&app), [r"C:\c"]);
-    assert_eq!(app.cur, 0);
+    assert_eq!(app.tabs.cur, 0);
     app.run_action("tab.reopen", Instant::now());
     assert_eq!(names(&app), [r"C:\c", r"C:\b"]);
     app.run_action("tab.close_others", Instant::now());
@@ -155,7 +155,7 @@ fn dragging_a_tab_reorders_and_esc_puts_it_back() {
     ev(&mut app, Event::MouseDown { x: x0, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseMove { x: r2.x + r2.w * 0.75, y });
     assert_eq!(names(&app), [r"C:\b", r"C:\c", r"C:\a"]);
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     ev(&mut app, Event::MouseUp { x: x2, y, button: MouseButton::Left });
     assert_eq!(app.drag, Drag::None);
     let (x1, _) = tab_xy(&app, 1);
@@ -164,7 +164,7 @@ fn dragging_a_tab_reorders_and_esc_puts_it_back() {
     assert_eq!(names(&app), [r"C:\b", r"C:\a", r"C:\c"]);
     key(&mut app, Key::Escape, NO);
     assert_eq!(names(&app), [r"C:\b", r"C:\c", r"C:\a"]);
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     ev(&mut app, Event::MouseUp { x: x1, y, button: MouseButton::Left });
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::MoveTab { .. })));
 }
@@ -178,13 +178,13 @@ fn dragging_outside_the_strip_switches_to_split_preview_and_returning_or_cancell
     assert!(app.dragged_tab().is_some() && app.insert_mark().is_some());
     let below = app.layout.title.bottom() + 1.0;
     ev(&mut app, Event::MouseMove { x, y: below });
-    assert!(app.docking.is_some(), "split preview starts immediately below the strip");
+    assert!(app.tabs.docking.is_some(), "split preview starts immediately below the strip");
     assert!(app.dragged_tab().is_none() && app.insert_mark().is_none());
     ev(&mut app, Event::MouseMove { x, y });
-    assert!(app.docking.is_none() && app.dragged_tab().is_some());
+    assert!(app.tabs.docking.is_none() && app.dragged_tab().is_some());
     key(&mut app, Key::Escape, NO);
-    assert!(app.docking.is_none() && app.dragged_tab().is_none() && app.insert_mark().is_none());
-    assert!(app.strip.hold.is_none());
+    assert!(app.tabs.docking.is_none() && app.dragged_tab().is_none() && app.insert_mark().is_none());
+    assert!(app.tabs.strip.hold.is_none());
 }
 
 #[test]
@@ -194,9 +194,9 @@ fn a_tab_torn_off_the_strip_moves_to_another_window() {
     let (x, y) = tab_xy(&app, 1);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseMove { x, y: 300.0 });
-    assert!(matches!(app.drag, Drag::Tab { torn: false, .. }) && app.docking.is_some(), "inside the window the tab docks");
+    assert!(matches!(app.drag, Drag::Tab { torn: false, .. }) && app.tabs.docking.is_some(), "inside the window the tab docks");
     ev(&mut app, Event::MouseMove { x, y: -30.0 });
-    assert!(matches!(app.drag, Drag::Tab { torn: true, .. }) && app.docking.is_none());
+    assert!(matches!(app.drag, Drag::Tab { torn: true, .. }) && app.tabs.docking.is_none());
     app.drain_effects().for_each(drop);
     ev(&mut app, Event::MouseUp { x, y: -30.0, button: MouseButton::Left });
     let moved = app.drain_effects().find_map(|e| if let Effect::MoveTab { tab, at, last } = e { Some((tab, at, last)) } else { None }).unwrap();
@@ -206,10 +206,10 @@ fn a_tab_torn_off_the_strip_moves_to_another_window() {
 
     let mut target = app_with(&[r"C:\x", r"C:\y"]);
     let r = target.layout.tabs[1].0;
-    let base = target.next_tab;
+    let base = target.tabs.next_tab;
     target.insert_tab(moved.0, Some((r.x + 5.0, 10.0)), Instant::now());
     assert_eq!(names(&target), [r"C:\x", r"C:\", r"C:\y"]);
-    assert_eq!(target.cur, 1);
+    assert_eq!(target.tabs.cur, 1);
     assert_eq!(target.tab().id, base);
     assert!(target.tab().history.can_back());
     assert_eq!(listed(&mut target), [r"C:\"]);
@@ -288,13 +288,13 @@ fn the_mark_shows_only_in_the_panel_under_the_pointer() {
     key(&mut target, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
     target.animations = false;
     target.layout();
-    let right = target.panels.active;
-    let left = target.panels.list.iter().find(|p| p.id != right).unwrap().id;
+    let right = target.tabs.panels.active;
+    let left = target.tabs.panels.list.iter().find(|p| p.id != right).unwrap().id;
     let r = target.layout.tabs[0].0;
     assert!(target.tab_incoming(Some((r.right() - 2.0, r.y + 300.0))));
     assert!(target.insert_mark().is_some(), "the right panel shows the mark");
     assert_eq!(target.visit(left, |a| a.insert_mark()), None, "the left panel does not");
-    let l = target.panels.list.iter().find(|p| p.id == left).unwrap().layout.tabs[0].0;
+    let l = target.tabs.panels.list.iter().find(|p| p.id == left).unwrap().layout.tabs[0].0;
     assert!(target.tab_incoming(Some((l.x + 5.0, l.y + 300.0))));
     assert_eq!(target.insert_mark(), None);
     assert!(target.visit(left, |a| a.insert_mark()).is_some());
@@ -309,21 +309,21 @@ fn wheel_over_the_strip_switches_tabs_in_the_chosen_direction() {
     let (x, y) = tab_xy(&app, 1);
     ev(&mut app, Event::MouseMove { x, y });
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -1.0 });
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -0.5 });
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -0.5 });
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -3.0 });
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     app.tab_wheel_reversed = true;
     ev(&mut app, Event::Wheel { dx: 0.0, dy: 1.0 });
-    assert_eq!(app.cur, 2);
+    assert_eq!(app.tabs.cur, 2);
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -2.0 });
-    assert_eq!(app.cur, 0);
+    assert_eq!(app.tabs.cur, 0);
     let (x, y) = row_xy(&app, 3);
     ev(&mut app, Event::MouseMove { x, y });
     ev(&mut app, Event::Wheel { dx: 0.0, dy: -1.0 });
-    assert_eq!(app.cur, 0);
+    assert_eq!(app.tabs.cur, 0);
 }
 
 #[test]
@@ -333,10 +333,10 @@ fn restored_tabs_stay_asleep_until_shown() {
     app.restore_tabs(&[loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], 1);
     assert!(app.session_rev() > rev);
     assert_eq!(names(&app), [r"C:\a", r"C:\b", r"C:\c"]);
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
     assert!(listed(&mut app).is_empty());
-    assert_eq!(app.tabs[0].gen, 0);
-    assert_eq!(app.tabs[2].title(), "c");
+    assert_eq!(app.tabs.items[0].gen, 0);
+    assert_eq!(app.tabs.items[2].title(), "c");
     assert_eq!(app.session(), WindowSession { tabs: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")], cur: 1, panels: None, trails: vec![loc(r"C:\a"), loc(r"C:\b"), loc(r"C:\c")] });
     key(&mut app, Key::Char('3'), CTRL);
     assert_eq!(listed(&mut app), [r"C:\c"]);
@@ -372,7 +372,7 @@ fn several_selected_items_open_together_and_folders_go_to_new_tabs() {
     assert_eq!(names(&app), [r"C:\x", r"C:\x\a", r"C:\x\b"]);
 
     app.select_tab(0);
-    let v = app.tabs[0].view.as_mut().unwrap();
+    let v = app.tabs.items[0].view.as_mut().unwrap();
     v.clear_selection();
     let a = v.find(b"a").unwrap();
     v.set_selected(a, true);
@@ -439,7 +439,7 @@ fn dropping_onto_the_new_tab_button_opens_new_tabs() {
 fn tab_actions_button_follows_its_flag() {
     let mut app = app_with(&[r"C:\x", r"C:\y"]);
     let r = app.layout.actions;
-    assert!(r.w > 0.0 && r.right() <= app.panels.caption[0].x);
+    assert!(r.w > 0.0 && r.right() <= app.tabs.panels.caption[0].x);
     ev(&mut app, Event::MouseDown { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x: r.x + 5.0, y: r.y + 5.0, button: MouseButton::Left });
     assert!(matches!(app.nav.palette.as_ref().map(|p| &p.pick), Some(crate::ui::palette::Pick::Tabs)), "the button opens Search Tabs");
@@ -513,12 +513,12 @@ fn drop_on(app: &mut App, from: usize, pick: impl Fn(&crate::ui::dock::Zone) -> 
     ev(app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     let r = app.panel_rect();
     ev(app, Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 });
-    let z = *app.docking.as_ref().unwrap().zones.iter().find(|z| pick(z)).expect("zone");
+    let z = *app.tabs.docking.as_ref().unwrap().zones.iter().find(|z| pick(z)).expect("zone");
     let (zx, zy) = (z.button.x + 2.0, z.button.y + 2.0);
     ev(app, Event::MouseMove { x: zx, y: zy });
-    assert_eq!(app.docking.as_ref().unwrap().hot.map(|k| app.docking.as_ref().unwrap().zones[k].dock), Some(z.dock));
+    assert_eq!(app.tabs.docking.as_ref().unwrap().hot.map(|k| app.tabs.docking.as_ref().unwrap().zones[k].dock), Some(z.dock));
     ev(app, Event::MouseUp { x: zx, y: zy, button: MouseButton::Left });
-    assert!(app.docking.is_none());
+    assert!(app.tabs.docking.is_none());
     let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
     app.frame(&mut g, Instant::now());
 }
@@ -527,18 +527,18 @@ fn drop_on(app: &mut App, from: usize, pick: impl Fn(&crate::ui::dock::Zone) -> 
 fn dropping_a_tab_on_a_zone_splits_moves_or_copies_it() {
     use crate::ui::dock::Dock;
     let mut app = app_with(&[r"C:\a", r"C:\b"]);
-    let first = app.panels.active;
+    let first = app.tabs.panels.active;
     drop_on(&mut app, 1, |z| matches!(z.dock, Dock::Split { down: false, before: false, .. }));
     assert_eq!(app.panel_count(), 2);
-    assert_ne!(app.panels.active, first);
+    assert_ne!(app.tabs.panels.active, first);
     assert_eq!(names(&app), [r"C:\b"]);
-    let second = app.panels.active;
+    let second = app.tabs.panels.active;
     assert!(app.panel_rect().x > 300.0, "the new panel is on the right");
     let (x, y) = tab_xy(&app, 0);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     let r = app.panel_rect();
     ev(&mut app, Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 });
-    let own = |app: &App| app.docking.as_ref().unwrap().zones.iter().any(|z| matches!(z.dock, Dock::Split { panel, .. } | Dock::Into(panel) if panel == second));
+    let own = |app: &App| app.tabs.docking.as_ref().unwrap().zones.iter().any(|z| matches!(z.dock, Dock::Split { panel, .. } | Dock::Into(panel) if panel == second));
     assert!(!own(&app), "the only tab of a panel is not offered its own panel");
     ev(&mut app, Event::Key { key: Key::Other, mods: CTRL, pressed: true });
     assert!(own(&app), "a copy may split its own panel, offered as soon as Ctrl goes down");
@@ -548,37 +548,37 @@ fn dropping_a_tab_on_a_zone_splits_moves_or_copies_it() {
     assert_eq!(app.panel_count(), 2);
     app.activate_panel(first);
     assert_eq!(names(&app), [r"C:\a"]);
-    let r = app.panels.list.iter().find(|p| p.id == second).unwrap().rect;
+    let r = app.tabs.panels.list.iter().find(|p| p.id == second).unwrap().rect;
     let (x, y) = tab_xy(&app, 0);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 });
-    let z = *app.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Into(second)).unwrap();
+    let z = *app.tabs.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Into(second)).unwrap();
     ev(&mut app, Event::MouseMove { x: z.button.x + 2.0, y: z.button.y + 2.0 });
     ev(&mut app, Event::Key { key: Key::Other, mods: Mods { ctrl: true, shift: false, alt: false }, pressed: true });
     ev(&mut app, Event::MouseUp { x: z.button.x + 2.0, y: z.button.y + 2.0, button: MouseButton::Left });
     assert_eq!(app.panel_count(), 2, "a copy leaves the source panel");
-    assert_eq!(app.panels.active, second);
+    assert_eq!(app.tabs.panels.active, second);
     assert_eq!(names(&app), [r"C:\b", r"C:\a"]);
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
     ev(&mut app, Event::Key { key: Key::Other, mods: NO, pressed: false });
     app.activate_panel(first);
-    let r = app.panels.list.iter().find(|p| p.id == second).unwrap().rect;
+    let r = app.tabs.panels.list.iter().find(|p| p.id == second).unwrap().rect;
     let (x, y) = tab_xy(&app, 0);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 });
-    let z = *app.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Into(second)).unwrap();
+    let z = *app.tabs.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Into(second)).unwrap();
     ev(&mut app, Event::MouseMove { x: z.button.x + 2.0, y: z.button.y + 2.0 });
     ev(&mut app, Event::MouseUp { x: z.button.x + 2.0, y: z.button.y + 2.0, button: MouseButton::Left });
     assert_eq!(app.panel_count(), 1, "moving the last tab away closes its panel");
     assert_eq!(names(&app), [r"C:\b", r"C:\a", r"C:\a"]);
     let (x, y) = tab_xy(&app, 0);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
-    let left = app.panels.left;
+    let left = app.tabs.panels.left;
     ev(&mut app, Event::MouseMove { x: left + 5.0, y: 400.0 });
-    let edge = app.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Window { before: true }).copied();
+    let edge = app.tabs.docking.as_ref().unwrap().zones.iter().find(|z| z.dock == Dock::Window { before: true }).copied();
     assert!(edge.is_some(), "the window edge offers a column");
     key(&mut app, Key::Escape, NO);
-    assert!(app.docking.is_none() && app.drag == Drag::None);
+    assert!(app.tabs.docking.is_none() && app.drag == Drag::None);
 }
 
 #[test]
@@ -598,7 +598,7 @@ fn a_new_tab_slides_in_and_the_strip_settles_without_more_frames() {
     a.open_new_tab(t0);
     let t1 = Instant::now();
     assert!(a.frame(&mut g, t1), "the new tab slides in");
-    assert!(a.strip.arrival(a.tabs[a.tabs.len() - 1].id, t1 + std::time::Duration::from_millis(20)) < 1.0);
+    assert!(a.tabs.strip.arrival(a.tabs.items[a.tabs.items.len() - 1].id, t1 + std::time::Duration::from_millis(20)) < 1.0);
     assert!(!a.frame(&mut g, t1 + std::time::Duration::from_millis(300)));
     a.animations = false;
     a.open_new_tab(t1);
@@ -610,8 +610,8 @@ fn a_new_tab_of_the_open_folder_shows_its_rows_at_once_and_refreshes_behind_them
     let mut app = app_with(&[r"C:\a"]);
     deliver(&mut app, &[("x.txt", false), ("y.txt", false), ("sub", true)]);
     app.open_new_tab(Instant::now());
-    assert_eq!(app.tabs.len(), 2);
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.items.len(), 2);
+    assert_eq!(app.tabs.cur, 1);
     assert_eq!(app.tab().view.as_ref().map(|v| v.rows().len()), Some(3), "the new tab draws the listing it duplicates on its first frame");
     assert_eq!(listed(&mut app), [r"C:\a"], "and still reads the folder in the background");
     deliver(&mut app, &[("x.txt", false), ("y.txt", false), ("sub", true), ("z.txt", false)]);
@@ -672,8 +672,8 @@ fn reopening_a_closed_tab_restores_its_history() {
     assert_eq!(app.tab().history.back_list().len(), 2);
     key(&mut app, Key::Char('W'), CTRL);
     assert_eq!(app.tabs().len(), 1);
-    assert_eq!(app.nav.closed.last().map(|c| c.location()), Some(&loc(r"C:\a\one\two")));
-    assert_eq!(app.nav.closed.last().map(|c| c.history.back_list().len()), Some(2), "the trail is remembered");
+    assert_eq!(app.tabs.closed.last().map(|c| c.location()), Some(&loc(r"C:\a\one\two")));
+    assert_eq!(app.tabs.closed.last().map(|c| c.history.back_list().len()), Some(2), "the trail is remembered");
     app.run_action("tab.reopen", Instant::now());
     assert_eq!(app.tabs().len(), 2);
     assert_eq!(*app.tab().location(), loc(r"C:\a\one\two"), "the tab reopens at its last folder");
@@ -744,14 +744,14 @@ fn each_reopened_tab_gets_its_own_history_also_from_the_tab_list() {
     app.run_action("tab.search", Instant::now());
     assert!(app.tab_row_closed(2));
     app.choose_tab_row(2, Instant::now());
-    assert_eq!((app.cur, names(&app)), (1, vec![r"C:\c".to_owned(), r"C:\a\x".to_owned(), r"C:\c".to_owned()]), "the latest closed tab opens next to the current one");
+    assert_eq!((app.tabs.cur, names(&app)), (1, vec![r"C:\c".to_owned(), r"C:\a\x".to_owned(), r"C:\c".to_owned()]), "the latest closed tab opens next to the current one");
     assert_eq!(app.tab().history.back_list(), [loc(r"C:\a")]);
     assert!(app.tabs()[2].history.back_list().is_empty(), "the last tab keeps its own empty history");
-    assert_eq!(app.nav.closed.len(), 1);
+    assert_eq!(app.tabs.closed.len(), 1);
     app.run_action("tab.reopen", Instant::now());
     assert_eq!(*app.tab().location(), loc(r"C:\b\y\z"));
     assert_eq!(app.tab().history.back_list(), [loc(r"C:\b"), loc(r"C:\b\y")], "the other closed tab kept its own trail");
-    assert!(app.nav.closed.is_empty());
+    assert!(app.tabs.closed.is_empty());
     app.run_action("tab.reopen", Instant::now());
     assert_eq!(app.tabs().len(), 4, "nothing more to reopen");
 }
@@ -763,12 +763,12 @@ fn a_new_tab_opens_next_to_the_current_one() {
     app.select_tab(1);
     key(&mut app, Key::Char('T'), CTRL);
     assert_eq!(app.tabs().len(), 4);
-    assert_eq!(app.cur, 2, "the new tab takes the place right of the current one");
+    assert_eq!(app.tabs.cur, 2, "the new tab takes the place right of the current one");
     assert_eq!(names(&app), [r"C:\a", r"C:\b", r"C:\b", r"C:\c"], "the tabs after it shift right");
     app.select_tab(0);
     key(&mut app, Key::Char('T'), CTRL);
     assert_eq!(names(&app), [r"C:\a", r"C:\a", r"C:\b", r"C:\b", r"C:\c"]);
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
 }
 
 #[test]
@@ -851,7 +851,7 @@ fn tabs_shrink_first_and_only_then_hide_behind_arrows_that_scroll_the_strip() {
 
     arrow_click(&mut app, true);
     assert_eq!(shown(&app)[0], 1, "the strip moves by one tab");
-    assert_eq!(app.cur, 0, "scrolling does not switch tabs");
+    assert_eq!(app.tabs.cur, 0, "scrolling does not switch tabs");
     app.layout();
     assert_eq!(shown(&app)[0], 1, "the next layout keeps the scrolled strip");
     assert_eq!(app.tip_text(Hit::TabScroll(false)).unwrap().details, ["1 tab is hidden on this side."]);
@@ -876,7 +876,7 @@ fn the_current_tab_is_scrolled_into_view_whenever_it_changes() {
     arrow_click(&mut app, true);
     key(&mut app, Key::Tab, CTRL);
     app.layout();
-    assert_eq!(app.cur, 29);
+    assert_eq!(app.tabs.cur, 29);
     assert!(shown(&app).contains(&29), "Ctrl+Tab brings the most recently used tab back into view");
 
     app.select_tab(29);
@@ -889,7 +889,7 @@ fn the_current_tab_is_scrolled_into_view_whenever_it_changes() {
     app.select_tab(29);
     app.run_action("tab.new", Instant::now());
     app.layout();
-    assert_eq!(app.cur, 30);
+    assert_eq!(app.tabs.cur, 30);
     assert!(shown(&app).contains(&30), "a new tab is in view");
 
     app.select_tab(3);
@@ -898,7 +898,7 @@ fn the_current_tab_is_scrolled_into_view_whenever_it_changes() {
     assert!(shown(&app).contains(&3), "a resize keeps the current tab in view");
     app.run_action("tab.close", Instant::now());
     app.layout();
-    assert!(shown(&app).contains(&app.cur), "closing the current tab shows the next current one");
+    assert!(shown(&app).contains(&app.tabs.cur), "closing the current tab shows the next current one");
 
     app.enter_focus(crate::ui::Focus::TabBar);
     key(&mut app, Key::End, NO);
@@ -908,7 +908,7 @@ fn the_current_tab_is_scrolled_into_view_whenever_it_changes() {
     assert!(kb > shown(&app)[0] && shown(&app).contains(&kb), "the keyboard focus scrolls the strip to its tab");
     key(&mut app, Key::Escape, NO);
     app.layout();
-    assert!(shown(&app).contains(&app.cur), "leaving the strip brings the current tab back");
+    assert!(shown(&app).contains(&app.tabs.cur), "leaving the strip brings the current tab back");
 
     let mut restored = app_with(&[r"C:\a"]);
     let locs: Vec<Location> = (0..30).map(|i| loc(&format!(r"C:\r{i:02}"))).collect();
@@ -923,7 +923,7 @@ fn scrolling_one_panel_strip_leaves_the_other_alone_and_its_arrows_work_while_pa
     app.animations = false;
     app.select_tab(0);
     key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
     app.activate_panel(0);
     app.layout();
     arrow_click(&mut app, true);
@@ -936,7 +936,7 @@ fn scrolling_one_panel_strip_leaves_the_other_alone_and_its_arrows_work_while_pa
     app.layout();
     assert!(app.layout.tab_arrows[0].w > 0.0, "the other panel overflows on its own");
     arrow_click(&mut app, false);
-    let parked = &app.panels.list.iter().find(|p| p.id == 0).unwrap().layout;
+    let parked = &app.tabs.panels.list.iter().find(|p| p.id == 0).unwrap().layout;
     assert_eq!(parked.tabs.iter().position(|(r, _)| r.w > 0.0), Some(first), "the parked strip keeps its place");
     let r = parked.tab_arrows[1];
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
@@ -944,7 +944,7 @@ fn scrolling_one_panel_strip_leaves_the_other_alone_and_its_arrows_work_while_pa
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
     app.layout();
-    assert_eq!(app.panels.active, 0);
+    assert_eq!(app.tabs.panels.active, 0);
     assert_eq!(shown(&app)[0], first + 1, "a parked panel's arrow scrolls that panel");
 }
 
@@ -973,8 +973,8 @@ fn dragging_a_tab_onto_an_arrow_scrolls_the_strip_step_by_step_and_esc_brings_it
     ev(&mut app, Event::MouseMove { x: right.0, y });
     app.layout();
     assert_eq!(shown(&app)[0], s0 + 1, "the strip moves by one tab, not to the end");
-    assert_eq!((app.cur, names(&app)[s0 + fit].as_str()), (s0 + fit, r"C:\t04"), "the dragged tab rides at the right edge");
-    assert!(shown(&app).contains(&app.cur), "the dragged tab stays in view");
+    assert_eq!((app.tabs.cur, names(&app)[s0 + fit].as_str()), (s0 + fit, r"C:\t04"), "the dragged tab rides at the right edge");
+    assert!(shown(&app).contains(&app.tabs.cur), "the dragged tab stays in view");
     ev(&mut app, Event::MouseMove { x: right.0 + 1.0, y });
     app.layout();
     assert_eq!(shown(&app)[0], s0 + 1, "moving over the arrow does not add steps");
@@ -982,16 +982,16 @@ fn dragging_a_tab_onto_an_arrow_scrolls_the_strip_step_by_step_and_esc_brings_it
     timer(&mut app, t + Duration::from_millis(100));
     assert_eq!(shown(&app)[0], s0 + 1, "it waits before repeating");
     timer(&mut app, t + super::HOLD_DELAY);
-    assert_eq!((shown(&app)[0], app.cur), (s0 + 2, s0 + fit + 1), "then steps while it stays over the arrow");
+    assert_eq!((shown(&app)[0], app.tabs.cur), (s0 + 2, s0 + fit + 1), "then steps while it stays over the arrow");
     timer(&mut app, t + super::HOLD_DELAY + super::HOLD_REPEAT);
-    assert_eq!((shown(&app)[0], app.cur), (s0 + 3, s0 + fit + 2));
+    assert_eq!((shown(&app)[0], app.tabs.cur), (s0 + 3, s0 + fit + 2));
     let left = centre(app.layout.tab_arrows[0]);
     ev(&mut app, Event::MouseMove { x: left.0, y });
     app.layout();
-    assert_eq!((shown(&app)[0], app.cur, names(&app)[s0 + 2].as_str()), (s0 + 2, s0 + 2, r"C:\t04"), "the left arrow steps back with the tab at its edge");
+    assert_eq!((shown(&app)[0], app.tabs.cur, names(&app)[s0 + 2].as_str()), (s0 + 2, s0 + 2, r"C:\t04"), "the left arrow steps back with the tab at its edge");
     key(&mut app, Key::Escape, NO);
     app.layout();
-    assert_eq!((app.cur, names(&app)[4].as_str()), (4, r"C:\t04"));
+    assert_eq!((app.tabs.cur, names(&app)[4].as_str()), (4, r"C:\t04"));
     assert!(shown(&app).contains(&4));
     let before = shown(&app)[0];
     timer(&mut app, t + Duration::from_secs(5));
@@ -1031,7 +1031,7 @@ fn a_held_arrow_repeats_until_released_or_left_and_a_click_steps_once() {
     timer(&mut app, step + super::HOLD_REPEAT * 3);
     assert_eq!(shown(&app)[0], 4, "and stops the repeat");
     assert!(!asks_timer(&mut app), "a released arrow asks for no more timers");
-    assert_eq!(app.cur, 0, "scrolling never switches tabs");
+    assert_eq!(app.tabs.cur, 0, "scrolling never switches tabs");
 
     arrow_click(&mut app, true);
     assert_eq!(shown(&app)[0], 5, "a click is one step");
@@ -1086,7 +1086,7 @@ fn a_narrow_window_keeps_the_arrows_and_new_tab_clear_of_the_window_buttons() {
         app.select_tab(10);
         app.layout();
         let l = &app.layout;
-        let limit = if l.actions.w > 0.0 { l.actions.x } else { app.panels.caption[0].x };
+        let limit = if l.actions.w > 0.0 { l.actions.x } else { app.tabs.panels.caption[0].x };
         assert_eq!(l.tab_arrows[0].w > 0.0, arrows, "{width}: arrows only where a tab still fits between them");
         assert!((!arrows || l.tab_arrows[0].x >= l.title.x) && l.new_tab.right() <= limit, "{width}: {:?} {:?} {limit}", l.tab_arrows, l.new_tab);
         assert!(l.tabs.iter().all(|(r, _)| r.w == 0.0 || !arrows || (r.x >= l.tab_arrows[0].right() && r.right() <= l.tab_arrows[1].x)), "{width}: tabs stay between the arrows");
@@ -1106,18 +1106,18 @@ fn while_a_new_panel_opens_the_left_strip_stays_clear_of_the_window_buttons() {
     let mut g = Gfx::new(crate::text::tests::Mono, 1024);
     let t = Instant::now();
     app.frame(&mut g, t);
-    let caption = app.panels.caption[0].x;
+    let caption = app.tabs.panels.caption[0].x;
     assert!(strip_end(&app.layout) <= caption, "one panel ends its strip before the window buttons");
     key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
-    assert!(app.panels.growing.is_some(), "the new panel grows in");
+    assert!(app.tabs.panels.growing.is_some(), "the new panel grows in");
     for k in [0, 16, 50, 100, 400] {
         app.frame(&mut g, ms(t, k));
-        let left = app.panels.list.iter().find(|p| p.id == 0).unwrap();
+        let left = app.tabs.panels.list.iter().find(|p| p.id == 0).unwrap();
         assert!(k > 0 || left.rect.right() > caption, "at first the left panel still reaches under the buttons");
         assert!(strip_end(&left.layout) <= caption, "{k} ms: the left strip ends at {} past the buttons at {caption}", strip_end(&left.layout));
     }
-    assert!(app.panels.growing.is_none());
-    let left = app.panels.list.iter().find(|p| p.id == 0).unwrap();
+    assert!(app.tabs.panels.growing.is_none());
+    let left = app.tabs.panels.list.iter().find(|p| p.id == 0).unwrap();
     let s4 = app.s(4.0);
     assert_eq!(left.layout.actions.right(), left.rect.right() - s4, "once the panel stops short of the buttons its strip uses its whole width");
     assert!(strip_end(&app.layout) <= caption, "the right panel keeps clear of the buttons");
@@ -1163,7 +1163,7 @@ fn a_closed_tab_shrinks_and_fades_while_its_right_neighbour_slides_into_its_plac
     let title = app.layout.title;
     let o = outlines(&app, &g, title);
     assert_eq!(o.iter().map(|o| (o.0.x, o.1)).collect::<Vec<_>>(), [(old1.x, full), (old2.x, full)], "at first the closed tab is where it was and its neighbour has not moved");
-    assert_eq!(app.strip.ghost_count(app.panels.here), 1);
+    assert_eq!(app.tabs.strip.ghost_count(app.tabs.panels.here), 1);
 
     assert!(app.frame(&mut g, ms(t1, 60)));
     let o = outlines(&app, &g, title);
@@ -1176,7 +1176,7 @@ fn a_closed_tab_shrinks_and_fades_while_its_right_neighbour_slides_into_its_plac
     assert!(!app.frame(&mut g, ms(t1, 200)), "the strip settles and asks for no more frames");
     let o = outlines(&app, &g, title);
     assert_eq!(o.iter().map(|o| (o.0.x, o.1)).collect::<Vec<_>>(), [(old1.x, full)]);
-    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+    assert_eq!(app.tabs.strip.ghost_count(app.tabs.panels.here), 0);
 }
 
 #[test]
@@ -1192,7 +1192,7 @@ fn without_animations_a_closed_tab_goes_at_once_and_no_frames_are_asked_for() {
     assert!(!app.frame(&mut g, ms(t0, 2000)));
     let o = outlines(&app, &g, app.layout.title);
     assert_eq!(o.iter().map(|o| o.0.x).collect::<Vec<_>>(), [old1.x], "the neighbour is in place on the first frame");
-    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+    assert_eq!(app.tabs.strip.ghost_count(app.tabs.panels.here), 0);
     assert!(!app.motion);
 }
 
@@ -1210,12 +1210,12 @@ fn during_the_close_animation_clicks_land_on_the_final_layout() {
     let t1 = ms(t0, 2000);
     app.frame(&mut g, t1);
     assert!(app.frame(&mut g, ms(t1, 50)), "still moving");
-    assert_eq!(app.strip.ghost_count(app.panels.here), 1, "a middle click animates too");
+    assert_eq!(app.tabs.strip.ghost_count(app.tabs.panels.here), 1, "a middle click animates too");
     let r = app.layout.tabs[1].0;
     let (x, y) = (r.x + 4.0, r.y + r.h / 2.0);
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
-    assert_eq!(app.cur, 1, "the click where C now stands selects it, the ghost of B is not hit");
+    assert_eq!(app.tabs.cur, 1, "the click where C now stands selects it, the ghost of B is not hit");
     assert_eq!(names(&app), [r"C:\a", r"C:\c", r"C:\d"]);
     assert_eq!(app.drag, Drag::None);
 }
@@ -1238,7 +1238,7 @@ fn quick_closes_each_leave_a_ghost_and_slides_go_on_from_where_tabs_are_drawn() 
     key(&mut app, Key::Char('W'), CTRL);
     assert_eq!(names(&app), [r"C:\a", r"C:\d"]);
     assert!(app.frame(&mut g, ms(t1, 40)));
-    assert_eq!(app.strip.ghost_count(app.panels.here), 2, "both closed tabs fade on their own");
+    assert_eq!(app.tabs.strip.ghost_count(app.tabs.panels.here), 2, "both closed tabs fade on their own");
     let o = outlines(&app, &g, title);
     assert_eq!(o.len(), 3, "{o:?}");
     assert!(o.iter().any(|o| o.0.x == c_at && o.1 == full), "C's ghost starts where C was drawn: {o:?} {c_at}");
@@ -1246,7 +1246,7 @@ fn quick_closes_each_leave_a_ghost_and_slides_go_on_from_where_tabs_are_drawn() 
     let d = o.iter().filter(|o| o.1 == full).map(|o| o.0.x).fold(f32::MIN, f32::max);
     assert!(d < old3.x && d > old1.x, "D goes on from where it was drawn, not from its old place: {d} {old3:?}");
     assert!(!app.frame(&mut g, ms(t1, 400)));
-    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+    assert_eq!(app.tabs.strip.ghost_count(app.tabs.panels.here), 0);
 }
 
 #[test]
@@ -1254,13 +1254,13 @@ fn closing_a_tab_in_one_panel_leaves_the_other_panel_strip_still() {
     let mut app = app_with(&[r"C:\a", r"C:\b"]);
     let mut g = Gfx::new(crate::text::tests::Mono, 1024);
     key(&mut app, Key::Char('S'), Mods { ctrl: true, shift: true, alt: false });
-    let (first, second) = (app.parked_ids()[0], app.panels.active);
+    let (first, second) = (app.parked_ids()[0], app.tabs.panels.active);
     app.run_action("tab.new", Instant::now());
     app.run_action("tab.new", Instant::now());
     app.select_tab(1);
     let t0 = Instant::now();
     app.frame(&mut g, ms(t0, 1000));
-    let other = app.panels.list.iter().find(|p| p.id == first).unwrap().layout.title;
+    let other = app.tabs.panels.list.iter().find(|p| p.id == first).unwrap().layout.title;
     let before = outlines(&app, &g, other);
     assert_eq!(before.len(), 1);
     let old1 = app.layout.tabs[1].0;
@@ -1269,8 +1269,8 @@ fn closing_a_tab_in_one_panel_leaves_the_other_panel_strip_still() {
     app.frame(&mut g, t1);
     assert!(app.frame(&mut g, ms(t1, 60)));
     assert_eq!(outlines(&app, &g, other), before, "the other panel's tabs do not move or fade");
-    assert_eq!(app.strip.ghost_count(first), 0);
-    assert_eq!(app.strip.ghost_count(second), 1);
+    assert_eq!(app.tabs.strip.ghost_count(first), 0);
+    assert_eq!(app.tabs.strip.ghost_count(second), 1);
     assert!(outlines(&app, &g, app.layout.title).iter().any(|o| o.0.x == old1.x && o.0.w < old1.w), "the closed tab fades in its own panel");
 }
 
@@ -1298,11 +1298,11 @@ fn closing_a_tab_of_an_overflowing_strip_animates_between_the_arrows() {
 }
 
 fn drawn(app: &App, i: usize) -> Rect {
-    app.strip.drawn(app.panels.here, crate::ui::tabbar::Part::Tab(app.tabs[i].id)).expect("drawn")
+    app.tabs.strip.drawn(app.tabs.panels.here, crate::ui::tabbar::Part::Tab(app.tabs.items[i].id)).expect("drawn")
 }
 
 fn plus_drawn(app: &App) -> Rect {
-    app.strip.drawn(app.panels.here, crate::ui::tabbar::Part::Plus).expect("drawn")
+    app.tabs.strip.drawn(app.tabs.panels.here, crate::ui::tabbar::Part::Plus).expect("drawn")
 }
 
 #[test]
@@ -1314,7 +1314,7 @@ fn a_new_tab_pushes_the_tabs_to_its_right_aside_and_clicks_use_the_final_places(
     app.frame(&mut g, ms(t0, 1000));
     let (old_b, old_c, old_plus) = (app.layout.tabs[1].0, app.layout.tabs[2].0, app.layout.new_tab);
     key(&mut app, Key::Char('T'), CTRL);
-    assert_eq!((app.cur, names(&app)), (1, vec![r"C:\a".to_owned(), r"C:\a".to_owned(), r"C:\b".to_owned(), r"C:\c".to_owned()]));
+    assert_eq!((app.tabs.cur, names(&app)), (1, vec![r"C:\a".to_owned(), r"C:\a".to_owned(), r"C:\b".to_owned(), r"C:\c".to_owned()]));
     let t1 = ms(t0, 2000);
     assert!(app.frame(&mut g, t1));
     assert_eq!((drawn(&app, 2).x, drawn(&app, 3).x, plus_drawn(&app).x), (old_b.x, old_c.x, old_plus.x), "at first the tabs on the right stay where they were");
@@ -1329,7 +1329,7 @@ fn a_new_tab_pushes_the_tabs_to_its_right_aside_and_clicks_use_the_final_places(
     assert!(!c.contains(x, y), "the click below lands where C is not drawn yet");
     ev(&mut app, Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 });
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Left });
-    assert_eq!(app.cur, 3, "a click on C's final place selects C");
+    assert_eq!(app.tabs.cur, 3, "a click on C's final place selects C");
 
     assert!(!app.frame(&mut g, ms(t1, 300)), "the strip settles");
     assert_eq!((drawn(&app, 2), drawn(&app, 3)), (app.layout.tabs[2].0, app.layout.tabs[3].0));
@@ -1346,7 +1346,7 @@ fn without_animations_a_new_tab_moves_its_neighbours_at_once() {
     key(&mut app, Key::Char('T'), CTRL);
     assert!(!app.frame(&mut g, ms(t0, 2000)), "no frames are asked for");
     assert!(!app.motion);
-    assert_eq!(app.strip.drawn(app.panels.here, crate::ui::tabbar::Part::Tab(app.tabs[2].id)), None, "nothing is remembered for animation");
+    assert_eq!(app.tabs.strip.drawn(app.tabs.panels.here, crate::ui::tabbar::Part::Tab(app.tabs.items[2].id)), None, "nothing is remembered for animation");
 }
 
 #[test]
@@ -1361,19 +1361,19 @@ fn dragging_a_tab_follows_the_pointer_while_neighbours_slide_into_the_insertion_
     ev(&mut app, Event::MouseMove { x: r2.x + r2.w * 0.75, y });
     assert_eq!(names(&app), [r"C:\b", r"C:\c", r"C:\a"]);
     assert!(app.frame(&mut g, ms(t0, 2000)));
-    assert_eq!(drawn(&app, app.cur).x, r2.x + r2.w * 0.75 - (x0 - app.layout.tabs[0].0.x), "the grabbed point stays under the cursor");
+    assert_eq!(drawn(&app, app.tabs.cur).x, r2.x + r2.w * 0.75 - (x0 - app.layout.tabs[0].0.x), "the grabbed point stays under the cursor");
     assert_ne!(drawn(&app, 0), app.layout.tabs[0].0, "neighbours animate to their new slots");
     assert!(app.insert_mark().is_some());
     app.frame(&mut g, ms(t0, 2070));
     let middle = drawn(&app, 0);
     assert!(middle.x > app.layout.tabs[0].0.x && middle.x < app.layout.tabs[1].0.x);
-    assert_eq!(app.strip.ghost_count(app.panels.here), 0);
+    assert_eq!(app.tabs.strip.ghost_count(app.tabs.panels.here), 0);
     ev(&mut app, Event::MouseUp { x: r2.x + r2.w * 0.75, y, button: MouseButton::Left });
     assert_eq!(app.drag, Drag::None);
     assert_eq!(app.insert_mark(), None);
     app.frame(&mut g, ms(t0, 2200));
     app.frame(&mut g, ms(t0, 2400));
-    assert_eq!(drawn(&app, app.cur), app.layout.tabs[app.cur].0);
+    assert_eq!(drawn(&app, app.tabs.cur), app.layout.tabs[app.tabs.cur].0);
 }
 
 #[test]

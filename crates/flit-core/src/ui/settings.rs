@@ -20,6 +20,48 @@ use serde_json::{Map, Value as Json};
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
+pub(super) struct SettingsState {
+    pub(super) screen: Option<super::settings_page::SettingsUi>,
+    pub(super) animations_wanted: bool,
+    pub(super) system_animations: bool,
+    pub(super) hide_companions: bool,
+    pub(super) metadata_ads: bool,
+    pub(super) archive_offer_pending: bool,
+    pub(super) background: bool,
+    pub(super) portal_picker: bool,
+    pub(super) shown_lang: Lang,
+    pub(super) folders: super::FolderViews,
+    pub(super) saved_filters: Vec<String>,
+    pub(super) ui_scale: u32,
+    pub(super) content_scale: u32,
+    pub(super) system_title_wanted: bool,
+    pub(super) keymap: Arc<Keymap>,
+    pub(super) opts: options::Opts,
+}
+
+impl SettingsState {
+    pub(super) fn new(folders: super::FolderViews) -> Self {
+        Self {
+            screen: None,
+            animations_wanted: true,
+            system_animations: true,
+            hide_companions: false,
+            metadata_ads: false,
+            archive_offer_pending: false,
+            background: false,
+            portal_picker: false,
+            shown_lang: i18n::lang(),
+            folders,
+            saved_filters: Vec::new(),
+            ui_scale: 100,
+            content_scale: 100,
+            system_title_wanted: false,
+            keymap: keymap::defaults(),
+            opts: Default::default(),
+        }
+    }
+}
+
 const MAX_PATHS: usize = 64;
 const MAX_STRINGS: usize = 256;
 const MAX_TEXT: usize = 4096;
@@ -303,29 +345,29 @@ pub static SETTINGS: &[Setting] = &[
         help: S::OptionsHelpContentScale,
         kind: Kind::Number { min: super::UI_SCALE.0 as i64, max: super::UI_SCALE.1 as i64, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.content_scale() as i64, set: |a, v| a.set_content_scale(v as u32) },
     },
-    Setting { id: "appearance.inspector_font", page: Page::Interface, title: S::OptionsTitleInspectorFont, help: S::OptionsHelpInspectorFont, kind: Kind::Text(|a| a.opts.inspector_font.clone(), |a, v| a.set_inspector_font(v)) },
+    Setting { id: "appearance.inspector_font", page: Page::Interface, title: S::OptionsTitleInspectorFont, help: S::OptionsHelpInspectorFont, kind: Kind::Text(|a| a.settings.opts.inspector_font.clone(), |a, v| a.set_inspector_font(v)) },
     Setting {
         id: "appearance.inspector_font_size",
         page: Page::Interface,
         title: S::OptionsTitleInspectorFontSize,
         help: S::OptionsHelpInspectorFontSize,
-        kind: Kind::Number { min: options::INSPECTOR_SIZE.0, max: options::INSPECTOR_SIZE.2, step: 1, unit: S::OptionsUnitPoints, zero: None, get: |a| a.opts.inspector_size as i64, set: |a, v| a.set_inspector_size(v as u8) },
+        kind: Kind::Number { min: options::INSPECTOR_SIZE.0, max: options::INSPECTOR_SIZE.2, step: 1, unit: S::OptionsUnitPoints, zero: None, get: |a| a.settings.opts.inspector_size as i64, set: |a, v| a.set_inspector_size(v as u8) },
     },
     Setting {
         id: SPACING,
         page: Page::Interface,
         title: S::OptionsTitleSpacing,
         help: S::OptionsHelpSpacing,
-        kind: Kind::Number { min: 0, max: 100, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.opts.spacing as i64, set: |a, v| a.set_spacing(v as u8) },
+        kind: Kind::Number { min: 0, max: 100, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.settings.opts.spacing as i64, set: |a, v| a.set_spacing(v as u8) },
     },
-    toggle("appearance.animations", Page::Interface, S::OptionsTitleAnimations, S::OptionsHelpAnimations, |a| a.animations_wanted, |a, on| a.set_animations_wanted(on)),
+    toggle("appearance.animations", Page::Interface, S::OptionsTitleAnimations, S::OptionsHelpAnimations, |a| a.settings.animations_wanted, |a, on| a.set_animations_wanted(on)),
     toggle("appearance.round_corners", Page::Interface, S::OptionsTitleRoundCorners, S::OptionsHelpRoundCorners, |a| a.round_corners, |a, on| a.round_corners = on),
     choice(LANGUAGE, Page::Interface, S::SettingsTitleGeneralLanguage, S::SettingsHelpGeneralLanguage, LANGUAGE_CHOICES, |a| a.language, |a, i| a.set_language(i)),
     choice("general.date_format", Page::Interface, S::SettingsTitleGeneralDateFormat, S::SettingsHelpGeneralDateFormat, DATE_CHOICES, |a| pos(&DATES, &a.style.dates), |a, i| a.set_style(|s| s.dates = DATES[i])),
     toggle("appearance.tab_actions", Page::Interface, S::SettingsTitleAppearanceTabActions, S::SettingsHelpAppearanceTabActions, |a| a.tab_actions_button, |a, on| a.tab_actions_button = on),
     choice("appearance.ops_button", Page::Interface, S::SettingsTitleAppearanceOpsButton, S::SettingsHelpAppearanceOpsButton, OPS_CHOICES, |a| usize::from(a.ops_button_always), |a, i| a.ops_button_always = i == 1),
     toggle("appearance.status_bar", Page::Interface, S::SettingsTitleAppearanceStatusBar, S::SettingsHelpAppearanceStatusBar, |a| a.prefs.status_bar, |a, on| a.set_pref(|p| &mut p.status_bar, on)),
-    choice(WINDOW_TITLE, Page::Interface, S::SettingsTitleAppearanceWindowTitle, S::SettingsHelpAppearanceWindowTitle, TITLE_CHOICES, |a| usize::from(a.system_title_wanted), |a, i| a.set_system_title_wanted(i == 1)),
+    choice(WINDOW_TITLE, Page::Interface, S::SettingsTitleAppearanceWindowTitle, S::SettingsHelpAppearanceWindowTitle, TITLE_CHOICES, |a| usize::from(a.settings.system_title_wanted), |a, i| a.set_system_title_wanted(i == 1)),
     toggle("general.shell_submenu", Page::Menu, S::SettingsTitleGeneralShellSubmenu, S::SettingsHelpGeneralShellSubmenu, |a| !a.shell_items_inline, |a, on| a.shell_items_inline = !on),
     toggle("general.menu_open_tab", Page::Menu, S::SettingsTitleGeneralMenuOpenTab, S::SettingsHelpGeneralMenuOpenTab, |a| shown_in_menu(a, "item.open_tab"), |a, on| show_in_menu(a, "item.open_tab", on)),
     toggle("general.menu_open_window", Page::Menu, S::SettingsTitleGeneralMenuOpenWindow, S::SettingsHelpGeneralMenuOpenWindow, |a| shown_in_menu(a, "item.open_window"), |a, on| show_in_menu(a, "item.open_window", on)),
@@ -341,13 +383,13 @@ pub static SETTINGS: &[Setting] = &[
     toggle("advanced.flatten_in_menu", Page::Menu, S::SettingsTitleAdvancedFlattenInMenu, S::SettingsHelpAdvancedFlattenInMenu, |a| a.show_flatten, |a, on| a.show_flatten = on),
     toggle("appearance.system_scheme", Page::Colors, S::OptionsTitleSystemScheme, S::OptionsHelpSystemScheme, |a| a.look.mode == Mode::System, |a, on| a.set_system_scheme(on)),
     choice("appearance.color_scheme", Page::Colors, S::OptionsTitleColorScheme, S::OptionsHelpColorScheme, SCHEME_CHOICES, |a| pos(&SCHEMES, &a.scheme()), |a, i| a.set_scheme(SCHEMES[i])),
-    toggle("appearance.alternating_rows", Page::Colors, S::OptionsTitleAlternatingRows, S::OptionsHelpAlternatingRows, |a| a.opts.alternating, |a, on| a.opts.alternating = on),
+    toggle("appearance.alternating_rows", Page::Colors, S::OptionsTitleAlternatingRows, S::OptionsHelpAlternatingRows, |a| a.settings.opts.alternating, |a, on| a.settings.opts.alternating = on),
     Setting {
         id: OPACITY,
         page: Page::Colors,
         title: S::OptionsTitleInactiveOpacity,
         help: S::OptionsHelpInactiveOpacity,
-        kind: Kind::Number { min: 0, max: 100, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.opts.inactive_opacity as i64, set: |a, v| a.opts.inactive_opacity = v as u8 },
+        kind: Kind::Number { min: 0, max: 100, step: 10, unit: S::SettingsUnitPercent, zero: None, get: |a| a.settings.opts.inactive_opacity as i64, set: |a, v| a.settings.opts.inactive_opacity = v as u8 },
     },
     pick("appearance.background", Picker::Color, S::SettingsTitleAppearanceBackground, S::SettingsHelpAppearanceBackground, |a| a.look.background.key(), |a, v| a.set_background(&v)),
     Setting { id: "appearance.background_image", page: Page::Colors, title: S::SettingsTitleAppearanceBackgroundImage, help: S::SettingsHelpAppearanceBackgroundImage, kind: Kind::Text(|a| a.look.backdrop_path.clone(), |a, v| a.set_backdrop(v)) },
@@ -358,8 +400,8 @@ pub static SETTINGS: &[Setting] = &[
     pick("appearance.color_pane", Picker::Color, S::SettingsTitleAppearanceColorPane, AREA_HELP, |a| a.look.areas[Area::Pane as usize].key(), |a, v| a.set_area_color(Area::Pane, &v)),
     toggle("files.extensions", Page::Files, S::OptionsTitleShowExtension, S::OptionsHelpShowExtension, |a| a.prefs.show_extensions, |a, on| a.set_pref(|p| &mut p.show_extensions, on)),
     toggle(LONG_PATHS, Page::Files, S::OptionsTitleLongPaths, S::OptionsHelpLongPaths, |_| true, |_, _| {}),
-    toggle("files.compact_paths", Page::Files, S::OptionsTitleCompactPaths, S::OptionsHelpCompactPaths, |a| a.opts.compact_paths, |a, on| a.set_compact_paths(on)),
-    toggle("files.breadcrumbs", Page::Files, S::OptionsTitleBreadcrumbs, S::OptionsHelpBreadcrumbs, |a| a.opts.breadcrumbs, |a, on| a.opts.breadcrumbs = on),
+    toggle("files.compact_paths", Page::Files, S::OptionsTitleCompactPaths, S::OptionsHelpCompactPaths, |a| a.settings.opts.compact_paths, |a, on| a.set_compact_paths(on)),
+    toggle("files.breadcrumbs", Page::Files, S::OptionsTitleBreadcrumbs, S::OptionsHelpBreadcrumbs, |a| a.settings.opts.breadcrumbs, |a, on| a.settings.opts.breadcrumbs = on),
     toggle("files.show_hidden", Page::Files, S::OptionsTitleShowHidden, S::OptionsHelpShowHidden, |a| a.show_hidden, |a, on| a.set_show_hidden(on)),
     toggle("files.system", Page::Files, S::OptionsTitleShowSystem, S::OptionsHelpShowSystem, |a| a.prefs.show_system, |a, on| a.set_pref(|p| &mut p.show_system, on)),
     toggle("files.dotfiles", Page::Files, S::SettingsTitleFilesDotfiles, S::SettingsHelpFilesDotfiles, |a| a.prefs.show_dotfiles, |a, on| a.set_pref(|p| &mut p.show_dotfiles, on)),
@@ -394,31 +436,31 @@ pub static SETTINGS: &[Setting] = &[
             a.toggle_auto_fit();
         }
     }),
-    choice("layout.rule_network", Page::Files, S::LayoutsRulesNetwork, S::LayoutsRulesNetworkHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.opts.view_rules.network), |a, i| {
-        a.opts.view_rules.network = RULE_LAYOUTS[i];
+    choice("layout.rule_network", Page::Files, S::LayoutsRulesNetwork, S::LayoutsRulesNetworkHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.network), |a, i| {
+        a.settings.opts.view_rules.network = RULE_LAYOUTS[i];
         a.refresh_view_rules();
     }),
-    choice("layout.rule_removable", Page::Files, S::LayoutsRulesRemovable, S::LayoutsRulesRemovableHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.opts.view_rules.removable), |a, i| {
-        a.opts.view_rules.removable = RULE_LAYOUTS[i];
+    choice("layout.rule_removable", Page::Files, S::LayoutsRulesRemovable, S::LayoutsRulesRemovableHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.removable), |a, i| {
+        a.settings.opts.view_rules.removable = RULE_LAYOUTS[i];
         a.refresh_view_rules();
     }),
-    choice("layout.rule_archive", Page::Files, S::LayoutsRulesArchive, S::LayoutsRulesArchiveHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.opts.view_rules.archive), |a, i| {
-        a.opts.view_rules.archive = RULE_LAYOUTS[i];
+    choice("layout.rule_archive", Page::Files, S::LayoutsRulesArchive, S::LayoutsRulesArchiveHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.archive), |a, i| {
+        a.settings.opts.view_rules.archive = RULE_LAYOUTS[i];
         a.refresh_view_rules();
     }),
-    toggle("layout.rule_search_grid", Page::Files, S::LayoutsRulesSearch, S::LayoutsRulesSearchHelp, |a| a.opts.view_rules.search_grid, |a, on| a.opts.view_rules.search_grid = on),
+    toggle("layout.rule_search_grid", Page::Files, S::LayoutsRulesSearch, S::LayoutsRulesSearchHelp, |a| a.settings.opts.view_rules.search_grid, |a, on| a.settings.opts.view_rules.search_grid = on),
     Setting {
         id: "layout.rule_pictures_min",
         page: Page::Files,
         title: S::LayoutsRulesPicturesShare,
         help: S::LayoutsRulesPicturesShareHelp,
-        kind: Kind::Number { min: 0, max: 100, step: 5, unit: S::SettingsUnitPercent, zero: Some(S::SettingsChoiceLogOff), get: |a| i64::from(a.opts.view_rules.pictures_min), set: |a, v| {
-            a.opts.view_rules.pictures_min = v as u8;
+        kind: Kind::Number { min: 0, max: 100, step: 5, unit: S::SettingsUnitPercent, zero: Some(S::SettingsChoiceLogOff), get: |a| i64::from(a.settings.opts.view_rules.pictures_min), set: |a, v| {
+            a.settings.opts.view_rules.pictures_min = v as u8;
             a.refresh_view_rules();
         } },
     },
-    choice("layout.rule_pictures_layout", Page::Files, S::LayoutsRulesPictures, S::LayoutsRulesPicturesHelp, PICTURE_CHOICES, |a| pos(&PICTURE_LAYOUTS, &a.opts.view_rules.pictures), |a, i| {
-        a.opts.view_rules.pictures = PICTURE_LAYOUTS[i];
+    choice("layout.rule_pictures_layout", Page::Files, S::LayoutsRulesPictures, S::LayoutsRulesPicturesHelp, PICTURE_CHOICES, |a| pos(&PICTURE_LAYOUTS, &a.settings.opts.view_rules.pictures), |a, i| {
+        a.settings.opts.view_rules.pictures = PICTURE_LAYOUTS[i];
         a.refresh_view_rules();
     }),
     Setting {
@@ -429,18 +471,18 @@ pub static SETTINGS: &[Setting] = &[
         kind: Kind::Number { min: super::THUMB_CACHE_MB.0 as i64, max: super::THUMB_CACHE_MB.2 as i64, step: 100, unit: S::SettingsUnitMb, zero: None, get: |a| a.prefs.thumb_cache_mb as i64, set: |a, v| a.prefs.thumb_cache_mb = v as u32 },
     },
     choice("files.thumbnails", Page::Data, S::OptionsTitleLoadThumbnails, S::OptionsHelpLoadThumbnails, THUMB_CHOICES, |a| a.thumbs_choice(), |a, i| a.set_thumbs_choice(i)),
-    choice("general.recents", Page::Data, S::OptionsTitleStoreRecents, S::OptionsHelpStoreRecents, RECENT_CHOICES, |a| pos(&RECENTS, &a.opts.recents), |a, i| a.opts.recents = RECENTS[i]),
+    choice("general.recents", Page::Data, S::OptionsTitleStoreRecents, S::OptionsHelpStoreRecents, RECENT_CHOICES, |a| pos(&RECENTS, &a.settings.opts.recents), |a, i| a.settings.opts.recents = RECENTS[i]),
     toggle("appearance.tooltips", Page::Data, S::OptionsTitleTooltips, S::OptionsHelpTooltips, |a| a.tooltips, |a, on| a.set_tooltips(on)),
     toggle("files.auto_sizes", Page::Data, S::OptionsTitleFolderSizes, S::OptionsHelpFolderSizes, |a| a.prefs.auto_sizes, |a, on| a.set_pref(|p| &mut p.auto_sizes, on)),
     toggle("files.count_folders", Page::Data, S::OptionsTitleCountFolders, S::OptionsHelpCountFolders, |a| a.prefs.count_folders, |a, on| a.set_pref(|p| &mut p.count_folders, on)),
     toggle("files.count_files", Page::Data, S::OptionsTitleCountFiles, S::OptionsHelpCountFiles, |a| a.prefs.count_files, |a, on| a.set_pref(|p| &mut p.count_files, on)),
-    toggle("files.sizes_ssd", Page::Data, S::OptionsTitleSizesSsd, S::OptionsHelpSizesSsd, |a| a.opts.sizes_ssd, |a, on| a.set_sizes_allowed(0, on)),
-    toggle("files.sizes_hdd", Page::Data, S::OptionsTitleSizesHdd, S::OptionsHelpSizesHdd, |a| a.opts.sizes_hdd, |a, on| a.set_sizes_allowed(1, on)),
-    toggle("files.sizes_network", Page::Data, S::OptionsTitleSizesNetwork, S::OptionsHelpSizesNetwork, |a| a.opts.sizes_network, |a, on| a.set_sizes_allowed(2, on)),
+    toggle("files.sizes_ssd", Page::Data, S::OptionsTitleSizesSsd, S::OptionsHelpSizesSsd, |a| a.settings.opts.sizes_ssd, |a, on| a.set_sizes_allowed(0, on)),
+    toggle("files.sizes_hdd", Page::Data, S::OptionsTitleSizesHdd, S::OptionsHelpSizesHdd, |a| a.settings.opts.sizes_hdd, |a, on| a.set_sizes_allowed(1, on)),
+    toggle("files.sizes_network", Page::Data, S::OptionsTitleSizesNetwork, S::OptionsHelpSizesNetwork, |a| a.settings.opts.sizes_network, |a, on| a.set_sizes_allowed(2, on)),
     toggle("files.git_integration", Page::Data, S::GitCloneIntegration, S::GitCloneIntegrationHelp, |a| a.prefs.git_integration, |a, on| a.set_git_integration(on)),
     toggle("advanced.indexing", Page::Data, S::SettingsTitleAdvancedIndexing, S::SettingsHelpAdvancedIndexing, |a| a.indexing, |a, on| a.set_indexing(on)),
-    Setting { id: "advanced.search_exclusions", page: Page::Data, title: S::SettingsTitleAdvancedSearchExclusions, help: S::SettingsHelpAdvancedSearchExclusions, kind: Kind::Paths(|a| a.search_exclusions.clone(), |a, paths| a.set_search_exclusions(paths)) },
-    toggle("input.act_on_press", Page::Input, S::OptionsTitleActOnPress, S::OptionsHelpActOnPress, |a| a.opts.act_on_press, |a, on| a.opts.act_on_press = on),
+    Setting { id: "advanced.search_exclusions", page: Page::Data, title: S::SettingsTitleAdvancedSearchExclusions, help: S::SettingsHelpAdvancedSearchExclusions, kind: Kind::Paths(|a| a.search.exclusions.clone(), |a, paths| a.set_search_exclusions(paths)) },
+    toggle("input.act_on_press", Page::Input, S::OptionsTitleActOnPress, S::OptionsHelpActOnPress, |a| a.settings.opts.act_on_press, |a, on| a.settings.opts.act_on_press = on),
     toggle(CHECKBOXES, Page::Input, S::OptionsTitleSelectionBoxes, S::OptionsHelpSelectionBoxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
     toggle("input.single_click", Page::Input, S::OptionsTitleSingleClick, S::OptionsHelpSingleClick, |a| a.single_click_files == ClickOpen::Always && a.single_click_folders == ClickOpen::Always, |a, on| {
         let mode = if on { ClickOpen::Always } else { ClickOpen::Never };
@@ -450,9 +492,9 @@ pub static SETTINGS: &[Setting] = &[
     choice("files.single_click_folders", Page::Input, S::SettingsTitleFilesSingleClickFolders, S::SettingsHelpFilesSingleClickFolders, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_folders), |a, i| a.single_click_folders = CLICKS[i]),
     choice("files.single_click_columns", Page::Input, S::SettingsTitleFilesSingleClickColumns, S::SettingsHelpFilesSingleClickColumns, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_columns), |a, i| a.single_click_columns = CLICKS[i]),
     toggle("files.double_click_up", Page::Input, S::OptionsTitleDoubleClickUp, S::OptionsHelpDoubleClickUp, |a| a.double_click_up, |a, on| a.double_click_up = on),
-    toggle("input.scroll_beyond", Page::Input, S::OptionsTitleScrollBeyond, S::OptionsHelpScrollBeyond, |a| a.opts.scroll_beyond, |a, on| a.opts.scroll_beyond = on),
-    toggle("input.reverse_scroll", Page::Input, S::OptionsTitleReverseScroll, S::OptionsHelpReverseScroll, |a| a.opts.reverse_scroll, |a, on| a.opts.reverse_scroll = on),
-    choice("input.char_key", Page::Input, S::OptionsTitleCharKey, S::OptionsHelpCharKey, CHAR_CHOICES, |a| pos(&CHARS, &a.opts.char_key), |a, i| a.opts.char_key = CHARS[i]),
+    toggle("input.scroll_beyond", Page::Input, S::OptionsTitleScrollBeyond, S::OptionsHelpScrollBeyond, |a| a.settings.opts.scroll_beyond, |a, on| a.settings.opts.scroll_beyond = on),
+    toggle("input.reverse_scroll", Page::Input, S::OptionsTitleReverseScroll, S::OptionsHelpReverseScroll, |a| a.settings.opts.reverse_scroll, |a, on| a.settings.opts.reverse_scroll = on),
+    choice("input.char_key", Page::Input, S::OptionsTitleCharKey, S::OptionsHelpCharKey, CHAR_CHOICES, |a| pos(&CHARS, &a.settings.opts.char_key), |a, i| a.settings.opts.char_key = CHARS[i]),
     toggle("files.hover_select", Page::Input, S::SettingsTitleFilesHoverSelect, S::SettingsHelpFilesHoverSelect, |a| a.prefs.hover_select, |a, on| a.set_pref(|p| &mut p.hover_select, on)),
     Setting {
         id: "files.spring_delay",
@@ -466,46 +508,46 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.smooth_scroll", Page::Input, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::Input, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
     toggle("general.mru_tabs", Page::Input, S::SettingsTitleGeneralMruTabs, S::SettingsHelpGeneralMruTabs, |a| a.mru_tabs, |a, on| { a.finish_tab_cycle(); a.mru_tabs = on; }),
-    Setting { id: "files.saved_filters", page: Page::Input, title: S::ActionsFilterSaved, help: S::DescribeFilterSaved, kind: Kind::Strings(|a| a.saved_filters.clone(), |a, v| a.set_saved_filters(v)) },
-    choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.opts.inspector_at), |a, i| a.opts.inspector_at = INSPECTORS[i]),
-    choice("windows.svg_background", Page::Windows, S::PreviewSvgBackground, S::PreviewSvgBackgroundHelp, SVG_BACKGROUNDS, |a| a.opts.svg_background as usize, |a, i| a.opts.svg_background = crate::preview::SvgBackground::ALL[i]),
+    Setting { id: "files.saved_filters", page: Page::Input, title: S::ActionsFilterSaved, help: S::DescribeFilterSaved, kind: Kind::Strings(|a| a.settings.saved_filters.clone(), |a, v| a.set_saved_filters(v)) },
+    choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.settings.opts.inspector_at), |a, i| a.settings.opts.inspector_at = INSPECTORS[i]),
+    choice("windows.svg_background", Page::Windows, S::PreviewSvgBackground, S::PreviewSvgBackgroundHelp, SVG_BACKGROUNDS, |a| a.settings.opts.svg_background as usize, |a, i| a.settings.opts.svg_background = crate::preview::SvgBackground::ALL[i]),
     choice("general.startup", Page::Windows, S::OptionsTitleLoadOnStartup, S::OptionsHelpLoadOnStartup, STARTUP, |a| match a.startup {
         Startup::Continue => 0,
         Startup::NewTab => 1,
         Startup::Folders(_) => 2,
     }, |a, i| a.set_startup(i)),
     Setting { id: "general.startup_pages", page: Page::Windows, title: S::SettingsTitleGeneralStartupPages, help: S::SettingsHelpGeneralStartupPages, kind: Kind::Paths(|a| a.startup_pages.clone(), |a, v| a.set_startup_pages(v)) },
-    choice("windows.new_tab", Page::Windows, S::OptionsTitleNewTabShow, S::OptionsHelpNewTabShow, NEW_TAB_CHOICES, |a| pos(&NEW_TABS, &a.opts.new_tab), |a, i| a.opts.new_tab = NEW_TABS[i]),
+    choice("windows.new_tab", Page::Windows, S::OptionsTitleNewTabShow, S::OptionsHelpNewTabShow, NEW_TAB_CHOICES, |a| pos(&NEW_TABS, &a.settings.opts.new_tab), |a, i| a.settings.opts.new_tab = NEW_TABS[i]),
     toggle("general.open_in_running", Page::Windows, S::SettingsTitleGeneralOpenInRunning, S::SettingsHelpGeneralOpenInRunning, |a| a.open_target != OpenTarget::NewWindow, |a, on| a.open_target = if on { OpenTarget::NewTab } else { OpenTarget::NewWindow }),
     toggle("general.switch_to_new_tab", Page::Windows, S::SettingsTitleGeneralSwitchToNewTab, S::SettingsHelpGeneralSwitchToNewTab, |a| a.switch_to_new_tab, |a, on| a.switch_to_new_tab = on),
     toggle("general.home_quick_access", Page::Windows, S::SettingsTitleGeneralHomeQuickAccess, S::SettingsHelpGeneralHomeQuickAccess, |a| a.widget_shown(Widget::QuickAccess), |a, on| set_widget(a, Widget::QuickAccess, on)),
     toggle("general.home_drives", Page::Windows, S::SettingsTitleGeneralHomeDrives, S::SettingsHelpGeneralHomeDrives, |a| a.widget_shown(Widget::Drives), |a, on| set_widget(a, Widget::Drives, on)),
     toggle("general.home_tags", Page::Windows, S::SettingsTitleGeneralHomeTags, S::SettingsHelpGeneralHomeTags, |a| a.widget_shown(Widget::Tags), |a, on| set_widget(a, Widget::Tags, on)),
     toggle("general.home_recent", Page::Windows, S::SettingsTitleGeneralHomeRecent, S::SettingsHelpGeneralHomeRecent, |a| a.widget_shown(Widget::Recent), |a, on| set_widget(a, Widget::Recent, on)),
-    toggle(BACKGROUND, Page::Windows, S::BackgroundTitle, S::BackgroundHelp, |a| a.background, |a, on| a.background = on),
+    toggle(BACKGROUND, Page::Windows, S::BackgroundTitle, S::BackgroundHelp, |a| a.settings.background, |a, on| a.settings.background = on),
     toggle(DEFAULT_MANAGER, Page::Advanced, S::SettingsTitleAdvancedDefaultManager, S::SettingsHelpAdvancedDefaultManager, |a| a.default_manager, |a, on| a.default_manager = on),
     toggle(QUICK_ACCESS_SYNC, Page::Advanced, S::SettingsTitleAdvancedQuickAccessSync, S::SettingsHelpAdvancedQuickAccessSync, |a| a.quick_access_sync, |a, on| a.quick_access_sync = on),
     choice(LOG_LEVEL, Page::Advanced, S::SettingsTitleAdvancedLogLevel, S::SettingsHelpAdvancedLogLevel, LOG_CHOICES, |a| a.log_level, |a, i| a.log_level = i),
-    toggle(PORTAL_PICKER, Page::Advanced, S::PickPortalTitle, S::PickPortalHelp, |a| a.portal_picker, |a, on| a.portal_picker = on),
+    toggle(PORTAL_PICKER, Page::Advanced, S::PickPortalTitle, S::PickPortalHelp, |a| a.settings.portal_picker, |a, on| a.settings.portal_picker = on),
     toggle(CHECK_UPDATES, Page::About, S::SettingsTitleUpdatesCheckOnStart, S::SettingsHelpUpdatesCheckOnStart, |a| a.updates.on_start, |a, on| a.updates.on_start = on),
     Setting { id: "updates.skipped", page: Page::About, title: S::SettingsTitleUpdatesSkipped, help: S::SettingsHelpUpdatesSkipped, kind: Kind::Strings(|a| a.updates.skipped.clone(), |a, v| a.updates.skipped = v) },
-    Setting { id: "keys", page: Page::Advanced, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.keymap.clone(), |a, k| a.set_keymap(k)) },
-    Setting { id: "menu.pins_file", page: Page::Menu, title: S::OptionsTitlePinsFile, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[0].clone(), |a, v| a.opts.pins[0] = v) },
-    Setting { id: "menu.pins_folder", page: Page::Menu, title: S::OptionsTitlePinsFolder, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[1].clone(), |a, v| a.opts.pins[1] = v) },
-    Setting { id: "menu.pins_background", page: Page::Menu, title: S::OptionsTitlePinsBackground, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.opts.pins[2].clone(), |a, v| a.opts.pins[2] = v) },
-    choice(MENU_KIND, Page::Menu, S::MenuEditorKindTitle, S::MenuEditorKindHelp, MENU_KINDS, |a| a.opts.menu.kind, |a, i| a.opts.menu.kind = i),
-    menu_list("menu.hidden_file", |a| a.opts.menu.hidden[0].clone(), |a, v| a.opts.menu.hidden[0] = v),
-    menu_list("menu.hidden_folder", |a| a.opts.menu.hidden[1].clone(), |a, v| a.opts.menu.hidden[1] = v),
-    menu_list("menu.hidden_background", |a| a.opts.menu.hidden[2].clone(), |a, v| a.opts.menu.hidden[2] = v),
-    menu_list("menu.order_file", |a| a.opts.menu.order[0].clone(), |a, v| a.opts.menu.order[0] = v),
-    menu_list("menu.order_folder", |a| a.opts.menu.order[1].clone(), |a, v| a.opts.menu.order[1] = v),
-    menu_list("menu.order_background", |a| a.opts.menu.order[2].clone(), |a, v| a.opts.menu.order[2] = v),
-    menu_list("menu.seen_file", |a| a.opts.menu.seen[0].clone(), |a, v| a.opts.menu.seen[0] = v),
-    menu_list("menu.seen_folder", |a| a.opts.menu.seen[1].clone(), |a, v| a.opts.menu.seen[1] = v),
-    menu_list("menu.seen_background", |a| a.opts.menu.seen[2].clone(), |a, v| a.opts.menu.seen[2] = v),
-    toggle("files.hide_companions", Page::Files, S::CompanionsHide, S::CompanionsHelp, |a| a.hide_companions, |a, on| a.set_companions(on)),
-    toggle("files.portable_ads", Page::Files, S::PortableMetaAds, S::PortableMetaAdsHelp, |a| a.metadata_ads, |a, on| a.set_metadata_ads(on)),
-    Setting { id: "menu.custom", page: Page::Menu, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
+    Setting { id: "keys", page: Page::Advanced, title: S::SettingsTitleKeys, help: S::SettingsHelpKeys, kind: Kind::Keys(|a| a.settings.keymap.clone(), |a, k| a.set_keymap(k)) },
+    Setting { id: "menu.pins_file", page: Page::Menu, title: S::OptionsTitlePinsFile, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.settings.opts.pins[0].clone(), |a, v| a.settings.opts.pins[0] = v) },
+    Setting { id: "menu.pins_folder", page: Page::Menu, title: S::OptionsTitlePinsFolder, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.settings.opts.pins[1].clone(), |a, v| a.settings.opts.pins[1] = v) },
+    Setting { id: "menu.pins_background", page: Page::Menu, title: S::OptionsTitlePinsBackground, help: S::OptionsHelpPins, kind: Kind::Strings(|a| a.settings.opts.pins[2].clone(), |a, v| a.settings.opts.pins[2] = v) },
+    choice(MENU_KIND, Page::Menu, S::MenuEditorKindTitle, S::MenuEditorKindHelp, MENU_KINDS, |a| a.settings.opts.menu.kind, |a, i| a.settings.opts.menu.kind = i),
+    menu_list("menu.hidden_file", |a| a.settings.opts.menu.hidden[0].clone(), |a, v| a.settings.opts.menu.hidden[0] = v),
+    menu_list("menu.hidden_folder", |a| a.settings.opts.menu.hidden[1].clone(), |a, v| a.settings.opts.menu.hidden[1] = v),
+    menu_list("menu.hidden_background", |a| a.settings.opts.menu.hidden[2].clone(), |a, v| a.settings.opts.menu.hidden[2] = v),
+    menu_list("menu.order_file", |a| a.settings.opts.menu.order[0].clone(), |a, v| a.settings.opts.menu.order[0] = v),
+    menu_list("menu.order_folder", |a| a.settings.opts.menu.order[1].clone(), |a, v| a.settings.opts.menu.order[1] = v),
+    menu_list("menu.order_background", |a| a.settings.opts.menu.order[2].clone(), |a, v| a.settings.opts.menu.order[2] = v),
+    menu_list("menu.seen_file", |a| a.settings.opts.menu.seen[0].clone(), |a, v| a.settings.opts.menu.seen[0] = v),
+    menu_list("menu.seen_folder", |a| a.settings.opts.menu.seen[1].clone(), |a, v| a.settings.opts.menu.seen[1] = v),
+    menu_list("menu.seen_background", |a| a.settings.opts.menu.seen[2].clone(), |a, v| a.settings.opts.menu.seen[2] = v),
+    toggle("files.hide_companions", Page::Files, S::CompanionsHide, S::CompanionsHelp, |a| a.settings.hide_companions, |a, on| a.set_companions(on)),
+    toggle("files.portable_ads", Page::Files, S::PortableMetaAds, S::PortableMetaAdsHelp, |a| a.settings.metadata_ads, |a, on| a.set_metadata_ads(on)),
+    Setting { id: "menu.custom", page: Page::Menu, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.settings.opts.user_menu.clone(), |a, v| a.settings.opts.user_menu = v) },
     toggle(AUTOSTART, Page::Advanced, S::SettingsPageSystemAutostart, S::SettingsPageSystemAutostartHelp, |a| a.autostart, |a, on| a.autostart = on),
     toggle(PROTOCOL_LINKS, Page::Advanced, S::SettingsPageSystemProtocol, S::SettingsPageSystemProtocolHelp, |a| a.protocol_links, |a, on| a.protocol_links = on),
 ];
@@ -518,7 +560,7 @@ impl Setting {
     pub fn enabled(&self, a: &App) -> bool {
         self.id != LONG_PATHS && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id)) && (self.id != WINDOW_TITLE || a.server_frames != Some(false))
             && (!a.about.system_integration_unavailable || !matches!(self.id, AUTOSTART | PROTOCOL_LINKS))
-            && (self.id != BACKGROUND || !a.caps.unix_paths || a.tray_available || a.background)
+            && (self.id != BACKGROUND || !a.caps.unix_paths || a.tray_available || a.settings.background)
     }
 
     pub fn get(&self, a: &App) -> Value {
@@ -757,7 +799,7 @@ pub fn render(values: &[Value], unknown: &Map<String, Json>, tags: Option<&[Tag]
 
 impl App {
     pub fn keeps_recents(&self) -> bool {
-        self.opts.recents != super::options::Recents::Never
+        self.settings.opts.recents != super::options::Recents::Never
     }
 
     pub fn setting_values(&self) -> Vec<Value> {
@@ -816,11 +858,11 @@ impl App {
 
     pub(super) fn relabel(&mut self) {
         let l = i18n::lang();
-        if self.shown_lang == l {
+        if self.settings.shown_lang == l {
             return;
         }
-        let old = std::mem::replace(&mut self.shown_lang, l);
-        for t in &mut self.tabs {
+        let old = std::mem::replace(&mut self.settings.shown_lang, l);
+        for t in &mut self.tabs.items {
             if let Some(e) = &mut t.error {
                 *e = i18n::relocalize(e, old).into_owned();
             }
@@ -870,9 +912,9 @@ impl App {
     }
 
     fn set_companions(&mut self, on: bool) {
-        if self.hide_companions == on { return; }
-        self.hide_companions = on;
-        for k in 0..self.tabs.len() {
+        if self.settings.hide_companions == on { return; }
+        self.settings.hide_companions = on;
+        for k in 0..self.tabs.items.len() {
             self.sync_spec(k);
             self.resort(k);
         }
@@ -880,9 +922,9 @@ impl App {
 
     fn set_show_hidden(&mut self, on: bool) {
         self.show_hidden = on;
-        for k in 0..self.tabs.len() {
-            if self.tabs[k].view_spec.show_hidden != on {
-                self.tabs[k].view_spec.show_hidden = on;
+        for k in 0..self.tabs.items.len() {
+            if self.tabs.items[k].view_spec.show_hidden != on {
+                self.tabs.items[k].view_spec.show_hidden = on;
                 self.resort(k);
             }
         }

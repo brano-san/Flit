@@ -738,25 +738,25 @@ impl App {
     }
 
     pub fn folder_views(&self) -> &FolderViews {
-        &self.folders
+        &self.settings.folders
     }
 
     fn view_for(&self, t: &Tab) -> FolderView {
         let inherited = if t.mode == LayoutMode::Columns { t.folder_view() } else { self.prefs.defaults };
-        self.folders.owner(&lineage(t.location())).and_then(|k| self.folders.get(k)).unwrap_or(inherited)
+        self.settings.folders.owner(&lineage(t.location())).and_then(|k| self.settings.folders.get(k)).unwrap_or(inherited)
     }
 
     pub(super) fn has_saved_view(&self, location: &Location) -> bool {
-        self.folders.owner(&lineage(location)).is_some()
+        self.settings.folders.owner(&lineage(location)).is_some()
     }
 
     pub(super) fn view_mode(&self) -> ViewMode {
-        self.folders.mode(folder_key(self.current_location()))
+        self.settings.folders.mode(folder_key(self.current_location()))
     }
 
     pub(super) fn set_view_mode(&mut self, mode: ViewMode) {
         let t = self.tab();
-        self.folders.set_mode(folder_key(t.location()), mode, t.folder_view());
+        self.settings.folders.set_mode(folder_key(t.location()), mode, t.folder_view());
         self.dirty = true;
     }
 
@@ -783,7 +783,7 @@ impl App {
     }
 
     pub(super) fn clear_folder_views(&mut self) {
-        self.folders.clear();
+        self.settings.folders.clear();
         self.dirty = true;
     }
 
@@ -793,23 +793,23 @@ impl App {
 
     pub(super) fn load_tab_restored(&mut self, k: usize, select: Option<Vec<u8>>, restore: Option<crate::nav::Restore>, now: Instant) {
         let gen = self.gen();
-        let arriving = self.tabs[k].view_loc != *self.tabs[k].location();
-        let fresh = arriving || self.tabs[k].view.is_none();
+        let arriving = self.tabs.items[k].view_loc != *self.tabs.items[k].location();
+        let fresh = arriving || self.tabs.items[k].view.is_none();
         if arriving {
-            let loc = self.tabs[k].location().clone();
+            let loc = self.tabs.items[k].location().clone();
             self.count_visit(&loc);
         }
         if !self.prefs.same_for_all {
-            let fv = self.view_for(&self.tabs[k]);
-            self.tabs[k].set_folder_view(fv);
+            let fv = self.view_for(&self.tabs.items[k]);
+            self.tabs.items[k].set_folder_view(fv);
         }
-        if fresh && self.tabs[k].location().is_root() {
-            self.tabs[k].subfolders = false;
+        if fresh && self.tabs.items[k].location().is_root() {
+            self.tabs.items[k].subfolders = false;
         }
         self.sync_spec(k);
-        self.tabs[k].retain_filter = self.prefs.retain_filter;
+        self.tabs.items[k].retain_filter = self.prefs.retain_filter;
         let case = self.case;
-        self.tabs[k].load(gen, select, restore, case, now, &mut self.effects);
+        self.tabs.items[k].load(gen, select, restore, case, now, &mut self.effects);
         if !self.nav.sidebar.prefs.saved_servers.is_empty() {
             self.show_saved_servers(k);
         }
@@ -819,9 +819,9 @@ impl App {
 
     pub(super) fn sync_spec(&mut self, k: usize) {
         let (p, tz) = (&self.prefs, self.utc_offset_min);
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         let (deep, tree) = (t.subfolders, t.mode == LayoutMode::Tree);
-        let hide_companions = self.hide_companions && t.location().provider() == crate::location::ProviderId::Local;
+        let hide_companions = self.settings.hide_companions && t.location().provider() == crate::location::ProviderId::Local;
         let v = &mut t.view_spec;
         v.hide_dotfiles = !p.show_dotfiles;
         v.hide_companions = hide_companions;
@@ -840,20 +840,20 @@ impl App {
         }
         let t = self.tab();
         let special = matches!(t.location().path().kind(), PathKind::RecycleBin | PathKind::Computer | PathKind::Home);
-        match self.folders.owner(&lineage(t.location())) {
-            Some(k) => self.folders.put(k, t.folder_view()),
-            None if special => self.folders.put(folder_key(t.location()), t.folder_view()),
+        match self.settings.folders.owner(&lineage(t.location())) {
+            Some(k) => self.settings.folders.put(k, t.folder_view()),
+            None if special => self.settings.folders.put(folder_key(t.location()), t.folder_view()),
             None if t.mode != LayoutMode::Columns => self.prefs.defaults = t.folder_view(),
             None => {}
         }
     }
 
     pub(super) fn change_view(&mut self, f: impl FnOnce(&mut Tab)) {
-        let k = self.cur;
-        let before = self.tabs[k].view_spec;
-        f(&mut self.tabs[k]);
+        let k = self.tabs.cur;
+        let before = self.tabs.items[k].view_spec;
+        f(&mut self.tabs.items[k]);
         self.sync_spec(k);
-        if self.tabs[k].view_spec != before {
+        if self.tabs.items[k].view_spec != before {
             self.resort(k);
         }
         self.remember_view();
@@ -897,10 +897,10 @@ impl App {
         if c != Column::Name {
             self.change_view(|t| t.columns.toggle(c));
             if c.is_git() {
-                self.git_refresh(self.cur, false);
+                self.git_refresh(self.tabs.cur, false);
             }
             if self.prefs.auto_fit {
-                self.request_auto_fit(self.cur);
+                self.request_auto_fit(self.tabs.cur);
             }
             if matches!(c, Column::Size | Column::Folders | Column::Files) {
                 self.compute_dir_sizes();
@@ -1068,7 +1068,7 @@ impl App {
     }
 
     fn request_auto_fit(&mut self, k: usize) {
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         if !t.fit_pending {
             (t.fit_pending, t.fit_keeps_name) = (true, true);
         }
@@ -1078,7 +1078,7 @@ impl App {
     pub(super) fn toggle_auto_fit(&mut self) {
         self.prefs.auto_fit = !self.prefs.auto_fit;
         if self.prefs.auto_fit {
-            self.request_auto_fit(self.cur);
+            self.request_auto_fit(self.tabs.cur);
         }
     }
 
@@ -1088,11 +1088,11 @@ impl App {
         *p = !*p;
         self.each_pane(|a, k| {
             if !a.folder_stats_visible_in(k) {
-                a.tabs[k].stop_sizes();
+                a.tabs.items[k].stop_sizes();
             }
-            let before = a.tabs[k].view_spec;
+            let before = a.tabs.items[k].view_spec;
             a.sync_spec(k);
-            if a.tabs[k].view_spec != before {
+            if a.tabs.items[k].view_spec != before {
                 a.resort(k);
             }
         });
@@ -1112,7 +1112,7 @@ impl App {
     pub(super) fn toggle_streams(&mut self, now: Instant) {
         self.toggle_pref(|p| &mut p.show_streams);
         if self.prefs.show_streams {
-            for k in 0..self.tabs.len() {
+            for k in 0..self.tabs.items.len() {
                 self.reload(k, now);
             }
         }
@@ -1124,17 +1124,17 @@ impl App {
     }
 
     pub(super) fn fit_columns<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump) {
-        let k = self.cur;
-        if !std::mem::take(&mut self.tabs[k].fit_pending) {
+        let k = self.tabs.cur;
+        if !std::mem::take(&mut self.tabs.items[k].fit_pending) {
             return;
         }
-        let only = self.tabs[k].fit_column.take();
-        let keep_name = std::mem::take(&mut self.tabs[k].fit_keeps_name);
+        let only = self.tabs.items[k].fit_column.take();
+        let keep_name = std::mem::take(&mut self.tabs.items[k].fit_keeps_name);
         let (font, hfont) = (self.content_font(13.0), self.content_font(12.0));
         let (pad, glyph) = (self.cs(10.0), self.cs(20.0));
         let f = self.flow();
         let lines = self.visible_lines(&f);
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         let Some(v) = &t.view else { return };
         let mut cols = t.columns;
         let name_fixed = cols.width(Column::Name) > 0.0 && !keep_name;
@@ -1379,7 +1379,7 @@ impl App {
         if self.prefs.auto_fit {
             self.request_auto_fit(k);
         }
-        if k == self.cur {
+        if k == self.tabs.cur {
             self.compute_dir_sizes();
         }
     }

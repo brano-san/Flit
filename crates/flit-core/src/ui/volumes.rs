@@ -74,7 +74,7 @@ impl App {
     }
 
     pub(super) fn ask_unlock(&mut self, device: FsPath, title: &str, wrong: bool) -> bool {
-        if self.jobs.form.is_some() {
+        if self.dialogs.form.is_some() {
             return false;
         }
         let controls = vec![Control::value(S::SidebarDriveVolume.t(), title), Control::secret(S::SidebarDrivePassphrase.t(), "")];
@@ -91,9 +91,9 @@ impl App {
         if self.ask_unlock(device, &title, true) {
             return;
         }
-        let k = self.tabs.iter().position(|t| t.id == tab).unwrap_or(self.cur);
-        self.tabs[k].error = Some(S::ErrorsFsWrongPassphrase.t().to_owned());
-        self.dirty |= k == self.cur;
+        let k = self.tabs.items.iter().position(|t| t.id == tab).unwrap_or(self.tabs.cur);
+        self.tabs.items[k].error = Some(S::ErrorsFsWrongPassphrase.t().to_owned());
+        self.dirty |= k == self.tabs.cur;
     }
 
     pub(super) fn submit_unlock(&mut self, f: Form) -> Option<Form> {

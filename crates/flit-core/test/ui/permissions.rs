@@ -49,7 +49,7 @@ fn toggling_group_write_and_execution_emits_one_access_change() {
     let accounts = Accounts { users: vec![(1000, "u".into()), (0, "root".into())], groups: vec![(1000, "u".into()), (27, "sudo".into())] };
     let tab = app.tab().id;
     app.on_provider_event(ProviderEvent::Access { tab, id, items: vec![Some(Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 })], accounts }, Instant::now());
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     let Kind::Properties(Measuring { probe: Probe::Editing(e), .. }) = &f.kind else { panic!("no permissions section") };
     let (at, exec, group_name) = (e.at, e.exec_at().unwrap(), e.group_at());
     if let Control::Flags { items, .. } = &mut f.controls[at + 2] {
@@ -60,10 +60,10 @@ fn toggling_group_write_and_execution_emits_one_access_change() {
         *on = true;
     }
     app.form_changed(exec);
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert_eq!(f.flags(at + 3), vec![true, false, true], "others can read, so they may run it too");
     key(&mut app, Key::Enter);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     let edit = AccessEdit { mode: ModeEdit { set: 0o131, clear: 0 }, group: Some(27), ..Default::default() };
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), vec![FileOp::SetAccess { items: vec![p("/home/u/tool")], edit }]);
 }
@@ -76,12 +76,12 @@ fn an_unknown_owner_keeps_the_dialog_open() {
     let id = app.drain_effects().find_map(|e| if let Effect::Provider { req: ProviderRequest::Access { id, .. }, .. } = e { Some(id) } else { None }).unwrap();
     let tab = app.tab().id;
     app.on_provider_event(ProviderEvent::Access { tab, id, items: vec![Some(Access { mode: Access::FILE | 0o600, uid: 1000, gid: 1000 })], accounts: Accounts::default() }, Instant::now());
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     let Kind::Properties(Measuring { probe: Probe::Editing(e), .. }) = &f.kind else { panic!() };
     let owner = e.owner_at();
     f.set_text(owner, "nobody-here");
     key(&mut app, Key::Enter);
-    assert!(app.jobs.form.as_ref().is_some_and(|f| f.error));
+    assert!(app.dialogs.form.as_ref().is_some_and(|f| f.error));
     assert!(ops(&mut app).is_empty());
 }
 
@@ -119,7 +119,7 @@ fn folders_in_the_selection_get_separate_masks_for_enclosed_files_and_folders() 
     let accounts = Accounts { users: vec![(1000, "u".into())], groups: vec![(1000, "u".into())] };
     let tab = app.tab().id;
     app.on_provider_event(ProviderEvent::Access { tab, id, items: vec![Some(Access { mode: Access::DIR | 0o750, uid: 1000, gid: 1000 })], accounts }, Instant::now());
-    let f = app.jobs.form.as_mut().unwrap();
+    let f = app.dialogs.form.as_mut().unwrap();
     let Kind::Properties(Measuring { probe: Probe::Editing(e), .. }) = &f.kind else { panic!("no permissions section") };
     let (files_at, folders_at) = (e.enclosed_files_at().expect("enclosed masks are shown"), e.enclosed_folders_at().unwrap());
     assert_eq!(f.flags(files_at + 1), vec![true, true, false], "enclosed files default to the folder rights without the execute bits");
@@ -149,7 +149,7 @@ fn files_only_selection_has_no_enclosed_masks_and_the_run_check() {
     let accounts = Accounts::default();
     let tab = app.tab().id;
     app.on_provider_event(ProviderEvent::Access { tab, id, items: vec![Some(Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 })], accounts }, Instant::now());
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     let Kind::Properties(Measuring { probe: Probe::Editing(e), .. }) = &f.kind else { panic!("no permissions section") };
     assert!(e.enclosed_files_at().is_none() && e.enclosed_folders_at().is_none(), "a plain file shows no enclosed masks");
     assert!(e.exec_at().is_some(), "a plain file keeps the execute checkbox");
@@ -161,7 +161,7 @@ fn the_run_question_can_run_the_program_in_a_terminal_instead() {
     let (tab, path) = (app.tab().id, p("/home/u/Tool.AppImage"));
     app.on_provider_event(ProviderEvent::NotExecutable { tab, path: path.clone() }, Instant::now());
     assert_eq!(app.asking(), Some("allow_run"));
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert_eq!(f.buttons, ["Allow and run", "Run in terminal", "Cancel"]);
     key(&mut app, Key::Right);
     key(&mut app, Key::Enter);
@@ -198,13 +198,13 @@ fn an_executable_script_asks_to_run_it_in_a_terminal_or_open_it() {
         let tab = app.tab().id;
         app.on_provider_event(ProviderEvent::OpenAsk { tab, path: path.clone(), ask: OpenAsk::Script }, Instant::now());
         assert_eq!(app.asking(), Some("run_script"));
-        assert_eq!(app.jobs.form.as_ref().unwrap().buttons, ["Run", "Run in terminal", "Open", "Cancel"]);
+        assert_eq!(app.dialogs.form.as_ref().unwrap().buttons, ["Run", "Run in terminal", "Open", "Cancel"]);
         for _ in 0..rights {
             key(&mut app, Key::Right);
         }
         key(&mut app, Key::Enter);
         assert_eq!(launched(&mut app), [expected]);
-        assert!(app.jobs.form.is_none());
+        assert!(app.dialogs.form.is_none());
     }
 }
 
@@ -214,9 +214,9 @@ fn cancelling_the_script_question_runs_nothing_and_a_second_question_waits_for_t
     let tab = app.tab().id;
     app.on_provider_event(ProviderEvent::OpenAsk { tab, path: p("/home/u/a.sh"), ask: OpenAsk::Script }, Instant::now());
     app.on_provider_event(ProviderEvent::OpenAsk { tab, path: p("/home/u/b.sh"), ask: OpenAsk::Script }, Instant::now());
-    assert!(matches!(&app.jobs.form.as_ref().unwrap().kind, Kind::RunScript { path, .. } if *path == p("/home/u/a.sh")));
+    assert!(matches!(&app.dialogs.form.as_ref().unwrap().kind, Kind::RunScript { path, .. } if *path == p("/home/u/a.sh")));
     key(&mut app, Key::Escape);
-    assert!(launched(&mut app).is_empty() && app.jobs.form.is_none());
+    assert!(launched(&mut app).is_empty() && app.dialogs.form.is_none());
 }
 
 #[test]
@@ -235,7 +235,7 @@ fn an_untrusted_launcher_is_allowed_and_started_without_a_terminal_choice() {
     let mut app = app_with(&["Game.desktop"]);
     let (tab, path) = (app.tab().id, p("/home/u/Game.desktop"));
     app.on_provider_event(ProviderEvent::NotExecutable { tab, path: path.clone() }, Instant::now());
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, ["Allow and run", "Cancel"]);
+    assert_eq!(app.dialogs.form.as_ref().unwrap().buttons, ["Allow and run", "Cancel"]);
     key(&mut app, Key::Enter);
     let [(_, op)] = ops(&mut app).try_into().unwrap();
     assert_eq!(op, FileOp::SetAccess { items: vec![path], edit: AccessEdit { mode: ModeEdit { set: 0o100, clear: 0 }, ..Default::default() } });
@@ -249,7 +249,7 @@ fn the_four_script_buttons_fit_a_narrow_window_without_overlapping() {
     app.on_provider_event(ProviderEvent::OpenAsk { tab, path: p("/home/u/a-rather-long-script-name-for-a-narrow-window.sh"), ask: OpenAsk::Script }, Instant::now());
     let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
     app.frame(&mut g, Instant::now());
-    let f = app.jobs.form.as_ref().unwrap();
+    let f = app.dialogs.form.as_ref().unwrap();
     assert_eq!(f.button_rects.len(), 4);
     assert!(f.button_rects.iter().all(|b| b.x >= f.rect.x && b.right() <= f.rect.right() && b.w > 0.0), "{:?} in {:?}", f.button_rects, f.rect);
     assert!(f.button_rects.windows(2).all(|w| w[0].right() <= w[1].x), "{:?}", f.button_rects);
@@ -265,20 +265,20 @@ fn permissions_show_ok_and_cancel_only_once_changed_and_a_stray_click_keeps_the_
     let accounts = Accounts { users: vec![(1000, "u".into())], groups: vec![(1000, "u".into())] };
     app.on_provider_event(ProviderEvent::Access { tab, id, items: vec![Some(Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 })], accounts }, Instant::now());
     app.layout();
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "reading the permissions alone changes nothing");
-    let f = app.jobs.form.as_mut().unwrap();
+    assert_eq!(app.dialogs.form.as_ref().unwrap().buttons, [S::ArchiveClose.t()], "reading the permissions alone changes nothing");
+    let f = app.dialogs.form.as_mut().unwrap();
     let Kind::Properties(Measuring { probe: Probe::Editing(e), .. }) = &f.kind else { panic!("no permissions section") };
     let group = e.at + 2;
     if let Control::Flags { items, .. } = &mut f.controls[group] {
         items[1].1 = true;
     }
     app.form_changed(group);
-    assert_eq!(app.jobs.form.as_ref().unwrap().buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
+    assert_eq!(app.dialogs.form.as_ref().unwrap().buttons, [S::ArchiveOk.t(), S::WidgetsCancel.t()]);
     app.drain_effects().for_each(drop);
     app.form_down(1.0, 100.0, crate::input::MouseButton::Left, 1, Instant::now());
-    assert!(app.jobs.form.is_some(), "a click beside the dialog does not throw away changed permissions");
+    assert!(app.dialogs.form.is_some(), "a click beside the dialog does not throw away changed permissions");
     assert!(ops(&mut app).is_empty());
     key(&mut app, Key::Escape);
-    assert!(app.jobs.form.is_none());
+    assert!(app.dialogs.form.is_none());
     assert!(ops(&mut app).is_empty(), "Escape cancels the change");
 }

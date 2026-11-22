@@ -78,13 +78,13 @@ impl App {
         }
         let Some(dir) = self.props_dir() else { return };
         let (gen, first, last) = self.visible_rows();
-        let k = self.cur;
-        if self.tabs[k].props.gen != gen || self.tabs[k].props.portable != portable || self.tabs[k].props.system != system {
-            let next_ask = self.tabs[k].props.next_ask;
-            self.tabs[k].props = ShellProps { gen, portable, system, next_ask, ..Default::default() };
+        let k = self.tabs.cur;
+        if self.tabs.items[k].props.gen != gen || self.tabs.items[k].props.portable != portable || self.tabs.items[k].props.system != system {
+            let next_ask = self.tabs.items[k].props.next_ask;
+            self.tabs.items[k].props = ShellProps { gen, portable, system, next_ask, ..Default::default() };
         }
         self.apply_shell_props(k, now);
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         let (tab, spec) = (t.id, t.view_spec);
         let Some(v) = &t.view else { return };
         let l = v.listing();
@@ -116,7 +116,7 @@ impl App {
     }
 
     fn apply_shell_props(&mut self, k: usize, now: Instant) {
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         let gen = t.props.gen;
         if t.props.pending.is_empty() {
             return;
@@ -143,7 +143,7 @@ impl App {
             return self.visit(id, |a| a.on_shell_props(tab, gen, ask, rows));
         }
         let case = self.case;
-        let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) else { return };
+        let Some(t) = self.tabs.items.iter_mut().find(|t| t.id == tab) else { return };
         if t.props.gen != gen {
             return;
         }

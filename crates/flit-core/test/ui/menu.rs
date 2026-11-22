@@ -310,7 +310,7 @@ fn folder_sizes_is_a_check_item_in_the_layout_menu_and_keeps_its_shortcut() {
     assert!(app.prefs.auto_sizes);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })), "turning it on computes the sizes");
     assert_eq!(checked(&mut app), Some(true));
-    assert_eq!(app.keymap.first_text("folder.refresh_stats").as_deref(), Some("Alt+R"));
+    assert_eq!(app.settings.keymap.first_text("folder.refresh_stats").as_deref(), Some("Alt+R"));
     app.on_event(&Event::Key { key: Key::Char('R'), mods: Mods { ctrl: false, shift: false, alt: true }, pressed: true }, Instant::now());
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::DirSizes { .. }, .. })), "a pending calculation is not duplicated");
 }

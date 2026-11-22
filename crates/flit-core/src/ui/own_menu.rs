@@ -357,7 +357,7 @@ impl App {
 
     pub(super) fn button_menu(&mut self, owner: super::Hit, x: f32, y: f32, menu: Vec<MenuItem>) {
         self.flit_menu(x, y, menu);
-        (self.menu_owner, self.menu_panel) = (Some(owner), self.panels.here);
+        (self.menu_owner, self.menu_panel) = (Some(owner), self.tabs.panels.here);
     }
 
     #[cfg(test)]
@@ -377,7 +377,7 @@ impl App {
     }
 
     pub(super) fn menu_open_from(&self, owner: super::Hit) -> bool {
-        self.own_menu.is_some() && self.menu_owner == Some(owner) && self.menu_panel == self.panels.here
+        self.own_menu.is_some() && self.menu_owner == Some(owner) && self.menu_panel == self.tabs.panels.here
     }
 
     fn owner_under(&self, x: f32, y: f32) -> bool {
@@ -397,8 +397,8 @@ impl App {
 
     pub(super) fn draw_own_menu<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let (scale, bounds) = (self.scale, Rect::new(0.0, 0.0, self.size.0, self.size.1));
-        let pins = self.own_menu.as_ref().and_then(|m| m.kind.pins()).map(|k| self.opts.pins[k].clone());
-        let arrangement = self.own_menu.as_ref().filter(|m| m.view.is_none()).and_then(|m| m.kind.pins()).map(|k| (self.opts.menu.hidden[k].clone(), self.opts.menu.order[k].clone()));
+        let pins = self.own_menu.as_ref().and_then(|m| m.kind.pins()).map(|k| self.settings.opts.pins[k].clone());
+        let arrangement = self.own_menu.as_ref().filter(|m| m.view.is_none()).and_then(|m| m.kind.pins()).map(|k| (self.settings.opts.menu.hidden[k].clone(), self.settings.opts.menu.order[k].clone()));
         let mut seen = None;
         let (active, preedit) = (self.active, self.preedit.clone());
         let mut files = Vec::new();

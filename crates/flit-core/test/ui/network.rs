@@ -38,11 +38,11 @@ fn connection_history_masks_the_address_but_the_request_uses_the_password() {
 fn connect_dialog_offers_an_unchecked_network_checkbox_only_on_linux() {
     let mut a = linux();
     a.run_action("drive.connect_server", Instant::now());
-    let f = a.jobs.form.as_ref().expect("Linux opens the connection form");
+    let f = a.dialogs.form.as_ref().expect("Linux opens the connection form");
     assert!(matches!(f.controls.get(1), Some(Control::Check { on: false, .. })));
     let mut a = app();
     a.run_action("drive.connect_server", Instant::now());
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(matches!(a.nav.palette.as_ref().map(|p| &p.pick), Some(Pick::Server)));
 }
 
@@ -50,17 +50,17 @@ fn connect_dialog_offers_an_unchecked_network_checkbox_only_on_linux() {
 fn the_connect_dialog_shows_the_address_example_from_the_start_and_turns_it_red_only_for_a_bad_address() {
     let mut a = linux();
     a.run_action("drive.connect_server", Instant::now());
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert_eq!((f.note.as_str(), f.error), (S::SidebarDriveServerPrompt.t(), false), "the example is a hint before anything is typed");
-    a.jobs.form.as_mut().unwrap().set_text(0, "192.168.1.35");
+    a.dialogs.form.as_mut().unwrap().set_text(0, "192.168.1.35");
     a.form_submit(0);
-    let f = a.jobs.form.as_ref().expect("a bare address keeps the dialog open");
+    let f = a.dialogs.form.as_ref().expect("a bare address keeps the dialog open");
     assert_eq!((f.note.as_str(), f.error), (S::SidebarDriveServerPrompt.t(), true));
     let mut a = linux();
     a.run_action("drive.connect_server", Instant::now());
-    a.jobs.form.as_mut().unwrap().set_text(0, "sftp://ann@192.168.1.35");
+    a.dialogs.form.as_mut().unwrap().set_text(0, "sftp://ann@192.168.1.35");
     a.form_submit(0);
-    assert!(a.jobs.form.is_none(), "a full address still connects at once");
+    assert!(a.dialogs.form.is_none(), "a full address still connects at once");
 }
 
 #[test]
@@ -82,7 +82,7 @@ fn checking_the_box_saves_only_a_successfully_connected_address_and_only_once() 
     let address = "sftp://Ann@nas/docs";
     for (input, save, success) in [(address, false, true), (address, true, false), ("SFTP://Ann:secret@NAS/docs/", true, true), (address, true, true)] {
         a.run_action("drive.connect_server", Instant::now());
-        let form = a.jobs.form.as_mut().unwrap();
+        let form = a.dialogs.form.as_mut().unwrap();
         form.set_text(0, input);
         let Control::Check { on, .. } = &mut form.controls[1] else { panic!("missing checkbox") };
         *on = save;
@@ -145,7 +145,7 @@ fn index(f: &Form, prefix: &str) -> usize {
 fn an_sftp_password_request_shows_only_a_password_and_the_remember_choice() {
     let mut a = app();
     asked(&mut a, login_ask(ASK_PASSWORD | ASK_SAVING));
-    let f = a.jobs.form.as_ref().expect("the login form is open");
+    let f = a.dialogs.form.as_ref().expect("the login form is open");
     assert_eq!(f.title, crate::tr!(S::SidebarDriveLoginTitle, server = "nas"));
     let remember = format!("choice:{}={}|{}", S::SidebarDriveLoginRemember.t(), S::SidebarDriveLoginForget.t(), S::SidebarDriveLoginSession.t());
     assert_eq!(labels(f), ["line:Password required for share docs on nas".to_owned(), format!("secret:{}", S::SidebarDriveLoginPassword.t()), remember]);
@@ -158,7 +158,7 @@ fn an_sftp_password_request_shows_only_a_password_and_the_remember_choice() {
 fn an_smb_request_asks_for_user_domain_and_password_and_offers_anonymous_access() {
     let mut a = app();
     asked(&mut a, login_ask(ASK_PASSWORD | ASK_USER | ASK_DOMAIN | ASK_ANONYMOUS));
-    let f = a.jobs.form.as_ref().unwrap();
+    let f = a.dialogs.form.as_ref().unwrap();
     assert_eq!(
         labels(f)[1..],
         [format!("text:{}=ann", S::SidebarDriveLoginUser.t()), format!("text:{}=WORK", S::SidebarDriveLoginDomain.t()), format!("secret:{}", S::SidebarDriveLoginPassword.t()), format!("check:{}", S::SidebarDriveLoginAnonymous.t())]
@@ -170,7 +170,7 @@ fn an_smb_request_asks_for_user_domain_and_password_and_offers_anonymous_access(
 fn connecting_sends_the_typed_password_once_and_clears_the_field() {
     let mut a = app();
     let (_, rx) = asked(&mut a, login_ask(ASK_PASSWORD | ASK_USER | ASK_SAVING));
-    let f = a.jobs.form.as_mut().unwrap();
+    let f = a.dialogs.form.as_mut().unwrap();
     let (user, pass, remember) = (index(f, "text:"), index(f, "secret:"), index(f, "choice:"));
     f.set_text(user, " bob ");
     f.set_text(pass, "correct horse");
@@ -178,7 +178,7 @@ fn connecting_sends_the_typed_password_once_and_clears_the_field() {
         *sel = 1;
     }
     a.form_submit(0);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     let reply = rx.try_recv().expect("an answer");
     assert!(!format!("{reply:?}").contains("horse"), "the password never shows in debug output");
     match reply {
@@ -194,7 +194,7 @@ fn connecting_sends_the_typed_password_once_and_clears_the_field() {
 fn anonymous_access_sends_the_anonymous_flag() {
     let mut a = app();
     let (_, rx) = asked(&mut a, login_ask(ASK_PASSWORD | ASK_ANONYMOUS));
-    let f = a.jobs.form.as_mut().unwrap();
+    let f = a.dialogs.form.as_mut().unwrap();
     let k = index(f, "check:");
     if let Control::Check { on, .. } = &mut f.controls[k] {
         *on = true;
@@ -207,7 +207,7 @@ fn anonymous_access_sends_the_anonymous_flag() {
 fn the_secret_field_is_wiped_with_its_undo_history() {
     let mut a = app();
     asked(&mut a, login_ask(ASK_PASSWORD));
-    let f = a.jobs.form.as_mut().unwrap();
+    let f = a.dialogs.form.as_mut().unwrap();
     let k = index(f, "secret:");
     if let Control::Text { field, .. } = &mut f.controls[k] {
         field.edit.insert("pa55");
@@ -225,11 +225,11 @@ fn cancel_and_escape_tell_gvfs_the_login_was_aborted() {
     let mut a = app();
     let (_, rx) = asked(&mut a, login_ask(ASK_PASSWORD));
     a.form_submit(1);
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(matches!(rx.try_recv(), Ok(MountReply::Cancel)));
     let (_, rx) = asked(&mut a, login_ask(ASK_PASSWORD));
     a.on_event(&Event::Key { key: crate::input::Key::Escape, mods: Mods::default(), pressed: true }, Instant::now());
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(matches!(rx.try_recv(), Ok(MountReply::Cancel)));
 }
 
@@ -238,7 +238,7 @@ fn a_request_while_another_dialog_is_open_is_dropped_instead_of_replacing_it() {
     let mut a = app();
     a.ask_unlock(FsPath::parse("/dev/sdd2").unwrap(), "Encrypted volume", false);
     let (_, rx) = asked(&mut a, login_ask(ASK_PASSWORD));
-    assert!(matches!(a.jobs.form.as_ref().map(|f| &f.kind), Some(Kind::Unlock { .. })), "the dialog the user is typing in stays");
+    assert!(matches!(a.dialogs.form.as_ref().map(|f| &f.kind), Some(Kind::Unlock { .. })), "the dialog the user is typing in stays");
     assert_eq!(rx.try_recv().err(), Some(TryRecvError::Disconnected), "the platform is not left waiting");
 }
 
@@ -248,13 +248,13 @@ fn gvfs_withdrawing_a_request_closes_only_its_own_form() {
     let (id, rx) = asked(&mut a, login_ask(ASK_PASSWORD));
     let tab = a.tab().id;
     a.on_provider_event(ProviderEvent::MountAskDone { tab, id: id + 1000 }, Instant::now());
-    assert!(a.jobs.form.is_some(), "another request's withdrawal leaves this form open");
+    assert!(a.dialogs.form.is_some(), "another request's withdrawal leaves this form open");
     a.on_provider_event(ProviderEvent::MountAskDone { tab, id }, Instant::now());
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert_eq!(rx.try_recv().err(), Some(TryRecvError::Disconnected));
     a.ask_unlock(FsPath::parse("/dev/sdd2").unwrap(), "Encrypted volume", false);
     a.on_provider_event(ProviderEvent::MountAskDone { tab, id }, Instant::now());
-    assert!(a.jobs.form.is_some(), "an unrelated dialog is not closed");
+    assert!(a.dialogs.form.is_some(), "an unrelated dialog is not closed");
 }
 
 #[test]
@@ -262,7 +262,7 @@ fn a_host_key_question_offers_the_choices_in_their_order() {
     let mut a = app();
     let question = MountAsk::Question { server: "host".into(), message: "The identity of the remote computer is unknown.\nAre you sure you want to continue connecting?".into(), choices: vec!["Log In Anyway".into(), "Cancel Login".into()] };
     let (_, rx) = asked(&mut a, question);
-    let f = a.jobs.form.as_mut().unwrap();
+    let f = a.dialogs.form.as_mut().unwrap();
     assert_eq!(labels(f), ["line:The identity of the remote computer is unknown.".to_owned(), "line:Are you sure you want to continue connecting?".to_owned(), format!("choice:{}=Log In Anyway|Cancel Login", S::SidebarDriveLoginAnswer.t())]);
     assert_eq!(f.buttons, [S::SidebarDriveLoginContinue.t(), S::WidgetsCancel.t()]);
     if let Control::Choice { sel, .. } = &mut f.controls[2] {
@@ -276,7 +276,7 @@ fn a_host_key_question_offers_the_choices_in_their_order() {
 fn a_question_without_choices_is_cancelled_without_a_form() {
     let mut a = app();
     let (_, rx) = asked(&mut a, MountAsk::Question { server: "host".into(), message: "?".into(), choices: Vec::new() });
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(matches!(rx.try_recv(), Ok(MountReply::Cancel)), "an empty list is never answered as choice 0");
 }
 
@@ -297,7 +297,7 @@ fn the_login_form_fits_a_narrow_window_in_every_language() {
         asked(&mut a, login_ask(ASK_PASSWORD | ASK_USER | ASK_DOMAIN | ASK_ANONYMOUS | ASK_SAVING));
         let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
         a.frame(&mut g, Instant::now());
-        let f = a.jobs.form.as_ref().unwrap();
+        let f = a.dialogs.form.as_ref().unwrap();
         assert_eq!(f.button_rects.len(), 2);
         assert!(f.button_rects.iter().all(|b| b.x >= f.rect.x && b.right() <= f.rect.right() && b.bottom() <= 480.0 && b.w > 0.0), "{lang:?}: {:?} in {:?}", f.button_rects, f.rect);
         assert!(f.button_rects[0].right() <= f.button_rects[1].x);
@@ -739,7 +739,7 @@ fn back_and_forward_reuse_cached_shares_and_reject_a_late_password_request() {
     assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. } | ProviderRequest::Launch { .. }, .. })));
     let late = password_for(&mut a, started);
     assert!(matches!(late.try_recv(), Ok(MountReply::Cancel)));
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
 }
 
 #[test]
@@ -754,7 +754,7 @@ fn restoring_a_server_tab_shows_an_empty_page_that_offers_to_connect() {
         assert!(rows(&a).is_empty());
         assert_eq!(a.empty_text(a.current_location(), false), S::UiEmptyNetworkConnect);
         assert!(!a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::List { .. } | ProviderRequest::Launch { .. }, .. })));
-        assert!(a.jobs.form.is_none());
+        assert!(a.dialogs.form.is_none());
     }
 }
 
@@ -765,17 +765,17 @@ fn clicking_a_server_offers_login_and_f5_after_cancel_offers_it_again() {
     down(&mut a, at, MouseButton::Left, 2);
     let first = mount_started(&mut a, SMB);
     let rx = password_for(&mut a, first);
-    assert!(a.jobs.form.is_some());
+    assert!(a.dialogs.form.is_some());
     a.form_submit(1);
     assert!(matches!(rx.try_recv(), Ok(MountReply::Cancel)));
     mount_finished(&mut a, first, None);
     a.poll();
-    assert!(a.jobs.form.is_none());
+    assert!(a.dialogs.form.is_none());
     assert!(a.run_action("nav.refresh", Instant::now()));
     let second = mount_started(&mut a, SMB);
     assert_ne!(first, second);
     let _reply = password_for(&mut a, second);
-    assert!(a.jobs.form.is_some());
+    assert!(a.dialogs.form.is_some());
 }
 
 #[test]

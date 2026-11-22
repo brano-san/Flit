@@ -261,7 +261,7 @@ impl App {
     }
 
     fn remember_typed(&mut self, text: &str) {
-        if self.opts.recents == super::options::Recents::Never {
+        if self.settings.opts.recents == super::options::Recents::Never {
             return;
         }
         let Some(text) = remembered_address(text) else { return };
@@ -320,7 +320,7 @@ impl App {
     }
 
     pub(super) fn redirect(&mut self, k: usize, snap: &DirSnapshot) -> bool {
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         if snap.gen != t.gen {
             return false;
         }
@@ -328,7 +328,7 @@ impl App {
         let Some(kind) = snap.error.as_ref().map(|e| e.kind) else {
             return false;
         };
-        let t = &self.tabs[k];
+        let t = &self.tabs.items[k];
         let here = t.location().clone();
         match (kind, typed) {
             (FsErrorKind::NotADirectory, Some(_)) => {
@@ -345,7 +345,7 @@ impl App {
             }
             (FsErrorKind::NotADirectory, None) => {
                 let Some(parent) = here.parent() else { return false };
-                self.tabs[k].history.replace(parent);
+                self.tabs.items[k].history.replace(parent);
                 self.reload_moved(k, Some(here.file_name().to_vec()));
             }
             _ => return false,
@@ -354,19 +354,19 @@ impl App {
     }
 
     fn step_back(&mut self, k: usize) {
-        let select = self.tabs[k].focused_name();
-        if self.tabs[k].history.retract() {
+        let select = self.tabs.items[k].focused_name();
+        if self.tabs.items[k].history.retract() {
             self.reload_moved(k, select);
         }
     }
 
     fn reload_moved(&mut self, k: usize, select: Option<Vec<u8>>) {
-        self.tabs[k].drop_trail();
+        self.tabs.items[k].drop_trail();
         self.load_tab(k, select, Instant::now());
-        if k == self.cur {
+        if k == self.tabs.cur {
             self.after_tab_change();
         } else {
-            self.strip.rev += 1;
+            self.tabs.strip.rev += 1;
         }
     }
 

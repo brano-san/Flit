@@ -2,13 +2,34 @@ use super::archive::Kind;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::a11y::put;
+use super::jobs::Ask;
 use super::{centered, App, Effect, Hit};
 use crate::a11y::{Role, Tree};
 use crate::input::{Key, Mods, MouseButton};
+use crate::provider::{Conflict, OpId};
 use crate::render::Rect;
+use std::collections::VecDeque;
 use std::time::Instant;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
+
+#[derive(Default)]
+pub(super) struct Dialogs {
+    pub(super) confirm: Option<super::confirm::Confirm>,
+    pub(super) picker: Option<super::picker::Picker>,
+    pub(super) asks: VecDeque<Ask>,
+    pub(super) conflict_batches: VecDeque<(OpId, Vec<Conflict>)>,
+    pub(super) suspended_conflicts: Option<Form>,
+    pub(super) form: Option<Form>,
+    pub(super) all: bool,
+    pub(super) sel: usize,
+}
+
+impl Dialogs {
+    pub(super) fn modal(&self) -> bool {
+        !self.asks.is_empty() || self.form.is_some()
+    }
+}
 
 const FORM_ID: u64 = 12;
 const WIDTH: f32 = 600.0;
@@ -206,7 +227,7 @@ impl Form {
 
 impl App {
     fn reveal_form_focus(&mut self) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         if matches!(f.kind, Kind::Update(_)) { return; }
         let Some(row) = f.rows.get(f.focus) else { return };
         let v = f.document.viewport;
@@ -217,23 +238,23 @@ impl App {
 
     pub(super) fn open_form(&mut self, form: Form) {
         self.nav.palette = None;
-        if self.jobs.form.as_ref().is_some_and(|f| matches!(f.kind, Kind::ConflictTable { .. })) {
-            self.jobs.suspended_conflicts = self.jobs.form.take();
+        if self.dialogs.form.as_ref().is_some_and(|f| matches!(f.kind, Kind::ConflictTable { .. })) {
+            self.dialogs.suspended_conflicts = self.dialogs.form.take();
         }
-        self.jobs.form = Some(form);
+        self.dialogs.form = Some(form);
         self.layout();
         self.dirty = true;
     }
 
     fn form_button(&mut self, b: usize) {
-        let b = self.jobs.form.as_ref().map_or(b, |f| b.min(f.buttons.len().saturating_sub(1)));
+        let b = self.dialogs.form.as_ref().map_or(b, |f| b.min(f.buttons.len().saturating_sub(1)));
         self.form_submit(b);
         self.layout();
         self.dirty = true;
     }
 
     fn copy_value(&mut self, k: usize) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         if let Some(Control::Value { label, value }) = f.controls.get(k) {
             let text = value.clone();
             let feedback = crate::tr!(crate::i18n::S::FormCopied, label = label);
@@ -248,7 +269,7 @@ impl App {
     }
 
     fn form_activate(&mut self, k: usize) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         let n = f.controls.len();
         if k >= n {
             return self.form_button(k - n);
@@ -267,7 +288,7 @@ impl App {
     }
 
     fn turn(&mut self, k: usize, back: bool) {
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         match f.controls.get_mut(k) {
             Some(Control::Choice { options, sel, .. }) if !options.is_empty() => {
                 let n = options.len();
@@ -284,7 +305,7 @@ impl App {
     }
 
     pub(super) fn sync_form_buttons(&mut self) {
-        if self.jobs.form.as_mut().is_some_and(Form::properties_buttons) {
+        if self.dialogs.form.as_mut().is_some_and(Form::properties_buttons) {
             self.layout_form();
         }
     }
@@ -294,7 +315,7 @@ impl App {
         if self.update_scroll_key(key, m) {
             return true;
         }
-        let Some(f) = &mut self.jobs.form else { return false };
+        let Some(f) = &mut self.dialogs.form else { return false };
         let k = f.focus;
         let n = f.controls.len();
         let plain = !m.ctrl && !m.alt;
@@ -336,8 +357,8 @@ impl App {
     }
 
     pub(super) fn form_insert(&mut self, s: &str) -> bool {
-        let Some(f) = &mut self.jobs.form else { return false };
-        if !self.jobs.asks.is_empty() {
+        let Some(f) = &mut self.dialogs.form else { return false };
+        if !self.dialogs.asks.is_empty() {
             return true;
         }
         let k = f.focus;
@@ -354,35 +375,35 @@ impl App {
     }
 
     pub(super) fn form_text(&self, k: usize) -> Option<&Field> {
-        match self.jobs.form.as_ref()?.controls.get(k)? {
+        match self.dialogs.form.as_ref()?.controls.get(k)? {
             Control::Text { field, .. } => Some(field),
             _ => None,
         }
     }
 
     pub(super) fn form_text_mut(&mut self, k: usize) -> Option<&mut Field> {
-        match self.jobs.form.as_mut()?.controls.get_mut(k)? {
+        match self.dialogs.form.as_mut()?.controls.get_mut(k)? {
             Control::Text { field, .. } => Some(field),
             _ => None,
         }
     }
 
     pub(super) fn form_text_focus(&self) -> Option<usize> {
-        let k = self.jobs.form.as_ref().filter(|_| self.jobs.asks.is_empty())?.focus;
+        let k = self.dialogs.form.as_ref().filter(|_| self.dialogs.asks.is_empty())?.focus;
         self.form_text(k).map(|_| k)
     }
 
     pub(super) fn form_text_rect(&self, k: usize) -> Option<Rect> {
-        let f = self.jobs.form.as_ref()?;
+        let f = self.dialogs.form.as_ref()?;
         f.rows.get(k).map(|r| f.visible_row(*r))
     }
 
     pub(super) fn form_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) -> bool {
-        if self.jobs.form.is_none() || !self.jobs.asks.is_empty() {
+        if self.dialogs.form.is_none() || !self.dialogs.asks.is_empty() {
             return false;
         }
         self.sync_form_buttons();
-        if let Some(f) = &self.jobs.form {
+        if let Some(f) = &self.dialogs.form {
             if matches!(f.kind, Kind::Properties(_)) && !f.rect.contains(x, y) && !self.in_title(y) {
                 if button == MouseButton::Left && !App::properties_edited(f) {
                     self.form_button(f.buttons.len().saturating_sub(1));
@@ -396,7 +417,7 @@ impl App {
         let Some(Hit::Form(k)) = self.form_hit(x, y) else { return false };
         self.dirty = true;
         if self.form_text(k).is_some() {
-            if let Some(f) = &mut self.jobs.form {
+            if let Some(f) = &mut self.dialogs.form {
                 f.focus = k;
             }
             if button == MouseButton::Right {
@@ -410,7 +431,7 @@ impl App {
             self.pressed = Hit::Form(k);
             return true;
         }
-        let Some(f) = &mut self.jobs.form else { return false };
+        let Some(f) = &mut self.dialogs.form else { return false };
         f.focus = k;
         let n = f.controls.len();
         self.pressed = Hit::Form(k);
@@ -432,7 +453,7 @@ impl App {
     }
 
     pub(super) fn form_up(&mut self, h: Hit) -> bool {
-        let (Hit::Form(k), Some(f)) = (h, &self.jobs.form) else { return false };
+        let (Hit::Form(k), Some(f)) = (h, &self.dialogs.form) else { return false };
         if k >= f.controls.len() {
             self.form_activate(k);
         }
@@ -440,7 +461,7 @@ impl App {
     }
 
     pub(super) fn form_a11y(&self, t: &mut Tree, targets: &mut Vec<(u64, Hit)>) -> Option<usize> {
-        let f = self.jobs.form.as_ref().filter(|_| self.jobs.asks.is_empty())?;
+        let f = self.dialogs.form.as_ref().filter(|_| self.dialogs.asks.is_empty())?;
         let d = t.add(0, FORM_ID, Role::Dialog, &f.title, f.rect);
         t.nodes[d].help = f.note.clone();
         let mut focus = d;
@@ -486,7 +507,7 @@ impl App {
     }
 
     pub(super) fn form_a11y_focus(&mut self, k: usize) {
-        if let Some(f) = &mut self.jobs.form {
+        if let Some(f) = &mut self.dialogs.form {
             f.focus = k.min(f.slots().saturating_sub(1));
         }
         self.reveal_form_focus();
@@ -494,7 +515,7 @@ impl App {
 
     pub(super) fn form_a11y_flag(&mut self, k: usize, j: usize, toggle: bool) {
         self.form_a11y_focus(k);
-        if let Some(Control::Flags { items, cur, .. }) = self.jobs.form.as_mut().and_then(|f| f.controls.get_mut(k)) {
+        if let Some(Control::Flags { items, cur, .. }) = self.dialogs.form.as_mut().and_then(|f| f.controls.get_mut(k)) {
             if j >= items.len() {
                 return;
             }
@@ -509,7 +530,7 @@ impl App {
     pub(super) fn form_a11y_invoke(&mut self, k: usize) {
         self.sync_form_buttons();
         self.form_a11y_focus(k);
-        match self.jobs.form.as_ref().and_then(|f| f.controls.get(k)) {
+        match self.dialogs.form.as_ref().and_then(|f| f.controls.get(k)) {
             Some(Control::Choice { .. }) => self.turn(k, false),
             Some(Control::Text { .. }) => {}
             _ => self.form_activate(k),
@@ -518,7 +539,7 @@ impl App {
     }
 
     pub(super) fn form_hit(&self, x: f32, y: f32) -> Option<Hit> {
-        let f = self.jobs.form.as_ref()?;
+        let f = self.dialogs.form.as_ref()?;
         if matches!(f.kind, Kind::Properties(_)) && f.close_rect.contains(x, y) {
             return Some(Hit::Form(f.controls.len() + if f.buttons.len() > 1 { f.buttons.len() } else { 0 }));
         }
@@ -538,7 +559,7 @@ impl App {
         let (w, h) = self.size;
         let sc = form_scale(w, h, self.scale);
         let s = |v: f32| (v * sc).round();
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         f.properties_buttons();
         if matches!(f.kind, Kind::Update(_)) {
             f.layout_update(w, h, sc);
@@ -607,7 +628,7 @@ impl App {
         let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
         let (hover, active, pressed) = (self.hover, self.active, self.pressed);
         let mut reflow = false;
-        if let Some(f) = self.jobs.form.as_mut().filter(|f| !matches!(f.kind, Kind::ConflictTable { .. })) {
+        if let Some(f) = self.dialogs.form.as_mut().filter(|f| !matches!(f.kind, Kind::ConflictTable { .. })) {
             reflow = f.properties_buttons();
             let width = (f.rect.w - s(62.0)).max(1.0);
             for c in &mut f.controls {
@@ -618,7 +639,7 @@ impl App {
             }
         }
         if reflow { self.layout_form(); }
-        let Some(f) = &mut self.jobs.form else { return };
+        let Some(f) = &mut self.dialogs.form else { return };
         let d = f.rect;
         g.dl.round_rect(d, t.bg, s8);
         g.dl.outline(d, t.popup_border, s8, 1.0);

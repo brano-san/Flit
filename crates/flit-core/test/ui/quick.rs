@@ -120,7 +120,7 @@ fn measured_after_hover(app: &mut App) -> bool {
 #[test]
 fn a_folder_on_a_network_drive_is_not_counted_in_its_tip_when_network_statistics_are_off() {
     let mut app = app_with_network_folder();
-    app.opts.sizes_network = false;
+    app.settings.opts.sizes_network = false;
     assert!(!measured_after_hover(&mut app), "network folders are not counted on hover");
     assert!(!app.quick_rows().iter().any(|r| r.0 == "Subfolders:" || r.0 == "Size:"), "no counting rows are left waiting");
     assert!(!app.sizes_allowed(&loc(r"Z:\Downloads")), "folder statistics in the list follow the same rule");
@@ -129,9 +129,9 @@ fn a_folder_on_a_network_drive_is_not_counted_in_its_tip_when_network_statistics
 #[test]
 fn network_folders_are_counted_when_allowed_and_local_folders_keep_their_counts() {
     let mut network = app_with_network_folder();
-    network.opts.sizes_network = true;
+    network.settings.opts.sizes_network = true;
     assert!(measured_after_hover(&mut network), "network counting switched on counts again");
     let mut local = app();
-    local.opts.sizes_network = false;
+    local.settings.opts.sizes_network = false;
     assert!(measured_after_hover(&mut local), "a local folder is still counted");
 }

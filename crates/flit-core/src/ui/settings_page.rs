@@ -1,3 +1,6 @@
+mod layout;
+mod paint;
+
 use super::actions::Chord;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
@@ -605,11 +608,6 @@ pub(super) fn wrap<'a, B: TextBackend>(g: &mut Gfx<B>, text: &'a str, font: Font
     lines
 }
 
-fn paint_group<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, r: Rect, title: &str, bold: FontStyle, s: impl Fn(f32) -> f32) {
-    let mb = g.metrics(bold);
-    g.text(r.x + s(PAD), (r.bottom() - s(10.0) - mb.descent).round(), title, bold, t.text, r.w - 2.0 * s(PAD));
-}
-
 fn step_rects(r: Rect, s: impl Fn(f32) -> f32) -> (Rect, Rect) {
     let c = control_rect(r, &s);
     (Rect::new(c.x, c.y, s(34.0), c.h), Rect::new(c.right() - s(34.0), c.y, s(34.0), c.h))
@@ -681,7 +679,7 @@ fn size_text(bytes: Option<u64>, decimal: bool) -> String {
 
 impl App {
     pub fn settings_open(&self) -> bool {
-        self.settings.is_some()
+        self.settings.screen.is_some()
     }
 
     pub fn set_about(&mut self, about: About) {
@@ -693,11 +691,11 @@ impl App {
     }
 
     pub fn settings_page(&self) -> Option<Page> {
-        self.settings.as_ref().map(|s| s.page)
+        self.settings.screen.as_ref().map(|s| s.page)
     }
 
     pub fn settings_lines(&self) -> Vec<String> {
-        let Some(ui) = &self.settings else { return Vec::new() };
+        let Some(ui) = &self.settings.screen else { return Vec::new() };
         ui.lines
             .iter()
             .map(|l| match l {
@@ -715,11 +713,11 @@ impl App {
     }
 
     pub(super) fn open_settings(&mut self, page: Option<Page>) {
-        if self.settings.is_some() && page.is_none() {
+        if self.settings.screen.is_some() && page.is_none() {
             return self.close_settings();
         }
         self.nav.palette = None;
-        let ui = self.settings.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface), self.scale));
+        let ui = self.settings.screen.get_or_insert_with(|| SettingsUi::new(page.unwrap_or(Page::Interface), self.scale));
         if let Some(p) = page {
             ui.page = p;
             ui.jump = Some((p, false));
@@ -733,7 +731,7 @@ impl App {
     }
 
     pub(super) fn close_settings(&mut self) {
-        self.settings = None;
+        self.settings.screen = None;
         self.layout();
         self.dirty = true;
     }
@@ -804,7 +802,7 @@ impl App {
 
     pub(super) fn open_log_folder(&mut self, now: Instant) {
         let Some(dir) = self.about.logs.clone() else { return self.status(NO_LOGS.t()) };
-        if self.settings.is_some() {
+        if self.settings.screen.is_some() {
             self.close_settings();
         }
         self.dispatch(vec![Route { folder: Location::from_local(dir), select: Some(LOG_FILE.as_bytes().to_vec()) }], OpenTarget::NewTab, now);
@@ -839,13 +837,13 @@ impl App {
     }
 
     pub fn offer_archive_registration(&mut self) {
-        self.archive_offer_pending = true;
+        self.settings.archive_offer_pending = true;
         self.dirty = true;
     }
 
     pub(super) fn show_pending_archive_offer(&mut self) {
-        if self.archive_offer_pending && self.jobs.form.is_none() && self.nav.palette.is_none() {
-            self.archive_offer_pending = false;
+        if self.settings.archive_offer_pending && self.dialogs.form.is_none() && self.nav.palette.is_none() {
+            self.settings.archive_offer_pending = false;
             let items = vec![
                 (S::SettingsPageSystemArchivePrompt.t().to_owned(), S::SettingsPageSystemArchivePromptNote.t().to_owned()),
                 (S::SettingsPageDialogCancel.t().to_owned(), String::new()),
@@ -948,7 +946,7 @@ impl App {
             Page::Menu => {
                 out.push(Line::Group(S::MenuEditorOwn.t()));
                 out.push(Line::Buttons(None, USER_BUTTONS));
-                if self.opts.user_menu.is_empty() {
+                if self.settings.opts.user_menu.is_empty() {
                     out.push(Line::Note(S::UserMenuEmpty.t()));
                 }
                 out.extend(self.user_lines().into_iter().map(Line::Entry));
@@ -1023,336 +1021,29 @@ impl App {
         }
     }
 
-    pub(super) fn layout_settings(&mut self) {
-        let Some(mut ui) = self.settings.take() else { return };
-        let mut lines = Vec::new();
-        let mut starts = Vec::new();
-        match ui.query().to_owned().as_str() {
-            "" => {
-                for page in Page::ALL {
-                    starts.push(Start { line: lines.len(), page, matches: 0 });
-                    lines.push(Line::Group(page.title()));
-                    self.page_lines(page, &mut lines);
-                }
-            }
-            q => self.search_lines(q, &mut lines, &mut starts),
-        }
-        ui.lines = lines;
-        ui.starts = starts;
-        let (w, h, sc, describe) = (self.size.0, self.size.1, self.scale, self.opts.describe);
-        let s = |v: f32| (v * sc).round();
-        let room_w = w - 2.0 * s(EDGE);
-        let want = (w / 2.0).round().max(s(MIN_W)).min(s(MAX_W));
-        let full = ui.fit.nav_w(s);
-        let nav_w = match room_w {
-            r if r - full >= s(MIN_W) => full,
-            r if r - s(RAIL_W) >= s(RAIL_CONTENT_MIN) => s(RAIL_W),
-            _ => 0.0,
-        };
-        ui.rail = nav_w == s(RAIL_W);
-        let pw = want.min(room_w - nav_w).max(s(320.0));
-        let total = pw + nav_w;
-        let mut y = 0.0;
-        let mut offsets = Vec::with_capacity(ui.lines.len());
-        for l in &ui.lines {
-            let lh = match l {
-                Line::Buttons(..) => buttons_height(l, pw, &ui.fit, s),
-                _ => l.height(describe, &ui.fit, s),
-            };
-            offsets.push((y, lh));
-            y += lh;
-        }
-        ui.content_h = y;
-        let x = ((w - total) / 2.0).round().max(0.0);
-        let fixed = s(8.0) + s(FIELD_H) + s(6.0) + s(HINT_H);
-        let top = super::palette::popup_top(sc, h, fixed + s(SETTING_H) * 4.0);
-        let list_h = (h - 2.0 * top - fixed).max(s(SETTING_H) * 4.0).min((h - top - s(EDGE) - fixed).max(0.0));
-        ui.search_rect = Rect::new(x + s(8.0), top + s(8.0), total - s(16.0) - 2.0 * (s(FIELD_H) + s(4.0)), s(FIELD_H));
-        ui.describe = Rect::new(ui.search_rect.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
-        ui.close = Rect::new(ui.describe.right() + s(4.0), ui.search_rect.y, s(FIELD_H), s(FIELD_H));
-        let body = ui.search_rect.bottom() + s(6.0);
-        ui.nav = Rect::new(x, body, nav_w, list_h);
-        ui.list = Rect::new(x + nav_w, body, pw, list_h);
-        ui.hints = Rect::new(x, ui.list.bottom(), total, s(HINT_H));
-        ui.panel = Rect::new(x, top, total, ui.hints.bottom() - top);
-        let max = (ui.content_h - ui.list.h).max(0.0);
-        if let Some((p, smooth)) = ui.jump.take() {
-            if let Some(&Start { line: k, .. }) = ui.starts.iter().find(|st| st.page == p) {
-                let to = offsets[k].0.min(max);
-                if smooth {
-                    ui.scroll.target = to;
-                } else {
-                    ui.scroll.snap(to);
-                }
-                ui.held = Some((p, to));
-                ui.focus = ui.focusable(k, 1).unwrap_or(k);
-                ui.sub = 0;
-            }
-        }
-        if ui.focus >= ui.lines.len() || !ui.lines[ui.focus].focusable() {
-            ui.focus = ui.first_focusable();
-            ui.sub = 0;
-        }
-        ui.sub = ui.sub.min(ui.lines.get(ui.focus).map_or(0, |l| l.count().saturating_sub(1)));
-        let group_h = Line::Group("").height(describe, &ui.fit, s);
-        if std::mem::take(&mut ui.reveal) {
-            if let Some(&(fy, fh)) = offsets.get(ui.focus) {
-                let lead = if matches!(ui.lines[ui.focus], Line::Group(_)) { 0.0 } else { group_h };
-                if fy - lead < ui.scroll.target {
-                    ui.scroll.target = (fy - lead).max(0.0);
-                } else if fy + fh > ui.scroll.target + ui.list.h {
-                    ui.scroll.target = fy + fh - ui.list.h;
-                }
-            }
-        }
-        ui.scroll.clamp(max);
-        ui.page = match ui.held {
-            Some((p, at)) if (ui.scroll.target - at).abs() < 0.5 => p,
-            _ => {
-                ui.held = None;
-                let target = ui.scroll.target;
-                ui.starts.iter().rev().find(|st| offsets[st.line].0 <= target + 0.5).or(ui.starts.first()).map_or(ui.page, |st| st.page)
-            }
-        };
-        let n = ui.starts.len();
-        ui.nav_rects = if nav_w > 0.0 && n > 0 {
-            let item_h = ((list_h - 2.0 * s(NAV_PAD)) / n as f32).floor().clamp(s(NAV_ITEM_MIN), s(NAV_ITEM_H));
-            (0..n).map(|k| Rect::new(ui.nav.x + s(NAV_PAD), ui.nav.y + s(NAV_PAD) + k as f32 * item_h, nav_w - 2.0 * s(NAV_PAD), item_h)).collect()
-        } else {
-            Vec::new()
-        };
-        ui.nav_at = ui.nav_at.min(n.saturating_sub(1));
-        if ui.zone == Zone::Nav && ui.nav_rects.is_empty() {
-            ui.zone = Zone::List;
-        }
-        ui.bar = if ui.content_h > ui.list.h { Rect::new(ui.list.right() - s(BAR_W), ui.list.y, s(BAR_W), ui.list.h) } else { Rect::default() };
-        let row_w = ui.list.w - ui.bar.w;
-        ui.rects = offsets.into_iter().map(|(ly, lh)| Rect::new(ui.list.x, ui.list.y + ly - ui.scroll.pos, row_w, lh)).collect();
-        ui.sticky = ui.starts.iter().rposition(|st| ui.rects[st.line].y <= ui.list.y + 0.5).filter(|&at| ui.rects[ui.starts[at].line].y < ui.list.y - 0.5).map(|at| {
-            let line = ui.starts[at].line;
-            let next = ui.starts.get(at + 1).map_or(f32::INFINITY, |st| ui.rects[st.line].y);
-            (line, Rect::new(ui.list.x, ui.list.y.min(next - group_h), row_w, group_h))
-        });
-        self.settings = Some(ui);
-    }
-
-    pub(super) fn settings_hit(&self, x: f32, y: f32) -> Option<Hit> {
-        let ui = self.settings.as_ref()?;
-        if self.in_title(y) {
-            return None;
-        }
-        let s = |v: f32| (v * self.scale).round();
-        let h = |sh| Some(Hit::Settings(sh));
-        if !ui.panel.contains(x, y) {
-            return h(SHit::Outside);
-        }
-        if ui.close.contains(x, y) {
-            return h(SHit::Close);
-        }
-        if ui.describe.contains(x, y) {
-            return h(SHit::Describe);
-        }
-        if ui.search_rect.contains(x, y) {
-            return h(SHit::Search);
-        }
-        if let Some(k) = ui.nav_rects.iter().position(|r| r.contains(x, y)) {
-            return h(SHit::Nav(k));
-        }
-        if !ui.list.contains(x, y) {
-            return h(SHit::Panel);
-        }
-        if ui.bar.contains(x, y) {
-            let on_thumb = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, s).is_some_and(|t| y >= t.y && y < t.bottom());
-            return h(if on_thumb { SHit::Thumb } else { SHit::Track });
-        }
-        if ui.sticky.is_some_and(|(_, r)| r.contains(x, y)) {
-            return h(SHit::Panel);
-        }
-        let Some(k) = ui.rects.iter().position(|r| r.contains(x, y)) else { return h(SHit::Panel) };
-        let (r, line) = (ui.rects[k], &ui.lines[k]);
-        if let Some(b) = button_rects(line, r, &ui.fit, s).iter().position(|b| b.contains(x, y)) {
-            return h(SHit::Button(k, b));
-        }
-        match line {
-            Line::Setting(i) => match SETTINGS[*i].kind {
-                Kind::Toggle(..) if switch_rect(r, s).contains(x, y) => h(SHit::Control(k)),
-                Kind::Number { .. } if slider(*i) => {
-                    let grip = slider_track(r, s).inset(-s(8.0), -s(10.0));
-                    if grip.contains(x, y) { h(SHit::Slide(k)) } else { h(SHit::Line(k)) }
-                }
-                Kind::Number { .. } => {
-                    let (minus, plus) = step_rects(r, s);
-                    match (minus.contains(x, y), plus.contains(x, y)) {
-                        (true, _) => h(SHit::Step(k, false)),
-                        (_, true) => h(SHit::Step(k, true)),
-                        _ => h(SHit::Line(k)),
-                    }
-                }
-                Kind::Choice(..) | Kind::Text(..) | Kind::Pick(..) if control_rect(r, s).contains(x, y) => h(SHit::Control(k)),
-                _ => h(SHit::Line(k)),
-            },
-            Line::Path(..) if remove_rect(r, s).contains(x, y) => h(SHit::Remove(k)),
-            Line::MenuItem(row) => h(menu_editor::row_hit(row, r, k, (x, y), s)),
-            _ => h(SHit::Line(k)),
-        }
-    }
-
-    pub(super) fn settings_a11y(&self, t: &mut Tree, targets: &mut Vec<(u64, Hit)>) -> Option<usize> {
-        let ui = self.settings.as_ref()?;
-        let s = |v: f32| (v * self.scale).round();
-        let at = Hit::Settings;
-        let d = t.add(0, SETTINGS_ID, Role::Dialog, S::SettingsPageLineTitle.t(), ui.panel);
-        put(t, targets, d, at(SHit::Close), Role::Button, S::A11yButtonClose.t(), ui.close);
-        let search = put(t, targets, d, at(SHit::Search), Role::Edit, S::SettingsPageLineSearch.t(), ui.search_rect);
-        t.nodes[search].value = ui.search.text().to_owned();
-        let searching = !ui.query().is_empty();
-        let describe = put(t, targets, d, at(SHit::Describe), Role::Button, S::OptionsDescriptions.t(), ui.describe);
-        t.nodes[describe].selected = self.opts.describe;
-        let mut focus = if ui.searching() { search } else { d };
-        if !ui.nav_rects.is_empty() {
-            let nav = t.add(d, CATEGORIES_ID, Role::List, S::SettingsPageLineCategories.t(), ui.nav);
-            for (k, (&r, st)) in ui.nav_rects.iter().zip(&ui.starts).enumerate() {
-                let n = put(t, targets, nav, at(SHit::Nav(k)), Role::ListItem, st.page.title(), r);
-                t.nodes[n].selected = st.page == ui.page;
-                if searching {
-                    t.nodes[n].value = crate::trn!(P::SettingsPageMatches, st.matches);
-                }
-                if ui.zone == Zone::Nav && k == ui.nav_at {
-                    focus = n;
-                }
-            }
-        }
-        let list = t.add(d, LIST_ID, Role::Group, if searching { S::SettingsPageLineSearch.t() } else { ui.page.title() }, ui.list);
-        let mut section = list;
-        for (k, (line, &r)) in ui.lines.iter().zip(&ui.rects).enumerate() {
-            if r.bottom() < ui.list.y || r.y > ui.list.bottom() {
-                continue;
-            }
-            let id = leaf(at(SHit::Line(k)));
-            let row = match line {
-                Line::Group(title) => {
-                    section = t.add(list, id, Role::Group, *title, r);
-                    None
-                }
-                Line::Note(text) => Some(t.add(section, id, Role::Text, *text, r)),
-                Line::Info(label, value) => {
-                    let n = t.add(section, id, Role::Text, *label, r);
-                    t.nodes[n].value = value.clone();
-                    Some(n)
-                }
-                Line::Setting(i) => {
-                    let set = &SETTINGS[*i];
-                    let (role, hit) = match set.kind {
-                        Kind::Toggle(..) => (Role::CheckBox, SHit::Control(k)),
-                        Kind::Choice(..) => (Role::ComboBox, SHit::Control(k)),
-                        Kind::Text(..) | Kind::Pick(..) => (Role::Button, SHit::Control(k)),
-                        _ => (Role::Group, SHit::Line(k)),
-                    };
-                    let n = put(t, targets, section, at(hit), role, set.title.t(), r);
-                    t.nodes[n].help = if RESTART.contains(&set.id) { format!("{} {}", set.help.t(), S::OptionsRestart.t()) } else { set.help.t().to_owned() };
-                    t.nodes[n].value = self.setting_value_text(*i);
-                    t.nodes[n].selected = set.get(self) == Value::Bool(true);
-                    if let (Kind::Number { .. }, false) = (set.kind, slider(*i)) {
-                        let (minus, plus) = step_rects(r, s);
-                        put(t, targets, n, at(SHit::Step(k, false)), Role::Button, S::A11yButtonDecrease.t(), minus);
-                        put(t, targets, n, at(SHit::Step(k, true)), Role::Button, S::A11yButtonIncrease.t(), plus);
-                    }
-                    Some(n)
-                }
-                Line::Off(i) => {
-                    let set = &SETTINGS[*i];
-                    let role = match set.kind {
-                        Kind::Toggle(..) => Role::CheckBox,
-                        Kind::Choice(..) => Role::ComboBox,
-                        _ => Role::Group,
-                    };
-                    let n = t.add(section, id, role, set.title.t(), r);
-                    t.nodes[n].help = self.setting_help(line).into_owned();
-                    t.nodes[n].value = self.setting_value_text(*i);
-                    t.nodes[n].selected = set.get(self) == Value::Bool(true);
-                    t.nodes[n].enabled = false;
-                    Some(n)
-                }
-                Line::Path(i, n) => {
-                    let p = t.add(section, id, Role::Text, self.paths_of(*i).get(*n).map(settings::path_text).unwrap_or_default(), r);
-                    put(t, targets, p, at(SHit::Remove(k)), Role::Button, S::A11yButtonRemove.t(), remove_rect(r, s));
-                    Some(p)
-                }
-                Line::Tag(n) => Some(t.add(section, id, Role::Group, self.tag_defs().get(*n).map_or("", |tag| tag.name.as_str()), r)),
-                Line::Entry(e) => Some(t.add(section, id, Role::Group, self.user_entry_name(*e), r)),
-                Line::MenuItem(row) => {
-                    let n = put(t, targets, section, at(SHit::Check(k)), Role::CheckBox, row.label(), r);
-                    t.nodes[n].selected = !row.hidden;
-                    if row.submenu {
-                        t.nodes[n].value = if row.open { S::MenuEditorOpen.t() } else { S::MenuEditorClosed.t() }.to_owned();
-                    } else {
-                        let star = put(t, targets, n, at(SHit::Star(k)), Role::Button, S::MenuEditorPin.t(), menu_editor::star_rect(r, s));
-                        t.nodes[star].selected = row.pinned;
-                    }
-                    Some(n)
-                }
-                Line::Buttons(..) => None,
-            };
-            let mut subs = Vec::new();
-            for (b, br) in button_rects(line, r, &ui.fit, s).into_iter().enumerate() {
-                let name = line.buttons().get(b).map_or("", |btn| btn.label());
-                subs.push(put(t, targets, row.unwrap_or(section), at(SHit::Button(k, b)), Role::Button, name, br));
-            }
-            if ui.zone == Zone::List && k == ui.focus {
-                focus = subs.get(ui.sub).copied().or(row).unwrap_or(focus);
-            }
-        }
-        Some(focus)
-    }
-
-    pub(super) fn settings_a11y_focus(&mut self, sh: SHit) {
-        let Some(ui) = &mut self.settings else { return };
-        match sh {
-            SHit::Search => ui.zone = Zone::Search,
-            SHit::Nav(k) => (ui.zone, ui.nav_at) = (Zone::Nav, k),
-            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) | SHit::Check(k) | SHit::Star(k) | SHit::Fold(k) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, 0),
-            SHit::Button(k, b) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, b),
-            _ => {}
-        }
-    }
-
-    pub(super) fn settings_ime_area(&self) -> Option<Rect> {
-        self.settings.as_ref().filter(|s| s.searching() && self.nav.palette.is_none()).map(|s| s.search_rect)
-    }
-
-    pub(super) fn settings_nav_tip(&self, k: usize) -> Option<(Rect, String)> {
-        let ui = self.settings.as_ref().filter(|ui| ui.rail)?;
-        let (r, st) = (*ui.nav_rects.get(k)?, ui.starts.get(k)?);
-        let text = match ui.query() {
-            "" => st.page.title().to_owned(),
-            _ => format!("{} · {}", st.page.title(), crate::trn!(P::SettingsPageMatches, st.matches)),
-        };
-        Some((r, text))
-    }
-
     fn jump_to(&mut self, page: Page) {
         self.hide_settings_tip();
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         ui.jump = Some((page, true));
         self.layout();
         self.dirty = true;
     }
 
     pub(super) fn settings_search(&self) -> Option<&Field> {
-        self.settings.as_ref().map(|ui| &ui.search)
+        self.settings.screen.as_ref().map(|ui| &ui.search)
     }
 
     pub(super) fn settings_search_mut(&mut self) -> Option<&mut Field> {
-        self.settings.as_mut().map(|ui| &mut ui.search)
+        self.settings.screen.as_mut().map(|ui| &mut ui.search)
     }
 
     pub(super) fn settings_mouse_down(&mut self, h: Hit, (x, y): (f32, f32), button: MouseButton, clicks: u8, now: Instant) -> bool {
         let Hit::Settings(sh) = h else { return false };
-        if self.settings.is_none() {
+        if self.settings.screen.is_none() {
             return false;
         }
         let clicks = if sh == SHit::Search && button == MouseButton::Left { self.text_clicks((x, y), clicks, now) } else { clicks };
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         if self.nav.palette.is_some() {
             self.nav.palette = None;
         }
@@ -1406,13 +1097,13 @@ impl App {
     }
 
     pub(super) fn settings_click(&mut self, sh: SHit, x: f32, y: f32) {
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         let line = |k: usize| ui.lines.get(k).cloned();
         match sh {
             SHit::Outside | SHit::Close => self.close_settings(),
             SHit::Describe => {
-                self.opts.describe = !self.opts.describe;
-                if let Some(ui) = &mut self.settings {
+                self.settings.opts.describe = !self.settings.opts.describe;
+                if let Some(ui) = &mut self.settings.screen {
                     ui.reveal = true;
                 }
                 self.layout();
@@ -1458,7 +1149,7 @@ impl App {
     }
 
     pub(super) fn slide_setting(&mut self, k: usize, x: f32) {
-        let Some(ui) = &self.settings else { return };
+        let Some(ui) = &self.settings.screen else { return };
         let (Some(&Line::Setting(i)), Some(&r)) = (ui.lines.get(k), ui.rects.get(k)) else { return };
         let track = slider_track(r, |v| (v * self.scale).round());
         if let Some(v) = slide_value(i, track, x).filter(|&v| SETTINGS[i].get(self) != Value::Number(v)) {
@@ -1469,7 +1160,7 @@ impl App {
 
     pub(super) fn drag_settings_thumb(&mut self, y: f32, grab: f32) {
         let sc = self.scale;
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         let Some(t) = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, |v| (v * sc).round()) else { return };
         let frac = ((y - grab - ui.list.y) / (ui.list.h - t.h).max(1.0)).clamp(0.0, 1.0);
         ui.scroll.snap(frac * (ui.content_h - ui.list.h));
@@ -1489,8 +1180,8 @@ impl App {
                     it
                 });
                 let (x, y) = self.menu_spot(i, at);
-                let k = self.settings.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
-                match k.zip(self.settings.as_ref()).map(|(k, ui)| (k, control_rect(ui.rects[k], |v| (v * self.scale).round()))) {
+                let k = self.settings.screen.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
+                match k.zip(self.settings.screen.as_ref()).map(|(k, ui)| (k, control_rect(ui.rects[k], |v| (v * self.scale).round()))) {
                     Some((k, r)) => {
                         self.button_menu(Hit::Settings(SHit::Control(k)), r.x, r.bottom() + self.s(4.0), items.collect());
                         self.menu_right = Some(r.right());
@@ -1507,8 +1198,8 @@ impl App {
     }
 
     fn menu_spot(&self, i: usize, at: Option<(f32, f32)>) -> (f32, f32) {
-        let k = self.settings.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
-        let r = k.and_then(|k| self.settings.as_ref().map(|ui| control_rect(ui.rects[k], |v| (v * self.scale).round())));
+        let k = self.settings.screen.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
+        let r = k.and_then(|k| self.settings.screen.as_ref().map(|ui| control_rect(ui.rects[k], |v| (v * self.scale).round())));
         r.map(|r| (r.x, r.bottom())).or(at).unwrap_or_default()
     }
 
@@ -1591,7 +1282,7 @@ impl App {
     }
 
     fn activate_line(&mut self, k: usize) {
-        let Some(ui) = &self.settings else { return };
+        let Some(ui) = &self.settings.screen else { return };
         let sub = ui.sub;
         match ui.lines.get(k).cloned() {
             Some(Line::Setting(i)) => self.activate_setting(i, None),
@@ -1605,9 +1296,9 @@ impl App {
         if self.nav.palette.is_some() {
             return false;
         }
-        let closes = self.keymap.runs(key, m, "options.open");
+        let closes = self.settings.keymap.runs(key, m, "options.open");
         self.hide_settings_tip();
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         self.dirty = true;
         let plain = !m.ctrl && !m.alt;
         let line = ui.lines.get(ui.focus).cloned();
@@ -1735,7 +1426,7 @@ impl App {
 
     fn focus_menu_row(&mut self, path: &str) {
         self.layout();
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         if let Some(k) = ui.lines.iter().position(|l| matches!(l, Line::MenuItem(row) if row.path == path)) {
             (ui.focus, ui.reveal) = (k, true);
             self.layout();
@@ -1743,7 +1434,7 @@ impl App {
     }
 
     fn menu_top_lines(&self) -> Vec<(usize, Rect)> {
-        let Some(ui) = &self.settings else { return Vec::new() };
+        let Some(ui) = &self.settings.screen else { return Vec::new() };
         ui.lines.iter().zip(&ui.rects).enumerate().filter(|(_, (l, _))| matches!(l, Line::MenuItem(row) if row.depth == 0)).map(|(k, (_, r))| (k, *r)).collect()
     }
 
@@ -1756,7 +1447,7 @@ impl App {
     pub(super) fn drop_menu_row(&mut self, from: usize, to: Option<usize>) {
         let tops = self.menu_top_lines();
         let (Some(to), Some(at)) = (to, tops.iter().position(|(k, _)| *k == from)) else { return };
-        let Some(Line::MenuItem(row)) = self.settings.as_ref().and_then(|ui| ui.lines.get(from).cloned()) else { return };
+        let Some(Line::MenuItem(row)) = self.settings.screen.as_ref().and_then(|ui| ui.lines.get(from).cloned()) else { return };
         let target = if to > at { to - 1 } else { to };
         self.move_menu_item(&row.path, target);
         self.focus_menu_row(&row.path);
@@ -1771,7 +1462,7 @@ impl App {
         if self.nav.palette.is_some() {
             return false;
         }
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         if s.is_empty() || (s == " " && !ui.searching()) {
             return true;
         }
@@ -1785,12 +1476,12 @@ impl App {
     }
 
     pub(super) fn settings_pans_at(&self, x: f32, y: f32) -> bool {
-        self.settings.as_ref().is_some_and(|ui| ui.list.contains(x, y) && !ui.bar.contains(x, y)) && !matches!(self.settings_hit(x, y), Some(Hit::Settings(SHit::Slide(_))))
+        self.settings.screen.as_ref().is_some_and(|ui| ui.list.contains(x, y) && !ui.bar.contains(x, y)) && !matches!(self.settings_hit(x, y), Some(Hit::Settings(SHit::Slide(_))))
     }
 
     pub(super) fn touch_pan_settings(&mut self, dy: f32) -> bool {
         self.hide_settings_tip();
-        let Some(ui) = &mut self.settings else { return false };
+        let Some(ui) = &mut self.settings.screen else { return false };
         let was = ui.scroll.pos;
         ui.scroll.snap((was - dy).clamp(0.0, (ui.content_h - ui.list.h).max(0.0)));
         let moved = ui.scroll.pos != was;
@@ -1806,7 +1497,7 @@ impl App {
         }
         let step = 3.0 * (ITEM_H * self.scale).round();
         self.hide_settings_tip();
-        if let Some(ui) = &mut self.settings {
+        if let Some(ui) = &mut self.settings.screen {
             ui.scroll.by(-dy * step, ui.content_h - ui.list.h);
         }
         self.layout();
@@ -1814,335 +1505,9 @@ impl App {
         true
     }
 
-    fn setting_help(&self, line: &Line) -> std::borrow::Cow<'static, str> {
-        match line {
-            Line::Off(i) if self.about.system_integration_unavailable && matches!(SETTINGS[*i].id, settings::AUTOSTART | settings::PROTOCOL_LINKS) => S::SettingsPageSystemUnavailable.t().into(),
-            Line::Off(i) if settings::NEEDS_BUILTIN_ARCHIVES.contains(&SETTINGS[*i].id) => format!("{} {}", S::SettingsPageLineNeedsBuiltinArchives.t(), SETTINGS[*i].help.t()).into(),
-            Line::Off(i) if SETTINGS[*i].id == settings::BACKGROUND => S::BackgroundUnavailable.t().into(),
-            Line::Off(i) => SETTINGS[*i].help.t().into(),
-            Line::Setting(i) => SETTINGS[*i].help.t().into(),
-            _ => "".into(),
-        }
-    }
-
-    fn setting_value_text(&self, i: usize) -> String {
-        match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
-            (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1.t()).to_owned(),
-            (Kind::Number { zero: Some(off), .. }, Value::Number(0)) => off.t().to_owned(),
-            (Kind::Number { unit, .. }, Value::Number(n)) => format!("{n} {unit}"),
-            (Kind::Text(..), _) => self.text_value(i),
-            (Kind::Paths(..), Value::Paths(p)) => crate::trn!(P::SettingsPagePages, p.len()),
-            (Kind::Pick(..), _) => self.pick_text(i).unwrap_or_default(),
-            _ => String::new(),
-        }
-    }
-
-    pub(super) fn fit_settings<B: TextBackend>(&mut self, g: &mut Gfx<B>) {
-        if self.settings.is_none() {
-            return;
-        }
-        let font = self.ui_font(13.0);
-        let fit = Fit {
-            body: line_h(g.metrics(font)),
-            small: line_h(g.metrics(self.ui_font(12.0))),
-            bold: line_h(g.metrics(FontStyle::new(FontFamily::Ui, 14.0 * self.scale, true))),
-            labels: Btn::ALL.map(|b| g.measure(b.label(), font)),
-            titles: Page::ALL.iter().map(|p| g.measure(p.title(), font)).fold(0.0, f32::max),
-        };
-        if let Some(ui) = self.settings.as_mut().filter(|ui| ui.fit != fit) {
-            ui.fit = fit;
-            self.layout_settings();
-        }
-    }
-
-    pub(super) fn draw_settings<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
-        let Some(mut ui) = self.settings.take() else { return };
-        let open = match self.menu_owner {
-            Some(Hit::Settings(SHit::Control(k))) if self.own_menu_open() => Some(k),
-            _ => None,
-        };
-        if ui.turn.aim(open, self.animations, self.last_frame.unwrap_or_else(Instant::now)) {
-            self.motion = true;
-        }
-        ui.knob_motion = false;
-        if ui.lines.iter().any(|l| matches!(l, Line::Entry(_))) {
-            self.request_user_line_images(g);
-        }
-        self.paint_settings(g, t, &mut ui);
-        self.motion |= ui.knob_motion;
-        self.settings = Some(ui);
-    }
-
-    fn paint_settings<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, ui: &mut SettingsUi) {
-        let sc = self.scale;
-        let s = |v: f32| (v * sc).round();
-        let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 14.0 * sc, true));
-        let icons = self.icon_font(10.0);
-        let (s4, s6, s8) = (s(4.0), s(6.0), s(8.0));
-        let p = ui.panel;
-        Paint::new(g, t, sc).frame(p);
-        let (mf, ms) = (g.metrics(font), g.metrics(small));
-        let mid = |r: Rect, m: crate::text::FontMetrics| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-        let hover = self.hover;
-        let query = ui.query().to_owned();
-        let describe = self.opts.describe;
-        let sr = ui.search_rect;
-        let focused_search = ui.searching() && self.active && self.nav.palette.is_none();
-        Paint::new(g, t, sc).field(sr, focused_search);
-        centered(g, Rect::new(sr.x + s4, sr.y, s(24.0), sr.h), G_SEARCH, icons, t.text_dim);
-        let inner = Rect::new(sr.x + s(32.0), sr.y, sr.w - s(40.0), sr.h);
-        ui.search.draw(g, t, inner, font, focused_search, S::OptionsPlaceholder.t(), sc, Some(&self.preedit));
-        let big_icons = self.icon_font(12.0);
-        Paint::new(g, t, sc).toggle_button(ui.describe, G_DESCRIBE, big_icons, describe, self.lit(Hit::Settings(SHit::Describe)));
-        Paint::new(g, t, sc).icon_button(ui.close, G_CLOSE, icons, self.button(Hit::Settings(SHit::Close), false, true), t.text_dim);
-        let hints = ui.hints;
-        {
-            let mut w = Paint::new(g, t, sc);
-            w.separator(hints.x + s(12.0), hints.y, hints.w - s(24.0));
-            let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
-            let all: [(&[&str], &str); 4] = [(&[S::WidgetsKeyTab.t()], S::SettingsPageLineSwitchArea.t()), (&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())];
-            w.hints_within(hints, &all[usize::from(ui.nav_rects.is_empty())..], small);
-        }
-        self.paint_settings_nav(g, t, ui, (font, small), (mf, ms));
-        let list = ui.list;
-        g.dl.set_clip(Some(list));
-        let mut cut = Vec::new();
-        let list_focused = ui.zone == Zone::List && self.active && self.nav.palette.is_none();
-        for (k, (line, &r)) in ui.lines.iter().zip(&ui.rects).enumerate() {
-            if r.bottom() < list.y || r.y > list.bottom() {
-                continue;
-            }
-            let focused = list_focused && k == ui.focus;
-            let row = Rect::new(r.x + s4, r.y + 1.0, r.w - s8, r.h - 2.0);
-            if line.focusable() && !matches!(line, Line::Buttons(..)) {
-                let lit = self.lit(Hit::Settings(SHit::Line(k)));
-                if lit > 0.0 {
-                    g.dl.round_rect(row, super::widgets::faded(t.hover, lit), s6);
-                }
-                if focused {
-                    g.dl.outline(row, t.accent, s6, sc.round().max(1.0));
-                }
-            }
-            match line {
-                Line::Group(title) => paint_group(g, t, r, title, bold, s),
-                Line::Note(text) => {
-                    g.text(r.x + s(PAD), mid(r, mf), text, font, t.text_dim, r.w - 2.0 * s(PAD));
-                }
-                Line::Info(label, value) => {
-                    let lw = info_label_w(r, s);
-                    g.text(r.x + s(PAD), mid(r, ms), label, small, t.text_dim, lw);
-                    g.text(r.x + s(PAD) + lw + s(10.0), mid(r, ms), value, small, t.text, r.w - s(PAD) * 2.0 - lw - s(10.0));
-                }
-                Line::Setting(i) | Line::Off(i) => {
-                    let set = &SETTINGS[*i];
-                    let tx = r.x + s(PAD) + s(indent(*i));
-                    let restart = RESTART.contains(&set.id);
-                    let text_w = label_w(*i, r, s);
-                    let (tm, hm) = (title_marks(&query, set.title.t()), help_marks(&query, set.help.t()));
-                    let (ty, help_y) = if describe { text_baselines(r, mf, ms, s) } else { (mid(r, mf), 0.0) };
-                    Paint::new(g, t, sc).marked((tx, ty), set.title.t(), &tm, font, (t.text, t.accent), text_w);
-                    if describe {
-                        let help = self.setting_help(line);
-                        let marks = if matches!(line, Line::Setting(_)) { hm } else { Vec::new() };
-                        Paint::new(g, t, sc).marked((tx, help_y), &help, &marks, small, (t.text_dim, t.accent), text_w);
-                        if g.measure(&help, small) > text_w {
-                            cut.push((k, Rect::new(tx, help_y - ms.ascent, text_w, ms.ascent + ms.descent)));
-                        }
-                    }
-                    if restart {
-                        let c = control_rect(r, s);
-                        centered(g, Rect::new(c.x - s(24.0), r.y, s(20.0), r.h), G_RESTART, icons, t.text_dim);
-                    }
-                    let value = self.setting_value_text(*i);
-                    match (set.kind, set.get(self)) {
-                        (Kind::Number { min, max, .. }, Value::Number(n)) if slider(*i) => {
-                            let c = control_rect(r, s);
-                            g.text(c.x, mid(c, ms), &value, small, t.text_dim, s(52.0));
-                            let frac = if max > min { (n - min) as f32 / (max - min) as f32 } else { 0.0 };
-                            let hot = if self.drag == super::Drag::Slide(k) { 1.0 } else { self.lit(Hit::Settings(SHit::Slide(k))) };
-                            Paint::new(g, t, sc).slider(slider_track(r, s), frac, hot);
-                        }
-                        (Kind::Toggle(..), Value::Bool(on)) => {
-                            let hot = self.lit(Hit::Settings(SHit::Control(k)));
-                            let to = if on { 1.0 } else { 0.0 };
-                            let now = self.last_frame.unwrap_or_else(Instant::now);
-                            let knob = match ui.knobs.iter().position(|(x, _)| x == i) {
-                                Some(n) => n,
-                                None => {
-                                    ui.knobs.push((*i, super::widgets::Tween::at(to)));
-                                    ui.knobs.len() - 1
-                                }
-                            };
-                            ui.knob_motion |= ui.knobs[knob].1.aim(to, self.animations, now, KNOB);
-                            Paint::new(g, t, sc).switch(switch_rect(r, s), ui.knobs[knob].1.value(now, KNOB), hot, self.icon_font(8.0));
-                        }
-                        (Kind::Choice(..), _) => {
-                            let h = Hit::Settings(SHit::Control(k));
-                            let angle = ui.turn.angle(k, self.last_frame.unwrap_or_else(Instant::now));
-                            Paint::new(g, t, sc).picker(control_rect(r, s), &value, font, angle, self.menu_open_from(h), hover == h);
-                        }
-                        (Kind::Text(..) | Kind::Pick(..), _) => {
-                            let c = control_rect(r, s);
-                            g.dl.round_rect(c, crate::theme::mix(t.input_bg, t.button_hover, self.lit(Hit::Settings(SHit::Control(k)))), s4);
-                            g.dl.outline(c, t.input_border, s4, 1.0);
-                            let mut tx = c.x + s(10.0);
-                            if let Some(color) = self.swatch(*i) {
-                                let sw = Rect::new(tx, c.y + (c.h - s(16.0)) / 2.0, s(16.0), s(16.0));
-                                g.dl.round_rect(sw, color, s4);
-                                g.dl.outline(sw, t.input_border, s4, 1.0);
-                                tx = sw.right() + s(8.0);
-                            }
-                            g.text(tx, mid(c, mf), &value, font, t.text, c.right() - s(30.0) - tx);
-                            centered(g, Rect::new(c.right() - s(30.0), c.y, s(24.0), c.h), G_DOWN, icons, t.text_dim);
-                        }
-                        (Kind::Number { .. }, _) => {
-                            let lit = [false, true].map(|up| self.lit(Hit::Settings(SHit::Step(k, up))));
-                            Paint::new(g, t, sc).stepper(control_rect(r, s), &value, font, icons, lit);
-                        }
-                        _ => {
-                            let c = control_rect(r, s);
-                            let vw = g.measure(&value, small).min(c.w);
-                            g.text(c.right() - vw, mid(r, ms), &value, small, t.text_dim, c.w);
-                        }
-                    }
-                    if let Line::Off(_) = line {
-                        g.dl.rect(row, t.bg.alpha(0xA0));
-                    }
-                }
-                Line::Path(i, n) => {
-                    let text = self.paths_of(*i).get(*n).map(settings::path_text).unwrap_or_default();
-                    g.text(r.x + s(32.0), mid(r, mf), &text, font, t.text, r.w - s(PAD) * 2.0 - s(60.0));
-                    let rr = remove_rect(r, s);
-                    let lit = self.lit(Hit::Settings(SHit::Remove(k)));
-                    if lit > 0.0 {
-                        g.dl.round_rect(rr, super::widgets::faded(t.button_hover, lit), s4);
-                    }
-                    centered(g, rr, G_CLOSE, self.icon_font(8.0), t.text_dim);
-                }
-                Line::Tag(n) => {
-                    if let Some(tag) = self.tag_defs().get(*n) {
-                        let dot = s(12.0);
-                        g.dl.round_rect(Rect::new(r.x + s(PAD), r.y + (r.h - dot) / 2.0, dot, dot), Color::rgb(tag.color), dot / 2.0);
-                        let count = self.tags().count(*n);
-                        let label = crate::trn!(P::SettingsPageTagItems, count, color = tags::color_name(tag.color));
-                        let limit = button_rects(line, r, &ui.fit, s).first().map_or(r.right(), |b| b.x) - s(BUTTON_GAP);
-                        let nx = r.x + s(PAD) + dot + s(10.0);
-                        let nw = g.text(nx, mid(r, mf), &tag.name, font, t.text, s(220.0).min(limit - nx).max(0.0));
-                        let lx = nx + nw + s(14.0);
-                        g.text(lx, mid(r, ms), &label, small, t.text_dim, s(220.0).min(limit - lx).max(0.0));
-                    }
-                }
-                Line::Entry(at) => self.draw_user_line(g, t, r, *at, (font, small, icons)),
-                Line::MenuItem(row) => self.draw_menu_row(g, t, r, k, row, (font, icons)),
-                Line::Buttons(..) => {}
-            }
-            for (b, (br, btn)) in button_rects(line, r, &ui.fit, s).into_iter().zip(line.buttons()).enumerate() {
-                let hot = self.lit(Hit::Settings(SHit::Button(k, b)));
-                let danger = matches!(btn, Btn::Reset | Btn::Delete);
-                g.dl.round_rect(br, crate::theme::mix(t.button_hover, t.button_pressed, hot), s4);
-                g.dl.outline(br, if focused && ui.sub == b { t.accent } else { t.input_border }, s4, if focused && ui.sub == b { sc.round().max(1.0) } else { 1.0 });
-                let glyph_w = glyph_w(btn, s);
-                if glyph_w > 0.0 {
-                    centered(g, Rect::new(br.x + s(8.0), br.y, glyph_w, br.h), G_PLUS, self.icon_font(9.0), t.accent);
-                }
-                let lw = g.measure(btn.label(), font).min(br.w - s(16.0) - glyph_w);
-                g.text((br.x + glyph_w + (br.w - glyph_w - lw) / 2.0).round(), mid(br, mf), btn.label(), font, if danger { t.error } else { t.text }, br.w - s(16.0) - glyph_w);
-            }
-        }
-        if let super::Drag::MenuMove { to: Some(to), .. } = self.drag {
-            let rows = || ui.lines.iter().zip(&ui.rects).filter_map(|(l, r)| if let Line::MenuItem(row) = l { Some((row.depth, *r)) } else { None });
-            let at = rows().filter(|(depth, _)| *depth == 0).nth(to).map(|(_, r)| r.y);
-            if let Some(y) = at.or_else(|| rows().next_back().map(|(_, r)| r.bottom())) {
-                g.dl.rect(Rect::new(list.x + s(PAD), y - 1.0, list.w - 2.0 * s(PAD), s(2.0)), t.accent);
-            }
-        }
-        if let Some((k, r)) = ui.sticky {
-            g.dl.rect(r, t.popup);
-            if let Some(Line::Group(title)) = ui.lines.get(k) {
-                paint_group(g, t, r, title, bold, s);
-            }
-            Paint::new(g, t, sc).separator(r.x + s(12.0), r.bottom() - 1.0, r.w - s(24.0));
-        }
-        g.dl.set_clip(None);
-        if let Some(th) = scroll_thumb(list, ui.content_h, ui.scroll.pos, s) {
-            let hot = matches!(hover, Hit::Settings(SHit::Thumb | SHit::Track)) || matches!(self.drag, super::Drag::OptionsThumb { .. });
-            let bar = if hot { s(6.0) } else { s(4.0) };
-            g.dl.round_rect(Rect::new(th.right() - s(3.0) - bar, th.y, bar, th.h), if hot { t.scrollbar_hover } else { t.scrollbar }, bar / 2.0);
-        }
-        ui.cut = cut;
-        if let Some((k, (x, y))) = ui.tip {
-            if let Some(line @ (Line::Setting(_) | Line::Off(_))) = ui.lines.get(k) {
-                self.paint_tip(g, t, &self.setting_help(line), (x, y));
-            }
-        }
-    }
-
-    fn paint_settings_nav<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, ui: &SettingsUi, (font, small): (FontStyle, FontStyle), (mf, ms): (crate::text::FontMetrics, crate::text::FontMetrics)) {
-        if ui.nav.w <= 0.0 {
-            return;
-        }
-        let s = |v: f32| (v * self.scale).round();
-        let nav = ui.nav;
-        g.dl.rect(Rect::new(nav.right() - 1.0, nav.y + s(NAV_PAD), 1.0, (nav.h - 2.0 * s(NAV_PAD)).max(0.0)), t.separator);
-        let icons = self.icon_font(13.0);
-        let mid = |r: Rect, m: crate::text::FontMetrics| (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
-        let focused = ui.zone == Zone::Nav && self.active && self.nav.palette.is_none();
-        let searching = !ui.query().is_empty();
-        g.dl.set_clip(Some(nav));
-        for (k, (&r, st)) in ui.nav_rects.iter().zip(&ui.starts).enumerate() {
-            let glow = self.lit(Hit::Settings(SHit::Nav(k)));
-            if st.page == ui.page && glow < 1.0 {
-                g.dl.round_rect(r, t.selection, s(4.0));
-            }
-            if glow > 0.0 {
-                g.dl.round_rect(r, super::widgets::faded(t.accent_fill, glow), s(4.0));
-            }
-            if focused && ui.nav_at == k {
-                g.dl.outline(r, t.focus_ring, s(4.0), 1.0);
-            }
-            let ink = if glow >= 0.5 { crate::theme::ink_on(t.accent_fill) } else { t.text };
-            let mark = if glow >= 0.5 { ink } else { t.accent };
-            if ui.rail {
-                centered(g, r, page_glyph(st.page), icons, mark);
-                continue;
-            }
-            let icon = Rect::new(r.x + s(6.0), r.y, s(22.0), r.h);
-            centered(g, icon, page_glyph(st.page), icons, mark);
-            let tx = icon.right() + s(8.0);
-            let mut right = r.right() - s(8.0);
-            if searching {
-                let count = st.matches.to_string();
-                let cw = g.measure(&count, small);
-                g.text(right - cw, mid(r, ms), &count, small, if glow >= 0.5 { ink } else { t.text_dim }, cw + 1.0);
-                right -= cw + s(8.0);
-            }
-            g.text(tx, mid(r, mf), st.page.title(), font, ink, (right - tx).max(0.0));
-        }
-        g.dl.set_clip(None);
-    }
-
-    fn paint_tip<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, text: &str, (x, y): (f32, f32)) {
-        let sc = self.scale;
-        let font = self.ui_font(12.0);
-        let m = g.metrics(font);
-        let (pad, line_h, edge) = (self.s(8.0), (self.s(12.0) * 1.45).round(), self.s(8.0));
-        let max_w = self.s(TIP_W).min(self.size.0 - 2.0 * edge - 2.0 * pad);
-        let lines = wrap(g, text, font, max_w);
-        let w = lines.iter().map(|l| g.measure(l, font)).fold(0.0, f32::max).ceil() + 2.0 * pad;
-        let h = lines.len() as f32 * line_h + 2.0 * pad;
-        let below = y + self.s(20.0);
-        let ty = if below + h > self.size.1 - edge { y - self.s(6.0) - h } else { below };
-        let b = Rect::new((x + self.s(12.0)).min(self.size.0 - w - edge).max(edge), ty.max(edge), w, h);
-        Paint::new(g, t, sc).frame(b);
-        for (n, l) in lines.iter().enumerate() {
-            let base = b.y + pad + n as f32 * line_h + (line_h + m.ascent - m.descent) / 2.0;
-            g.text(b.x + pad, base.round(), l, font, t.text, w - 2.0 * pad);
-        }
-    }
-
     pub(super) fn settings_tip(&mut self, x: f32, y: f32) {
         let blocked = self.nav.palette.is_some();
-        let Some(ui) = &mut self.settings else { return };
+        let Some(ui) = &mut self.settings.screen else { return };
         let over = if blocked || !ui.list.contains(x, y) { None } else { ui.cut.iter().find(|(_, r)| r.contains(x, y)).map(|&(k, _)| k) };
         match (over, ui.tip) {
             (Some(k), Some((was, _))) if k == was => {}
@@ -2156,7 +1521,7 @@ impl App {
     }
 
     pub(super) fn hide_settings_tip(&mut self) {
-        if let Some(ui) = self.settings.as_mut().filter(|ui| ui.tip.is_some()) {
+        if let Some(ui) = self.settings.screen.as_mut().filter(|ui| ui.tip.is_some()) {
             ui.tip = None;
             self.dirty = true;
         }

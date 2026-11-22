@@ -47,7 +47,7 @@ fn text(line: S, command: &str) -> (String, Option<&str>) {
 
 impl App {
     pub(super) fn tip_hover(&mut self, h: Hit, now: Instant) {
-        let quiet = self.tooltips && self.drag == Drag::None && self.pressed == Hit::None && self.own_menu.is_none() && self.confirm.is_none();
+        let quiet = self.tooltips && self.drag == Drag::None && self.pressed == Hit::None && self.own_menu.is_none() && self.dialogs.confirm.is_none();
         let wanted = quiet && self.tip_anchor(h).is_some() && self.tip_text(h).is_some();
         match (wanted, self.tip) {
             (true, Some(t)) if t.hit == h => {}
@@ -103,7 +103,7 @@ impl App {
 
     fn tip_anchor(&self, h: Hit) -> Option<Rect> {
         let l = &self.layout;
-        let p = &self.panels;
+        let p = &self.tabs.panels;
         let r = match h {
             Hit::Menu => p.menu,
             Hit::QuickToggle => p.quick,
@@ -194,7 +194,7 @@ impl App {
             Hit::Caption(0) => text(S::TooltipMinimize, "window.minimize"),
             Hit::Caption(1) => text(if self.maximized { S::TooltipRestore } else { S::TooltipMaximize }, ""),
             Hit::Caption(_) => text(S::TooltipCloseWindow, "window.close"),
-            Hit::Tab(i) => (super::tabbar::full_name(self.tabs.get(i)?), None),
+            Hit::Tab(i) => (super::tabbar::full_name(self.tabs.items.get(i)?), None),
             Hit::TabClose(_) => text(S::TooltipCloseTab, "tab.close"),
             Hit::NewTab => text(S::TooltipNewTab, "tab.new"),
             Hit::TabActions => text(S::TooltipTabActions, "tab.search"),
@@ -267,7 +267,7 @@ impl App {
         };
         let (command, keys) = match command.and_then(index) {
             Some(i) => {
-                let keys = self.keymap.shown(i);
+                let keys = self.settings.keymap.shown(i);
                 (Some(ACTIONS[i].title.t().to_owned()), if keys.is_empty() { vec![S::WidgetsBlank.t().to_owned()] } else { keys })
             }
             None => (None, Vec::new()),

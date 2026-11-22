@@ -12,7 +12,7 @@ fn pinned() -> (App, Location) {
 
 fn ask(a: &mut App, loc: &Location) -> Confirm {
     a.ask(Rect::new(100.0, 100.0, 24.0, 24.0), ("Remove item from list?", "Yes"), true, Confirmed::Unpin(loc.clone()), Instant::now());
-    a.confirm.clone().expect("the popover is open")
+    a.dialogs.confirm.clone().expect("the popover is open")
 }
 
 fn click(a: &mut App, r: Rect) {
@@ -34,16 +34,16 @@ fn only_the_confirm_button_runs_the_action() {
     assert!(c.rect.y >= 124.0, "the popover opens under the element");
     assert!(c.buttons[0].x < c.buttons[1].x && c.buttons[0].w == c.buttons[1].w, "confirm on the left, Cancel on the right, equal widths");
     click(&mut a, c.buttons[1]);
-    assert!(a.confirm.is_none() && is_pinned(&a, &loc), "Cancel closes and keeps the item");
+    assert!(a.dialogs.confirm.is_none() && is_pinned(&a, &loc), "Cancel closes and keeps the item");
     ask(&mut a, &loc);
     a.on_event(&Event::Key { key: Key::Escape, mods: Default::default(), pressed: true }, Instant::now());
-    assert!(a.confirm.is_none() && is_pinned(&a, &loc), "Escape dismisses");
+    assert!(a.dialogs.confirm.is_none() && is_pinned(&a, &loc), "Escape dismisses");
     ask(&mut a, &loc);
     click(&mut a, Rect::new(900.0, 500.0, 4.0, 4.0));
-    assert!(a.confirm.is_none() && is_pinned(&a, &loc), "a click elsewhere dismisses");
+    assert!(a.dialogs.confirm.is_none() && is_pinned(&a, &loc), "a click elsewhere dismisses");
     let c = ask(&mut a, &loc);
     click(&mut a, c.buttons[0]);
-    assert!(a.confirm.is_none() && !is_pinned(&a, &loc), "Yes removes the item");
+    assert!(a.dialogs.confirm.is_none() && !is_pinned(&a, &loc), "Yes removes the item");
 }
 
 #[test]
@@ -51,7 +51,7 @@ fn the_sidebar_asks_before_unpinning_and_pins_at_once() {
     let (mut a, loc) = pinned();
     let i = a.nav.sidebar.items.iter().position(|it| it.loc == loc).expect("a pinned row");
     a.toggle_pin_item(i, Instant::now());
-    assert!(a.confirm.is_some() && is_pinned(&a, &loc), "removing asks first");
+    assert!(a.dialogs.confirm.is_some() && is_pinned(&a, &loc), "removing asks first");
     a.on_event(&Event::Key { key: Key::Enter, mods: Default::default(), pressed: true }, Instant::now());
     assert!(!is_pinned(&a, &loc), "Enter confirms");
     assert_eq!(a.hover, Hit::None);

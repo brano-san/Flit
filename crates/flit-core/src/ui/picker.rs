@@ -103,30 +103,30 @@ impl App {
         name.edit.select_all();
         let focused = matches!(request.mode, Mode::Save(_)).then_some(Control::Name);
         let filters = std::mem::take(&mut request.filters).into_iter().map(Arc::new).collect();
-        self.picker = Some(Picker { request, name, original_name, filters, focused, pressed: None, preedit: None });
-        self.apply_pick_filter(self.cur);
+        self.dialogs.picker = Some(Picker { request, name, original_name, filters, focused, pressed: None, preedit: None });
+        self.apply_pick_filter(self.tabs.cur);
         self.layout();
     }
 
     pub fn picker_title(&self) -> Option<&str> {
-        self.picker.as_ref().map(|p| p.request.title.as_deref().unwrap_or_else(|| if p.request.saving() { S::PickSaveTitle.t() } else { S::PickOpenTitle.t() }))
+        self.dialogs.picker.as_ref().map(|p| p.request.title.as_deref().unwrap_or_else(|| if p.request.saving() { S::PickSaveTitle.t() } else { S::PickOpenTitle.t() }))
     }
 
     pub(super) fn picker_uses_mime(&self) -> bool {
-        self.picker.as_ref().is_some_and(|picker| {
+        self.dialogs.picker.as_ref().is_some_and(|picker| {
             !picker.request.directories() && picker.filters.iter().any(|filter| !filter.mime_types.is_empty())
         })
     }
 
     pub(super) fn apply_pick_filter(&mut self, tab: usize) {
-        if let Some((picker, view)) = self.picker.as_ref().zip(self.tabs[tab].view.as_mut()) {
+        if let Some((picker, view)) = self.dialogs.picker.as_ref().zip(self.tabs.items[tab].view.as_mut()) {
             view.set_pick_filter(picker.request.directories(), picker.filters.get(picker.request.filter).cloned());
         }
     }
 
     pub(super) fn picker_open_entry(&mut self, i: u32, now: Instant) -> bool {
-        let Some(picker) = &mut self.picker else { return false };
-        let t = &self.tabs[self.cur];
+        let Some(picker) = &mut self.dialogs.picker else { return false };
+        let t = &self.tabs.items[self.tabs.cur];
         let Some(view) = t.view.as_ref() else { return true };
         if view.snap().gen != t.gen || !view.is_visible(i) {
             return true;
@@ -150,7 +150,7 @@ impl App {
     }
 
     fn picker_paths(&self, max: usize) -> Vec<FsPath> {
-        let Some(picker) = &self.picker else { return Vec::new() };
+        let Some(picker) = &self.dialogs.picker else { return Vec::new() };
         let t = self.tab();
         let view = t.view.as_ref().filter(|view| view.snap().gen == t.gen);
         let current = view.filter(|view| view.snap().done && view.snap().error.is_none()).and_then(|_| pick::local_path(self.current_location()));
@@ -170,20 +170,20 @@ impl App {
         match control {
             Control::Name => {}
             Control::Filter => {
-                let Some(picker) = &mut self.picker else { return };
+                let Some(picker) = &mut self.dialogs.picker else { return };
                 picker.request.filter = (picker.request.filter + 1) % picker.filters.len();
-                for tab in 0..self.tabs.len() {
+                for tab in 0..self.tabs.items.len() {
                     self.apply_pick_filter(tab);
                 }
                 self.reveal_focus(false);
             }
             Control::Choice(i) => {
-                let Some(choice) = self.picker.as_mut().and_then(|p| p.request.choices.get_mut(i)) else { return };
+                let Some(choice) = self.dialogs.picker.as_mut().and_then(|p| p.request.choices.get_mut(i)) else { return };
                 choice.selected = (choice.selected + 1) % choice.values.len();
             }
             Control::Cancel => self.close_window(now),
             Control::Accept => {
-                let Some(picker) = &self.picker else { return };
+                let Some(picker) = &self.dialogs.picker else { return };
                 let paths = self.picker_paths(usize::MAX);
                 if let Some(path) = paths.first() {
                     if matches!(picker.request.mode, Mode::Save(_)) {
@@ -214,17 +214,17 @@ impl App {
     }
 
     pub(super) fn pick_confirmed(&mut self, path: FsPath) {
-        if let Some(picker) = &self.picker {
+        if let Some(picker) = &self.dialogs.picker {
             self.effects.push(picker.picked(vec![path]));
         }
     }
 
     fn picker_stacked(&self, width: f32) -> bool {
-        self.picker.as_ref().is_some_and(|p| matches!(p.request.mode, Mode::Save(_)) && width < self.s(if p.filters.is_empty() { 380.0 } else { 520.0 }))
+        self.dialogs.picker.as_ref().is_some_and(|p| matches!(p.request.mode, Mode::Save(_)) && width < self.s(if p.filters.is_empty() { 380.0 } else { 520.0 }))
     }
 
     pub(super) fn picker_height(&self, width: f32) -> f32 {
-        let choices = self.picker.as_ref().is_some_and(|p| !p.request.choices.is_empty());
+        let choices = self.dialogs.picker.as_ref().is_some_and(|p| !p.request.choices.is_empty());
         36.0 + if self.picker_stacked(width) { 32.0 } else { 0.0 } + if choices { 32.0 } else { 0.0 }
     }
 
@@ -244,7 +244,7 @@ impl App {
         };
         let width = self.s(106.0).min((area.w - pad * 4.0).max(0.0) / 3.0);
         let mut out = vec![(Control::Cancel, part(&mut right, width)), (Control::Accept, part(&mut right, width))];
-        if let Some(picker) = &self.picker {
+        if let Some(picker) = &self.dialogs.picker {
             let count = picker.request.choices.len();
             if count != 0 {
                 let space = (status.w - pad * (count as f32 + 1.0)).max(0.0);
@@ -277,7 +277,7 @@ impl App {
         let font = self.ui_font(12.0);
         let scale = self.scale;
         let enabled = !self.picker_paths(1).is_empty();
-        let Some(picker) = &mut self.picker else { return };
+        let Some(picker) = &mut self.dialogs.picker else { return };
         for (control, rect) in rects {
             let focused = picker.focused == Some(control);
             if control == Control::Name {
@@ -295,7 +295,7 @@ impl App {
 
     pub(super) fn picker_accessibility(&self, tree: &mut crate::a11y::Tree, focus: &mut Option<usize>) {
         use crate::a11y::Role;
-        let Some(picker) = &self.picker else { return };
+        let Some(picker) = &self.dialogs.picker else { return };
         for (control, rect) in self.picker_rects() {
             let role = if control == Control::Name { Role::Edit } else { Role::Button };
             let i = tree.add(0, control.id(), role, picker.label(control).into_owned(), rect);
@@ -312,10 +312,10 @@ impl App {
     }
 
     pub(super) fn picker_event(&mut self, event: &Event, now: Instant) -> bool {
-        if self.confirm.is_some() {
+        if self.dialogs.confirm.is_some() {
             return false;
         }
-        let Some(picker) = &mut self.picker else { return false };
+        let Some(picker) = &mut self.dialogs.picker else { return false };
         match *event {
             Event::A11yFocus(id) | Event::Invoke(id) => {
                 let control = picker.controls().find(|c| c.id() == id);
@@ -348,7 +348,7 @@ impl App {
             }
             Event::MouseDown { x, y, button: MouseButton::Left, clicks } => {
                 let target = self.picker_rects().into_iter().find(|(_, r)| r.contains(x, y));
-                let Some(picker) = &mut self.picker else { return false };
+                let Some(picker) = &mut self.dialogs.picker else { return false };
                 picker.focused = target.map(|(control, _)| control);
                 picker.pressed = picker.focused;
                 picker.preedit = None;
@@ -389,7 +389,7 @@ impl App {
     }
 
     pub(super) fn picker_allows(&self, id: &str) -> bool {
-        if self.picker.is_none() {
+        if self.dialogs.picker.is_none() {
             return true;
         }
         matches!(id, "item.open" | "app.quit" | "tab.close" | "folder.dropdown")

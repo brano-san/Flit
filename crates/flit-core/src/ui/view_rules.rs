@@ -78,7 +78,7 @@ fn below(path: &FsPath, root: &FsPath) -> bool {
 impl App {
     pub(super) fn refresh_view_rules(&mut self) {
         self.each_pane(|a, k| {
-            if a.tabs[k].view.as_ref().is_some_and(|v| v.snap().gen == a.tabs[k].gen && v.snap().done) {
+            if a.tabs.items[k].view.as_ref().is_some_and(|v| v.snap().gen == a.tabs.items[k].gen && v.snap().done) {
                 a.settle_look(k, false, true);
             }
         });
@@ -86,8 +86,8 @@ impl App {
     }
 
     pub(super) fn rule_layout(&mut self, k: usize, done: bool) -> Option<LayoutMode> {
-        let t = &self.tabs[k];
-        let rules = &self.opts.view_rules;
+        let t = &self.tabs.items[k];
+        let rules = &self.settings.opts.view_rules;
         if !rules.location_rules() && rules.archive.is_none() && rules.pictures_min == 0 {
             return None;
         }
@@ -126,7 +126,7 @@ impl App {
         let ask = self.gen();
         let cancel = GenToken::default();
         cancel.set(ask);
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         t.picture_scan = Some(PictureScan { snap: weak, ask, cancel: cancel.clone(), share: None });
         self.effects.push(Effect::ViewPictures { tab: t.id, ask, snap, cancel });
         None
@@ -136,8 +136,8 @@ impl App {
         if let Some(id) = self.parked_of(tab) {
             return self.visit(id, |a| a.on_picture_share(tab, ask, share));
         }
-        let Some(k) = self.tabs.iter().position(|t| t.id == tab) else { return };
-        let t = &mut self.tabs[k];
+        let Some(k) = self.tabs.items.iter().position(|t| t.id == tab) else { return };
+        let t = &mut self.tabs.items[k];
         let Some(v) = t.view.as_ref().filter(|v| v.snap().gen == t.gen) else { return };
         let Some(scan) = t.picture_scan.as_mut().filter(|s| s.ask == ask && s.snap.ptr_eq(&Arc::downgrade(v.snap()))) else { return };
         scan.share = Some(share);

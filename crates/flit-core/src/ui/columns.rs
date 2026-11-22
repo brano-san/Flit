@@ -63,7 +63,7 @@ impl App {
     }
 
     fn settle_panes(&mut self) {
-        let App { tabs, cur, layout, .. } = self;
+        let App { tabs: super::tabbar::Tabs { items: tabs, cur, .. }, layout, .. } = self;
         let t = &mut tabs[*cur];
         let rh = layout.row_h.max(1.0);
         let children: Vec<Vec<u8>> = (0..t.panes.len()).map(|i| t.panes.get(i + 1).map_or(&t.view_loc, |p| &p.loc).file_name().to_vec()).collect();
@@ -77,21 +77,21 @@ impl App {
 
     pub(super) fn poll_panes(&mut self) -> bool {
         let mut shown = false;
-        for (k, t) in self.tabs.iter_mut().enumerate() {
+        for (k, t) in self.tabs.items.iter_mut().enumerate() {
             for p in t.panes.iter_mut() {
                 let Some(snap) = p.slot.take().filter(|s| s.gen == p.gen) else { continue };
                 match &mut p.view {
                     Some(v) if v.snap().gen == snap.gen => v.replace(snap),
                     _ => p.view = Some(DirView::new(snap)),
                 }
-                shown |= k == self.cur;
+                shown |= k == self.tabs.cur;
             }
         }
         shown
     }
 
     pub(super) fn keep_as_pane(&mut self, k: usize) {
-        let t = &mut self.tabs[k];
+        let t = &mut self.tabs.items[k];
         if let Some(v) = t.view.take() {
             t.panes.push(Pane::shown(t.view_loc.clone(), v));
         }
@@ -186,7 +186,7 @@ impl App {
         let font = self.content_font(13.0);
         let m = g.metrics(font);
         let (s4, s8, s10) = (self.cs(4.0), self.cs(8.0), self.cs(10.0));
-        let t = &self.tabs[self.cur];
+        let t = &self.tabs.items[self.tabs.cur];
         let mut requests: Vec<IconRequest> = Vec::new();
         let mut elided: Vec<(usize, usize)> = Vec::new();
         let area = l.pane_area;

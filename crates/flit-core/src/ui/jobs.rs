@@ -309,12 +309,6 @@ pub(super) struct Jobs {
     pub list: Vec<Job>,
     pub open: bool,
     pub menu: Option<usize>,
-    pub asks: VecDeque<Ask>,
-    conflict_batches: VecDeque<(OpId, Vec<Conflict>)>,
-    pub(super) suspended_conflicts: Option<Form>,
-    pub form: Option<Form>,
-    pub all: bool,
-    pub sel: usize,
     first: usize,
     unseen_failure: bool,
     r: Rects,
@@ -339,10 +333,6 @@ impl Jobs {
             Some(JobState::Done) => Outcome::Done,
             _ => Outcome::None,
         }
-    }
-
-    pub fn modal(&self) -> bool {
-        !self.asks.is_empty() || self.form.is_some()
     }
 
     fn visible(&self) -> std::ops::Range<usize> {
@@ -512,10 +502,10 @@ impl App {
         let created = Instant::now();
         let started = matches!(kind, JobKind::Git { .. }).then_some(created);
         let job = Job { id, kind, wsl, dest, ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created, started, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
-        if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
-            self.jobs.list.remove(k);
+        if let Some(k) = self.ops.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.ops.jobs.list.len() >= MAX_JOBS) {
+            self.ops.jobs.list.remove(k);
         }
-        self.jobs.list.push(job);
+        self.ops.jobs.list.push(job);
         self.layout();
         self.dirty = true;
     }
@@ -554,13 +544,13 @@ impl App {
     }
 
     pub(super) fn cancel_git_jobs(&self) {
-        for j in self.jobs.list.iter().filter(|j| j.state == JobState::Running && matches!(j.kind, JobKind::Git { .. })) {
+        for j in self.ops.jobs.list.iter().filter(|j| j.state == JobState::Running && matches!(j.kind, JobKind::Git { .. })) {
             j.ctl.cancel();
         }
     }
 
     fn job_mut(&mut self, id: OpId) -> Option<&mut Job> {
-        self.jobs.list.iter_mut().find(|j| j.id == id)
+        self.ops.jobs.list.iter_mut().find(|j| j.id == id)
     }
 
     pub(super) fn job_progress(&mut self, id: OpId, progress: OpProgress, now: Instant) {
@@ -600,7 +590,7 @@ impl App {
             return;
         }
         job.asking = true;
-        self.jobs.conflict_batches.push_back((id, conflicts));
+        self.dialogs.conflict_batches.push_back((id, conflicts));
         if !self.active {
             self.effects.push(super::Effect::Window(super::WindowCmd::Attention));
         }
@@ -610,14 +600,14 @@ impl App {
     }
 
     pub(super) fn show_conflict_table(&mut self) {
-        if self.jobs.form.is_some() || !self.jobs.asks.is_empty() {
+        if self.dialogs.form.is_some() || !self.dialogs.asks.is_empty() {
             return;
         }
-        if let Some(form) = self.jobs.suspended_conflicts.take() {
-            self.jobs.form = Some(form);
+        if let Some(form) = self.dialogs.suspended_conflicts.take() {
+            self.dialogs.form = Some(form);
             return;
         }
-        let Some((id, conflicts)) = self.jobs.conflict_batches.pop_front() else { return };
+        let Some((id, conflicts)) = self.dialogs.conflict_batches.pop_front() else { return };
         let bulk = |folders| std::iter::once(S::UiConflictPerItem.t().to_owned())
             .chain(REVIEW_CHOICES.iter().map(|&choice| review_label(choice, folders))).collect();
         let review = ConflictReview::new(conflicts);
@@ -626,7 +616,7 @@ impl App {
             Control::choice(S::UiConflictAllFolders.t(), bulk(true), 0),
         ];
         controls.extend(review.controls());
-        self.jobs.form = Some(Form::new(
+        self.dialogs.form = Some(Form::new(
             super::archive::Kind::ConflictTable { id, review },
             S::UiConflictReviewTitle.t(),
             controls,
@@ -635,7 +625,7 @@ impl App {
     }
 
     pub(super) fn conflict_table_changed(&mut self, index: usize) {
-        let Some(form) = self.jobs.form.as_mut() else { return };
+        let Some(form) = self.dialogs.form.as_mut() else { return };
         let selected = form.choice(index);
         let super::archive::Kind::ConflictTable { review, .. } = &mut form.kind else { return };
         let mut detail = String::new();
@@ -702,32 +692,32 @@ impl App {
     }
 
     fn push_ask(&mut self, ask: Ask) {
-        if self.jobs.asks.is_empty() {
-            self.jobs.all = false;
-            self.jobs.sel = ask.first_button();
+        if self.dialogs.asks.is_empty() {
+            self.dialogs.all = false;
+            self.dialogs.sel = ask.first_button();
             if !self.active {
                 self.effects.push(super::Effect::Window(super::WindowCmd::Attention));
             }
         }
-        self.jobs.asks.push_back(ask);
+        self.dialogs.asks.push_back(ask);
         self.layout();
         self.dirty = true;
     }
 
     pub(super) fn job_done(&mut self, id: OpId, error: Option<&str>, cancelled: bool, now: Instant) {
         let asked = |a: &Ask| a.of_job(id);
-        if self.jobs.asks.front().is_some_and(asked) {
-            self.jobs.all = false;
-            self.jobs.sel = self.jobs.asks.iter().find(|a| !asked(a)).map_or(0, Ask::first_button);
+        if self.dialogs.asks.front().is_some_and(asked) {
+            self.dialogs.all = false;
+            self.dialogs.sel = self.dialogs.asks.iter().find(|a| !asked(a)).map_or(0, Ask::first_button);
         }
-        self.jobs.asks.retain(|a| !asked(a));
-        self.jobs.conflict_batches.retain(|(job, _)| *job != id);
+        self.dialogs.asks.retain(|a| !asked(a));
+        self.dialogs.conflict_batches.retain(|(job, _)| *job != id);
         let matches_job = |f: &Form| matches!(f.kind, super::archive::Kind::ConflictTable { id: job, .. } if job == id);
-        if self.jobs.form.as_ref().is_some_and(matches_job) {
-            self.jobs.form = None;
+        if self.dialogs.form.as_ref().is_some_and(matches_job) {
+            self.dialogs.form = None;
         }
-        if self.jobs.suspended_conflicts.as_ref().is_some_and(matches_job) {
-            self.jobs.suspended_conflicts = None;
+        if self.dialogs.suspended_conflicts.as_ref().is_some_and(matches_job) {
+            self.dialogs.suspended_conflicts = None;
         }
         let Some(j) = self.job_mut(id) else { return };
         j.state = match error {
@@ -756,7 +746,7 @@ impl App {
         if took.as_millis() > super::bottom::ELAPSED_MIN_MS {
             self.tab_mut().stats.op = Some(took);
         }
-        self.jobs.unseen_failure |= failed && !self.jobs.open;
+        self.ops.jobs.unseen_failure |= failed && !self.ops.jobs.open;
         self.show_conflict_table();
         self.layout();
         self.dirty = true;
@@ -800,20 +790,20 @@ impl App {
     }
 
     pub fn jobs_open(&self) -> bool {
-        self.jobs.open
+        self.ops.jobs.open
     }
 
     pub fn running_jobs(&self) -> usize {
-        self.jobs.list.iter().filter(|j| j.state == JobState::Running).count()
+        self.ops.jobs.list.iter().filter(|j| j.state == JobState::Running).count()
     }
 
     pub fn keeps_awake(&self) -> bool {
-        self.jobs.list.iter().any(|j| j.state == JobState::Running && !j.ctl.is_paused()) || self.hashing()
+        self.ops.jobs.list.iter().any(|j| j.state == JobState::Running && !j.ctl.is_paused()) || self.hashing()
     }
 
     pub fn overall_progress(&self) -> Option<(f32, bool)> {
-        let running: Vec<f32> = self.jobs.list.iter().filter(|j| j.state == JobState::Running).map(Job::fraction).collect();
-        let held = !self.jobs.asks.is_empty() || self.jobs.list.iter().any(|j| j.state == JobState::Running && j.ctl.is_paused());
+        let running: Vec<f32> = self.ops.jobs.list.iter().filter(|j| j.state == JobState::Running).map(Job::fraction).collect();
+        let held = !self.dialogs.asks.is_empty() || self.ops.jobs.list.iter().any(|j| j.state == JobState::Running && j.ctl.is_paused());
         (!running.is_empty()).then(|| (running.iter().sum::<f32>() / running.len() as f32, held))
     }
 
@@ -831,17 +821,17 @@ impl App {
             return self.effects.push(super::Effect::Window(cmd));
         }
         let s = |v: f32| (v * self.scale).round();
-        let anchor = self.panels.caption.get(2).copied().filter(|r| r.w > 0.0).unwrap_or_else(|| Rect::new(self.size.0 - s(46.0), 0.0, s(46.0), s(32.0)));
+        let anchor = self.tabs.panels.caption.get(2).copied().filter(|r| r.w > 0.0).unwrap_or_else(|| Rect::new(self.size.0 - s(46.0), 0.0, s(46.0), s(32.0)));
         let question = crate::trn!(P::UiCloseRunning, running);
         self.ask(anchor, (&question, S::UiCloseCancel.t()), true, then, now);
     }
 
     pub fn job_states(&self) -> Vec<(String, JobState, OpProgress)> {
-        self.jobs.list.iter().map(|j| (j.title(), j.state.clone(), j.progress)).collect()
+        self.ops.jobs.list.iter().map(|j| (j.title(), j.state.clone(), j.progress)).collect()
     }
 
     pub fn asking(&self) -> Option<&str> {
-        match self.jobs.asks.front() {
+        match self.dialogs.asks.front() {
             Some(a) if a.unreadable() => Some("unreadable"),
             Some(a) if a.too_large() => Some("too_large"),
             Some(Ask::Conflict { .. }) => Some("conflict"),
@@ -852,40 +842,40 @@ impl App {
             Some(Ask::Restore { .. }) => Some("restore"),
             Some(Ask::ReplaceExport { .. }) => Some("replace"),
             Some(Ask::ExtensionChange(_)) => Some("extension"),
-            None => self.jobs.form.as_ref().map(|f| f.kind.name()),
+            None => self.dialogs.form.as_ref().map(|f| f.kind.name()),
         }
     }
 
     pub fn toggle_jobs(&mut self) {
-        self.jobs.open = !self.jobs.open;
-        self.jobs.menu = None;
-        if self.jobs.open {
-            self.jobs.unseen_failure = false;
-            self.jobs.first = 0;
+        self.ops.jobs.open = !self.ops.jobs.open;
+        self.ops.jobs.menu = None;
+        if self.ops.jobs.open {
+            self.ops.jobs.unseen_failure = false;
+            self.ops.jobs.first = 0;
         }
         self.layout();
         self.dirty = true;
     }
 
     pub fn clear_completed(&mut self) {
-        self.jobs.list.retain(|j| j.state == JobState::Running);
-        self.jobs.menu = None;
-        self.jobs.first = 0;
+        self.ops.jobs.list.retain(|j| j.state == JobState::Running);
+        self.ops.jobs.menu = None;
+        self.ops.jobs.first = 0;
         self.layout();
         self.dirty = true;
     }
 
     pub fn cancel_job(&mut self, row: usize) {
-        let i = self.jobs.row_of(row);
-        if let Some(j) = self.jobs.list.get(i).filter(|j| j.state == JobState::Running) {
+        let i = self.ops.jobs.row_of(row);
+        if let Some(j) = self.ops.jobs.list.get(i).filter(|j| j.state == JobState::Running) {
             j.ctl.cancel();
             self.dirty = true;
         }
     }
 
     pub fn pause_job(&mut self, row: usize) {
-        let i = self.jobs.row_of(row);
-        if let Some(j) = self.jobs.list.get_mut(i).filter(|j| j.can_pause()) {
+        let i = self.ops.jobs.row_of(row);
+        if let Some(j) = self.ops.jobs.list.get_mut(i).filter(|j| j.can_pause()) {
             j.ctl.pause(!j.ctl.is_paused());
             (j.mark, j.speed) = (None, 0.0);
             self.dirty = true;
@@ -893,7 +883,7 @@ impl App {
     }
 
     fn job_menu(&self, row: usize) -> Vec<S> {
-        let Some(j) = self.jobs.list.get(self.jobs.row_of(row)) else { return Vec::new() };
+        let Some(j) = self.ops.jobs.list.get(self.ops.jobs.row_of(row)) else { return Vec::new() };
         let mut items = Vec::new();
         if j.dest.is_some() {
             items.push(S::UiJobOpenDestination);
@@ -916,20 +906,20 @@ impl App {
     }
 
     fn run_job_menu(&mut self, k: usize, now: Instant) {
-        let Some(row) = self.jobs.menu.take() else { return };
+        let Some(row) = self.ops.jobs.menu.take() else { return };
         let item = self.job_menu(row).get(k).copied();
-        let i = self.jobs.row_of(row);
+        let i = self.ops.jobs.row_of(row);
         match item {
             Some(S::UiJobOpenDestination) => {
-                if let Some(folder) = self.jobs.list.get(i).and_then(|j| j.dest.clone()) {
-                    self.jobs.open = false;
+                if let Some(folder) = self.ops.jobs.list.get(i).and_then(|j| j.dest.clone()) {
+                    self.ops.jobs.open = false;
                     self.dispatch(vec![Route { folder, select: None }], OpenTarget::NewTab, now);
                 }
             }
             Some(S::UiButtonCancel) => self.cancel_job(row),
             Some(S::UiJobPause | S::UiJobResume) => self.pause_job(row),
             Some(S::GitLockRemove) => {
-                let j = &self.jobs.list[i];
+                let j = &self.ops.jobs.list[i];
                 if let JobKind::Git { lock: Some(lock), .. } = &j.kind {
                     let controls = vec![Control::paragraph(crate::tr!(S::GitLockConfirm, path = lock.path.display()))];
                     let kind = super::archive::Kind::GitRemoveIndexLock { id: j.id, lock: lock.clone() };
@@ -937,15 +927,15 @@ impl App {
                 }
             }
             Some(S::UiJobCopyLimit) => {
-                if let Some(job) = self.jobs.list.get(i) {
+                if let Some(job) = self.ops.jobs.list.get(i) {
                     let value = job.ctl.copy_limit().to_string();
                     let controls = vec![Control::text(S::UiJobCopyLimitUnit.t(), &value, "")];
                     self.open_form(Form::new(super::archive::Kind::CopyLimit(job.id), S::UiJobCopyLimitTitle.t(), controls, vec![S::ArchiveOk.t(), S::UiButtonCancel.t()]));
                 }
             }
             Some(_) => {
-                self.jobs.list.remove(i);
-                self.jobs.first = self.jobs.first.min(self.jobs.list.len().saturating_sub(MAX_ROWS));
+                self.ops.jobs.list.remove(i);
+                self.ops.jobs.first = self.ops.jobs.first.min(self.ops.jobs.list.len().saturating_sub(MAX_ROWS));
             }
             None => {}
         }
@@ -966,17 +956,17 @@ impl App {
 
     fn answer(&mut self, button: usize) {
         let key = self.dialog_keys().get(button).copied();
-        let Some(ask) = self.jobs.asks.pop_front() else { return };
+        let Some(ask) = self.dialogs.asks.pop_front() else { return };
         let (two, too_large) = (!ask.name_conflict(), ask.too_large());
         match ask {
             Ask::Conflict { id, .. } => {
                 let choice = match key {
                     Some(S::OpsExtraCopyAnyway) => Some((limits::ROOM_ANYWAY, false)),
                     Some(S::UiButtonRetry) => Some((limits::ROOM_RETRY, false)),
-                    _ if two => [Some((Resolve::Skip, self.jobs.all)), None][button.min(1)],
-                    Some(S::UiButtonReplace) => Some((Resolve::Replace, self.jobs.all)),
-                    Some(S::UiButtonKeepBoth) => Some((Resolve::KeepBoth, self.jobs.all)),
-                    Some(S::UiButtonSkip) => Some((Resolve::Skip, self.jobs.all)),
+                    _ if two => [Some((Resolve::Skip, self.dialogs.all)), None][button.min(1)],
+                    Some(S::UiButtonReplace) => Some((Resolve::Replace, self.dialogs.all)),
+                    Some(S::UiButtonKeepBoth) => Some((Resolve::KeepBoth, self.dialogs.all)),
+                    Some(S::UiButtonSkip) => Some((Resolve::Skip, self.dialogs.all)),
                     Some(S::UiButtonSkipSame) => Some((Resolve::SkipSame, true)),
                     Some(S::UiButtonReplaceOlder) => Some((Resolve::ReplaceOlder, true)),
                     _ => None,
@@ -1003,7 +993,7 @@ impl App {
                     j.asking = false;
                 }
             }
-            Ask::Confirm(FileOp::Trash(items), provider) if button == 0 && self.jobs.all => self.start_confirmed(provider, FileOp::Delete(items)),
+            Ask::Confirm(FileOp::Trash(items), provider) if button == 0 && self.dialogs.all => self.start_confirmed(provider, FileOp::Delete(items)),
             Ask::Confirm(op, provider) if button == 0 => self.start_confirmed(provider, op),
             Ask::Untrashable(items) if button == 0 => self.start_confirmed(ProviderId::Local, FileOp::Delete(items)),
             Ask::Restore { session, dump } => match restore_buttons(session, dump.is_some()).get(button) {
@@ -1025,8 +1015,8 @@ impl App {
             Ask::ExtensionChange(_) => self.extension_change_answered(button == 0),
             Ask::Confirm(..) | Ask::Untrashable(_) | Ask::ReplaceExport { .. } => {}
         }
-        self.jobs.all = false;
-        self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
+        self.dialogs.all = false;
+        self.dialogs.sel = self.dialogs.asks.front().map_or(0, Ask::first_button);
         self.show_conflict_table();
         self.layout();
         self.dirty = true;
@@ -1039,7 +1029,7 @@ impl App {
     }
 
     fn dialog_keys(&self) -> Vec<S> {
-        let keys: &[S] = match self.jobs.asks.front() {
+        let keys: &[S] = match self.dialogs.asks.front() {
             Some(Ask::Conflict { conflict, .. }) if limits::is_short_of_space(conflict) => &NO_ROOM_BUTTONS,
             Some(a) if a.unreadable() || a.too_large() => &UNREADABLE_BUTTONS,
             Some(Ask::Conflict { id, .. }) => return self.conflict_keys(*id),
@@ -1054,7 +1044,7 @@ impl App {
             None => &[],
         };
         let mut keys = keys.to_vec();
-        if matches!(self.jobs.asks.front(), Some(Ask::Failure { failure, .. }) if failure.error.kind == PlatformErrorKind::SymlinkPrivilege) {
+        if matches!(self.dialogs.asks.front(), Some(Ask::Failure { failure, .. }) if failure.error.kind == PlatformErrorKind::SymlinkPrivilege) {
             if let Some(first) = keys.first_mut() {
                 *first = S::MenuLinksRetryAdmin;
             }
@@ -1067,17 +1057,17 @@ impl App {
     }
 
     pub(super) fn jobs_char(&mut self, c: char) -> bool {
-        if !self.jobs.modal() {
+        if !self.dialogs.modal() {
             return false;
         }
-        let conflict = self.jobs.asks.front().is_some_and(Ask::name_conflict);
+        let conflict = self.dialogs.asks.front().is_some_and(Ask::name_conflict);
         if !conflict || self.mods.ctrl || self.mods.alt {
             return true;
         }
         let typed = upper(c);
         if self.mods.shift {
             if typed.is_some() && typed == first_letter(S::UiConflictApplyAll.t()) {
-                self.jobs.all = !self.jobs.all;
+                self.dialogs.all = !self.dialogs.all;
             }
         } else {
             let letters: Vec<Option<char>> = self.dialog_keys().iter().map(|k| CONFLICT_ANSWERS.contains(k).then(|| first_letter(k.t())).flatten()).collect();
@@ -1090,14 +1080,14 @@ impl App {
     }
 
     pub(super) fn jobs_key(&mut self, key: Key, m: Mods) -> bool {
-        if !self.jobs.asks.is_empty() {
+        if !self.dialogs.asks.is_empty() {
             let n = self.dialog_buttons().len();
             match key {
                 Key::Escape => self.answer(n - 1),
-                Key::Enter | Key::Space => self.answer(self.jobs.sel),
-                Key::Left => self.jobs.sel = (self.jobs.sel + n - 1) % n,
-                Key::Right | Key::Tab if !m.shift => self.jobs.sel = (self.jobs.sel + 1) % n,
-                Key::Tab => self.jobs.sel = (self.jobs.sel + n - 1) % n,
+                Key::Enter | Key::Space => self.answer(self.dialogs.sel),
+                Key::Left => self.dialogs.sel = (self.dialogs.sel + n - 1) % n,
+                Key::Right | Key::Tab if !m.shift => self.dialogs.sel = (self.dialogs.sel + 1) % n,
+                Key::Tab => self.dialogs.sel = (self.dialogs.sel + n - 1) % n,
                 _ => {}
             }
             self.dirty = true;
@@ -1106,9 +1096,9 @@ impl App {
         if self.form_key(key, m) {
             return true;
         }
-        if self.jobs.open && key == Key::Escape {
-            self.jobs.open = false;
-            self.jobs.menu = None;
+        if self.ops.jobs.open && key == Key::Escape {
+            self.ops.jobs.open = false;
+            self.ops.jobs.menu = None;
             self.dirty = true;
             return true;
         }
@@ -1116,23 +1106,23 @@ impl App {
     }
 
     pub(super) fn jobs_wheel(&mut self, dy: f32, now: Instant) -> bool {
-        if !self.jobs.open || !matches!(self.hover, Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsCancel(_) | Hit::OpsPause(_) | Hit::OpsMore(_)) {
+        if !self.ops.jobs.open || !matches!(self.hover, Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsCancel(_) | Hit::OpsPause(_) | Hit::OpsMore(_)) {
             return false;
         }
         let rows = self.wheel_steps.add(super::pointer::Steps::Jobs, dy, now);
         if rows == 0 {
             return true;
         }
-        let max = self.jobs.list.len().saturating_sub(MAX_ROWS) as isize;
-        self.jobs.first = (self.jobs.first as isize - rows as isize).clamp(0, max) as usize;
-        self.jobs.menu = None;
+        let max = self.ops.jobs.list.len().saturating_sub(MAX_ROWS) as isize;
+        self.ops.jobs.first = (self.ops.jobs.first as isize - rows as isize).clamp(0, max) as usize;
+        self.ops.jobs.menu = None;
         self.layout();
         self.dirty = true;
         true
     }
 
     pub(super) fn ops_button_visible(&self) -> bool {
-        self.ops_button_always || self.jobs.running() || self.jobs.open || self.jobs.unseen_failure
+        self.ops_button_always || self.ops.jobs.running() || self.ops.jobs.open || self.ops.jobs.unseen_failure
     }
 
     pub(super) fn layout_jobs(&mut self) {
@@ -1141,7 +1131,7 @@ impl App {
         let (w, h, sc) = (self.size.0, self.size.1, self.scale);
         let s = |v: f32| (v * sc).round();
         let button = self.layout.ops_button;
-        let j = &mut self.jobs;
+        let j = &mut self.ops.jobs;
         j.r = Rects { button, ..Default::default() };
         if j.open && button.w > 0.0 {
             let pw = s(PANEL_W).min(w - s(16.0));
@@ -1162,7 +1152,7 @@ impl App {
                 j.r.menu = (0..n).map(|k| Rect::new(more.right() - s(MENU_W), top + k as f32 * row_height, s(MENU_W), row_height)).collect();
             }
         }
-        if let Some(ask) = j.asks.front() {
+        if let Some(ask) = self.dialogs.asks.front() {
             let elevating = matches!(ask, Ask::Failure { failure, .. } if failure.error.kind == PlatformErrorKind::SymlinkPrivilege);
             let checked = (matches!(ask, Ask::Conflict { .. }) && !ask.too_large()) || can_delete_instead(ask);
             let policies = policy.iter().filter(|&&p| p).count();
@@ -1204,11 +1194,11 @@ impl App {
     }
 
     pub(super) fn jobs_hit(&self, x: f32, y: f32) -> Option<Hit> {
-        let r = &self.jobs.r;
-        if self.jobs.asks.is_empty() && self.jobs.form.is_some() {
+        let r = &self.ops.jobs.r;
+        if self.dialogs.asks.is_empty() && self.dialogs.form.is_some() {
             return self.form_hit(x, y);
         }
-        if self.jobs.modal() {
+        if self.dialogs.modal() {
             if let Some(k) = r.buttons.iter().position(|b| b.contains(x, y)) {
                 return Some(Hit::DialogButton(k));
             }
@@ -1223,7 +1213,7 @@ impl App {
         if self.nav.palette.is_none() && r.button.contains(x, y) {
             return Some(Hit::OpsButton);
         }
-        if !self.jobs.open {
+        if !self.ops.jobs.open {
             return None;
         }
         if let Some(k) = r.menu.iter().position(|m| m.contains(x, y)) {
@@ -1237,11 +1227,11 @@ impl App {
         }
         let s = |v: f32| (v * self.scale).round();
         for (k, &row) in r.rows.iter().enumerate() {
-            let i = self.jobs.first + k;
+            let i = self.ops.jobs.first + k;
             if Jobs::more_rect(row, s).contains(x, y) {
                 return Some(Hit::OpsMore(i));
             }
-            let job = self.jobs.list.get(self.jobs.row_of(i));
+            let job = self.ops.jobs.list.get(self.ops.jobs.row_of(i));
             let running = job.is_some_and(|j| j.state == JobState::Running);
             if running && Jobs::cancel_rect(row, s).contains(x, y) {
                 return Some(Hit::OpsCancel(i));
@@ -1259,15 +1249,15 @@ impl App {
     pub(super) fn jobs_mouse_down(&mut self, h: Hit) -> bool {
         let ours = matches!(h, Hit::Modal | Hit::Dialog | Hit::DialogButton(_) | Hit::DialogCheck | Hit::Form(_) | Hit::OpsButton | Hit::OpsPanel | Hit::OpsRow(_) | Hit::OpsClear | Hit::OpsCancel(_) | Hit::OpsPause(_) | Hit::OpsMore(_) | Hit::OpsMenu(_));
         if !ours {
-            if self.jobs.open {
-                self.jobs.open = false;
-                self.jobs.menu = None;
+            if self.ops.jobs.open {
+                self.ops.jobs.open = false;
+                self.ops.jobs.menu = None;
                 self.layout();
             }
             return false;
         }
         if !matches!(h, Hit::OpsMore(_) | Hit::OpsMenu(_)) {
-            self.jobs.menu = None;
+            self.ops.jobs.menu = None;
         }
         self.pressed = h;
         self.dirty = true;
@@ -1281,12 +1271,12 @@ impl App {
             Hit::OpsCancel(row) => self.cancel_job(row),
             Hit::OpsPause(row) => self.pause_job(row),
             Hit::OpsMore(row) => {
-                self.jobs.menu = if self.jobs.menu == Some(row) { None } else { Some(row) };
+                self.ops.jobs.menu = if self.ops.jobs.menu == Some(row) { None } else { Some(row) };
                 self.layout();
             }
             Hit::OpsMenu(k) => self.run_job_menu(k, now),
             Hit::DialogButton(k) => self.answer(k),
-            Hit::DialogCheck => self.jobs.all = !self.jobs.all,
+            Hit::DialogCheck => self.dialogs.all = !self.dialogs.all,
             Hit::Form(_) => return self.form_up(h),
             _ => return false,
         }
@@ -1300,13 +1290,13 @@ impl App {
             return;
         }
         let (s2, s4) = (self.s(2.0), self.s(4.0));
-        let lit = if self.jobs.open { 1.0 } else { self.lit(Hit::OpsButton) };
+        let lit = if self.ops.jobs.open { 1.0 } else { self.lit(Hit::OpsButton) };
         if lit > 0.0 {
-            let c = if self.pressed == Hit::OpsButton || self.jobs.open { t.button_pressed } else { super::widgets::faded(t.button_hover, lit) };
+            let c = if self.pressed == Hit::OpsButton || self.ops.jobs.open { t.button_pressed } else { super::widgets::faded(t.button_hover, lit) };
             g.dl.round_rect(r.inset(s2, 0.0), c, s4);
         }
-        let running: Vec<f32> = self.jobs.list.iter().filter(|j| j.state == JobState::Running).map(Job::fraction).collect();
-        let (glyph, color) = match (running.is_empty(), self.jobs.outcome()) {
+        let running: Vec<f32> = self.ops.jobs.list.iter().filter(|j| j.state == JobState::Running).map(Job::fraction).collect();
+        let (glyph, color) = match (running.is_empty(), self.ops.jobs.outcome()) {
             (false, _) => (G_OPS, t.accent),
             (true, Outcome::Failed) => (G_WARNING, t.error),
             (true, Outcome::Done) => (G_DONE, t.text),
@@ -1319,7 +1309,7 @@ impl App {
             g.dl.round_rect(bar, t.separator, s2);
             g.dl.round_rect(Rect::new(bar.x, bar.y, (bar.w * f).max(s2), bar.h), t.accent, s2);
         }
-        if self.jobs.unseen_failure {
+        if self.ops.jobs.unseen_failure {
             let d = self.s(6.0);
             g.dl.round_rect(Rect::new(r.right() - self.s(9.0), r.y + self.s(4.0), d, d), t.error, d / 2.0);
         }
@@ -1327,17 +1317,17 @@ impl App {
 
     pub(super) fn draw_jobs<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let now = self.last_frame.unwrap_or_else(Instant::now);
-        if let Some(since) = self.jobs.opened(now).filter(|_| !self.search.active) {
+        if let Some(since) = self.ops.jobs.opened(now).filter(|_| !self.search.active) {
             let from = g.dl.instances.len();
             self.draw_panel(g, t);
-            let p = self.jobs.r.panel;
+            let p = self.ops.jobs.r.panel;
             self.keep_ghost(g, super::widgets::Ghost::Jobs, from, (p.right(), p.y));
             self.pop(g, from, since, (p.right(), p.y));
         }
-        if self.jobs.form.is_some() {
+        if self.dialogs.form.is_some() {
             self.draw_form(g, t);
         }
-        if !self.jobs.asks.is_empty() {
+        if !self.dialogs.asks.is_empty() {
             self.draw_dialog(g, t);
         }
     }
@@ -1347,13 +1337,13 @@ impl App {
         let icons = self.icon_font(10.0);
         let (s4, s6, s12) = (self.s(4.0), self.s(6.0), self.s(12.0));
         let s = |v: f32| (v * self.scale).round();
-        let p = self.jobs.r.panel;
+        let p = self.ops.jobs.r.panel;
         super::widgets::Paint::new(g, t, self.scale).frame(p);
         let m = g.metrics(bold);
         let head = (p.y + (s(PANEL_HEAD) + m.ascent - m.descent) / 2.0).round();
         g.text(p.x + s12 + s6, head, S::UiJobOperations.t(), bold, t.text, p.w / 2.0);
-        let clear = self.jobs.r.clear;
-        let done = self.jobs.list.iter().any(|j| j.state != JobState::Running);
+        let clear = self.ops.jobs.r.clear;
+        let done = self.ops.jobs.list.iter().any(|j| j.state != JobState::Running);
         let lit = self.lit(Hit::OpsClear);
         if lit > 0.0 && done {
             g.dl.round_rect(clear, super::widgets::faded(t.button_hover, lit), s4);
@@ -1362,20 +1352,20 @@ impl App {
         let lw = g.measure(label, small);
         g.text(clear.right() - lw - s(8.0), head, label, small, if done { t.accent } else { t.text_dim.alpha(0x70) }, f32::INFINITY);
         g.dl.set_clip(Some(p));
-        if self.jobs.list.is_empty() {
+        if self.ops.jobs.list.is_empty() {
             let baseline = (p.y + s(PANEL_HEAD) + s(ROW_H) / 2.0).round();
             g.text(p.x + s12 + s6, baseline, S::UiJobNone.t(), font, t.text_dim, p.w - 2.0 * s12);
         }
-        let rows = self.jobs.r.rows.clone();
+        let rows = self.ops.jobs.r.rows.clone();
         for (k, &row) in rows.iter().enumerate() {
-            let i = self.jobs.first + k;
-            let Some(j) = self.jobs.list.get(self.jobs.row_of(i)) else { continue };
+            let i = self.ops.jobs.first + k;
+            let Some(j) = self.ops.jobs.list.get(self.ops.jobs.row_of(i)) else { continue };
             let failed = matches!(j.state, JobState::Failed(_));
             if failed {
                 g.dl.round_rect(row, t.error.alpha(0x1C), s4);
                 g.dl.round_rect(Rect::new(row.x + s(2.0), row.y + s(6.0), s(3.0), row.h - s(12.0)), t.error, s(1.5));
             }
-            let lit = if self.jobs.menu == Some(i) { 1.0 } else { self.lit(Hit::OpsRow(i)).max(self.lit(Hit::OpsCancel(i))).max(self.lit(Hit::OpsPause(i))).max(self.lit(Hit::OpsMore(i))) };
+            let lit = if self.ops.jobs.menu == Some(i) { 1.0 } else { self.lit(Hit::OpsRow(i)).max(self.lit(Hit::OpsCancel(i))).max(self.lit(Hit::OpsPause(i))).max(self.lit(Hit::OpsMore(i))) };
             if lit > 0.0 {
                 g.dl.round_rect(row, super::widgets::faded(t.hover, lit), s4);
             }
@@ -1407,7 +1397,7 @@ impl App {
                 if !show {
                     continue;
                 }
-                let lit = if hit == Hit::OpsMore(i) && self.jobs.menu == Some(i) { 1.0 } else { self.lit(hit) };
+                let lit = if hit == Hit::OpsMore(i) && self.ops.jobs.menu == Some(i) { 1.0 } else { self.lit(hit) };
                 if lit > 0.0 {
                     g.dl.round_rect(b, super::widgets::faded(t.button_hover, lit), s4);
                 }
@@ -1438,9 +1428,9 @@ impl App {
             g.text(row.x + s12, dy, &detail, small, dcolor, row.w - 2.0 * s12);
         }
         g.dl.set_clip(None);
-        if let Some(row) = self.jobs.menu {
+        if let Some(row) = self.ops.jobs.menu {
             let items = self.job_menu_items(row);
-            let menu = self.jobs.r.menu.clone();
+            let menu = self.ops.jobs.r.menu.clone();
             if let (Some(first), Some(last)) = (menu.first(), menu.last()) {
                 let bg = Rect::new(first.x, first.y, first.w, last.bottom() - first.y);
                 super::widgets::Paint::new(g, t, self.scale).frame(bg);
@@ -1458,7 +1448,7 @@ impl App {
 
     pub(super) fn dialog_text(&self) -> Option<(String, Vec<String>)> {
         let offset = self.utc_offset_min;
-        Some(match self.jobs.asks.front() {
+        Some(match self.dialogs.asks.front() {
             Some(Ask::Conflict { conflict: c, .. }) if limits::too_large(c) => {
                 let size = |b: u64| {
                     let mut out = String::new();
@@ -1488,7 +1478,7 @@ impl App {
                 (S::UiConflictTitle.t().into(), lines)
             }
             Some(Ask::Failure { id, failure: f }) => {
-                let op = self.jobs.list.iter().find(|j| j.id == *id).and_then(|j| match &j.kind { JobKind::File(op) => Some(op), JobKind::Git { .. } => None });
+                let op = self.ops.jobs.list.iter().find(|j| j.id == *id).and_then(|j| match &j.kind { JobKind::File(op) => Some(op), JobKind::Git { .. } => None });
                 let folder = f.path.parent().map(|p| p.display().into_owned()).unwrap_or_default();
                 let hint = if f.fatal { S::UiFailureFullHint.t().to_owned() } else { crate::tr!(S::UiFailureWhere, folder = folder) };
                 let title = if f.fatal { S::UiFailureFullTitle.t().to_owned() } else { failure_title(op, quoted(&f.path)) };
@@ -1524,14 +1514,14 @@ impl App {
     }
 
     pub(super) fn dialog_rects(&self) -> (Rect, &[Rect]) {
-        (self.jobs.r.dialog, &self.jobs.r.buttons)
+        (self.ops.jobs.r.dialog, &self.ops.jobs.r.buttons)
     }
 
     fn draw_dialog<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let (font, small, bold) = (self.ui_font(13.0), self.ui_font(12.0), FontStyle::new(FontFamily::Ui, 16.0 * self.scale, true));
         let s = |v: f32| (v * self.scale).round();
         let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
-        let d = self.jobs.r.dialog;
+        let d = self.ops.jobs.r.dialog;
         g.dl.round_rect(d, t.bg, s8);
         g.dl.outline(d, t.popup_border, s8, 1.0);
         let Some((title, lines)) = self.dialog_text() else { return };
@@ -1540,7 +1530,7 @@ impl App {
         g.text(d.x + s20, y.round(), &title, bold, t.text, d.w - 2.0 * s20);
         y += s(12.0);
         let mf = g.metrics(font);
-        let wraps = matches!(self.jobs.asks.front(), Some(Ask::Failure { .. } | Ask::ExtensionChange(_)));
+        let wraps = matches!(self.dialogs.asks.front(), Some(Ask::Failure { .. } | Ask::ExtensionChange(_)));
         for (k, line) in lines.iter().enumerate() {
             y += s(22.0);
             let (style, color, wrapped) = if k == 0 { (font, t.text, wraps) } else { (small, t.text_dim, false) };
@@ -1552,17 +1542,17 @@ impl App {
                 y += s(18.0);
             }
         }
-        let check = self.jobs.r.check;
+        let check = self.ops.jobs.r.check;
         if check.w > 0.0 {
             let bx = Rect::new(check.x, check.y + (check.h - s(18.0)) / 2.0, s(18.0), s(18.0));
-            if self.jobs.all {
+            if self.dialogs.all {
                 g.dl.round_rect(bx, t.accent, s4);
                 g.dl.check(bx, crate::theme::ink_on(t.accent));
             } else {
                 g.dl.outline(bx, if self.hover == Hit::DialogCheck { t.accent } else { t.text_dim }, s4, s(1.0).max(1.0));
             }
             let baseline = (check.y + (check.h + mf.ascent - mf.descent) / 2.0).round();
-            let label = match self.jobs.asks.front() {
+            let label = match self.dialogs.asks.front() {
                 Some(a) if a.unreadable() => S::UiConflictSkipAll,
                 Some(Ask::Confirm(..)) => S::UiConfirmDeleteInstead,
                 _ => S::UiConflictApplyAll,
@@ -1571,9 +1561,9 @@ impl App {
             g.text(bx.right() + s8, baseline, label, font, t.text, check.w - bx.w - s8);
         }
         let labels = self.dialog_buttons();
-        let buttons = self.jobs.r.buttons.clone();
+        let buttons = self.ops.jobs.r.buttons.clone();
         for (k, (b, label)) in buttons.iter().zip(labels).enumerate() {
-            let primary = k == self.jobs.sel;
+            let primary = k == self.dialogs.sel;
             let hot = self.hover == Hit::DialogButton(k);
             if primary {
                 g.dl.round_rect(*b, if hot { t.accent.alpha(0xD0) } else { t.accent }, s4);

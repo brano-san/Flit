@@ -174,7 +174,7 @@ fn the_palette_sits_over_the_panels_at_half_the_window() {
     a.open_palette();
     draw(&mut a, Instant::now());
     let (w, h) = a.size;
-    let left = a.panels.left;
+    let left = a.tabs.panels.left;
     let r = a.nav.palette.as_ref().unwrap().rect;
     assert!((r.w - w / 2.0).abs() <= 1.0, "half the window: {r:?}");
     assert!((r.x + r.w / 2.0 - (left + (w - left) / 2.0)).abs() <= 1.0, "centered over the panels: {r:?}");
@@ -328,7 +328,7 @@ fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored_from_the_c
     assert_eq!(rows(&a)[0], "Assign Ctrl+G to «Toggle Hidden Files»");
     press(&mut a, Key::Enter, NONE);
     assert_eq!(pick(&a), Pick::Commands, "the commands come back after the change");
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G");
     assert_eq!(caps_of(&a, hidden), ["Ctrl+H", "Ctrl+G"], "the row shows the new keycaps");
     assert_eq!(a.nav.palette.as_ref().unwrap().row_action(a.nav.palette.as_ref().unwrap().sel), Some(hidden), "the same command stays selected");
     assert!(note(&a).starts_with("Ctrl+G runs «Toggle Hidden Files» now"), "{}", note(&a));
@@ -341,8 +341,8 @@ fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored_from_the_c
     assert_eq!(rows(&a)[0], "Reassign Ctrl+T from «Open New Tab» to «Toggle Hidden Files»", "the conflict is shown before it is applied");
     assert_eq!(a.nav.palette.as_ref().unwrap().keys[0], "«Open New Tab» is left without a shortcut");
     press(&mut a, Key::Enter, NONE);
-    assert_eq!(a.keymap.text_of("tab.new"), "");
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
+    assert_eq!(a.settings.keymap.text_of("tab.new"), "");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
 
     press(&mut a, Key::F(2), NONE);
     a.nav.palette.as_mut().unwrap().select_row(3);
@@ -353,19 +353,19 @@ fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored_from_the_c
     assert!(rows(&a)[0].starts_with("Shift+Q cannot be used"), "Enter keeps the dialog open for refused keys");
     press(&mut a, Key::Escape, NONE);
     assert_eq!(pick(&a), Pick::Commands, "Escape returns to the commands");
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+H, Ctrl+G, Ctrl+T");
 
     press(&mut a, Key::F(2), NONE);
     press(&mut a, Key::Enter, NONE);
     assert_eq!(rows(&a).last().unwrap(), "Remove the shortcut Ctrl+H");
     press(&mut a, Key::Char('M'), CTRL);
     press(&mut a, Key::Enter, NONE);
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+M, Ctrl+G, Ctrl+T", "changing replaces the shortcut in place");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+M, Ctrl+G, Ctrl+T", "changing replaces the shortcut in place");
 
     press(&mut a, Key::F(2), NONE);
     press(&mut a, Key::Down, NONE);
     press(&mut a, Key::Delete, NONE);
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+M, Ctrl+T", "Delete removes the selected shortcut");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+M, Ctrl+T", "Delete removes the selected shortcut");
     assert_eq!(rows(&a)[..2], ["Change Ctrl+M", "Change Ctrl+T"]);
     press(&mut a, Key::Escape, NONE);
     assert_eq!(pick(&a), Pick::Commands);
@@ -377,8 +377,8 @@ fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored_from_the_c
     assert_eq!(rows(&a), ["Add shortcut", "Restore default shortcut", "Restore all shortcuts"]);
     press(&mut a, Key::Down, NONE);
     press(&mut a, Key::Enter, NONE);
-    assert_eq!(a.keymap.text_of("tab.new"), "Ctrl+T", "the defaults come back");
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+M");
+    assert_eq!(a.settings.keymap.text_of("tab.new"), "Ctrl+T", "the defaults come back");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+M");
     assert!(note(&a).contains("«Toggle Hidden Files» keeps Ctrl+M"), "{}", note(&a));
 
     press(&mut a, Key::F(2), NONE);
@@ -386,7 +386,7 @@ fn shortcuts_are_added_reassigned_refused_edited_removed_and_restored_from_the_c
     press(&mut a, Key::Enter, NONE);
     assert_eq!(pick(&a), Pick::Setting(SettingPick::ResetKeys));
     press(&mut a, Key::Enter, NONE);
-    assert_eq!(a.keymap, crate::ui::keymap::defaults());
+    assert_eq!(a.settings.keymap, crate::ui::keymap::defaults());
     assert_eq!(note(&a), "All commands have their default shortcuts again");
     assert_eq!(pick(&a), Pick::Commands);
 }
@@ -444,11 +444,11 @@ fn shift_delete_in_the_shortcut_and_layout_pickers_cuts_query_text_and_plain_del
     press(&mut a, Key::Char('A'), CTRL);
     a.drain_effects().for_each(drop);
     press(&mut a, Key::Delete, Mods { shift: true, ..NONE });
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+H", "Shift+Delete keeps the shortcut");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+H", "Shift+Delete keeps the shortcut");
     assert!(a.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s == "Change")), "it cuts the query instead");
     assert_eq!(a.nav.palette.as_ref().unwrap().field.text(), "");
     press(&mut a, Key::Delete, NONE);
-    assert_eq!(a.keymap.text_of("view.hidden"), "", "plain Delete still removes the highlighted shortcut");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "", "plain Delete still removes the highlighted shortcut");
     a.close_palette();
     a.set_layouts(vec!["home".into(), "work".into()]);
     a.ask_load_layout();

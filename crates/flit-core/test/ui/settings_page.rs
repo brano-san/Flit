@@ -27,15 +27,15 @@ fn settings_wheel_glides_toward_the_target_over_frames() {
     let mut a = app();
     a.open_settings(Some(Page::Interface));
     a.frame(&mut Gfx::new(Mono, 1024), t0);
-    let list = a.settings.as_ref().unwrap().list;
+    let list = a.settings.screen.as_ref().unwrap().list;
     a.on_event(&Event::MouseMove { x: list.x + list.w / 2.0, y: list.y + list.h / 2.0 }, t0);
     a.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, t0);
-    let target = a.settings.as_ref().unwrap().scroll.target;
+    let target = a.settings.screen.as_ref().unwrap().scroll.target;
     assert!(target > 0.0);
     let mut seen = Vec::new();
     for k in 1..40 {
         a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_millis(16 * k));
-        seen.push(a.settings.as_ref().unwrap().scroll.pos);
+        seen.push(a.settings.screen.as_ref().unwrap().scroll.pos);
     }
     assert!(seen[0] > 0.0 && seen[0] < target, "the first frame moves part of the way: {seen:?}");
     assert!(seen.windows(2).all(|w| w[1] >= w[0]));
@@ -43,7 +43,7 @@ fn settings_wheel_glides_toward_the_target_over_frames() {
     let up_from = *seen.last().unwrap();
     a.on_event(&Event::Wheel { dx: 0.0, dy: 1.0 }, t0 + Duration::from_secs(1));
     a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_millis(1016));
-    assert!(a.settings.as_ref().unwrap().scroll.pos < up_from, "wheel up moves on its first frame");
+    assert!(a.settings.screen.as_ref().unwrap().scroll.pos < up_from, "wheel up moves on its first frame");
 }
 
 #[test]
@@ -53,25 +53,25 @@ fn a_cut_description_shows_its_full_text_on_hover_and_hides_on_key_wheel_and_lea
     a.on_event(&Event::Resized { width: 760, height: 520 }, t0);
     a.open_settings(Some(Page::Interface));
     a.frame(&mut Gfx::new(Mono, 1024), t0);
-    let (k, r) = *a.settings.as_ref().unwrap().cut.first().expect("a narrow window cuts some description");
+    let (k, r) = *a.settings.screen.as_ref().unwrap().cut.first().expect("a narrow window cuts some description");
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
     a.on_event(&Event::MouseMove { x, y }, t0);
-    assert_eq!(a.settings.as_ref().unwrap().tip, Some((k, (x, y))));
+    assert_eq!(a.settings.screen.as_ref().unwrap().tip, Some((k, (x, y))));
     let plain = { let mut g = Gfx::new(Mono, 1024); a.frame(&mut g, t0); g.dl.instances.len() };
     a.on_event(&Event::MouseMove { x: x + 1.0, y }, t0);
-    assert_eq!(a.settings.as_ref().unwrap().tip, Some((k, (x, y))), "the tip stays put while the pointer stays on the same text");
+    assert_eq!(a.settings.screen.as_ref().unwrap().tip, Some((k, (x, y))), "the tip stays put while the pointer stays on the same text");
     key(&mut a, Key::Down, NO);
-    assert_eq!(a.settings.as_ref().unwrap().tip, None);
+    assert_eq!(a.settings.screen.as_ref().unwrap().tip, None);
     let hidden = { let mut g = Gfx::new(Mono, 1024); a.frame(&mut g, t0); g.dl.instances.len() };
     assert!(plain > hidden, "the tip draws a box and its text");
     a.on_event(&Event::MouseMove { x, y: y + 0.5 }, t0);
-    assert!(a.settings.as_ref().unwrap().tip.is_some());
+    assert!(a.settings.screen.as_ref().unwrap().tip.is_some());
     a.on_event(&Event::Wheel { dx: 0.0, dy: -1.0 }, t0);
-    assert_eq!(a.settings.as_ref().unwrap().tip, None);
+    assert_eq!(a.settings.screen.as_ref().unwrap().tip, None);
     a.frame(&mut Gfx::new(Mono, 1024), t0 + Duration::from_secs(1));
     a.on_event(&Event::MouseMove { x, y }, t0);
     a.on_event(&Event::MouseLeave, t0);
-    assert_eq!(a.settings.as_ref().unwrap().tip, None);
+    assert_eq!(a.settings.screen.as_ref().unwrap().tip, None);
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn center(r: Rect) -> (f32, f32) {
 }
 
 fn ui(a: &App) -> &SettingsUi {
-    a.settings.as_ref().expect("settings are open")
+    a.settings.screen.as_ref().expect("settings are open")
 }
 
 fn line(a: &mut App, id: &str) -> usize {
@@ -136,10 +136,10 @@ fn line(a: &mut App, id: &str) -> usize {
 }
 
 fn reveal(a: &mut App, k: usize) -> usize {
-    let u = a.settings.as_mut().unwrap();
+    let u = a.settings.screen.as_mut().unwrap();
     (u.focus, u.reveal) = (k, true);
     a.layout();
-    let u = a.settings.as_mut().unwrap();
+    let u = a.settings.screen.as_mut().unwrap();
     u.scroll.snap(u.scroll.target);
     a.layout();
     k
@@ -298,7 +298,7 @@ fn controls_change_settings_with_the_mouse_and_the_keyboard() {
 }
 
 fn ui_focus(a: &mut App, k: usize) {
-    let u = a.settings.as_mut().unwrap();
+    let u = a.settings.screen.as_mut().unwrap();
     (u.focus, u.zone) = (k, Zone::List);
 }
 
@@ -497,7 +497,7 @@ fn delete_confirmation_follows_the_setting() {
     a.confirm_delete = ConfirmDelete::Always;
     a.trash_selection();
     assert_eq!(a.asking(), Some("confirm"));
-    a.jobs.all = true;
+    a.dialogs.all = true;
     key(&mut a, Key::Enter, NO);
     assert!(a.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { op: FileOp::Delete(_), .. }, .. })), "the check box deletes permanently instead");
     a.confirm_delete = ConfirmDelete::Never;
@@ -512,10 +512,10 @@ fn folders_open_in_background_tabs_and_with_one_click_when_asked() {
     a.switch_to_new_tab = false;
     key(&mut a, Key::Down, NO);
     key(&mut a, Key::Enter, CTRL);
-    assert_eq!((a.tabs().len(), a.cur), (2, 0), "the new tab opens in the background");
+    assert_eq!((a.tabs().len(), a.tabs.cur), (2, 0), "the new tab opens in the background");
     a.switch_to_new_tab = true;
     key(&mut a, Key::Enter, CTRL);
-    assert_eq!((a.tabs().len(), a.cur), (3, 1), "the new tab sits next to the current one");
+    assert_eq!((a.tabs().len(), a.tabs.cur), (3, 1), "the new tab sits next to the current one");
     let mut a = listed(&[("docs", true), ("a.txt", false)]);
     a.single_click_folders = crate::ui::settings::ClickOpen::Always;
     a.click_row(0, MouseButton::Left, 1, Instant::now());
@@ -664,7 +664,7 @@ fn options_have_no_shortcuts_group() {
     assert!(!a.settings_lines().iter().any(|l| l.starts_with("action ")));
     key(&mut a, Key::Escape, NO);
     a.apply_doc(&settings::parse(r#"{"keys": {"view.hidden": ["Ctrl+G"]}}"#));
-    assert_eq!(a.keymap.text_of("view.hidden"), "Ctrl+G", "saved shortcuts still load");
+    assert_eq!(a.settings.keymap.text_of("view.hidden"), "Ctrl+G", "saved shortcuts still load");
     assert!(a.setting_values().iter().any(|v| matches!(v, Value::Keys(_))));
 }
 
@@ -800,8 +800,8 @@ fn a_switch_slides_its_knob_and_blends_its_track() {
     let mut a = app();
     a.open_settings(Some(Page::Interface));
     a.frame(&mut Gfx::new(Mono, 1024), t0);
-    let knob = |a: &App, i: usize, at: Instant| a.settings.as_ref().unwrap().knobs.iter().find(|k| k.0 == i).unwrap().1.value(at, KNOB);
-    let i = a.settings.as_ref().unwrap().knobs.iter().map(|k| k.0).find(|&i| SETTINGS[i].id != "appearance.animations").expect("the page shows a switch");
+    let knob = |a: &App, i: usize, at: Instant| a.settings.screen.as_ref().unwrap().knobs.iter().find(|k| k.0 == i).unwrap().1.value(at, KNOB);
+    let i = a.settings.screen.as_ref().unwrap().knobs.iter().map(|k| k.0).find(|&i| SETTINGS[i].id != "appearance.animations").expect("the page shows a switch");
     let on = knob(&a, i, t0) == 1.0;
     assert!(SETTINGS[i].set(&mut a, Value::Bool(!on)));
     let t = Instant::now();
@@ -838,7 +838,7 @@ impl crate::text::TextBackend for Tall {
 fn check_layout<B: crate::text::TextBackend>(mut g: Gfx<B>, (w, h): (u32, u32), describe: bool) {
     let mut a = app();
     a.on_event(&Event::Resized { width: w, height: h }, Instant::now());
-    a.opts.describe = describe;
+    a.settings.opts.describe = describe;
     a.open_settings(Some(Page::Interface));
     a.frame(&mut g, Instant::now());
     a.frame(&mut g, Instant::now());
@@ -906,7 +906,7 @@ fn help_buttons_wrap_to_a_second_row_in_a_narrow_window() {
 fn tall_metrics_make_rows_taller_than_short_ones() {
     let height = |g: Gfx<Tall>| {
         let mut a = app();
-        a.opts.describe = true;
+        a.settings.opts.describe = true;
         a.open_settings(Some(Page::Interface));
         let mut g = g;
         a.frame(&mut g, Instant::now());
@@ -915,7 +915,7 @@ fn tall_metrics_make_rows_taller_than_short_ones() {
     };
     let mono = {
         let mut a = app();
-        a.opts.describe = true;
+        a.settings.opts.describe = true;
         a.open_settings(Some(Page::Interface));
         a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
         let k = ui(&a).lines.iter().position(|l| matches!(l, Line::Setting(_))).unwrap();
@@ -940,7 +940,7 @@ fn offset(a: &App, page: Page) -> f32 {
 }
 
 fn scroll_to(a: &mut App, pos: f32) {
-    a.settings.as_mut().unwrap().scroll.snap(pos);
+    a.settings.screen.as_mut().unwrap().scroll.snap(pos);
     a.layout();
 }
 
@@ -1135,7 +1135,7 @@ fn section_titles_stick_to_the_top_and_keyboard_rows_stay_below_them() {
     ui_focus(&mut a, first);
     for k in 0..80 {
         key(&mut a, if k < 40 { Key::Down } else { Key::Up }, NO);
-        let u = a.settings.as_mut().unwrap();
+        let u = a.settings.screen.as_mut().unwrap();
         u.scroll.snap(u.scroll.target);
         a.layout();
         if let Some((_, top)) = ui(&a).sticky {
@@ -1151,8 +1151,8 @@ fn menu_app() -> App {
     let mut a = wide();
     a.animations = false;
     let seen = |list: &[&str]| list.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
-    a.opts.menu.seen[0] = seen(&["Open", "Rename", "Send to", "Send to \u{203A} Desktop", "Properties"]);
-    a.opts.menu.seen[1] = seen(&["Open in new tab"]);
+    a.settings.opts.menu.seen[0] = seen(&["Open", "Rename", "Send to", "Send to \u{203A} Desktop", "Properties"]);
+    a.settings.opts.menu.seen[1] = seen(&["Open in new tab"]);
     a.open_settings(Some(Page::Menu));
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     a
@@ -1196,29 +1196,29 @@ fn space_hides_enter_pins_or_folds_and_the_mouse_does_the_same() {
     let mut a = menu_app();
     menu_row(&mut a, "Rename");
     key(&mut a, Key::Space, NO);
-    assert_eq!(a.opts.menu.hidden[0], ["Rename"]);
+    assert_eq!(a.settings.opts.menu.hidden[0], ["Rename"]);
     assert!(menu_lines(&a).contains(&"menu [ ] Rename".to_owned()));
     let k = menu_row(&mut a, "Rename");
     let target = center(menu_editor::check_rect(rect(&a, k), 0, s));
     click_at(&mut a, target);
-    assert!(a.opts.menu.hidden[0].is_empty(), "a click on the box shows it again");
+    assert!(a.settings.opts.menu.hidden[0].is_empty(), "a click on the box shows it again");
     menu_row(&mut a, "Open");
     key(&mut a, Key::Enter, NO);
-    assert_eq!(a.opts.pins[0], ["Open"]);
+    assert_eq!(a.settings.opts.pins[0], ["Open"]);
     let k = menu_row(&mut a, "Properties");
     let target = center(menu_editor::star_rect(rect(&a, k), s));
     click_at(&mut a, target);
-    assert_eq!(a.opts.pins[0], ["Properties", "Open"]);
+    assert_eq!(a.settings.opts.pins[0], ["Properties", "Open"]);
     assert!(menu_lines(&a).contains(&"menu [x] Properties *".to_owned()));
     menu_row(&mut a, "Send to");
     key(&mut a, Key::Enter, NO);
     assert!(menu_lines(&a).contains(&"menu   [x] Desktop".to_owned()), "{:?}", menu_lines(&a));
     let k = menu_row(&mut a, "Desktop");
     key(&mut a, Key::Space, NO);
-    assert_eq!(a.opts.menu.hidden[0], ["Send to \u{203A} Desktop"]);
+    assert_eq!(a.settings.opts.menu.hidden[0], ["Send to \u{203A} Desktop"]);
     let target = center(menu_editor::star_rect(rect(&a, k), s));
     click_at(&mut a, target);
-    assert_eq!(a.opts.pins[0][0], "Send to \u{203A} Desktop", "nested commands pin by their path");
+    assert_eq!(a.settings.opts.pins[0][0], "Send to \u{203A} Desktop", "nested commands pin by their path");
     let k = menu_row(&mut a, "Send to");
     let target = center(menu_editor::fold_rect(rect(&a, k), 0, s));
     click_at(&mut a, target);
@@ -1230,14 +1230,14 @@ fn rows_move_with_alt_arrows_and_by_dragging() {
     let mut a = menu_app();
     menu_row(&mut a, "Properties");
     key(&mut a, Key::Up, ALT);
-    assert_eq!(&a.opts.menu.order[0][..4], ["Open", "Rename", "Properties", "Send to"]);
+    assert_eq!(&a.settings.opts.menu.order[0][..4], ["Open", "Rename", "Properties", "Send to"]);
     assert!(matches!(&ui(&a).lines[ui(&a).focus], Line::MenuItem(r) if r.label() == "Properties"), "the moved row keeps the focus");
     key(&mut a, Key::Up, ALT);
     key(&mut a, Key::Up, ALT);
     key(&mut a, Key::Up, ALT);
-    assert_eq!(&a.opts.menu.order[0][..4], ["Properties", "Open", "Rename", "Send to"], "the top stops the row");
+    assert_eq!(&a.settings.opts.menu.order[0][..4], ["Properties", "Open", "Rename", "Send to"], "the top stops the row");
     key(&mut a, Key::Down, ALT);
-    assert_eq!(&a.opts.menu.order[0][..4], ["Open", "Properties", "Rename", "Send to"]);
+    assert_eq!(&a.settings.opts.menu.order[0][..4], ["Open", "Properties", "Rename", "Send to"]);
     let at = menu_row(&mut a, "Send to");
     let from = rect(&a, at);
     let at = menu_row(&mut a, "Open");
@@ -1250,26 +1250,26 @@ fn rows_move_with_alt_arrows_and_by_dragging() {
     assert_eq!(a.drag, super::super::Drag::MenuMove { from: dragged, to: Some(0) });
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     a.on_event(&Event::MouseUp { x, y: onto.y + 3.0, button: MouseButton::Left }, Instant::now());
-    assert_eq!(&a.opts.menu.order[0][..4], ["Send to", "Open", "Properties", "Rename"]);
+    assert_eq!(&a.settings.opts.menu.order[0][..4], ["Send to", "Open", "Properties", "Rename"]);
     let at = menu_row(&mut a, "Rename");
     let r = rect(&a, at);
     click_at(&mut a, center(r));
-    assert_eq!(&a.opts.menu.order[0][..4], ["Send to", "Open", "Properties", "Rename"], "a click without a drag moves nothing");
+    assert_eq!(&a.settings.opts.menu.order[0][..4], ["Send to", "Open", "Properties", "Rename"], "a click without a drag moves nothing");
 }
 
 #[test]
 fn reset_restores_one_menu_and_leaves_the_others() {
     let mut a = menu_app();
-    a.opts.menu.hidden = [vec!["Rename".into()], vec!["Open in new tab".into()], Vec::new()];
-    a.opts.menu.order[0] = vec!["Properties".into()];
-    a.opts.pins[0] = vec!["Open".into()];
+    a.settings.opts.menu.hidden = [vec!["Rename".into()], vec!["Open in new tab".into()], Vec::new()];
+    a.settings.opts.menu.order[0] = vec!["Properties".into()];
+    a.settings.opts.pins[0] = vec!["Open".into()];
     a.layout();
     let k = ui(&a).lines.iter().position(|l| *l == Line::Buttons(None, &[Btn::MenuReset])).expect("the section has a reset button");
     reveal(&mut a, k);
     key(&mut a, Key::Enter, NO);
-    assert!(a.opts.menu.hidden[0].is_empty() && a.opts.menu.order[0].is_empty());
-    assert_eq!(a.opts.menu.hidden[1], ["Open in new tab"], "the folder menu keeps its layout");
-    assert_eq!(a.opts.pins[0], ["Open"], "pins stay: they have their own star");
+    assert!(a.settings.opts.menu.hidden[0].is_empty() && a.settings.opts.menu.order[0].is_empty());
+    assert_eq!(a.settings.opts.menu.hidden[1], ["Open in new tab"], "the folder menu keeps its layout");
+    assert_eq!(a.settings.opts.pins[0], ["Open"], "pins stay: they have their own star");
     assert_eq!(&menu_lines(&a)[..4], ["menu [x] Open *", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
 }
 
@@ -1297,7 +1297,7 @@ fn settings_sit_in_the_middle_of_the_whole_window_and_rows_stay_clear_of_the_scr
     let mut a = app();
     a.open_settings(Some(Page::Interface));
     a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
-    let ui = a.settings.as_ref().unwrap();
+    let ui = a.settings.screen.as_ref().unwrap();
     let (w, h) = a.size;
     let p = ui.panel;
     assert!((p.x - (w - p.right())).abs() <= 1.0, "left {} right {}", p.x, w - p.right());
@@ -1330,7 +1330,7 @@ fn a_finger_scrolls_the_settings_page_a_flick_glides_on_and_a_tap_still_toggles(
     let moved = ui(&a).scroll.pos;
     assert!((moved - 150.0).abs() <= 1.0, "the page follows the finger: {moved}");
     assert!(a.drag == crate::ui::Drag::None && a.own_menu.is_none());
-    a.touch_flick(end, |a| a.settings.as_ref().unwrap().scroll.pos);
+    a.touch_flick(end, |a| a.settings.screen.as_ref().unwrap().scroll.pos);
     let toggle = |a: &App| {
         let u = ui(a);
         (0..u.lines.len()).find_map(|k| match u.lines[k] {

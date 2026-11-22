@@ -53,7 +53,7 @@ fn remember_keeps_items_of_other_selections_after_their_neighbours() {
 #[test]
 fn hidden_items_are_not_drawn_but_the_search_still_finds_them() {
     let mut a = app();
-    a.opts.menu.hidden[0] = strings(&["Rename", "Send to", "Properties"]);
+    a.settings.opts.menu.hidden[0] = strings(&["Rename", "Send to", "Properties"]);
     show(&mut a, own_items(), false);
     assert_eq!(labels(&a), ["Open"]);
     for c in "desk".chars() {
@@ -65,7 +65,7 @@ fn hidden_items_are_not_drawn_but_the_search_still_finds_them() {
         a.on_event(&Event::Char(c), Instant::now());
     }
     assert_eq!(labels(&a), ["Rename"]);
-    a.opts.menu.hidden[0] = strings(&["Send to › Mail"]);
+    a.settings.opts.menu.hidden[0] = strings(&["Send to › Mail"]);
     show(&mut a, own_items(), false);
     a.on_event(&Event::Key { key: Key::Down, mods: Mods::default(), pressed: true }, Instant::now());
     for k in [Key::Down, Key::Down, Key::Right] {
@@ -77,9 +77,9 @@ fn hidden_items_are_not_drawn_but_the_search_still_finds_them() {
 #[test]
 fn the_order_applies_to_shell_items_and_new_ones_follow_their_neighbour() {
     let mut a = app();
-    a.opts.menu.order[0] = strings(&["Properties", "Scan", "Open"]);
+    a.settings.opts.menu.order[0] = strings(&["Properties", "Scan", "Open"]);
     show(&mut a, own_items(), true);
-    assert!(a.opts.menu.seen[0].is_empty(), "a menu still waiting for Windows is not remembered");
+    assert!(a.settings.opts.menu.seen[0].is_empty(), "a menu still waiting for Windows is not remembered");
     shell_arrives(&mut a);
     assert_eq!(labels(&a), ["Properties", "-", "Git Bash", "Scan", "-", "Open", "Rename", "-", "Send to >"]);
     a.drain_effects().for_each(drop);
@@ -87,7 +87,7 @@ fn the_order_applies_to_shell_items_and_new_ones_follow_their_neighbour() {
         a.on_event(&Event::Key { key: k, mods: Mods::default(), pressed: true }, Instant::now());
     }
     assert!(a.drain_effects().any(|e| matches!(e, Effect::ShellPick(Some(2)))), "a moved shell item still runs its own command");
-    assert_eq!(a.opts.menu.seen[0], ["Open", "Rename", "Send to", "Send to › Desktop", "Send to › Mail", "Properties", "Git Bash", "Scan"]);
+    assert_eq!(a.settings.opts.menu.seen[0], ["Open", "Rename", "Send to", "Send to › Desktop", "Send to › Mail", "Properties", "Git Bash", "Scan"]);
 }
 
 #[test]
@@ -101,9 +101,9 @@ fn without_a_layout_the_menu_keeps_its_natural_order() {
 #[test]
 fn settings_list_builtin_actions_before_any_context_menu_is_opened() {
     let mut a = app();
-    assert!(a.opts.menu.seen.iter().all(Vec::is_empty));
+    assert!(a.settings.opts.menu.seen.iter().all(Vec::is_empty));
     for kind in 0..3 {
-        a.opts.menu.kind = kind;
+        a.settings.opts.menu.kind = kind;
         let rows = a.menu_rows();
         assert!(rows.iter().any(|r| r.label() == S::MenuProperties.t()), "kind {kind}");
         assert!(rows.iter().any(|r| r.label() == if kind == 2 { S::MenuRefresh.t() } else { S::MenuOpen.t() }), "kind {kind}");
@@ -113,22 +113,22 @@ fn settings_list_builtin_actions_before_any_context_menu_is_opened() {
 #[test]
 fn the_layout_and_the_old_pins_round_trip_through_the_settings_file() {
     let mut a = app();
-    a.opts.pins[0] = strings(&["Open"]);
-    a.opts.menu.hidden[1] = strings(&["Copy path"]);
-    a.opts.menu.order[2] = strings(&["Paste", "Refresh"]);
-    a.opts.menu.seen[0] = strings(&["Open", "Send to › Mail"]);
-    a.opts.menu.kind = 2;
+    a.settings.opts.pins[0] = strings(&["Open"]);
+    a.settings.opts.menu.hidden[1] = strings(&["Copy path"]);
+    a.settings.opts.menu.order[2] = strings(&["Paste", "Refresh"]);
+    a.settings.opts.menu.seen[0] = strings(&["Open", "Send to › Mail"]);
+    a.settings.opts.menu.kind = 2;
     let text = settings::render(&a.setting_values(), &serde_json::Map::new(), None);
     let mut b = app();
     b.apply_doc(&settings::parse(&text));
-    assert_eq!((b.opts.pins.clone(), b.opts.menu.hidden.clone(), b.opts.menu.order.clone(), b.opts.menu.seen.clone(), b.opts.menu.kind), (a.opts.pins.clone(), a.opts.menu.hidden.clone(), a.opts.menu.order.clone(), a.opts.menu.seen.clone(), 2));
+    assert_eq!((b.settings.opts.pins.clone(), b.settings.opts.menu.hidden.clone(), b.settings.opts.menu.order.clone(), b.settings.opts.menu.seen.clone(), b.settings.opts.menu.kind), (a.settings.opts.pins.clone(), a.settings.opts.menu.hidden.clone(), a.settings.opts.menu.order.clone(), a.settings.opts.menu.seen.clone(), 2));
     assert!(text.contains("\"menu.edit_kind\": \"background\""));
     let old = settings::parse(r#"{ "menu.pins_folder": ["New › Folder"], "menu.someday": 1 }"#);
     let mut c = app();
     c.apply_doc(&old);
-    assert_eq!(c.opts.pins[1], ["New › Folder"], "files written before the editor keep their pins");
+    assert_eq!(c.settings.opts.pins[1], ["New › Folder"], "files written before the editor keep their pins");
     assert!(old.unknown.contains_key("menu.someday"));
-    assert_eq!(c.opts.menu, MenuPrefs::default());
+    assert_eq!(c.settings.opts.menu, MenuPrefs::default());
     assert!(SETTINGS[settings::index(MENU_KIND).unwrap()].set(&mut c, Value::Choice(1)));
-    assert_eq!(c.opts.menu.kind, 1);
+    assert_eq!(c.settings.opts.menu.kind, 1);
 }

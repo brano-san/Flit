@@ -156,7 +156,7 @@ impl App {
                 let mut out: Vec<(String, String, String)> = browse(S::SettingsPageRowBrowseFolder).into_iter().collect();
                 let home = std::iter::once((S::SettingsPageRowHome.t(), Location::home_page()));
                 let here = std::iter::once((S::SettingsPageRowCurrentFolder.t(), self.current_location().clone()));
-                let tabs = self.tabs.iter().map(|t| (S::SettingsPageRowOpenTab.t(), t.location().clone()));
+                let tabs = self.tabs.items.iter().map(|t| (S::SettingsPageRowOpenTab.t(), t.location().clone()));
                 for (title, loc) in home.chain(here).chain(tabs) {
                     if listed.contains(&loc) || seen.contains(&loc) {
                         continue;
@@ -294,14 +294,14 @@ impl App {
             _ => None,
         };
         let start = start.or_else(|| self.current_location().to_windows().filter(|p| self.caps.is_native(p)));
-        if let Some(ui) = &mut self.settings {
+        if let Some(ui) = &mut self.settings.screen {
             ui.browsing = Some(pick);
             self.effects.push(Effect::Settings(SettingsCmd::Browse { exts, folder, start }));
         }
     }
 
     pub fn on_browsed(&mut self, path: Option<FsPath>) {
-        let Some(pick) = self.settings.as_mut().and_then(|ui| ui.browsing.take()) else { return };
+        let Some(pick) = self.settings.screen.as_mut().and_then(|ui| ui.browsing.take()) else { return };
         let Some(path) = path else { return };
         let text = path.display().into_owned();
         match self.setting_accepts(&pick, &text) {
@@ -312,7 +312,7 @@ impl App {
     }
 
     pub(super) fn note_h(&self) -> f32 {
-        let small = self.settings.as_ref().map_or_else(|| (12.0 * 1.35 * self.scale).ceil(), |ui| ui.fit.small);
+        let small = self.settings.screen.as_ref().map_or_else(|| (12.0 * 1.35 * self.scale).ceil(), |ui| ui.fit.small);
         self.s(NOTE_LINE_H).max(small + self.s(4.0))
     }
 

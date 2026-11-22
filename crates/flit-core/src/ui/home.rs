@@ -88,7 +88,7 @@ impl App {
     }
 
     pub(super) fn place_loaded(&mut self, k: usize) {
-        if self.tabs[k].location().is_home_page() {
+        if self.tabs.items[k].location().is_home_page() {
             self.effects.push(Effect::RefreshPlaces);
         }
         self.library_crumbs(k);

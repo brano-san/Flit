@@ -64,7 +64,7 @@ fn release(app: &mut App, (x, y): (f32, f32), button: MouseButton) {
 }
 
 fn select(app: &mut App, names: &[&str]) {
-    let v = app.tabs[app.cur].view.as_mut().unwrap();
+    let v = app.tabs.items[app.tabs.cur].view.as_mut().unwrap();
     v.clear_selection();
     for n in names {
         let i = v.find(n.as_bytes()).unwrap();
@@ -398,7 +398,7 @@ fn trash_and_delete_in_wsl_go_to_the_distro_with_linux_paths() {
     assert_eq!(app.job_states()[0].0, "Moving 2 items to the Trash");
     select(&mut app, &["c"]);
     key(&mut app, Key::Delete, SHIFT);
-    assert!(app.jobs.modal());
+    assert!(app.dialogs.modal());
     key(&mut app, Key::Enter, NO);
     let sent_ops: Vec<_> = sent(&mut app).into_iter().map(|(provider, _, op)| (provider, op)).collect();
     assert_eq!(sent_ops, [(ubuntu(), FileOp::Delete(vec![p("/home/c")]))]);
@@ -431,7 +431,7 @@ fn confirmed_wsl_trash_can_delete_permanently_through_the_agent() {
     app.confirm_delete = crate::ui::ConfirmDelete::Always;
     key(&mut app, Key::Delete, NO);
     assert_eq!(app.asking(), Some("confirm"));
-    app.jobs.all = true;
+    app.dialogs.all = true;
     key(&mut app, Key::Enter, NO);
     let [(provider, _, op)] = sent(&mut app).try_into().unwrap();
     assert_eq!((provider, op), (ubuntu(), FileOp::Delete(vec![p("/home/a")])));
@@ -966,7 +966,7 @@ fn hovering_a_folder_tab_or_crumb_while_dragging_opens_it() {
     let tab = center(app.layout.tabs[1].0);
     at(&mut app, tab, 3500);
     at(&mut app, tab, 4900);
-    assert_eq!(app.cur, 1);
+    assert_eq!(app.tabs.cur, 1);
     app.select_tab(0);
     deliver(&mut app, &[("folder", true)]);
     let row = row_xy(&app, 0);
@@ -2318,7 +2318,7 @@ fn the_rename_box_picks_words_and_cuts_with_shift_delete_without_deleting_files(
     let effects: Vec<Effect> = app.drain_effects().collect();
     assert!(effects.iter().any(|e| matches!(e, Effect::SetClipboard(s) if s == "my report")));
     assert!(!effects.iter().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
-    assert!(!app.jobs.modal());
+    assert!(!app.dialogs.modal());
     assert_eq!(app.rename_text(), Some(".txt"));
     key(&mut app, Key::Char('Z'), CTRL);
     assert_eq!(app.rename_text(), Some("my report.txt"));
@@ -2482,7 +2482,7 @@ fn trashing_shows_an_undo_bar_that_untrashes_and_disappears() {
     done(&mut app, id, op, &[(r"C:\x\c.txt", r"C:\x\c.txt")]);
     assert!(app.tab().undo.is_none(), "a permanent delete shows no bar");
 
-    if let Some(t) = app.tabs.get_mut(app.cur) { t.undo = Some((1, t0() - Duration::from_secs(6))); }
+    if let Some(t) = app.tabs.items.get_mut(app.tabs.cur) { t.undo = Some((1, t0() - Duration::from_secs(6))); }
     app.frame(&mut Gfx::new(Mono, 1024), t0());
     assert!(app.tab().undo.is_none(), "the bar expires after five seconds");
 }
@@ -2500,7 +2500,7 @@ fn the_undo_bar_belongs_to_its_tab_and_yields_to_status_errors() {
     assert_eq!(app.tab().error.as_deref(), Some("the folder went away"), "the error stays visible while the bar waits");
     key(&mut app, Key::Char('T'), CTRL);
     deliver(&mut app, &[("b.txt", false)]);
-    assert_ne!(app.cur, 0, "the second tab is active now");
+    assert_ne!(app.tabs.cur, 0, "the second tab is active now");
     let a11y = app.accessibility();
     assert!(!a11y.nodes.iter().any(|node| node.name == "Undo"), "the bar does not follow into another tab");
     key(&mut app, Key::Tab, CTRL);
@@ -2708,16 +2708,16 @@ fn desktop_listing_labels_sort_and_select_by_title_but_f2_edits_the_actual_file(
     let v = app.tab().view.as_ref().unwrap();
     assert_eq!(v.rows(), &[launcher, 1]);
     assert_eq!(app.shown_name(v.listing(), launcher), "Alpha Browser");
-    app.opts.char_key = crate::ui::options::CharKey::Select;
+    app.settings.opts.char_key = crate::ui::options::CharKey::Select;
     key(&mut app, Key::End, NO);
     typed(&mut app, "a");
     assert_eq!(selected(&app), ["z-browser.desktop"]);
     for needle in ["Alpha", "z-browser"] {
-        let v = app.tabs[app.cur].view.as_mut().unwrap();
+        let v = app.tabs.items[app.tabs.cur].view.as_mut().unwrap();
         v.set_filter(needle);
         assert_eq!(v.rows(), &[launcher]);
     }
-    app.tabs[app.cur].view.as_mut().unwrap().set_filter("");
+    app.tabs.items[app.tabs.cur].view.as_mut().unwrap().set_filter("");
     key(&mut app, Key::F(2), NO);
     assert_eq!(app.rename_text(), Some("z-browser.desktop"));
     typed(&mut app, "new");
@@ -2858,6 +2858,6 @@ fn content_drop_checks_the_provider_of_the_panel_at_the_final_pointer_position()
     app.drag(&DragEvent::Enter { paths: Vec::new(), x: remote.0, y: remote.1, mods: NO, allowed: drop_effect::COPY, right: false }, t0());
     let data = Arc::new(crate::provider::DroppedFile { name: b"text.txt".to_vec(), bytes: b"hello".to_vec() });
     assert_eq!(app.drag(&DragEvent::DropData { x: local.0, y: local.1, data }, t0()), drop_effect::COPY);
-    assert_eq!(app.panels.active, 1);
+    assert_eq!(app.tabs.panels.active, 1);
     assert!(matches!(ops(&mut app).as_slice(), [(_, FileOp::PasteDropped { dest, data: Some(_), .. })] if dest == &p("/tmp/target")));
 }

@@ -657,7 +657,7 @@ fn compact_paths_start_at_the_home_folder_and_subfolders_mark_the_last_crumb() {
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert_eq!(shown(&app), [true; 6]);
     let before = app.layout.crumbs[5].w;
-    app.tabs[app.cur].subfolders = true;
+    app.tabs.items[app.tabs.cur].subfolders = true;
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     assert!(app.layout.crumbs[5].w > before, "the last crumb carries [...]");
 }

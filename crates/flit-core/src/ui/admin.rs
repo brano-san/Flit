@@ -44,7 +44,7 @@ impl App {
         if provider != ProviderId::Local {
             return provider;
         }
-        let in_admin_tab = self.tabs.iter().any(|t| t.id == tab && t.location().is_admin());
+        let in_admin_tab = self.tabs.items.iter().any(|t| t.id == tab && t.location().is_admin());
         if in_admin_tab {
             ProviderId::Admin
         } else {
@@ -58,18 +58,18 @@ impl App {
 
     pub(super) fn admin_denied(&mut self, tab: TabId, error: &str, now: Instant) {
         let message = crate::i18n::localize(error).into_owned();
-        if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.location().is_admin()) {
-            if self.tabs.len() > 1 {
-                let mut t = self.tabs.remove(k);
+        if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab && t.location().is_admin()) {
+            if self.tabs.items.len() > 1 {
+                let mut t = self.tabs.items.remove(k);
                 t.shutdown(&mut self.effects);
-                if self.cur > k || self.cur >= self.tabs.len() {
-                    self.cur = self.cur.saturating_sub(1);
+                if self.tabs.cur > k || self.tabs.cur >= self.tabs.items.len() {
+                    self.tabs.cur = self.tabs.cur.saturating_sub(1);
                 }
                 self.after_tab_change();
             } else {
-                let here = Location::from_local(self.tabs[k].location().path().clone());
-                self.tabs[k].shutdown(&mut self.effects);
-                self.tabs[k].history = crate::nav::History::new(here);
+                let here = Location::from_local(self.tabs.items[k].location().path().clone());
+                self.tabs.items[k].shutdown(&mut self.effects);
+                self.tabs.items[k].history = crate::nav::History::new(here);
                 self.load_tab(k, None, now);
                 self.after_tab_change();
             }

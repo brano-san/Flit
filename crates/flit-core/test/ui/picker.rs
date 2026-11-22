@@ -48,7 +48,7 @@ fn narrow_save_dialog_exposes_the_name_and_confirms_replacing_an_existing_file()
     assert!(tree.nodes[name].bounds.bottom() <= tree.nodes[save].bounds.y);
     assert!(tree.nodes[name].bounds.w >= 200.0);
     app.on_event(&Event::Invoke(Control::Accept.id()), now);
-    assert!(app.confirm.is_some());
+    assert!(app.dialogs.confirm.is_some());
     assert!(!app.drain_effects().any(|e| matches!(e, Effect::Picked { .. })));
     app.on_event(&Event::Key { key: Key::Enter, pressed: true, mods: Default::default() }, now);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Picked { paths, .. } if paths[0].file_name() == b"file.png")));
