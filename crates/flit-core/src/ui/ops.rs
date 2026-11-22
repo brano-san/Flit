@@ -1113,7 +1113,7 @@ impl App {
             Pick::Label(drive) => self.relabel_drive(drive, text),
             Pick::SaveLayout => self.save_layout(text),
             Pick::OpenWithCommand(c) => self.chooser_command(*c, text),
-            Pick::OpenWith(_) | Pick::Tabs | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) |Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
+            Pick::OpenWith(_) | Pick::Tabs | Pick::SavedFilters | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) |Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
         }
     }
 
@@ -1560,7 +1560,7 @@ impl App {
         let Some(edit) = edit else { return };
         if edit.change_case(upper) {
             if self.focus == Focus::Filter && self.ops.rename.is_none() {
-                self.tab_mut().refilter_view();
+                self.refilter_tab(self.cur);
             }
             self.dirty = true;
         }

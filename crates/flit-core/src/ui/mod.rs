@@ -739,6 +739,7 @@ pub struct App {
     tab_use: u64,
     tab_cycle: bool,
     quick_tags: bool,
+    saved_filters: Vec<String>,
     next_tab: TabId,
     next_gen: u64,
     timer_at: Option<Instant>,
@@ -886,6 +887,7 @@ impl App {
             tab_use: 0,
             tab_cycle: false,
             quick_tags: false,
+            saved_filters: Vec::new(),
             next_tab: tab_base + 1,
             next_gen: 0,
             timer_at: None,
@@ -1467,7 +1469,9 @@ impl App {
             self.keep_as_pane(k);
         }
         let snap = self.with_saved_servers(k, snap);
-        let resort = self.tabs[k].on_snapshot(snap);
+        let clock = crate::query_attrs::Clock::system(self.utc_offset_min);
+        let tags = self.tags().clone();
+        let resort = self.tabs[k].on_snapshot(snap, clock, &tags.defs);
         if std::mem::take(&mut self.tabs[k].properties_due) && k == self.cur {
             self.properties_dialog();
         }

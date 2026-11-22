@@ -376,6 +376,11 @@ impl App {
         let menu = self.collect(|a, m| {
             if let Some(f) = a.text_field(h) {
                 text_entries(m, &f.edit, f.secret, a.text_on_clipboard());
+                if h == Hit::FilterField {
+                    m.separator();
+                    m.action("filter.save", crate::i18n::S::ActionsFilterSave.t());
+                    m.action("filter.saved", crate::i18n::S::ActionsFilterSaved.t());
+                }
             }
         });
         if !menu.is_empty() {

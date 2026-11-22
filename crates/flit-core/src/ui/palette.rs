@@ -101,6 +101,7 @@ pub(super) enum Pick {
     Tabs,
     SaveLayout,
     LoadLayout,
+    SavedFilters,
     Keys(usize),
     OpenWith(Box<super::open_with::Chooser>),
     OpenWithCommand(Box<super::open_with::Chooser>),
@@ -127,6 +128,7 @@ impl Pick {
             Pick::Tabs => S::MenusSearchTabsShort.t(),
             Pick::SaveLayout => S::MenusSaveLayoutPlaceholder.t(),
             Pick::LoadLayout => S::MenusLoadLayoutPlaceholder.t(),
+            Pick::SavedFilters => S::ActionsFilterSaved.t(),
             Pick::Keys(_) => S::PalettePlaceholderCommands.t(),
             Pick::OpenWith(_) => S::OpenWithFilter.t(),
             Pick::OpenWithCommand(_) => S::OpenWithCommand.t(),
@@ -152,6 +154,7 @@ impl Pick {
             Pick::Tabs => S::MenusNoTabs.t(),
             Pick::SaveLayout => S::MenusSaveLayoutHint.t(),
             Pick::LoadLayout => S::MenusNoLayouts.t(),
+            Pick::SavedFilters => S::FilterNoSaved.t(),
             Pick::Keys(_) => S::PaletteEmptyCommands.t(),
             Pick::OpenWith(_) => S::OpenWithNone.t(),
             Pick::OpenWithCommand(_) => S::OpenWithCommand.t(),
@@ -561,11 +564,19 @@ impl App {
             }
             Pick::Tabs => self.choose_tab_row(id, now),
             Pick::LoadLayout => self.load_layout(&p.titles[id]),
+            Pick::SavedFilters => self.choose_saved_filter(&p.titles[id]),
             _ => self.new_item(id),
         }
     }
 
     fn remove_palette_item(&mut self) -> bool {
+        if let Some(p) = self.nav.palette.take_if(|p| p.pick == Pick::SavedFilters && p.field.text().is_empty()) {
+            if let Some(&id) = p.matches.get(p.sel) {
+                self.remove_saved_filter(&p.titles[id]);
+            }
+            self.open_saved_filters();
+            return true;
+        }
         if let Some(p) = self.nav.palette.as_ref().filter(|p| matches!(p.pick, Pick::Keys(_))) {
             if let (Pick::Keys(a), Some(&row)) = (&p.pick, p.matches.get(p.sel)) {
                 let a = *a;

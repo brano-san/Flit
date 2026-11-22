@@ -370,3 +370,5 @@
 "status.select_program" = "Wählen Sie zuerst eine ausführbare Datei."
 "app.check_updates" = "Nach Updates suchen"
 "tags.quick" = "Schnelle Tags"
+"filter.save" = "Ordnerfilter speichern"
+"filter.saved" = "Gespeicherte Ordnerfilter"

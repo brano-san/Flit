@@ -370,3 +370,5 @@
 "status.select_program" = "Спершу виберіть виконуваний файл."
 "app.check_updates" = "Перевірити оновлення"
 "tags.quick" = "Швидкі теги"
+"filter.save" = "Зберегти фільтр теки"
+"filter.saved" = "Збережені фільтри тек"

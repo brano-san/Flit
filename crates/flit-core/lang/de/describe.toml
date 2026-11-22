@@ -372,3 +372,5 @@
 "preview.play" = "Audio oder Video in der Vorschau starten oder stoppen"
 "app.check_updates" = "Bei GitHub nachsehen, ob ein neueres Flit erschienen ist, dann herunterladen, installieren und neu starten, Update, Aktualisierung, neue Version, Release"
 "tags.quick" = "Mit den Tasten 1–9 Tags für die Auswahl umschalten. Esc beendet den Modus."
+"filter.save" = "Speichert den aktuellen Ordnerfilter."
+"filter.saved" = "Wählt einen gespeicherten Filter. Entf löscht ihn."

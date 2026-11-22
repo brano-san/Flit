@@ -428,6 +428,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.smooth_scroll", Page::Input, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::Input, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
     toggle("general.mru_tabs", Page::Input, S::SettingsTitleGeneralMruTabs, S::SettingsHelpGeneralMruTabs, |a| a.mru_tabs, |a, on| { a.finish_tab_cycle(); a.mru_tabs = on; }),
+    Setting { id: "files.saved_filters", page: Page::Input, title: S::ActionsFilterSaved, help: S::DescribeFilterSaved, kind: Kind::Strings(|a| a.saved_filters.clone(), |a, v| a.set_saved_filters(v)) },
     choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.opts.inspector_at), |a, i| a.opts.inspector_at = INSPECTORS[i]),
     choice("general.startup", Page::Windows, S::OptionsTitleLoadOnStartup, S::OptionsHelpLoadOnStartup, STARTUP, |a| match a.startup {
         Startup::Continue => 0,

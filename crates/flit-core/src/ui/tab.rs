@@ -231,7 +231,7 @@ impl Tab {
         }
     }
 
-    pub(super) fn on_snapshot(&mut self, snap: Arc<DirSnapshot>) -> bool {
+    pub(super) fn on_snapshot(&mut self, snap: Arc<DirSnapshot>, clock: crate::query_attrs::Clock, tags: &[crate::tags::Tag]) -> bool {
         if snap.gen != self.gen {
             return false;
         }
@@ -259,7 +259,7 @@ impl Tab {
                 self.view_loc = self.location().clone();
                 self.scroll = 0.0;
                 self.scroll_target = 0.0;
-                self.refilter_view();
+                self.refilter_view(clock, tags);
                 self.tree.loaded.clear();
                 self.apply_shape();
             }

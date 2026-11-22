@@ -569,6 +569,9 @@ impl DirView {
         let l = &self.snap.listing;
         let gone = (lost_sel || lost_focus).then(|| self.rows().iter().position(|&i| l.entries[i as usize].attrs & attr::DELETED != 0 && (self.is_selected(i) || self.focus == Some(i)))).flatten();
         if !touched.is_empty() {
+            if let Some(f) = &mut self.filter {
+                f.refresh_entries(&self.snap.listing, &touched, relabeled);
+            }
             self.reorder(touched);
             self.rows_changed();
             self.prune();
@@ -693,10 +696,18 @@ impl DirView {
             }
         }
         let v = snap.view;
-        if !touched.is_empty() && (v.sort.field == sort::SortField::Tag || v.group.field == GroupField::Tag) {
-            self.reorder(touched);
-            self.rows_changed();
-            self.prune();
+        if !touched.is_empty() {
+            let sort_tags = v.sort.field == sort::SortField::Tag || v.group.field == GroupField::Tag;
+            if let Some(f) = &mut self.filter {
+                f.refresh_entries(&self.snap.listing, &touched, false);
+            }
+            if sort_tags {
+                self.reorder(touched);
+            }
+            if sort_tags || self.filter.is_some() {
+                self.rows_changed();
+                self.prune();
+            }
         }
     }
 
@@ -760,8 +771,12 @@ impl DirView {
     }
 
     pub fn set_filter(&mut self, text: &str) {
+        self.apply_filter(NameFilter::new(text));
+    }
+
+    pub(crate) fn apply_filter(&mut self, filter: Option<NameFilter>) {
         let prev = self.filter.take();
-        self.filter = NameFilter::new(text);
+        self.filter = filter;
         if let (Some(f), Some(p)) = (&mut self.filter, &prev) {
             if f.narrows(p) {
                 f.seed_from(p, &self.snap.listing);

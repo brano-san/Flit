@@ -370,3 +370,5 @@
 "status.select_program" = "Select an executable file first."
 "app.check_updates" = "Check for updates"
 "tags.quick" = "Quick tags"
+"filter.save" = "Save folder filter"
+"filter.saved" = "Saved folder filters"

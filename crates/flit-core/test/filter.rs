@@ -32,6 +32,26 @@ fn added(name: &str) -> DirChange {
 }
 
 #[test]
+fn w3_folder_masks_include_either_extension_and_hide_drafts() {
+    let mut v = DirView::new(snap(&["final.JPG", "draft.png", "cover.png", "notes.txt", "candidate.jpg.tmp"]));
+    v.set_filter("*.jpg;*.png;!*draft*");
+    assert_eq!(rows(&v), ["cover.png", "final.JPG"]);
+    v.set_filter("!*draft*");
+    assert_eq!(rows(&v), ["candidate.jpg.tmp", "cover.png", "final.JPG", "notes.txt"]);
+}
+
+#[test]
+fn w3_folder_attributes_intersect_with_masks_and_recheck_changed_entries() {
+    let mut v = DirView::new(snap(&["alpha.jpg", "beta.png", "gamma.txt"]));
+    v.set_filter("*.jpg;*.png size:>=1 ext:jpg;png");
+    assert_eq!(rows(&v), ["beta.png"]);
+    v.apply(&DirChange { label: crate::listing::Label::Keep, kind: ChangeKind::Modified, name: "alpha.jpg".into(), meta: Some(Meta { size: 2, ..Meta::default() }) });
+    assert_eq!(rows(&v), ["alpha.jpg", "beta.png"]);
+    v.set_filter("*.jpg;*.png size:>2");
+    assert!(rows(&v).is_empty());
+}
+
+#[test]
 fn fuzzy_match_ignores_case_in_any_script() {
     assert!(NameFilter::new("").is_none());
     assert!(hit("REP", "annual report.pdf"));

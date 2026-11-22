@@ -78,7 +78,7 @@ impl App {
         self.apply_snapshot(k, raw);
         if let Some(view) = self.tabs[k].view.as_mut().filter(|v| v.is_filtered()) {
             view.set_filter("");
-            self.tabs[k].refilter_view();
+            self.refilter_tab(k);
         }
         if let (Some((selected, focus, anchor)), Some(view)) = (selection, &mut self.tabs[k].view) {
             view.clear_selection();

@@ -27,6 +27,27 @@ fn requests(app: &mut App) -> Vec<SearchRequest> {
     app.drain_effects().filter_map(|e| if let Effect::Search(r) = e { Some(r) } else { None }).collect()
 }
 
+#[test]
+fn w3_review_filter_tab_cycles_focus_unless_a_key_can_be_completed() {
+    let mut a = crate::ui::harness::app(&["example.txt"]);
+    a.set_caps(crate::caps::Caps { unix_paths: false });
+    for input in ["", "word ", "e", "s", "h"] {
+        key(&mut a, Key::Char('F'), CTRL);
+        a.tab_mut().filter.as_mut().unwrap().edit.set(input);
+        assert_eq!(a.focus, crate::ui::Focus::Filter);
+        key(&mut a, Key::Tab, NO);
+        assert!(a.focus != crate::ui::Focus::Filter, "{input:?}");
+        assert_eq!(a.tab().filter.as_ref().unwrap().text(), input);
+    }
+    for (input, expected) in [("ex", "ext:"), ("ext:tx", "ext:txt ")] {
+        key(&mut a, Key::Char('F'), CTRL);
+        a.tab_mut().filter.as_mut().unwrap().edit.set(input);
+        key(&mut a, Key::Tab, NO);
+        assert_eq!(a.focus, crate::ui::Focus::Filter);
+        assert_eq!(a.tab().filter.as_ref().unwrap().text(), expected);
+    }
+}
+
 fn gen_of(app: &App) -> u64 {
     app.search.gen
 }

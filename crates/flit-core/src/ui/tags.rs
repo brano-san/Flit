@@ -76,10 +76,20 @@ impl App {
     pub fn on_tags(&mut self, ev: TagEvent, now: Instant) {
         match ev {
             TagEvent::Changed { tags, files, dropped } => {
+                let defs_changed = self.tag_defs() != tags.defs.as_slice();
                 if let Some(k) = dropped {
                     self.drop_tag_bit(k);
                 }
                 self.set_tags(tags);
+                if defs_changed {
+                    let clock = crate::query_attrs::Clock::system(self.utc_offset_min);
+                    let tags = self.tags().clone();
+                    for tab in self.tabs.iter_mut().chain(self.panels.list.iter_mut().flat_map(|p| &mut p.tabs)) {
+                        if tab.filter.as_ref().is_some_and(|f| crate::tags::has_tag_term(f.text())) {
+                            tab.refilter_view(clock, &tags.defs);
+                        }
+                    }
+                }
                 self.tag_fixes.extend(files.into_iter().map(|(path, mask)| (path, mask, now + FIX_WINDOW)));
                 self.apply_tag_fixes(now);
             }

@@ -370,3 +370,5 @@
 "status.select_program" = "Sélectionnez d'abord un fichier exécutable."
 "app.check_updates" = "Rechercher les mises à jour"
 "tags.quick" = "Étiquettes rapides"
+"filter.save" = "Enregistrer le filtre du dossier"
+"filter.saved" = "Filtres de dossier enregistrés"

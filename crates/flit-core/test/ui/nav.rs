@@ -586,12 +586,12 @@ fn the_filter_menu_edits_text_and_follows_the_selection() {
     let (start, _) = filter_with(&mut app, "alpha beta");
     app.on_event(&Event::MouseDown { x: start.0, y: start.1, button: MouseButton::Right, clicks: 1 }, t0());
     app.on_event(&Event::MouseUp { x: start.0, y: start.1, button: MouseButton::Right }, t0());
-    let labels: Vec<&str> = vec!["Undo", "Cut", "Copy", "Paste", "Delete", "Select All"];
-    assert_eq!(text_menu(&mut app), labels.iter().zip([false, true, true, false, true, false]).map(|(l, d)| (l.to_string(), d)).collect::<Vec<_>>());
+    let labels = ["Undo", "Cut", "Copy", "Paste", "Delete", "Select All", "Save folder filter", "Saved folder filters"];
+    assert_eq!(text_menu(&mut app), labels.iter().zip([false, true, true, false, true, false, false, false]).map(|(l, d)| (l.to_string(), d)).collect::<Vec<_>>());
     app.on_event(&Event::MenuCommand(5), t0());
     assert_eq!(filter_selection(&app), "alpha beta");
     key(&mut app, Key::Apps, NO);
-    assert_eq!(text_menu(&mut app).iter().map(|(_, d)| *d).collect::<Vec<_>>(), [false, false, false, false, false, true], "the menu key opens it too");
+    assert_eq!(text_menu(&mut app).iter().map(|(_, d)| *d).collect::<Vec<_>>(), [false, false, false, false, false, true, false, false], "the menu key opens it too");
     app.on_event(&Event::MenuCommand(1), t0());
     assert_eq!(clipboard(&mut app), ["alpha beta"]);
     assert_eq!(app.tab().filter.as_ref().unwrap().text(), "");
@@ -760,7 +760,7 @@ fn paste_in_the_field_menu_is_offered_only_while_the_clipboard_holds_text() {
     app.on_event(&Event::ClipboardText(false), t0());
     assert!(!paste(&mut app), "an empty or non-text clipboard greys Paste out");
     right_click(&mut app, start);
-    assert_eq!(text_menu(&mut app).iter().map(|(_, d)| *d).collect::<Vec<_>>(), [false, true, true, true, true, false], "the other entries do not change");
+    assert_eq!(text_menu(&mut app).iter().map(|(_, d)| *d).collect::<Vec<_>>(), [false, true, true, true, true, false, false, false], "the other entries do not change");
     key(&mut app, Key::Char('V'), CTRL);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Paste)), "Ctrl+V still asks the system");
     app.on_event(&Event::ClipboardText(true), t0());

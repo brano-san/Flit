@@ -372,3 +372,5 @@
 "preview.play" = "Start or stop the audio or video in the preview"
 "app.check_updates" = "Ask GitHub whether a newer Flit is out, then download, install and restart, update, upgrade, new version, release"
 "tags.quick" = "Use keys 1–9 to toggle single tags on the selection. Press Esc to exit."
+"filter.save" = "Save the current folder filter."
+"filter.saved" = "Choose a saved filter. Delete removes it."
