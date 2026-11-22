@@ -815,6 +815,15 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
+                Effect::NetworkDiscovery { tab, gen } => {
+                    let (events, wake) = (self.events_tx.clone(), self.wake.clone());
+                    if let Err(error) = spawn("flit-network-discovery", move || {
+                        let _ = events.send(ProviderEvent::NetworkDiscovery { tab, gen, warning: P::network_warning() });
+                        wake();
+                    }) {
+                        tracing::warn!("cannot check network discovery: {error}");
+                    }
+                }
                 Effect::SavedServer(change) => {
                     change.apply(&mut self.saved.side.saved_servers);
                     for app in self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app).chain(self.pending.iter_mut()) {
@@ -1053,6 +1062,7 @@ impl<P: Platform> Handler<P> {
                 _ => {}
             }
             let target = match &ev {
+                ProviderEvent::NetworkDiscovery { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } | ProviderEvent::Denied { tab, .. } => self.window_of_tab(*tab).or(self.active),
                 ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::WrongPassphrase { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),

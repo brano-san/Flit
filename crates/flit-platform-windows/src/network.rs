@@ -11,10 +11,38 @@ use windows::Win32::NetworkManagement::WNet::{
     WNetAddConnection3W, WNetCloseEnum, WNetConnectionDialog1W, WNetDisconnectDialog, WNetDisconnectDialog1W, WNetEnumResourceW, WNetGetConnectionW, WNetOpenEnumW, CONNECTDLGSTRUCTW, CONNECT_INTERACTIVE, CONNDLG_USE_MRU, DISCDLGSTRUCTW, DISC_UPDATE_PROFILE, NETRESOURCEW, RESOURCETYPE_DISK, RESOURCE_REMEMBERED,
     WNET_OPEN_ENUM_USAGE,
 };
+use windows::Win32::NetworkManagement::WindowsFirewall::{NET_FW_PROFILE_TYPE2, NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC};
 use windows::Win32::Storage::FileSystem::GetDriveTypeW;
 
 const DRIVE_REMOTE: u32 = 4;
 const CANCELLED_BY_USER: u32 = 0xFFFF_FFFF;
+pub(crate) fn discovery_warning(enabled: impl FnOnce() -> Option<bool>) -> Option<flit_core::provider::NetworkWarning> {
+    (enabled() == Some(false)).then_some(flit_core::provider::NetworkWarning::WindowsDisabled)
+}
+
+pub(crate) fn discovery_enabled() -> Option<bool> {
+    use windows::Win32::NetworkManagement::WindowsFirewall::{INetFwPolicy2, NetFwPolicy2};
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
+    crate::com_sta();
+    let policy: INetFwPolicy2 = unsafe { CoCreateInstance(&NetFwPolicy2, None, CLSCTX_INPROC_SERVER) }.ok()?;
+    let active = unsafe { policy.CurrentProfileTypes() }.ok()?;
+    discovery_state(
+        active,
+        |profile| unsafe { policy.get_FirewallEnabled(profile) }.ok().map(|enabled| enabled.0 != 0),
+        || unsafe { policy.get_IsRuleGroupCurrentlyEnabled(&windows::core::BSTR::from("@FirewallAPI.dll,-32752")) }.ok().map(|enabled| enabled.0 != 0),
+    )
+}
+
+fn discovery_state(active: i32, mut firewall_enabled: impl FnMut(NET_FW_PROFILE_TYPE2) -> Option<bool>, group_enabled: impl FnOnce() -> Option<bool>) -> Option<bool> {
+    let mut profiles = [NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC].into_iter().filter(|p| active & p.0 != 0).peekable();
+    profiles.peek()?;
+    for profile in profiles {
+        if !firewall_enabled(profile)? {
+            return Some(true);
+        }
+    }
+    group_enabled()
+}
 
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()

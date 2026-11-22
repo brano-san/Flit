@@ -6,6 +6,19 @@ use std::collections::VecDeque;
 use std::os::unix::process::ExitStatusExt;
 use std::process::ExitStatus;
 
+#[test]
+fn a_missing_discovery_component_is_reported_with_its_distribution_package() {
+    use flit_core::provider::NetworkWarning;
+    assert_eq!(discovery_warning(Some(false), false, "ID=debian"), Some(NetworkWarning::LinuxMissing {
+        avahi: Some("avahi-daemon"), gvfs: Some("gvfs-backends"),
+    }));
+    assert_eq!(discovery_warning(Some(false), true, "ID=fedora"), Some(NetworkWarning::LinuxMissing {
+        avahi: Some("avahi"), gvfs: None,
+    }));
+    assert_eq!(discovery_warning(Some(true), true, "ID=arch"), None);
+    assert_eq!(discovery_warning(None, true, "ID=opensuse"), None);
+}
+
 const SOURCE: &str = "captured 2026-11-21 in WSL Ubuntu 22.04 with gvfs 1.48.2-0ubuntu1.3 (already installed), and avahi-daemon, avahi-utils 0.8-5ubuntu5.5 and samba 4.15.13 installed for these samples; services published with avahi-publish";
 
 const GVFS_FIRST: &str = "smb-root\t0\t(shortcut)\tstandard::display-name=Windows Network standard::target-uri=smb:///\n";

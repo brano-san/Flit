@@ -18,6 +18,9 @@ bin = "Кошик порожній."
 folder = "Ця папка порожня."
 network = "У мережі не знайдено ні комп’ютерів, ні спільних папок. Натисніть F5, щоб повторити пошук."
 network_connect = "Натисніть F5, щоб підключитися."
+network_discovery_disabled = "Виявлення мережі вимкнено."
+network_start_avahi = "Запустіть avahi-daemon з пакунка {package}."
+network_install_gvfs = "Установіть пакунок {package}."
 
 [status]
 selected = ["Вибрано: {n}", "Вибрано: {n}", "Вибрано: {n}"]
@@ -39,6 +42,7 @@ restore = "Відновити"
 not_now = "Не зараз"
 open_folder = "Відкрити папку"
 no = "Ні"
+open_network_settings = "Відкрити параметри"
 
 [job]
 operations = "Операції"

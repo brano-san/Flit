@@ -18,6 +18,9 @@ bin = "The Recycle Bin is empty."
 folder = "This folder is empty."
 network = "No computers or shared folders were found on the network. Press F5 to search again."
 network_connect = "Press F5 to connect."
+network_discovery_disabled = "Network discovery is turned off."
+network_start_avahi = "Start avahi-daemon from the {package} package."
+network_install_gvfs = "Install the {package} package."
 
 [status]
 selected = ["{n} selected", "{n} selected"]
@@ -39,6 +42,7 @@ restore = "Restore"
 not_now = "Not now"
 open_folder = "Open folder"
 no = "No"
+open_network_settings = "Open settings"
 
 [job]
 operations = "Operations"

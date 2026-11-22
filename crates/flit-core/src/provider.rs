@@ -659,6 +659,12 @@ impl fmt::Debug for MountAnswer {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkWarning {
+    WindowsDisabled,
+    LinuxMissing { avahi: Option<&'static str>, gvfs: Option<&'static str> },
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ProviderEvent {
     Changes { tab: TabId, gen: u64, changes: Vec<DirChange> },
@@ -673,6 +679,7 @@ pub enum ProviderEvent {
     Navigate { tab: TabId, path: FsPath },
     NetworkConnected { tab: TabId, gen: u64, result: Result<Option<FsPath>, String> },
     SavedServerConnected { tab: TabId, address: String, path: FsPath },
+    NetworkDiscovery { tab: TabId, gen: u64, warning: Option<NetworkWarning> },
     Reveal { tab: TabId, path: FsPath, new_tab: bool },
     Hashed { tab: TabId, id: OpId, result: Result<Vec<String>, String> },
     Measured { tab: TabId, id: OpId, totals: Totals, file_system: Option<String>, done: bool },

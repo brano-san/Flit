@@ -18,6 +18,9 @@ bin = "La Corbeille est vide."
 folder = "Ce dossier est vide."
 network = "Aucun ordinateur ni dossier partagé n’a été trouvé sur le réseau. Appuyez sur F5 pour relancer la recherche."
 network_connect = "Appuyez sur F5 pour vous connecter."
+network_discovery_disabled = "La découverte du réseau est désactivée."
+network_start_avahi = "Démarrez avahi-daemon fourni par le paquet {package}."
+network_install_gvfs = "Installez le paquet {package}."
 
 [status]
 selected = ["{n} sélectionné", "{n} de sélectionnés", "{n} sélectionnés"]
@@ -39,6 +42,7 @@ restore = "Restaurer"
 not_now = "Pas maintenant"
 open_folder = "Ouvrir le dossier"
 no = "Non"
+open_network_settings = "Ouvrir les paramètres"
 
 [job]
 operations = "Opérations"

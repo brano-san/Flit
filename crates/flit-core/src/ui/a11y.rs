@@ -229,6 +229,11 @@ impl App {
             }
         }
 
+        if let Some(r) = self.network_settings_rect() {
+            let k = put(&mut t, &mut targets, 0, Hit::NetworkSettings, Role::Button, S::UiButtonOpenNetworkSettings.t(), r);
+            t.nodes[k].help = S::UiEmptyNetworkDiscoveryDisabled.t().into();
+        }
+
         if let Some(k) = self.form_a11y(&mut t, &mut targets) {
             focus = Some(k);
         }

@@ -18,6 +18,9 @@ bin = "La Papelera de reciclaje está vacía."
 folder = "Esta carpeta está vacía."
 network = "No se encontraron equipos ni carpetas compartidas en la red. Presione F5 para volver a buscar."
 network_connect = "Pulsa F5 para conectar."
+network_discovery_disabled = "La detección de redes está desactivada."
+network_start_avahi = "Inicia avahi-daemon del paquete {package}."
+network_install_gvfs = "Instala el paquete {package}."
 
 [status]
 selected = ["{n} seleccionado", "{n} de seleccionados", "{n} seleccionados"]
@@ -39,6 +42,7 @@ restore = "Restaurar"
 not_now = "Ahora no"
 open_folder = "Abrir carpeta"
 no = "No"
+open_network_settings = "Abrir configuración"
 
 [job]
 operations = "Operaciones"

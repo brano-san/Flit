@@ -452,6 +452,7 @@ pub enum Effect {
     ShellPick(Option<u32>),
     Layout(LayoutCmd),
     Update(crate::update::UpdateRequest),
+    NetworkDiscovery { tab: TabId, gen: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -596,6 +597,7 @@ enum Hit {
     PanelSep(usize),
     Bottom(bottom::BottomHit),
     SearchRow(u64),
+    NetworkSettings,
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1422,6 +1424,9 @@ impl App {
             self.keep_as_pane(k);
         }
         let snap = self.with_saved_servers(k, snap);
+        if loaded {
+            self.check_discovery(k, &snap);
+        }
         let resort = self.tabs[k].on_snapshot(snap);
         if std::mem::take(&mut self.tabs[k].properties_due) && k == self.cur {
             self.properties_dialog();
@@ -1508,6 +1513,12 @@ impl App {
             ProviderEvent::NetworkConnected { tab, gen, result } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     self.network_connected(k, result, now);
+                }
+            }
+            ProviderEvent::NetworkDiscovery { tab, gen, warning } => {
+                if let Some(k) = self.tabs.iter().position(|t| t.id == tab && t.discovery == network::DiscoveryCheck::Pending(gen)) {
+                    self.tabs[k].discovery = network::DiscoveryCheck::Checked(warning);
+                    self.dirty |= k == self.cur;
                 }
             }
             ProviderEvent::Reveal { tab, path, new_tab } => {
@@ -1844,6 +1855,9 @@ impl App {
         }
         if self.eject_rect().is_some_and(|r| r.contains(x, y)) {
             return Hit::Eject;
+        }
+        if self.network_settings_rect().is_some_and(|r| r.contains(x, y)) {
+            return Hit::NetworkSettings;
         }
         if l.list.inset(-l.gutter, 0.0).contains(x, y) {
             return self.list_hit(x, y);
@@ -2368,6 +2382,7 @@ impl App {
             Hit::TabActions => self.open_tab_search(),
             Hit::Eject => self.eject(),
             Hit::GrantAccess => self.grant_access(),
+            Hit::NetworkSettings => self.open_network_settings(),
             Hit::Settings(s) => self.settings_click(s, x, y),
             _ => {}
         }
@@ -3143,7 +3158,9 @@ impl App {
         let want_thumbs = self.prefs.thumbnails && icon_px >= self.cs(THUMB_MIN_ICON) && !in_bin && (self.opts.thumbs != options::Thumbs::Local || !self.network_place(&tab.view_loc));
         let thumb_px = thumbs::class_px(icon_px as u32);
         if let Some(v) = &tab.view {
-            if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
+            if let Some(warning) = self.discovery_warning() {
+                self.draw_discovery_warning(g, t, list, warning);
+            } else if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
                 self.draw_unavailable(g, t, list, e);
             } else if v.rows().is_empty() && v.groups().is_empty() && v.snap().done {
                 let msg = self.empty_text(&tab.view_loc, v.is_filtered());

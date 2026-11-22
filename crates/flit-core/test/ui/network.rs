@@ -356,6 +356,73 @@ fn network_goes_to_the_network_place() {
 }
 
 #[test]
+fn an_empty_network_place_checks_once_and_the_banner_opens_sharing_settings() {
+    let mut a = app();
+    let now = Instant::now();
+    assert!(a.run_action("nav.network", now));
+    a.drain_effects().for_each(drop);
+    publish(&mut a, false, &[], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+    publish(&mut a, true, &[], None);
+    let checks: Vec<_> = a.drain_effects().filter_map(|e| match e {
+        Effect::NetworkDiscovery { tab, gen } => Some((tab, gen)),
+        _ => None,
+    }).collect();
+    assert_eq!(checks, [(a.tab().id, a.tab().gen)]);
+    let (tab, gen) = checks[0];
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen: gen + 1, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    assert!(a.network_settings_rect().is_none());
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    let r = a.network_settings_rect().unwrap();
+    let (x, y) = (r.x + r.w * 0.5, r.y + r.h * 0.5);
+    assert_eq!(a.hit(x, y), crate::ui::Hit::NetworkSettings);
+    a.activate(crate::ui::Hit::NetworkSettings, now);
+    assert_eq!(launches(&mut a), [Launch::Run { program: "ms-settings:network-advancedsharing".into(), args: String::new(), dir: None }]);
+    publish(&mut a, true, &[], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+}
+
+#[test]
+fn a_nonempty_network_and_an_enabled_firewall_do_not_show_the_banner() {
+    let mut a = app();
+    let now = Instant::now();
+    a.run_action("nav.network", now);
+    a.drain_effects().for_each(drop);
+    publish(&mut a, true, &[("server", "Server")], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+    publish(&mut a, true, &[], None);
+    let (tab, gen) = (a.tab().id, a.tab().gen);
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: None }, now);
+    assert!(a.discovery_warning().is_none());
+    assert!(a.network_settings_rect().is_none());
+}
+
+#[test]
+fn refresh_rechecks_discovery_and_drops_a_warning_from_an_earlier_load() {
+    let mut a = app();
+    let now = Instant::now();
+    assert!(a.run_action("nav.network", now));
+    publish(&mut a, true, &[], None);
+    let (tab, gen) = (a.tab().id, a.tab().gen);
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    assert!(a.network_settings_rect().is_some());
+    a.activate(crate::ui::Hit::NetworkSettings, now);
+    launches(&mut a);
+
+    assert!(a.run_action("nav.refresh", now));
+    publish(&mut a, false, &[], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+    publish(&mut a, true, &[], None);
+    let current = a.tab().gen;
+    assert_ne!(gen, current);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { tab: t, gen: g } if (t, g) == (tab, current))));
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    assert!(a.network_settings_rect().is_none());
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen: current, warning: None }, now);
+    assert!(a.network_settings_rect().is_none());
+}
+
+#[test]
 fn a_disconnected_mapped_drive_says_so() {
     let mut d = Drive { path: FsPath::parse(r"Z:\").unwrap(), label: r"share (\\nas) (Z:)".into(), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: true, kind: None, remote: Some(r"\\nas\share".into()) };
     assert!(d.offline());

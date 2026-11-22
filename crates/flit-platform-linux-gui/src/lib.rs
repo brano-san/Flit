@@ -162,6 +162,10 @@ impl Platform for Linux {
         xdg::home().and_then(|h| xdg::fs_path(&h)).unwrap_or_else(|| FsPath::parse("/").unwrap())
     }
 
+    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
+        network::discovery_warning(network::avahi_running(), tools::gvfs_network_present(), &tools::os_release())
+    }
+
     fn known_folder(name: &str) -> Option<Location> {
         xdg::known_folder(name)
     }

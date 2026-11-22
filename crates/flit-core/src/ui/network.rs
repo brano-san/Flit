@@ -11,8 +11,24 @@ use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ProviderRequest, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
 use crate::render::{Color, Rect};
 use crate::text::{FontStyle, Gfx, TextBackend};
+use crate::provider::NetworkWarning;
+use crate::theme::Theme;
 
 const SCHEMES: [&str; 11] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "dav+sd", "davs+sd", "afp", "nfs"];
+const SHARING_SETTINGS: &str = "ms-settings:network-advancedsharing";
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum DiscoveryCheck {
+    #[default]
+    Unchecked,
+    Pending(u64),
+    Checked(Option<NetworkWarning>),
+}
+
+fn empty_network(snap: &crate::listing::DirSnapshot) -> bool {
+    snap.path.is_network() && snap.path.is_root() && snap.done && snap.listing.is_empty()
+        && snap.error.as_ref().is_none_or(|error| error.code == crate::listing::NO_NETWORK_BROWSER_CODE)
+}
 
 pub fn server_uri(text: &str) -> Option<String> {
     let text = text.trim();
@@ -110,6 +126,55 @@ pub(super) fn split_remote(cmd: &Open) -> Option<(Vec<String>, Open)> {
 }
 
 impl App {
+    pub(super) fn check_discovery(&mut self, k: usize, snap: &crate::listing::DirSnapshot) {
+        let tab = &mut self.tabs[k];
+        if tab.discovery == DiscoveryCheck::Unchecked && empty_network(snap) {
+            tab.discovery = DiscoveryCheck::Pending(snap.gen);
+            self.effects.push(Effect::NetworkDiscovery { tab: tab.id, gen: snap.gen });
+        }
+    }
+
+    pub(super) fn discovery_warning(&self) -> Option<NetworkWarning> {
+        let tab = self.tab();
+        let DiscoveryCheck::Checked(warning) = tab.discovery else { return None };
+        let path = tab.location().path();
+        let view = tab.view.as_ref().filter(|view| view.snap().gen == tab.gen && &view.snap().path == path && empty_network(view.snap()));
+        view.and(warning)
+    }
+
+    pub(super) fn network_settings_rect(&self) -> Option<Rect> {
+        let r = self.layout.list;
+        let width = self.cs(190.0).min(r.w - self.cs(24.0));
+        (self.discovery_warning() == Some(NetworkWarning::WindowsDisabled) && width > 0.0 && r.h >= self.cs(106.0))
+            .then(|| Rect::new(r.x + (r.w - width) * 0.5, r.y + self.cs(62.0), width, self.cs(28.0)))
+    }
+
+    pub(super) fn open_network_settings(&mut self) {
+        if self.network_settings_rect().is_some() {
+            self.launch(Launch::Run { program: SHARING_SETTINGS.into(), args: String::new(), dir: None });
+        }
+    }
+
+    pub(super) fn draw_discovery_warning<B: TextBackend>(&self, g: &mut Gfx<B>, theme: &Theme, list: Rect, warning: NetworkWarning) {
+        let font = self.content_font(13.0);
+        let banner = list.inset(self.cs(8.0), self.cs(8.0));
+        let banner = Rect { h: self.cs(90.0).min(banner.h), ..banner };
+        g.dl.round_rect(banner, theme.button_hover, self.cs(4.0));
+        let message = match warning {
+            NetworkWarning::WindowsDisabled => S::UiEmptyNetworkDiscoveryDisabled.t().to_owned(),
+            NetworkWarning::LinuxMissing { avahi, gvfs } => [
+                avahi.map(|package| crate::tr!(S::UiEmptyNetworkStartAvahi, package = package)),
+                gvfs.map(|package| crate::tr!(S::UiEmptyNetworkInstallGvfs, package = package)),
+            ].into_iter().flatten().collect::<Vec<_>>().join(" "),
+        };
+        self.draw_network_notice(g, Rect { y: banner.y + self.cs(20.0), ..banner }, &message, font, theme.text);
+        if let Some(button) = self.network_settings_rect() {
+            let color = if self.hover == super::Hit::NetworkSettings { theme.button_pressed } else { theme.bg };
+            g.dl.round_rect(button, color, self.cs(4.0));
+            super::centered(g, button, S::UiButtonOpenNetworkSettings.t(), font, theme.text);
+        }
+    }
+
     pub(super) fn draw_network_notice<B: TextBackend>(&self, g: &mut Gfx<B>, area: Rect, text: &str, font: FontStyle, color: Color) {
         let width = (area.w - self.cs(24.0)).max(1.0);
         for (line, text) in super::update_dialog::wrapped(g, text, font, width).into_iter().enumerate() {

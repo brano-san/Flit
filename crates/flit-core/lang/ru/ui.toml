@@ -18,6 +18,9 @@ bin = "Корзина пуста."
 folder = "Эта папка пуста."
 network = "В сети не найдено ни компьютеров, ни общих папок. Нажмите F5, чтобы повторить поиск."
 network_connect = "Нажмите F5, чтобы подключиться."
+network_discovery_disabled = "Обнаружение сети выключено."
+network_start_avahi = "Запустите avahi-daemon из пакета {package}."
+network_install_gvfs = "Установите пакет {package}."
 
 [status]
 selected = ["Выбран {n} элемент", "Выбрано {n} элемента", "Выбрано {n} элементов"]
@@ -39,6 +42,7 @@ restore = "Восстановить"
 not_now = "Не сейчас"
 open_folder = "Открыть папку"
 no = "Нет"
+open_network_settings = "Открыть параметры"
 
 [job]
 operations = "Операции"
