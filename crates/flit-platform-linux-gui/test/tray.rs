@@ -28,7 +28,7 @@ fn tray_responds_with_the_wire_signatures_for_layout_and_properties() {
         let mut it = crate::dbus::Iter::new();
         (api.iter_init_append)(msg, &mut it);
         for value in &reply {
-            crate::atspi::put(&api, &mut it, "", value);
+            crate::atspi::put(api, &mut it, "", value);
         }
         let actual = CStr::from_ptr((api.signature)(msg)).to_owned();
         (api.unref)(msg);

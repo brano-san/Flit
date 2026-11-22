@@ -313,7 +313,7 @@ unsafe fn error(bus: &Bus, msg: *mut c_void, name: &std::ffi::CStr, description:
 }
 
 unsafe fn handle(bus: &Bus, msg: *mut c_void, owner: Option<&str>, pending: &mut HashMap<String, Pending>) -> bool {
-    let api = &bus.api;
+    let api = bus.api;
     let member = text((api.member)(msg));
     let iface = text((api.interface)(msg));
     let path = text((api.path)(msg));
@@ -410,7 +410,7 @@ pub fn run() -> i32 {
     }
     let mut owner = frontend(&bus);
     let mut pending = HashMap::new();
-    let api = &bus.api;
+    let api = bus.api;
     let release = || {
         let reply = bus.call(c"org.freedesktop.DBus", c"/org/freedesktop/DBus", c"org.freedesktop.DBus", c"ReleaseName", &[V::S(NAME.to_string_lossy().into_owned())]);
         if reply.as_deref() != Some(&[Arg::I(1)]) {

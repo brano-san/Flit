@@ -211,7 +211,7 @@ impl Export<'_> {
 }
 
 unsafe fn handle(bus: &Bus, msg: *mut c_void, tray: &Tray, export: &Export<'_>, activation: &mut Activation) {
-    let api = &bus.api;
+    let api = bus.api;
     let header = |get: unsafe extern "C" fn(*mut c_void) -> *const c_char| {
         let value = get(msg);
         if value.is_null() { c"" } else { CStr::from_ptr(value) }
@@ -362,7 +362,7 @@ impl<'a> Watches<'a> {
     }
 
     fn wait(&self, wakeup: &Wakeup, timeout: Option<Duration>) -> bool {
-        let api = &self.bus.api;
+        let api = self.bus.api;
         let watches: Vec<_> = self.list.borrow().iter().copied().filter(|&watch| unsafe { (api.watch_enabled)(watch) != 0 }).collect();
         let mut fds = vec![wakeup.poll_fd()];
         fds.extend(watches.iter().map(|&watch| unsafe {
@@ -418,7 +418,7 @@ fn serve(tray: &Tray, wakeup: &Wakeup) -> Option<()> {
     bus.subscribe(c"type='signal',sender='org.freedesktop.DBus',member='NameOwnerChanged',arg0='org.kde.StatusNotifierWatcher'");
     bus.subscribe(c"type='signal',sender='org.kde.StatusNotifierWatcher',path='/StatusNotifierWatcher',interface='org.kde.StatusNotifierWatcher'");
     bus.subscribe(c"type='signal',sender='org.kde.StatusNotifierWatcher',path='/StatusNotifierWatcher',interface='org.freedesktop.DBus.Properties',member='PropertiesChanged',arg0='org.kde.StatusNotifierWatcher'");
-    let api = &bus.api;
+    let api = bus.api;
     let mut registration = Registration::default();
     let mut availability = HostAvailability::default();
     let mut refresh = true;

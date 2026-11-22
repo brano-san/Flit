@@ -33,7 +33,7 @@ impl Bus {
 
     pub(crate) fn call(&self, dest: &CStr, path: &CStr, interface: &CStr, member: &CStr, args: &[crate::atspi::V]) -> Option<Vec<crate::atspi::Arg>> {
         unsafe {
-            let api = &self.api;
+            let api = self.api;
             let msg = (api.new_method_call)(dest.as_ptr(), path.as_ptr(), interface.as_ptr(), member.as_ptr());
             if msg.is_null() {
                 return None;
@@ -57,7 +57,7 @@ impl Bus {
         let mut iter = Iter::new();
         (self.api.iter_init_append)(msg, &mut iter);
         for arg in args {
-            crate::atspi::put(&self.api, &mut iter, "", arg);
+            crate::atspi::put(self.api, &mut iter, "", arg);
         }
     }
 
