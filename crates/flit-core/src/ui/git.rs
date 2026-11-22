@@ -259,6 +259,7 @@ impl App {
                 }
             }
             GitEvent::AuthFailed { tab, dir, op, error, github } => {
+                let error = crate::redact::passwords(&error).into_owned();
                 if self.tab().id == tab {
                     self.open_git_auth(&op, dir, &error, github);
                 }
@@ -271,6 +272,10 @@ impl App {
             }
             GitEvent::TrackedDone { tab, id, op, result } => {
                 let now = Instant::now();
+                let result = match result {
+                    GitResult::Failed { error, auth } => GitResult::Failed { error: crate::redact::passwords(&error).into_owned(), auth },
+                    result => result,
+                };
                 let error = match &result { GitResult::Failed { error, .. } => Some(error.as_str()), _ => None };
                 self.job_done(id, error, matches!(result, GitResult::Cancelled | GitResult::CancelledWithLock(_)), now);
                 match result {
@@ -285,6 +290,7 @@ impl App {
                 }
             }
             GitEvent::Done { tab, op, error, url } => {
+                let error = error.map(|e| crate::redact::passwords(&e).into_owned());
                 let here = self.tab().id == tab;
                 let handled = self.git_form_done(tab, &op, error.as_deref());
                 match (error, url) {

@@ -1114,7 +1114,7 @@ impl<P: Platform> Handler<P> {
         let now = Instant::now();
         while let Ok(ev) = self.events.try_recv() {
             match &ev {
-                ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {}", flit_core::redact::passwords(e)),
+                ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {}", flit_core::redact::passwords(&e.to_string())),
                 ProviderEvent::Hashed { result: Err(e), .. } => tracing::warn!("hashing failed: {}", flit_core::redact::passwords(e)),
                 ProviderEvent::Denied { error, .. } => tracing::warn!("{}", flit_core::redact::passwords(error)),
                 _ => {}
