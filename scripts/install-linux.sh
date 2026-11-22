@@ -4,6 +4,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 prefix=${PREFIX:-$HOME/.local}
 service=$prefix/share/dbus-1/services/org.freedesktop.FileManager1.service
+portal_service=$prefix/share/dbus-1/services/org.freedesktop.impl.portal.desktop.flit.service
+portal=$prefix/share/xdg-desktop-portal/portals/flit.portal
 units=$prefix/share/systemd/user
 dbus=no
 index=no
@@ -23,6 +25,9 @@ fi
 
 if [ "$uninstall" = yes ]; then
     echo "Removing Flit from $prefix..."
+    if [ -x "$prefix/bin/flit" ] && { [ -f "$portal" ] || [ -f "$portal_service" ]; }; then
+        "$prefix/bin/flit" --restore-file-chooser
+    fi
     if grep -qsF flit-indexd "$units/flit-indexd.service"; then
         echo "Stopping and removing Flit's search index service..."
         if command -v systemctl >/dev/null; then
@@ -32,6 +37,7 @@ if [ "$uninstall" = yes ]; then
     fi
     rm -f "$prefix/bin/flit" "$prefix/bin/flit-indexd" "$prefix/share/applications/flit.desktop"
     rm -rf "$prefix/share/doc/flit" "$prefix/share/flit"
+    rm -f "$portal" "$portal_service"
     find "$prefix/share/icons/hicolor" -path '*/apps/flit.*' -delete 2>/dev/null || true
     if grep -Eqs 'flit"? --dbus-activated' "$service"; then
         echo "Removing Flit's D-Bus activation service..."
@@ -44,6 +50,11 @@ else
     install -m 755 "$here/bin/flit" "$prefix/bin/flit"
     echo "Installing application launcher, icons and documentation..."
     cp -r "$here/share/." "$prefix/share/"
+    if [ -f "$here/share/flit/dbus/org.freedesktop.impl.portal.desktop.flit.service" ]; then
+        mkdir -p "$(dirname "$portal_service")"
+        executable=$(printf '%s' "$prefix/bin/flit" | sed 's/[\\"]/\\&/g')
+        printf '[D-BUS Service]\nName=org.freedesktop.impl.portal.desktop.flit\nExec="%s" --file-chooser-portal\n' "$executable" > "$portal_service"
+    fi
     if [ "$dbus" = yes ]; then
         echo "Enabling D-Bus file manager activation..."
         mkdir -p "$(dirname "$service")"

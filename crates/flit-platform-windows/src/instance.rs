@@ -246,8 +246,8 @@ fn listen_loop(pipe: Vec<u16>, opens: OpenSink, wake: Wake) {
     }
 }
 
-impl SingleInstance for PipeInstance {
-    fn acquire(open: &Open) -> Instance<Self> {
+impl PipeInstance {
+    fn acquire_instance(open: Option<&Open>) -> Instance<Self> {
         let (mutex_name, pipe) = names();
         let mutex = unsafe { CreateMutexW(None, false, PCWSTR(mutex_name.as_ptr())) };
         let existed = unsafe { GetLastError() } == ERROR_ALREADY_EXISTS;
@@ -261,10 +261,22 @@ impl SingleInstance for PipeInstance {
         unsafe {
             let _ = CloseHandle(mutex);
         }
+        let Some(open) = open else { return Instance::Forwarded };
         match forward(&pipe, open) {
             Ok(()) => Instance::Forwarded,
             Err(e) => Instance::Standalone(e),
         }
+    }
+
+}
+
+impl SingleInstance for PipeInstance {
+    fn acquire(open: &Open) -> Instance<Self> {
+        Self::acquire_instance(Some(open))
+    }
+
+    fn acquire_background() -> Instance<Self> {
+        Self::acquire_instance(None)
     }
 
     fn listen(self, opens: OpenSink, wake: Wake) {

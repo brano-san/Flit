@@ -1,4 +1,24 @@
 use super::*;
+
+#[test]
+fn shutdown_drains_pending_background_state_and_settings_writes() {
+    let root = std::env::temp_dir().join(format!("flit-bg-save-{}", std::process::id()));
+    let path = root.join("settings.json");
+    let state = root.join("state.bin");
+    let (jobs, pending) = unbounded();
+    let (reply, replies) = unbounded();
+    let settings_file = path.clone();
+    let worker = std::thread::spawn(move || work(Some(settings_file), None, None, String::new(), pending, reply, Arc::new(|| {})));
+    let mut settings = Settings { values: Vec::new(), unknown: Map::new(), replies, read_only: false, jobs: Some(jobs), thread: Some(worker) };
+    let location = flit_core::Location::parse("/tmp").unwrap();
+    let saved = crate::state::Saved::new(flit_core::ui::Persisted { path: location, ..Default::default() }, None);
+    settings.send(Job::SaveState(state.clone(), Box::new(saved)));
+    settings.send(Job::Write("{\"after-close\":true}".into()));
+    settings.finish();
+    assert!(std::fs::metadata(state).unwrap().len() > 0);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), "{\"after-close\":true}");
+    let _ = std::fs::remove_dir_all(root);
+}
 use std::time::Duration;
 
 struct Temp(PathBuf);

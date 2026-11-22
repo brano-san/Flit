@@ -32,7 +32,7 @@ x11rb = { version = "0.14", default-features = false, features = ["allow-unsafe-
 wayland-client = "0.31"
 wayland-sys = { version = "0.31", features = ["client", "dlopen"] }
 wayland-backend = { version = "0.3", default-features = false, features = ["client_system"] }
-wayland-protocols = { version = "0.32", default-features = false, features = ["client", "staging"] }
+wayland-protocols = { version = "0.32", default-features = false, features = ["client", "staging", "unstable"] }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 png = "0.18"
 x11-dl = "2.21"

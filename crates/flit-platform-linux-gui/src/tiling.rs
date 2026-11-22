@@ -9,6 +9,7 @@ use x11rb::properties::WmSizeHints;
 use x11rb::protocol::Event;
 use x11rb::protocol::xproto::{AtomEnum, ChangeWindowAttributesAux, ConnectionExt, EventMask, GetPropertyReply, Gravity, PropertyNotifyEvent};
 use x11rb::xcb_ffi::XCBConnection;
+use x11rb::wrapper::ConnectionExt as _;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Sides {
@@ -96,6 +97,7 @@ x11rb::atom_manager! {
         _NET_WM_STATE_MAXIMIZED_VERT,
         _NET_WM_STATE_MAXIMIZED_HORZ,
         _NET_WM_STATE_FULLSCREEN,
+        _NET_WM_STATE_MODAL,
         _GTK_EDGE_CONSTRAINTS,
         _NET_WORKAREA,
         _NET_CURRENT_DESKTOP,
@@ -220,6 +222,7 @@ impl WatchedWindows {
 
 pub enum Command {
     PreparePlacement(WindowId, u32),
+    PrepareChooser(WindowId, u32, u32, bool),
     Refresh(WindowId, u32),
     Forget(u32),
 }
@@ -290,6 +293,19 @@ impl X11 {
                     Command::PreparePlacement(id, window) => {
                         if let Err(e) = self.prepare_placement(window) {
                             tracing::debug!("cannot prepare X11 window placement: {e}");
+                        }
+                        report(Update::PlacementReady(id));
+                    }
+                    Command::PrepareChooser(id, window, parent, modal) => {
+                        let prepared = (|| -> R<()> {
+                            self.conn.change_property32(x11rb::protocol::xproto::PropMode::REPLACE, window, AtomEnum::WM_TRANSIENT_FOR, AtomEnum::WINDOW, &[parent])?.check()?;
+                            if modal {
+                                self.conn.change_property32(x11rb::protocol::xproto::PropMode::APPEND, window, a._NET_WM_STATE, AtomEnum::ATOM, &[a._NET_WM_STATE_MODAL])?.check()?;
+                            }
+                            Ok(())
+                        })();
+                        if let Err(e) = prepared {
+                            tracing::debug!("cannot prepare X11 chooser parent: {e}");
                         }
                         report(Update::PlacementReady(id));
                     }

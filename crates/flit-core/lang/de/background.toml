@@ -1,0 +1,3 @@
+title = "Flit nach dem Schließen des letzten Fensters im Hintergrund ausführen"
+help = "Über das Symbol im Infobereich können Sie Flit erneut öffnen oder beenden."
+unavailable = "Die Arbeitsumgebung unterstützt keine StatusNotifierItem-Symbole im Infobereich."

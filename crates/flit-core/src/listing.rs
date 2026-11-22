@@ -114,6 +114,7 @@ pub struct Listing {
     pub labels: Vec<(u32, Box<str>)>,
     pub props: crate::hash::FxHashMap<u32, PropKey>,
     pub git: Option<Arc<crate::git::GitInfo>>,
+    pub picker_mime: crate::hash::FxHashMap<u32, Arc<[String]>>,
 }
 
 pub const SHELL_PROPS: [&str; 10] = [

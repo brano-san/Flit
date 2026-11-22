@@ -183,7 +183,7 @@ impl WindowSystem for LinuxWindows {
     fn waker(&self) -> LinuxWaker {
         LinuxWaker
     }
-    fn run<H: WindowHandler<Self>>(self, _: WindowOptions, _: H) -> Result<(), PlatformError> {
+    fn run<H: WindowHandler<Self>>(self, _: Option<WindowOptions>, _: Option<flit_platform::tray::Tray>, _: H) -> Result<(), PlatformError> {
         Err(PlatformError::unsupported("Linux window system"))
     }
 }

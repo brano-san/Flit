@@ -3,6 +3,108 @@ use flit_core::Open;
 use flit_platform::{OpenSink, Wake};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
+#[path = "tray.rs"]
+pub(crate) mod tray;
+
+pub(crate) struct Bus {
+    pub(crate) api: Api,
+    pub(crate) conn: *mut c_void,
+}
+
+impl Bus {
+    pub(crate) fn session() -> Option<Self> {
+        let api = load()?;
+        let address = CString::new(session_address()?).ok()?;
+        unsafe {
+            let mut err = Error::new();
+            (api.error_init)(&mut err);
+            let conn = (api.open_private)(address.as_ptr(), &mut err);
+            if conn.is_null() {
+                (api.error_free)(&mut err);
+                return None;
+            }
+            let bus = Self { api, conn };
+            let registered = (bus.api.register)(conn, &mut err) != 0;
+            (bus.api.error_free)(&mut err);
+            registered.then_some(bus)
+        }
+    }
+
+    pub(crate) fn call(&self, dest: &CStr, path: &CStr, interface: &CStr, member: &CStr, args: &[crate::atspi::V]) -> Option<Vec<crate::atspi::Arg>> {
+        unsafe {
+            let api = &self.api;
+            let msg = (api.new_method_call)(dest.as_ptr(), path.as_ptr(), interface.as_ptr(), member.as_ptr());
+            if msg.is_null() {
+                return None;
+            }
+            self.append(msg, args);
+            let mut err = Error::new();
+            (api.error_init)(&mut err);
+            let result = (api.call)(self.conn, msg, 1000, &mut err);
+            (api.error_free)(&mut err);
+            (api.unref)(msg);
+            if result.is_null() {
+                return None;
+            }
+            let values = crate::atspi::args(api, result);
+            (api.unref)(result);
+            Some(values)
+        }
+    }
+
+    unsafe fn append(&self, msg: *mut c_void, args: &[crate::atspi::V]) {
+        let mut iter = Iter::new();
+        (self.api.iter_init_append)(msg, &mut iter);
+        for arg in args {
+            crate::atspi::put(&self.api, &mut iter, "", arg);
+        }
+    }
+
+    pub(crate) unsafe fn send(&self, msg: *mut c_void, args: &[crate::atspi::V]) {
+        if !msg.is_null() {
+            self.append(msg, args);
+            (self.api.send)(self.conn, msg, std::ptr::null_mut());
+            (self.api.unref)(msg);
+        }
+    }
+
+    pub(crate) unsafe fn respond(&self, request: *mut c_void, args: &[crate::atspi::V]) {
+        self.send((self.api.new_return)(request), args);
+    }
+
+    pub(crate) unsafe fn signal(&self, path: &CStr, interface: &CStr, member: &CStr, args: &[crate::atspi::V]) {
+        self.send((self.api.new_signal)(path.as_ptr(), interface.as_ptr(), member.as_ptr()), args);
+    }
+
+    pub(crate) fn own(&self, name: &CStr) -> bool {
+        unsafe {
+            let mut err = Error::new();
+            (self.api.error_init)(&mut err);
+            let result = (self.api.request_name)(self.conn, name.as_ptr(), NAME_DO_NOT_QUEUE, &mut err);
+            (self.api.error_free)(&mut err);
+            result == PRIMARY_OWNER
+        }
+    }
+
+    pub(crate) fn subscribe(&self, rule: &CStr) {
+        unsafe {
+            let mut err = Error::new();
+            (self.api.error_init)(&mut err);
+            (self.api.add_match)(self.conn, rule.as_ptr(), &mut err);
+            (self.api.error_free)(&mut err);
+        }
+    }
+}
+
+impl Drop for Bus {
+    fn drop(&mut self) {
+        unsafe {
+            (self.api.close)(self.conn);
+            (self.api.release)(self.conn);
+        }
+    }
+}
+
 pub const NAME: &CStr = c"org.freedesktop.FileManager1";
 const INTROSPECTION: &CStr = c"<node><interface name=\"org.freedesktop.FileManager1\">\
 <method name=\"ShowFolders\"><arg type=\"as\" direction=\"in\"/><arg type=\"s\" direction=\"in\"/></method>\
@@ -46,6 +148,10 @@ impl Iter {
     }
 }
 
+type AddWatch = unsafe extern "C" fn(*mut c_void, *mut c_void) -> u32;
+type WatchFunction = unsafe extern "C" fn(*mut c_void, *mut c_void);
+type FreeData = unsafe extern "C" fn(*mut c_void);
+
 pub(crate) struct Api {
     pub(crate) error_init: unsafe extern "C" fn(*mut Error),
     pub(crate) error_free: unsafe extern "C" fn(*mut Error),
@@ -56,6 +162,7 @@ pub(crate) struct Api {
     pub(crate) pop: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
     pub(crate) msg_type: unsafe extern "C" fn(*mut c_void) -> c_int,
     pub(crate) member: unsafe extern "C" fn(*mut c_void) -> *const c_char,
+    pub(crate) sender: unsafe extern "C" fn(*mut c_void) -> *const c_char,
     pub(crate) interface: unsafe extern "C" fn(*mut c_void) -> *const c_char,
     pub(crate) iter_init: unsafe extern "C" fn(*mut c_void, *mut Iter) -> u32,
     pub(crate) iter_type: unsafe extern "C" fn(*mut Iter) -> c_int,
@@ -79,6 +186,14 @@ pub(crate) struct Api {
     pub(crate) unique_name: unsafe extern "C" fn(*mut c_void) -> *const c_char,
     pub(crate) unix_fd: unsafe extern "C" fn(*mut c_void, *mut c_int) -> u32,
     pub(crate) dispatch_status: unsafe extern "C" fn(*mut c_void) -> c_int,
+    pub(crate) is_connected: unsafe extern "C" fn(*mut c_void) -> u32,
+    pub(crate) set_watches: unsafe extern "C" fn(*mut c_void, Option<AddWatch>, Option<WatchFunction>, Option<WatchFunction>, *mut c_void, Option<FreeData>) -> u32,
+    pub(crate) watch_fd: unsafe extern "C" fn(*mut c_void) -> c_int,
+    pub(crate) watch_flags: unsafe extern "C" fn(*mut c_void) -> u32,
+    pub(crate) watch_enabled: unsafe extern "C" fn(*mut c_void) -> u32,
+    pub(crate) watch_handle: unsafe extern "C" fn(*mut c_void, u32) -> u32,
+    #[cfg(test)]
+    pub(crate) signature: unsafe extern "C" fn(*mut c_void) -> *const c_char,
     pub(crate) close: unsafe extern "C" fn(*mut c_void),
     pub(crate) release: unsafe extern "C" fn(*mut c_void),
     pub(crate) reply_serial: unsafe extern "C" fn(*mut c_void) -> u32,
@@ -113,6 +228,7 @@ pub(crate) fn load() -> Option<Api> {
             pop: cast(sym(c"dbus_connection_pop_message")?),
             msg_type: cast(sym(c"dbus_message_get_type")?),
             member: cast(sym(c"dbus_message_get_member")?),
+            sender: cast(sym(c"dbus_message_get_sender")?),
             interface: cast(sym(c"dbus_message_get_interface")?),
             iter_init: cast(sym(c"dbus_message_iter_init")?),
             iter_type: cast(sym(c"dbus_message_iter_get_arg_type")?),
@@ -136,6 +252,14 @@ pub(crate) fn load() -> Option<Api> {
             unique_name: cast(sym(c"dbus_bus_get_unique_name")?),
             unix_fd: cast(sym(c"dbus_connection_get_unix_fd")?),
             dispatch_status: cast(sym(c"dbus_connection_get_dispatch_status")?),
+            is_connected: cast(sym(c"dbus_connection_get_is_connected")?),
+            set_watches: cast(sym(c"dbus_connection_set_watch_functions")?),
+            watch_fd: cast(sym(c"dbus_watch_get_unix_fd")?),
+            watch_flags: cast(sym(c"dbus_watch_get_flags")?),
+            watch_enabled: cast(sym(c"dbus_watch_get_enabled")?),
+            watch_handle: cast(sym(c"dbus_watch_handle")?),
+            #[cfg(test)]
+            signature: cast(sym(c"dbus_message_get_signature")?),
             close: cast(sym(c"dbus_connection_close")?),
             release: cast(sym(c"dbus_connection_unref")?),
             reply_serial: cast(sym(c"dbus_message_get_reply_serial")?),

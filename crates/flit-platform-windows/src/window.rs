@@ -626,10 +626,12 @@ struct Shared<H> {
     nodes: RefCell<Vec<Rc<Node<H>>>>,
     dead: RefCell<Vec<Rc<Node<H>>>>,
     woken: Cell<bool>,
+    quit_requested: Cell<bool>,
     next_id: Cell<WindowId>,
     hinst: HINSTANCE,
     hub: HWND,
     wake_pending: Arc<AtomicBool>,
+    tray: Option<(crate::tray::Icon, flit_platform::tray::Tray)>,
 }
 
 impl<H: WindowHandler<Win32>> Node<H> {
@@ -709,6 +711,9 @@ impl<H: WindowHandler<Win32>> Shared<H> {
             for n in &dead {
                 h.destroyed(&n.window);
             }
+            if self.quit_requested.replace(false) {
+                h.quit();
+            }
             if self.woken.replace(false) {
                 for n in self.nodes() {
                     h.woken(&n.window);
@@ -723,7 +728,7 @@ impl<H: WindowHandler<Win32>> Shared<H> {
                     h.event(&n.window, ev);
                 }
             }
-            if idle && !self.woken.get() && self.dead.borrow().is_empty() {
+            if idle && !self.quit_requested.get() && !self.woken.get() && self.dead.borrow().is_empty() {
                 break;
             }
         }
@@ -854,52 +859,87 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         if let Some(i) = nodes.iter().position(|n| n.window.hwnd() == hwnd) {
             self.dead.borrow_mut().push(nodes.remove(i));
         }
-        let last = nodes.is_empty();
         drop(nodes);
         self.flush();
-        if last {
-            unsafe { PostQuitMessage(0) };
-        }
     }
 }
 
 const WINDOW_CLASS: PCWSTR = w!("FlitWindow");
 const HUB_CLASS: PCWSTR = w!("FlitHub");
 
-type HubDispatch = unsafe fn(*const (), u32, LPARAM);
+type HubDispatch = unsafe fn(*const (), u32, WPARAM, LPARAM) -> bool;
 
 thread_local! {
     static HUB: Cell<Option<(*const (), HubDispatch)>> = const { Cell::new(None) };
+    static HUB_QUIT: Cell<bool> = const { Cell::new(false) };
 }
 
 unsafe extern "system" fn hub_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
-    if msg != WM_WAKE && msg != WM_OPEN_WINDOW {
-        return DefWindowProcW(hwnd, msg, wp, lp);
-    }
     match HUB.get() {
-        Some((ctx, dispatch)) => dispatch(ctx, msg, lp),
-        None if msg == WM_OPEN_WINDOW => drop(Box::from_raw(lp.0 as *mut WindowOptions)),
-        None => {}
+        Some((ctx, dispatch)) if dispatch(ctx, msg, wp, lp) => LRESULT(0),
+        None if msg == WM_OPEN_WINDOW => {
+            drop(Box::from_raw(lp.0 as *mut WindowOptions));
+            LRESULT(0)
+        }
+        None if msg == WM_CLOSE => {
+            HUB_QUIT.set(true);
+            LRESULT(0)
+        }
+        _ => DefWindowProcW(hwnd, msg, wp, lp),
     }
-    LRESULT(0)
 }
 
-unsafe fn hub_dispatch<H: WindowHandler<Win32>>(ctx: *const (), msg: u32, lp: LPARAM) {
+unsafe fn hub_dispatch<H: WindowHandler<Win32>>(ctx: *const (), msg: u32, wp: WPARAM, lp: LPARAM) -> bool {
     let sh = &*(ctx as *const Shared<H>);
+    if msg == WM_CLOSE {
+        sh.quit_requested.set(true);
+        sh.woken.set(true);
+        sh.flush();
+        return true;
+    }
     if msg == WM_WAKE {
         sh.wake_pending.store(false, Ordering::Release);
         sh.woken.set(true);
         sh.flush();
-        return;
+        return true;
+    }
+    if let Some((icon, tray)) = &sh.tray {
+        if msg == crate::tray::CALLBACK {
+            icon.message(tray, wp, lp);
+            return true;
+        }
+        if msg == WM_TIMER && wp.0 == crate::tray::RETRY_TIMER {
+            icon.refresh(tray, crate::tray::Refresh::Timer);
+            return true;
+        }
+        let created = icon.taskbar_created != 0 && msg == icon.taskbar_created;
+        if created {
+            icon.refresh(tray, crate::tray::Refresh::Taskbar);
+            return true;
+        }
+        if matches!(msg, WM_SETTINGCHANGE | WM_THEMECHANGED | WM_SYSCOLORCHANGE) {
+            icon.refresh(tray, crate::tray::Refresh::Theme);
+            return true;
+        }
+    }
+    if msg == WM_ENDSESSION && wp.0 != 0 && sh.nodes.borrow().is_empty() {
+        if let Ok(mut h) = sh.handler.try_borrow_mut() {
+            h.session_ending_without_windows();
+        }
+        return true;
+    }
+    if msg != WM_OPEN_WINDOW {
+        return false;
     }
     if sh.handler.try_borrow_mut().is_err() {
         let _ = PostMessageW(Some(sh.hub), WM_OPEN_WINDOW, WPARAM(0), lp);
-        return;
+        return true;
     }
     let opts = *Box::from_raw(lp.0 as *mut WindowOptions);
     if let Err(e) = sh.open(opts) {
         tracing::error!("cannot open window: {e}");
     }
+    true
 }
 
 pub struct Win32 {
@@ -918,7 +958,7 @@ impl WindowSystem for Win32 {
             let hinst: HINSTANCE = GetModuleHandleW(None).map_err(err)?.into();
             let wc = WNDCLASSEXW { cbSize: size_of::<WNDCLASSEXW>() as u32, lpfnWndProc: Some(hub_proc), hInstance: hinst, lpszClassName: HUB_CLASS, ..Default::default() };
             RegisterClassExW(&wc);
-            let hub = CreateWindowExW(WINDOW_EX_STYLE(0), HUB_CLASS, PCWSTR::null(), WINDOW_STYLE(0), 0, 0, 0, 0, Some(HWND_MESSAGE), None, Some(hinst), None).map_err(err)?;
+            let hub = CreateWindowExW(WS_EX_TOOLWINDOW, HUB_CLASS, PCWSTR::null(), WS_POPUP, 0, 0, 0, 0, None, None, Some(hinst), None).map_err(err)?;
             Ok(Self { hinst, hub, wake_pending: Arc::new(AtomicBool::new(false)) })
         }
     }
@@ -927,7 +967,7 @@ impl WindowSystem for Win32 {
         Win32Waker { hwnd: self.hub.0 as isize, pending: self.wake_pending.clone() }
     }
 
-    fn run<H: WindowHandler<Self>>(self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
+    fn run<H: WindowHandler<Self>>(self, first: Option<WindowOptions>, tray: Option<flit_platform::tray::Tray>, handler: H) -> Result<(), PlatformError> {
         unsafe {
             let wc = WNDCLASSEXW {
                 cbSize: size_of::<WNDCLASSEXW>() as u32,
@@ -945,17 +985,27 @@ impl WindowSystem for Win32 {
                 nodes: RefCell::default(),
                 dead: RefCell::default(),
                 woken: Cell::new(false),
+                quit_requested: Cell::new(HUB_QUIT.replace(false)),
                 next_id: Cell::new(1),
                 hinst: self.hinst,
                 hub: self.hub,
                 wake_pending: self.wake_pending.clone(),
+                tray: tray.map(|tray| (crate::tray::Icon::new(self.hub), tray)),
             };
             HUB.set(Some((&shared as *const Shared<H> as *const (), hub_dispatch::<H> as HubDispatch)));
-            let result = shared.open(first).and_then(|()| message_loop(&shared));
+            if shared.quit_requested.get() && first.is_none() {
+                shared.flush();
+            }
+            if let Some((icon, tray)) = &shared.tray {
+                icon.refresh(tray, crate::tray::Refresh::Normal);
+            }
+            let result = first.map_or(Ok(()), |opts| shared.open(opts)).and_then(|()| message_loop(&shared));
             HUB.set(None);
             for n in shared.nodes() {
                 SetWindowLongPtrW(n.window.hwnd(), GWLP_USERDATA, 0);
             }
+            drop(shared);
+            let _ = DestroyWindow(self.hub);
             result
         }
     }
@@ -990,6 +1040,17 @@ unsafe fn message_loop<H: WindowHandler<Win32>>(sh: &Shared<H>) -> Result<(), Pl
     loop {
         if !pump(&mut msg) && sh.nodes().is_empty() {
             return Ok(());
+        }
+        if let Some((icon, tray)) = &sh.tray {
+            icon.refresh(tray, crate::tray::Refresh::Normal);
+        }
+        if sh.nodes.borrow().is_empty() {
+            let idle = sh.handler.borrow_mut().idle();
+            match idle {
+                flit_platform::Idle::Exit => return Ok(()),
+                flit_platform::Idle::Wait => {}
+                flit_platform::Idle::Open(opts) => sh.open(opts)?,
+            }
         }
         let dirty: Vec<Rc<Node<H>>> = sh.nodes().into_iter().filter(|n| n.window.redraw.get()).collect();
         if dirty.is_empty() {

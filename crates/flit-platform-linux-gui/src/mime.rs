@@ -178,15 +178,22 @@ fn content_mime(data: &[u8]) -> Option<String> {
 }
 
 fn content_mime_with(data: &[u8], api: Option<&ContentApi>) -> Option<String> {
+    guess_mime(None, Some(data), api).map(|(mime, _)| mime)
+}
+
+fn guess_mime(name: Option<&std::ffi::CStr>, data: Option<&[u8]>, api: Option<&ContentApi>) -> Option<(String, bool)> {
     let api = api?;
+    let mut uncertain = 0;
+    let name = name.map_or(std::ptr::null(), std::ffi::CStr::as_ptr);
+    let (data, len) = data.map_or((std::ptr::null(), 0), |bytes| (bytes.as_ptr(), bytes.len()));
     unsafe {
-        let content = (api.guess)(std::ptr::null(), data.as_ptr(), data.len(), std::ptr::null_mut());
+        let content = (api.guess)(name, data, len, &mut uncertain);
         if content.is_null() { return None; }
         let mime = (api.mime)(content);
         let out = (!mime.is_null()).then(|| std::ffi::CStr::from_ptr(mime).to_str().ok().map(str::to_owned)).flatten();
         (api.free)(mime.cast());
         (api.free)(content.cast());
-        out
+        out.map(|mime| (mime, uncertain == 0))
     }
 }
 
@@ -265,6 +272,64 @@ fn content_names_in(cache: &Mutex<Option<ContentCache>>, path: &std::path::Path,
         }
     };
     icon_names(&mime)
+}
+
+#[derive(Default)]
+struct PickerTypes {
+    registered: std::collections::HashSet<String>,
+    aliases: HashMap<String, String>,
+}
+
+impl PickerTypes {
+    fn resolve(&self, mime: String) -> Option<String> {
+        let (media, subtype) = mime.split_once('/')?;
+        let valid = |part: &str| {
+            !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$&-^_.+".contains(&b))
+        };
+        if !valid(media) || (subtype != "*" && !valid(subtype)) {
+            return None;
+        }
+        if let Some(canonical) = self.aliases.get(&mime) {
+            return Some(canonical.clone());
+        }
+        (subtype == "*" || mime == "text/plain" || mime == OCTET_STREAM || self.registered.is_empty() || self.registered.contains(&mime)).then_some(mime)
+    }
+}
+
+pub(crate) fn picker_filter_type(mime: String) -> Option<String> {
+    static TYPES: OnceLock<PickerTypes> = OnceLock::new();
+    TYPES.get_or_init(|| {
+        let mut types = PickerTypes::default();
+        for dir in mime_dirs().iter().rev() {
+            if let Ok(text) = std::fs::read_to_string(dir.join("types")) {
+                types.registered.extend(text.lines().map(str::to_owned));
+            }
+            if let Ok(text) = std::fs::read_to_string(dir.join("aliases")) {
+                types.aliases.extend(text.lines().filter_map(|line| line.split_once(' ')).map(|(alias, mime)| (alias.to_owned(), mime.to_owned())));
+            }
+        }
+        types
+    }).resolve(mime)
+}
+
+pub(crate) fn picker_mime(path: &std::path::Path) -> Option<std::sync::Arc<[String]>> {
+    let name = std::ffi::CString::new(path.file_name()?.as_encoded_bytes()).ok()?;
+    let api = content_api();
+    let certain = |data: Option<&[u8]>| guess_mime(Some(&name), data, api).and_then(|(mime, certain)| certain.then_some(mime));
+    let mime = certain(None)
+        .or_else(|| path.extension().and_then(|ext| mime_of(ext.as_encoded_bytes())))
+        .or_else(|| {
+            if !content_readable(path, &current_mounts()) || !std::fs::symlink_metadata(path).ok()?.is_file() {
+                return None;
+            }
+            let (_, data) = content_head(path)?;
+            certain(Some(&data)).or_else(|| (sniff(&data) == "text/plain").then(|| "text/plain".to_owned()))
+        })?;
+    let mut types = lineage(&mime, parents);
+    if mime != OCTET_STREAM && !mime.starts_with("inode/") {
+        types.push(OCTET_STREAM.into());
+    }
+    Some(types.into())
 }
 
 pub fn content_icon_names(path: &std::path::Path) -> Vec<String> {

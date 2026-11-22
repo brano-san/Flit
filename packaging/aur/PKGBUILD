@@ -34,6 +34,8 @@ package() {
     install -Dm644 assets/flit-indexd.service "$pkgdir/usr/lib/systemd/user/flit-indexd.service"
     install -Dm644 assets/flit-indexd.socket "$pkgdir/usr/lib/systemd/user/flit-indexd.socket"
     install -Dm644 assets/flit.desktop "$pkgdir/usr/share/applications/flit.desktop"
+    install -Dm644 assets/flit.portal "$pkgdir/usr/share/xdg-desktop-portal/portals/flit.portal"
+    install -Dm644 assets/org.freedesktop.impl.portal.desktop.flit.service "$pkgdir/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.flit.service"
     install -d "$pkgdir/usr/share/flit/dbus"
     sed "s#@BINDIR@#/usr/bin#" assets/org.freedesktop.FileManager1.service > "$pkgdir/usr/share/flit/dbus/org.freedesktop.FileManager1.service"
     install -d "$pkgdir/usr/share/icons"

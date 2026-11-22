@@ -75,6 +75,7 @@ impl Rows {
 
 #[derive(Default)]
 struct Visible {
+    closed: std::sync::atomic::AtomicBool,
     pane: Rows,
     parked: Mutex<Vec<(u64, u32, u32)>>,
     content: Mutex<Vec<u64>>,
@@ -83,6 +84,9 @@ struct Visible {
 
 impl Visible {
     fn wants(&self, req: &IconRequest) -> bool {
+        if self.closed.load(Ordering::Relaxed) {
+            return false;
+        }
         if req.kind == flit_core::ui::IconKind::Content {
             return self.content.lock().is_ok_and(|keys| keys.contains(&req.key));
         }
@@ -147,14 +151,17 @@ fn locked(c: &Mutex<ThumbCache>) -> std::sync::MutexGuard<'_, ThumbCache> {
     c.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &IconRequest) -> IconResult {
+fn thumbnail<S: Shell>(shell: &mut S, cache: Option<&Mutex<ThumbCache>>, req: &IconRequest, visible: &Visible) -> IconResult {
     if let Some(b) = cache.and_then(|c| locked(c).get(req.key)) {
         return IconResult::Ready(b);
     }
     match shell.thumbnail(req) {
         Some(b) => {
             if let Some(c) = cache {
-                locked(c).put(req.key, &b);
+                let mut cache = locked(c);
+                if !visible.closed.load(Ordering::Relaxed) {
+                    cache.put(req.key, &b);
+                }
             }
             IconResult::Ready(b)
         }
@@ -243,7 +250,7 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
         spawn(&format!("flit-thumb-{k}"), move || {
             let Ok(mut shell) = P::Shell::new() else { return };
             for ThumbJob { window, req, visible } in rx {
-                let result = if visible.wants(&req) { thumbnail(&mut shell, cache.as_deref(), &req) } else { IconResult::Skipped };
+                let result = if visible.wants(&req) { thumbnail(&mut shell, cache.as_deref(), &req, &visible) } else { IconResult::Skipped };
                 if tx.send(Done::Thumb { window, key: req.key, result }).is_err() {
                     return;
                 }
@@ -378,10 +385,7 @@ struct Handler<P: Platform> {
     done: Receiver<Done>,
     saved: Saved,
     metrics: Option<Metrics>,
-    gpu: Receiver<(bool, Result<Device<P>, PlatformError>)>,
-    hw: Option<Device<P>>,
-    sw: Option<Device<P>>,
-    gpu_pending: usize,
+    graphics: Graphics<Device<P>>,
     injection: Option<(Instant, Event)>,
     wake: Wake,
     device_gen: u64,
@@ -409,23 +413,120 @@ struct Handler<P: Platform> {
     awake: KeepAwake,
     quitting: std::collections::HashSet<WindowId>,
     quit_session: Option<Session>,
+    closed_session: Option<Session>,
+    tray: Option<flit_platform::tray::Tray>,
+    background_start: bool,
+    tray_seen: bool,
+    background_startup: Option<StartupRestore>,
+    picker_result: Option<crate::picker::ResultSlot>,
     jumps: JumpList,
     quick: crate::quick_sync::QuickSyncWorker,
 }
 
+struct StartupRestore {
+    previous: Option<Session>,
+    allowed: bool,
+    dump: Option<FsPath>,
+}
+
+fn tray_controls_available(tray: Option<&flit_platform::tray::Tray>) -> bool {
+    tray.is_some_and(|t| t.available() == Some(true))
+}
+
 impl<P: Platform> Handler<P> {
+    fn background_requested(&self) -> bool {
+        self.background_start || settings::flag(&self.settings.values, flit_core::ui::settings::BACKGROUND) == Some(true)
+    }
+
+    fn sync_tray(&self) {
+        let Some(tray) = &self.tray else { return };
+        let requested = self.background_requested();
+        #[cfg(target_os = "linux")]
+        let disabled = !requested && tray.menu().is_some();
+        tray.set_menu(requested.then(|| flit_platform::tray::Menu {
+            new_window: S::MenuNewWindow.t().into(),
+            bookmarks: S::SidebarSectionBookmarks.t().into(),
+            pinned: self.saved.nav.pinned.iter().map(|loc| {
+                let label = flit_core::name::display(loc.file_name());
+                (loc.clone(), if label.is_empty() { loc.display().into_owned() } else { label.into_owned() })
+            }).collect(),
+            quit: S::ActionsAppQuit.t().into(),
+        }));
+        #[cfg(target_os = "linux")]
+        if disabled {
+            self.check_tray();
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn check_tray(&self) {
+        if self.tray.as_ref().is_some_and(|tray| tray.menu().is_none()) {
+            self.settings.send(Job::CheckTray);
+        }
+    }
+
+    fn tray_actions(&mut self, window: Option<&Win<P>>) {
+        use flit_platform::tray::Action;
+        let Some(tray) = &self.tray else { return };
+        for action in tray.take_actions() {
+            match action {
+                Action::Activate => match window {
+                    Some(window) => window.activate(),
+                    None => self.queued_opens.push(Open::default()),
+                },
+                Action::NewWindow => self.queued_opens.push(Open { target: OpenTarget::NewWindow, ..Default::default() }),
+                Action::Bookmark(loc) => self.queued_opens.push(Open::location(&loc, OpenTarget::NewWindow)),
+                Action::Quit => {
+                    self.quit();
+                    break;
+                }
+            }
+        }
+    }
+
+    fn finish_idle(&mut self) -> bool {
+        let Some(sink) = self.sink.lock().unwrap_or_else(|e| e.into_inner()).take() else { return true };
+        if !self.ending && self.quit_session.is_none() {
+            self.take_opens();
+            if !self.queued_opens.is_empty() {
+                *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = Some(sink);
+                return false;
+            }
+        }
+        self.settings.finish();
+        if self.picker_result.is_none() && self.background_startup.is_none() {
+            state::save::<P>(&self.saved);
+        }
+        let snapshot = self.quit_session.take().or(self.closed_session.take());
+        self.final_session(snapshot);
+        self.local.wait_idle(OPS_GRACE);
+        true
+    }
+
+    fn start_gpu(&mut self) {
+        if self.graphics.pending == 0 && self.graphics.hw.is_none() && self.graphics.sw.is_none() {
+            match start_gpu::<P>(self.wake.clone()) {
+                Ok(rx) => {
+                    self.graphics.replies = rx;
+                    self.graphics.pending = 2;
+                }
+                Err(e) => tracing::error!("{e}"),
+            }
+        }
+    }
+
     fn poll_gpu(&mut self, block: bool) {
-        let mut wait = block && self.hw.is_none() && self.sw.is_none();
-        while self.gpu_pending > 0 {
-            let msg = if wait { self.gpu.recv().ok() } else { self.gpu.try_recv().ok() };
+        let mut wait = block && self.graphics.hw.is_none() && self.graphics.sw.is_none();
+        while self.graphics.pending > 0 {
+            let msg = if wait { self.graphics.replies.recv().ok() } else { self.graphics.replies.try_recv().ok() };
             let Some((software, result)) = msg else { break };
-            self.gpu_pending -= 1;
+            self.graphics.pending -= 1;
             match result {
-                Ok(d) if software => self.sw = Some(d),
-                Ok(d) => self.hw = Some(d),
+                Ok(d) if software => self.graphics.sw = Some(d),
+                Ok(d) => self.graphics.hw = Some(d),
                 Err(e) => tracing::warn!("graphics device (software: {software}): {e}"),
             }
-            wait = wait && self.hw.is_none() && self.sw.is_none();
+            wait = wait && self.graphics.hw.is_none() && self.graphics.sw.is_none();
         }
     }
 
@@ -437,6 +538,7 @@ impl<P: Platform> Handler<P> {
         app.double_click = P::double_click_time();
         app.wheel_lines = P::wheel_lines();
         app.set_caps(P::caps());
+        app.set_tray_available(tray_controls_available(self.tray.as_ref()));
         app.set_shell_overlays(P::Shell::ICON_OVERLAYS);
         flit_core::i18n::set_unix_terms(app.caps.unix_paths);
         if base == 0 && P::elevated() {
@@ -478,6 +580,38 @@ impl<P: Platform> Handler<P> {
             app.restore_panels(p);
         }
         app
+    }
+
+    fn startup_app(&mut self, open: &Open, restore: StartupRestore) -> (App, Option<Placement>) {
+        let startup = &self.saved.persisted.startup;
+        let unix = P::caps().unix_paths;
+        let continue_with_open = unix && matches!(startup, Startup::Continue);
+        let allowed = restore.allowed && (open.is_empty() || continue_with_open);
+        let mut windows = session::startup_windows(startup, restore.previous.as_ref(), allowed, update::restarted());
+        let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes_for(open, &P::known_folder, unix) };
+        if windows.len() > 1 && open.target == OpenTarget::Default {
+            session::open_requested_window_last(&mut windows, &routes);
+        }
+        let (mut app, placement) = match windows.pop_front().filter(|(w, _)| !w.tabs.is_empty()) {
+            Some((ws, placement)) => {
+                if !open.is_empty() {
+                    self.startup_open = Some(open.clone());
+                }
+                (self.restored_app(&ws), placement)
+            }
+            None => {
+                let mut app = self.new_app(routes, self.saved.persisted.clone());
+                app.show_open_errors(&errors);
+                (app, if open.target == OpenTarget::NewWindow { None } else { self.saved.placement() })
+            }
+        };
+        self.queued_windows = windows;
+        match restore.dump {
+            Some(d) => app.offer_crash_report(self.crashed.is_some(), d),
+            None if self.crashed.is_some() => app.offer_restore(),
+            None => {}
+        }
+        (app, placement)
     }
 
     fn open_next(&mut self, window: &Win<P>) {
@@ -567,10 +701,8 @@ impl<P: Platform> Handler<P> {
         }
         self.writer = None;
         self.kept.finish();
-        if let Some(f) = &self.files {
-            if s.as_ref().is_none_or(|s| session::write(&f.session, s)) {
-                f.unmark();
-            }
+        if let Some(f) = self.files.take().filter(|_| self.background_startup.is_none()) {
+            f.finish(s.as_ref());
         }
     }
 
@@ -658,9 +790,22 @@ impl<P: Platform> Handler<P> {
         let fx: Vec<Effect> = st.app.drain_effects().collect();
         let mut folders = Vec::new();
         for e in fx {
+            if self.picker_result.is_some() && matches!(e, Effect::NewWindow(_) | Effect::NewNetworkWindow(_) | Effect::Settings(_) | Effect::Update(_) | Effect::ShellMenu(_) | Effect::RestoreSession | Effect::StartDrag(_)) {
+                continue;
+            }
             match e {
                 Effect::Icon(req) if batched::<P::Shell>(&req) => folders.push(req),
-                Effect::Provider { provider, req } => self.submit(provider, req),
+                Effect::Provider { provider, req } => {
+                    if self.picker_result.is_none() || matches!(req, ProviderRequest::List { .. } | ProviderRequest::Watch { .. } | ProviderRequest::DirSizes { .. }) {
+                        self.submit(provider, req);
+                    }
+                }
+                Effect::Picked { paths, filter, choices } => {
+                    if let Some(result) = &self.picker_result {
+                        *result.lock().unwrap_or_else(|e| e.into_inner()) = Some((paths, filter, choices));
+                        window.close();
+                    }
+                }
                 Effect::Resort { tab, gen, snap, view } => {
                     let _ = self.sorter.send(SortJob { window: id, tab, gen, snap, view });
                 }
@@ -810,6 +955,7 @@ impl<P: Platform> Handler<P> {
                     let wake = !matches!(&effect, Effect::PinnedFiles(_));
                     let windows = self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app);
                     apply_bookmark_effect(effect, &mut self.saved.nav, windows, &mut self.pending, |old, new| self.quick.pinned(old, new), P::bookmarks_changed);
+                    self.sync_tray();
                     if wake {
                         (self.wake)();
                     }
@@ -941,6 +1087,7 @@ impl<P: Platform> Handler<P> {
         }
         self.settings.set_values(values);
         self.follow_quick_sync();
+        self.sync_tray();
         self.settings.save();
         (self.wake)();
     }
@@ -949,6 +1096,12 @@ impl<P: Platform> Handler<P> {
         let id = window.id();
         while let Ok(reply) = self.settings.replies.try_recv() {
             match reply {
+                #[cfg(target_os = "linux")]
+                settings::Reply::TrayAvailable(available) => {
+                    if let Some(tray) = self.tray.as_ref().filter(|tray| tray.menu().is_none()) {
+                        tray.set_available(available);
+                    }
+                }
                 settings::Reply::System { os, dates, missing } => {
                     self.about.os = os;
                     self.about.missing = missing;
@@ -969,6 +1122,25 @@ impl<P: Platform> Handler<P> {
                     self.share_about();
                 }
                 settings::Reply::Changed(text) => self.reload_settings(id, &text),
+                #[cfg(target_os = "linux")]
+                settings::Reply::Portal(on, result) => match result {
+                    Ok(true) => self.status(id, S::PickPortalRestart.t().into()),
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!("file chooser portal configuration: {error}");
+                        self.status(id, flit_core::tr!(S::PickPortalFailed, error = flit_core::i18n::localize(&error)));
+                        if let Some(k) = flit_core::ui::settings::index(flit_core::ui::settings::PORTAL_PICKER) {
+                            if self.settings.values.get(k) == Some(&Value::Bool(on)) {
+                                let back = [(k, Value::Bool(!on))];
+                                for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
+                                    app.apply_settings(&back);
+                                }
+                                self.settings.values[k] = Value::Bool(!on);
+                                self.settings.save();
+                            }
+                        }
+                    }
+                },
                 settings::Reply::SaveFailed(e) => {
                     tracing::warn!("cannot save the settings: {e}");
                     self.status(id, flit_core::tr!(S::ErrorsSettingsWriteFailed, error = flit_core::i18n::localize(&e)));
@@ -1040,6 +1212,7 @@ impl<P: Platform> Handler<P> {
         }
         self.settings.adopt(&doc, values);
         self.follow_quick_sync();
+        self.sync_tray();
         (self.wake)();
     }
 
@@ -1154,6 +1327,7 @@ impl<P: Platform> Handler<P> {
                 app.set_pinned(list.clone());
             }
             self.saved.nav.pinned = list;
+            self.sync_tray();
         }
         for reply in self.places.poll() {
             match reply {
@@ -1265,8 +1439,8 @@ impl<P: Platform> Handler<P> {
         let needs = self.windows.get(&id).is_some_and(|st| st.renderer.is_none());
         self.poll_gpu(needs);
         let Some(st) = self.windows.get_mut(&id) else { return };
-        if st.renderer.is_none() || (st.software && self.hw.is_some()) {
-            let (dev, software) = match (&self.hw, &self.sw) {
+        if st.renderer.is_none() || (st.software && self.graphics.hw.is_some()) {
+            let (dev, software) = match (&self.graphics.hw, &self.graphics.sw) {
                 (Some(d), _) => (d, false),
                 (None, Some(d)) => (d, true),
                 (None, None) => {
@@ -1290,8 +1464,8 @@ impl<P: Platform> Handler<P> {
                     return;
                 }
             }
-            if self.hw.is_some() && self.windows.values().all(|w| !w.software) {
-                self.sw = None;
+            if self.graphics.hw.is_some() && self.windows.values().all(|w| !w.software) {
+                self.graphics.sw = None;
             }
         }
         let Some(st) = self.windows.get_mut(&id) else { return };
@@ -1332,12 +1506,12 @@ impl<P: Platform> Handler<P> {
             if !stale {
                 self.device_gen += 1;
                 if software {
-                    self.sw = None;
+                    self.graphics.sw = None;
                 } else {
-                    self.hw = P::Renderer::device(false).map_err(|e| tracing::error!("graphics device: {e}")).ok();
+                    self.graphics.hw = P::Renderer::device(false).map_err(|e| tracing::error!("graphics device: {e}")).ok();
                 }
-                if self.hw.is_none() && self.sw.is_none() {
-                    self.sw = P::Renderer::device(true).map_err(|e| tracing::error!("software device: {e}")).ok();
+                if self.graphics.hw.is_none() && self.graphics.sw.is_none() {
+                    self.graphics.sw = P::Renderer::device(true).map_err(|e| tracing::error!("software device: {e}")).ok();
                 }
             }
             window.request_redraw();
@@ -1385,6 +1559,11 @@ impl<P: Platform> Handler<P> {
 impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
     fn created(&mut self, window: &Win<P>) {
         self.quit_session = None;
+        self.closed_session = None;
+        if std::mem::take(&mut self.background_start) {
+            self.sync_tray();
+        }
+        self.start_gpu();
         let mut app = match self.pending.pop_front() {
             Some(app) => app,
             None => {
@@ -1429,6 +1608,8 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         if event == Event::Focus(true) {
             self.active = Some(id);
             self.settings.send(Job::Check);
+            #[cfg(target_os = "linux")]
+            self.check_tray();
         }
         if event == Event::SessionEnding && !self.ending {
             if let Some(st) = self.windows.get_mut(&id) {
@@ -1459,6 +1640,12 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
     }
 
     fn woken(&mut self, window: &Win<P>) {
+        if self.active == Some(window.id()) {
+            self.tray_actions(Some(window));
+        }
+        if let Some(st) = self.windows.get_mut(&window.id()) {
+            st.app.set_tray_available(tray_controls_available(self.tray.as_ref()));
+        }
         if self.raise == Some(window.id()) {
             self.raise = None;
             window.activate();
@@ -1471,7 +1658,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
         self.settings_replies(window);
         self.inject_due(window);
         self.poll_gpu(false);
-        if self.hw.is_some() && self.windows.get(&window.id()).is_some_and(|st| st.software) {
+        if self.graphics.hw.is_some() && self.windows.get(&window.id()).is_some_and(|st| st.software) {
             window.request_redraw();
         }
         self.apply_opens(window);
@@ -1486,6 +1673,9 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
     }
 
     fn drag(&mut self, window: &Win<P>, event: DragEvent) -> DropReply {
+        if self.picker_result.is_some() {
+            return DropReply::default();
+        }
         let Some(st) = self.windows.get_mut(&window.id()) else { return DropReply::default() };
         let reply = DropReply { effect: st.app.drag(&event, Instant::now()), caption: st.app.drop_caption(), folder: st.app.drop_folder(), onto: st.app.drop_onto() };
         self.flush(window);
@@ -1499,13 +1689,12 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
     fn destroyed(&mut self, window: &Win<P>) {
         let id = window.id();
         let mut last = None;
-        let mut server_decorations = false;
         if let Some(mut st) = self.windows.remove(&id) {
             if self.windows.is_empty() {
-                server_decorations = st.app.system_title_wanted();
                 self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
                 last = Some(Session::new(vec![(st.app.session(), Some(window.placement()))], self.typed.lock().unwrap_or_else(|e| e.into_inner()).clone()));
             }
+            st.visible.closed.store(true, Ordering::Relaxed);
             st.app.shutdown();
             for e in st.app.drain_effects().collect::<Vec<_>>() {
                 if let Effect::Provider { provider, req } = e {
@@ -1519,20 +1708,74 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             self.active = self.windows.keys().next().copied();
         }
         if self.windows.is_empty() {
-            let tx = self.sink.lock().unwrap_or_else(|e| e.into_inner()).take();
-            self.take_opens();
-            if self.queued_opens.is_empty() {
-                state::save::<P>(&self.saved);
-                self.settings.finish();
-                let snapshot = self.quit_session.take().or(last);
-                self.final_session(snapshot.filter(|_| !self.ending));
-                self.local.wait_idle(OPS_GRACE);
-            } else {
-                *self.sink.lock().unwrap_or_else(|e| e.into_inner()) = tx;
-                window.open_window(WindowOptions { title: "Flit".into(), placement: self.saved.placement(), dark: window.is_dark_mode(), server_decorations });
+            self.graphics.release();
+            self.closed_session = last.filter(|_| !self.ending);
+            if self.background_requested() && self.quit_session.is_none() && !self.ending {
+                if let Some((writer, snapshot)) = self.writer.as_ref().zip(self.closed_session.as_ref()) {
+                    writer.send(snapshot.clone());
+                }
+                if let Some(path) = state::file::<P>() {
+                    self.settings.send(Job::SaveState(path, Box::new(self.saved.clone())));
+                }
+                if let Some(cache) = self.thumb_cache.clone() {
+                    let _ = spawn("flit-release-thumbs", move || locked(&cache).release());
+                }
             }
         } else if let Some(w) = self.writer.as_ref().filter(|_| !self.ending && self.quit_session.is_none()) {
             w.send(self.session());
+        }
+    }
+
+    fn idle(&mut self) -> flit_platform::Idle {
+        use flit_core::ui::background::{self, Idle};
+        self.drain();
+        self.update_replies();
+        self.tray_actions(None);
+        self.take_opens();
+        let available = self.tray.as_ref().and_then(|t| t.available());
+        self.tray_seen |= available == Some(true);
+        let tray = if self.background_start && !self.tray_seen { Some(true) } else { self.tray.as_ref().map_or(Some(false), |t| t.available()) };
+        match background::idle(self.background_requested(), tray, self.ending || self.quit_session.is_some(), !self.queued_opens.is_empty()) {
+            Idle::Exit if self.finish_idle() => flit_platform::Idle::Exit,
+            Idle::Wait => flit_platform::Idle::Wait,
+            Idle::Open | Idle::Exit => {
+                let mut open = self.queued_opens.remove(0);
+                let last_window = self.closed_session.as_ref()
+                    .filter(|_| open.target == OpenTarget::Default && open.is_empty() && matches!(self.saved.persisted.startup, Startup::Continue))
+                    .and_then(|s| s.windows().next());
+                let (app, placement) = if let Some(restore) = self.background_startup.take() {
+                    if let Some(files) = &self.files {
+                        files.mark();
+                    }
+                    self.startup_app(&open, restore)
+                } else if let Some((window, placement)) = last_window {
+                    (self.restored_app(&window), placement)
+                } else {
+                    let mut app = self.new_app(Vec::new(), self.saved.persisted.clone());
+                    if !open.is_empty() {
+                        open.target = OpenTarget::CurrentTab;
+                        app.open(&open, &P::known_folder, Instant::now());
+                    }
+                    (app, self.saved.placement())
+                };
+                let opts = WindowOptions { title: app.window_title(), placement, dark: app.is_dark(), server_decorations: app.system_title_wanted() };
+                self.requested = Some(Instant::now());
+                self.pending.push_back(app);
+                flit_platform::Idle::Open(opts)
+            }
+        }
+    }
+
+    fn session_ending_without_windows(&mut self) {
+        self.ending = true;
+        self.finish_idle();
+    }
+
+    fn quit(&mut self) {
+        if let Some(st) = self.active.and_then(|id| self.windows.get_mut(&id)) {
+            st.app.quit_app(Instant::now());
+        } else {
+            self.ending = true;
         }
     }
 }
@@ -1550,9 +1793,53 @@ pub fn shown() -> bool {
     SHOWN.load(Ordering::Acquire)
 }
 
-pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, activated: bool, started: Instant) -> Result<(), PlatformError> {
+type Gpu<D> = (bool, Result<D, PlatformError>);
+
+struct Graphics<D> {
+    replies: Receiver<Gpu<D>>,
+    hw: Option<D>,
+    sw: Option<D>,
+    pending: usize,
+}
+
+impl<D> Default for Graphics<D> {
+    fn default() -> Self {
+        Self { replies: crossbeam_channel::never(), hw: None, sw: None, pending: 0 }
+    }
+}
+
+impl<D> Graphics<D> {
+    fn release(&mut self) {
+        *self = Self::default();
+    }
+}
+
+fn start_gpu<P: Platform>(wake: Wake) -> Result<Receiver<Gpu<Device<P>>>, PlatformError> {
+    let (tx, rx) = unbounded();
+    spawn("flit-gpu", move || {
+        for software in [true, false] {
+            if tx.send((software, P::Renderer::device(software))).is_err() {
+                break;
+            }
+            wake();
+        }
+    })?;
+    Ok(rx)
+}
+
+fn open_inbox<I: SingleInstance>(instance: Option<I>, wake: Wake) -> (OpenSink, Receiver<Open>) {
+    let (tx, rx) = unbounded();
+    let sink = Arc::new(Mutex::new(Some(tx)));
+    if let Some(instance) = instance {
+        instance.listen(sink.clone(), wake);
+    }
+    (sink, rx)
+}
+
+pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Option<PathBuf>, activated: bool, background: bool, picker: Option<(flit_core::pick::Request, crate::picker::ResultSlot)>, started: Instant) -> Result<(), PlatformError> {
     flit_core::ui::set_unix_defaults(P::caps().unix_paths);
     let mut saved = state::load::<P>();
+    let picking = picker.is_some();
     let settings_file = settings::file::<P>();
     let settings_text = settings_file.as_deref().and_then(settings::read);
     let doc = settings_text.as_deref().map(flit_core::ui::settings::parse).unwrap_or_default();
@@ -1571,64 +1858,53 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let ws = Ws::<P>::new()?;
     let waker = ws.waker();
     let wake: Wake = Arc::new(move || waker.wake());
-    let (gpu_tx, gpu) = unbounded();
-    let gpu_wake = wake.clone();
-    spawn("flit-gpu", move || {
-        for software in [true, false] {
-            let _ = gpu_tx.send((software, P::Renderer::device(software)));
-            gpu_wake();
-        }
-    })?;
-    let (events_tx, events) = unbounded();
-    let local = Arc::new(LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx.clone(), wake.clone())?);
-    let (opens_tx, opens) = unbounded();
-    let sink: OpenSink = Arc::new(Mutex::new(Some(opens_tx)));
-    if let Some(i) = instance {
-        i.listen(sink.clone(), wake.clone());
+    let mut graphics = Graphics::default();
+    if !background {
+        graphics.replies = start_gpu::<P>(wake.clone())?;
+        graphics.pending = 2;
     }
-    let thumb_cache: Cache = P::cache_dir().map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
-    let kept = KeptIcons::load(P::cache_dir().map(|d| d.join(ICONS_FILE)));
+    let (events_tx, events) = unbounded();
+    let local = LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx.clone(), wake.clone())?;
+    #[cfg(target_os = "linux")]
+    let local = if picker.as_ref().is_some_and(|(request, _)| !request.directories() && request.filters.iter().any(|filter| !filter.mime_types.is_empty())) {
+        local.with_picker_mime(flit_platform_linux_gui::file_chooser::picker_mime)
+    } else {
+        local
+    };
+    let local = Arc::new(local);
+    let (sink, opens) = open_inbox(instance, wake.clone());
+    let thumb_cache: Cache = P::cache_dir().filter(|_| !picking).map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
+    let kept = KeptIcons::load(P::cache_dir().filter(|_| !picking).map(|d| d.join(ICONS_FILE)));
     let refresh = kept.kept.iter().map(KeptIcon::request).collect();
     let (shell, thumbs, sorter, previews, overlays, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
     let about = About { os: String::new(), file: settings_file.clone().and_then(fs_path), cache_bytes: None, logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path), missing: Vec::new() };
-    let integrate = metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
-    let settings = Settings::start::<P>(settings_file.filter(|_| metrics.is_none()), settings_text, thumb_cache.clone(), integrate, wake.clone());
+    let integrate = !picking && metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
+    let settings = Settings::start::<P>(settings_file.filter(|_| !picking && metrics.is_none()), settings_text, thumb_cache.clone(), integrate, wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let open = if activated { opens.recv_timeout(ACTIVATION_WAIT).unwrap_or(open) } else { open };
     let unix = P::caps().unix_paths;
     let (servers, plain): (Vec<_>, Vec<_>) = open.paths.iter().cloned().partition(|p| unix && std::str::from_utf8(p).ok().and_then(flit_core::ui::server_uri).is_some());
     let queued: Vec<Open> = (!servers.is_empty()).then(|| Open { paths: servers, ..Default::default() }).into_iter().collect();
     let open = Open { paths: plain, ..open };
-    let new_window = open.target == OpenTarget::NewWindow;
-    let files = if metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none() { Files::of::<P>() } else { None };
+    let files = if !picking && metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none() { Files::of::<P>() } else { None };
     let crashed = files.as_ref().is_some_and(Files::crashed);
     let dump = files.as_ref().filter(|_| crashed).and_then(Files::marked_at).zip(P::state_dir()).and_then(|(t, d)| crate::logs::crash_report(&d.join("logs"), t)).and_then(fs_path);
     let previous = files.as_ref().and_then(|f| session::load(&f.session));
     let settled = files.as_ref().is_some_and(Files::settled_before_exit);
-    if let Some(f) = &files {
+    if let Some(f) = files.as_ref().filter(|_| !background) {
         f.mark();
     }
     let typed: Typed = Arc::new(Mutex::new(previous.as_ref().map(|s| s.typed.clone()).unwrap_or_default()));
     let restore_crash = session::restore_crash(&saved.persisted.startup, unix, settled);
-    // Linux desktop launchers and FileManager1 may supply a folder even on a cold start.
-    let continue_with_open = unix && matches!(saved.persisted.startup, Startup::Continue);
-    let mut restore: VecDeque<(WindowSession, Option<Placement>)> = match &saved.persisted.startup {
-        _ if (!open.is_empty() && !continue_with_open) || (crashed && !restore_crash) => VecDeque::new(),
-        _ if update::restarted() => previous.iter().flat_map(Session::windows).collect(),
-        Startup::Continue => previous.iter().flat_map(Session::windows).collect(),
-        Startup::NewTab => VecDeque::from([(WindowSession { tabs: vec![Location::home_page()], cur: 0, ..Default::default() }, None)]),
-        Startup::Folders(tabs) => VecDeque::from([(WindowSession { tabs: tabs.clone(), cur: 0, ..Default::default() }, None)]),
-    };
-    if restore.len() > 1 && !open.is_empty() && open.target == OpenTarget::Default {
-        let (routes, _) = open::routes_for(&open, &P::known_folder, unix);
-        session::open_requested_window_last(&mut restore, &routes);
-    }
-    let first_window = restore.pop_front().filter(|(w, _)| !w.tabs.is_empty());
+    let crashed_session = previous.as_ref().filter(|_| crashed && !restore_crash).cloned();
+    let restore = StartupRestore { previous, allowed: !picking && (!crashed || restore_crash), dump };
     let h_wake = wake.clone();
     let update_wake = wake.clone();
-    let headless = metrics.is_some();
+    let headless = picking || metrics.is_some();
+    let (pick_request, picker_result) = picker.map_or((None, None), |(request, result)| (Some(request), Some(result)));
+    let tray = integrate.then(|| flit_platform::tray::Tray::new(wake.clone()));
     let mut h = Handler::<P> {
         windows: HashMap::new(),
         pending: VecDeque::new(),
@@ -1657,18 +1933,15 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         kept,
         injection: None,
         wake,
-        gpu,
-        hw: None,
-        sw: None,
-        gpu_pending: 2,
+        graphics,
         device_gen: 0,
         search,
         writer: files.as_ref().map(|f| Writer::start(f.session.clone())),
         files,
-        crashed: previous.filter(|_| crashed && !restore_crash),
+        crashed: crashed_session,
         typed,
-        queued_windows: restore,
-        startup_open: (first_window.is_some() && !open.is_empty()).then(|| open.clone()),
+        queued_windows: VecDeque::new(),
+        startup_open: None,
         raise: None,
         ending: false,
         timing: std::env::var_os("FLIT_TIMING").is_some(),
@@ -1684,34 +1957,41 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         awake: KeepAwake::default(),
         quitting: Default::default(),
         quit_session: None,
+        closed_session: None,
+        tray: tray.clone(),
+        background_start: background,
+        tray_seen: false,
+        background_startup: None,
+        picker_result,
         jumps: JumpList::start::<P>(integrate),
     };
     h.jumps.show(jumps::lists(&saved.nav, &saved.side));
-    let (mut first, placement) = match &first_window {
-        Some((ws, placement)) => (h.restored_app(ws), *placement),
-        None => {
-            let (routes, errors) = if open.is_empty() { Default::default() } else { open::routes_for(&open, &P::known_folder, unix) };
-            let mut app = h.new_app(routes, saved.persisted.clone());
-            app.show_open_errors(&errors);
-            (app, if new_window { None } else { saved.placement() })
-        }
+    let (mut first, placement) = if background {
+        h.background_startup = Some(restore);
+        (App::new(saved.persisted.clone(), Vec::new(), 0, false, 1.0, (1100, 720), started), None)
+    } else {
+        h.startup_app(&open, restore)
     };
     first.apply_doc(&doc);
+    if let Some(request) = pick_request {
+        first.start_picker(request);
+    }
     let values = first.setting_values();
     h.settings.adopt(&doc, values);
     h.follow_quick_sync();
-    if first.checks_updates_on_start() && !update::restarted() {
+    h.sync_tray();
+    #[cfg(target_os = "linux")]
+    h.check_tray();
+    if !picking && first.checks_updates_on_start() && !update::restarted() {
         h.updates.submit(UpdateRequest::Check { manual: false });
-    }
-    match dump {
-        Some(d) => first.offer_crash_report(h.crashed.is_some(), d),
-        None if h.crashed.is_some() => first.offer_restore(),
-        None => {}
     }
     let dark = first.is_dark();
     let server_decorations = first.system_title_wanted();
-    h.pending.push_back(first);
-    ws.run(WindowOptions { title: "Flit".into(), placement, dark, server_decorations }, h)
+    let title = first.window_title();
+    if !background {
+        h.pending.push_back(first);
+    }
+    ws.run((!background).then_some(WindowOptions { title, placement, dark, server_decorations }), tray, h)
 }
 
 #[cfg(test)]
@@ -1721,3 +2001,7 @@ mod icon_visibility_tests;
 #[cfg(test)]
 #[path = "../test/bookmarks.rs"]
 mod bookmark_tests;
+
+#[cfg(test)]
+#[path = "../test/background.rs"]
+mod background_tests;

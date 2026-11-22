@@ -45,6 +45,7 @@ mod volume;
 mod walk_index;
 mod watcher;
 mod window;
+mod tray;
 mod winsearch;
 mod wsl;
 

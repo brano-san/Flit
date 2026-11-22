@@ -1754,6 +1754,7 @@ impl App {
     fn setting_help(&self, line: &Line) -> std::borrow::Cow<'static, str> {
         match line {
             Line::Off(i) if settings::NEEDS_BUILTIN_ARCHIVES.contains(&SETTINGS[*i].id) => format!("{} {}", S::SettingsPageLineNeedsBuiltinArchives.t(), SETTINGS[*i].help.t()).into(),
+            Line::Off(i) if SETTINGS[*i].id == settings::BACKGROUND => S::BackgroundUnavailable.t().into(),
             Line::Off(i) => SETTINGS[*i].help.t().into(),
             Line::Setting(i) => SETTINGS[*i].help.t().into(),
             _ => "".into(),

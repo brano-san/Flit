@@ -186,6 +186,10 @@ impl ThumbCache {
         }
     }
 
+    pub fn release(&mut self) {
+        *self = Self::new(self.dir.clone(), (self.limit >> 20) as u32);
+    }
+
     pub fn clear(&mut self) {
         self.load();
         self.out = None;

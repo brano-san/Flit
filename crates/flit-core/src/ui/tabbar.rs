@@ -275,6 +275,9 @@ pub(super) fn full_name(t: &Tab) -> String {
 
 impl App {
     pub fn window_title(&self) -> String {
+        if let Some(title) = self.picker_title() {
+            return title.to_owned();
+        }
         if self.tab().location().is_admin() {
             format!("{} ({}) — Flit", full_name(self.tab()), S::AddressAdminBadge.t())
         } else {

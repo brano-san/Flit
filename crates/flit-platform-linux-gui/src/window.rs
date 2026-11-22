@@ -25,7 +25,7 @@ use winit::event_loop::{ActiveEventLoop, AsyncRequestSerial, ControlFlow, DndAct
 use winit::keyboard::ModifiersState;
 use winit::platform::wayland::{ActiveEventLoopExtWayland, WindowAttributesWayland};
 use winit::platform::startup_notify::WindowExtStartupNotify;
-use winit::platform::x11::WindowAttributesX11;
+use winit::platform::x11::{EventLoopBuilderExtX11, WindowAttributesX11};
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle, RawDisplayHandle, RawWindowHandle};
 use winit::monitor::Fullscreen;
 use winit::window::{ActivationToken, ImeCapabilities, ImeEnableRequest, ImeRequest, ImeRequestData, PlatformWindowAttributes, ResizeDirection, Theme, UserAttentionType, WindowAttributes, WindowLevel};
@@ -189,6 +189,11 @@ fn server_frames(wayland: bool, offered: Option<bool>, x11: Option<bool>) -> Opt
 
 fn initial_decorations(wayland: bool, wanted: bool, x11: Option<bool>) -> bool {
     !wayland && wanted && x11 == Some(true)
+}
+
+fn chooser_parent_x11(value: &str) -> Option<u32> {
+    let id = value.strip_prefix("x11:")?;
+    u32::from_str_radix(id.trim_start_matches("0x"), 16).ok().filter(|id| *id != 0)
 }
 
 fn x11_window(raw: &dyn winit::window::Window) -> Option<u32> {
@@ -964,7 +969,14 @@ impl WindowSystem for LinuxWindows {
         if std::env::var_os("WAYLAND_DISPLAY").is_none() && !library_loads(X11_KEYBOARD_LIBRARY) {
             return Err(PlatformError::new(-1, "Flit on X11 needs libxkbcommon-x11.so.0 (package libxkbcommon-x11-0 on Debian and Ubuntu)"));
         }
-        let event_loop = EventLoop::new().map_err(|e| PlatformError::new(-1, format!("cannot connect to the display server: {e}")))?;
+        let mut builder = EventLoop::builder();
+        if std::env::var_os("DISPLAY").is_some()
+            && std::env::var(crate::file_chooser::PARENT_ENV).ok().as_deref().and_then(chooser_parent_x11).is_some()
+            && library_loads(X11_KEYBOARD_LIBRARY)
+        {
+            builder.with_x11();
+        }
+        let event_loop = builder.build().map_err(|e| PlatformError::new(-1, format!("cannot connect to the display server: {e}")))?;
         let _ = DISPLAY.set(event_loop.owned_display_handle());
         let _ = PROXY.set(event_loop.create_proxy());
         watch_desktop();
@@ -994,8 +1006,9 @@ impl WindowSystem for LinuxWindows {
         LinuxWaker { proxy: self.event_loop.create_proxy(), pending: self.pending.clone() }
     }
 
-    fn run<H: WindowHandler<Self>>(mut self, first: WindowOptions, handler: H) -> Result<(), PlatformError> {
-        let commands: Commands = Rc::new(RefCell::new(vec![Command::Open(first)]));
+    fn run<H: WindowHandler<Self>>(mut self, first: Option<WindowOptions>, tray: Option<flit_platform::tray::Tray>, handler: H) -> Result<(), PlatformError> {
+        let _tray = tray.map(crate::dbus::tray::start);
+        let commands: Commands = Rc::new(RefCell::new(first.into_iter().map(Command::Open).collect()));
         let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, pastes: HashMap::new(), clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None, x11: None, x11_frames: None };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
@@ -1311,7 +1324,16 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
             }
         }
         if self.nodes.is_empty() {
-            el.exit();
+            match self.handler.idle() {
+                flit_platform::Idle::Exit => el.exit(),
+                flit_platform::Idle::Wait => {}
+                flit_platform::Idle::Open(opts) => {
+                    self.open(el, opts);
+                    if self.nodes.is_empty() {
+                        el.exit();
+                    }
+                }
+            }
         }
     }
 
@@ -1442,11 +1464,13 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
     fn open(&mut self, el: &dyn ActiveEventLoop, opts: WindowOptions) {
         let server = initial_decorations(el.is_wayland(), opts.server_decorations, self.x11_frames);
         let placement = opts.placement.filter(|p| p.width > 100 && p.height > 100);
+        let parent = (self.next_id == 1).then(|| std::env::var(crate::file_chooser::PARENT_ENV).ok()).flatten();
+        let x11_parent = parent.as_deref().filter(|_| !el.is_wayland() && self.x11.is_some()).and_then(chooser_parent_x11);
         let prepare_placement = self.x11.is_some() && self.x11_frames != Some(false) && opts.server_decorations && placement.is_some_and(|p| !p.maximized);
         let mut attrs = WindowAttributes::default()
             .with_title(opts.title)
             .with_decorations(server)
-            .with_visible(!prepare_placement)
+            .with_visible(!prepare_placement && x11_parent.is_none())
             .with_min_surface_size(LogicalSize::new(MIN_SIZE.0, MIN_SIZE.1))
             .with_theme(Some(if opts.dark { Theme::Dark } else { Theme::Light }))
             .with_platform_attributes(platform_attributes(el));
@@ -1462,11 +1486,25 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                 return;
             }
         };
+        if let Some(handle) = parent.and_then(|p| p.strip_prefix("wayland:").filter(|p| !p.is_empty()).map(str::to_owned)) {
+            if let (Some(wl), Ok(raw_handle)) = (&self.wl, raw.window_handle()) {
+                if let RawWindowHandle::Wayland(h) = raw_handle.as_raw() {
+                    wl.attach_chooser(h.surface.as_ptr(), handle);
+                }
+            }
+        }
         enable_ime(&*raw);
         let id = self.next_id;
         self.next_id += 1;
-        let awaiting_placement = prepare_placement && self.x11.as_ref().zip(x11_window(&*raw)).is_some_and(|(x11, xid)| x11.send(tiling::Command::PreparePlacement(id, xid)));
-        if prepare_placement && !awaiting_placement {
+        let awaiting_placement = self.x11.as_ref().zip(x11_window(&*raw)).is_some_and(|(x11, xid)| {
+            if let Some(parent) = x11_parent {
+                let modal = std::env::var_os(crate::file_chooser::MODAL_ENV).is_some_and(|v| v == "1");
+                x11.send(tiling::Command::PrepareChooser(id, xid, parent, modal))
+            } else {
+                prepare_placement && x11.send(tiling::Command::PreparePlacement(id, xid))
+            }
+        });
+        if (prepare_placement || x11_parent.is_some()) && !awaiting_placement {
             raw.set_visible(true);
         }
         self.nodes.push(Node { window: LinuxWindow::new(id, raw, self.commands.clone(), self.targets.clone(), server), clicks: Clicks::new(input::double_click()), fingers: Default::default(), awaiting_placement });
@@ -2006,6 +2044,9 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
         }
         self.start_reads(el);
         if SHUTDOWN.swap(false, Ordering::AcqRel) {
+            if self.nodes.is_empty() {
+                self.handler.session_ending_without_windows();
+            }
             for node in &self.nodes {
                 self.handler.event(&node.window, Event::SessionEnding);
                 node.window.close();

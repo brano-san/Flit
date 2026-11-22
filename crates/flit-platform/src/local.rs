@@ -19,6 +19,8 @@ pub(crate) const PARTIAL_EVERY: Duration = Duration::from_millis(16);
 pub(crate) const PARTIAL_COST_FACTOR: u32 = 4;
 const QUEUE_POLL: Duration = Duration::from_millis(50);
 
+type PickerMime = fn(&FsPath) -> Option<Arc<[String]>>;
+
 struct ListJob {
     tab: TabId,
     gen: u64,
@@ -29,6 +31,7 @@ struct ListJob {
     cancel: GenToken,
     watch: Option<FsPath>,
     tags: Arc<Tags>,
+    picker_mime: Option<PickerMime>,
 }
 
 struct SizesJob {
@@ -167,6 +170,7 @@ pub struct LocalProvider {
     measure_fs: Arc<dyn Fs>,
     measure_events: Sender<ProviderEvent>,
     measure_wake: Wake,
+    picker_mime: Option<PickerMime>,
 }
 
 fn spawn(name: String, body: impl FnOnce() + Send + 'static) -> Result<(), PlatformError> {
@@ -311,7 +315,12 @@ impl LocalProvider {
                 }
             }
         })?;
-        Ok(Self { jobs, sizes, ops, shell, hashes, watch, pending_watch: Mutex::default(), busy, tags: TagCell::default(), measure_fs, measure_events, measure_wake })
+        Ok(Self { jobs, sizes, ops, shell, hashes, watch, pending_watch: Mutex::default(), busy, tags: TagCell::default(), measure_fs, measure_events, measure_wake, picker_mime: None })
+    }
+
+    pub fn with_picker_mime(mut self, picker_mime: PickerMime) -> Self {
+        self.picker_mime = Some(picker_mime);
+        self
     }
 
     pub fn tags(&self) -> &TagCell {
@@ -408,7 +417,7 @@ impl Provider for LocalProvider {
         let _ = match req {
             ProviderRequest::List { tab, gen, path, view, case, out, cancel } => {
                 let watch = pending.remove(&tab).filter(|(g, _)| *g == gen).map(|(_, p)| p);
-                let job = ListJob { tab, gen, path, view, case, out, cancel, watch, tags: self.tags.get() };
+                let job = ListJob { tab, gen, path, view, case, out, cancel, watch, tags: self.tags.get(), picker_mime: self.picker_mime };
                 match self.measure_fs.remote(&job.path) {
                     true => list_remote(self.measure_fs.clone(), job, self.watch.clone(), self.measure_wake.clone(), REMOTE_TIMEOUT),
                     false => self.jobs.send(job).map_err(drop),
@@ -522,7 +531,7 @@ fn list_remote(fs: Arc<dyn Fs>, mut job: ListJob, watch: Sender<WatchCmd>, wake:
 }
 
 fn run_list<F: Fs + ?Sized>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake: &Wake) {
-    let ListJob { tab, gen, path, view, case, out, cancel, watch: arm, tags } = job;
+    let ListJob { tab, gen, path, view, case, out, cancel, watch: arm, tags, picker_mime } = job;
     if !cancel.is_current(gen) {
         return;
     }
@@ -532,7 +541,7 @@ fn run_list<F: Fs + ?Sized>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake
             let _ = wait.recv();
         }
     }
-    list(fs, gen, &path, view, case, tags, &out, &cancel, wake);
+    list(fs, gen, &path, view, case, tags, &out, &cancel, wake, picker_mime);
 }
 
 fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake: &Wake) {
@@ -613,7 +622,7 @@ pub(crate) fn localize<F: Fs + ?Sized>(fs: &F, path: &FsPath, listing: &mut List
 }
 
 #[allow(clippy::too_many_arguments)]
-fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, tags: Arc<Tags>, out: &SnapshotSlot, cancel: &GenToken, wake: &Wake) {
+fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: CaseMode, tags: Arc<Tags>, out: &SnapshotSlot, cancel: &GenToken, wake: &Wake, picker_mime: Option<PickerMime>) {
     if !cancel.is_current(gen) {
         return;
     }
@@ -622,13 +631,34 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
         out.set_kind(gen, fs.desktop_ini(path).map_or(FolderKind::Unknown, |d| d.kind));
     }
     let mut next_partial = start;
+    let mut mime_types = flit_core::hash::FxHashMap::default();
+    let mut classified = 0;
+    let mut fill_mime = |listing: &mut Listing| {
+        let Some(classify) = picker_mime else { return };
+        for i in classified..listing.len() as u32 {
+            if !cancel.is_current(gen) {
+                return;
+            }
+            if !listing.entries[i as usize].is_dir() {
+                let folder = listing.folder(i);
+                let file = if folder.is_empty() { path.join(listing.name(i)) } else { path.join(folder).join(listing.name(i)) };
+                if let Some(mime) = classify(&file) {
+                    mime_types.insert(i, mime);
+                }
+            }
+        }
+        classified = listing.len() as u32;
+        listing.picker_mime.clone_from(&mime_types);
+    };
     let mut on_batch = |b: &ListingBuilder<'_>| {
         if !cancel.is_current(gen) {
             return false;
         }
         let began = Instant::now();
         if began >= next_partial {
-            let snap = snapshot(gen, path, b.listing.clone(), b.keys.clone(), view, false, None, start.elapsed());
+            let mut listing = b.listing.clone();
+            fill_mime(&mut listing);
+            let snap = snapshot(gen, path, listing, b.keys.clone(), view, false, None, start.elapsed());
             if cancel.is_current(gen) {
                 out.publish(snap);
                 wake();
@@ -650,6 +680,7 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
     let mut listing = std::mem::take(&mut b.listing);
     let mut keys = std::mem::replace(&mut b.keys, SortKeys::new(case));
     drop(b);
+    fill_mime(&mut listing);
     if result.is_ok() && cancel.is_current(gen) {
         localize(fs, path, &mut listing, &mut keys);
     }

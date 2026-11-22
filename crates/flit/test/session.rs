@@ -20,6 +20,42 @@ fn window(paths: &[&str], cur: usize) -> WindowSession {
 }
 
 #[test]
+fn opening_from_the_tray_uses_the_saved_windows_or_chosen_startup_mode() {
+    use flit_core::ui::background::{idle, Idle};
+
+    let at = Placement { x: 7, y: 14, width: 920, height: 620, maximized: true };
+    let last = (window(&["/tmp", "/usr"], 1), Some(at));
+    let other = (window(&["/etc"], 0), None);
+    let previous = Session::new(vec![last.clone(), other.clone()], vec!["history".into()]);
+    assert_eq!(idle(true, Some(true), false, false), Idle::Wait);
+    assert_eq!(idle(true, Some(true), false, true), Idle::Open);
+    assert_eq!(startup_windows(&Startup::Continue, Some(&previous), true, false), [last, other]);
+    assert_eq!(startup_windows(&Startup::NewTab, Some(&previous), true, false)[0].0.tabs, [Location::home_page()]);
+    let folders = vec![Location::parse("/home").unwrap(), Location::parse("/var").unwrap()];
+    assert_eq!(startup_windows(&Startup::Folders(folders.clone()), Some(&previous), true, false)[0].0.tabs, folders);
+    assert!(startup_windows(&Startup::Continue, Some(&previous), false, false).is_empty());
+}
+
+#[test]
+fn quitting_in_the_tray_keeps_the_closed_session_and_quitting_before_opening_keeps_the_previous_session() {
+    let d = temp("tray-quit");
+    let files = Files { session: d.0.join("session.bin"), marker: d.0.join("running") };
+    let saved = Session::new(vec![(window(&["/tmp", "/usr"], 1), None)], vec!["search".into()]);
+    let writer = Writer::start(files.session.clone());
+    let closed = saved.windows().next().unwrap();
+    let snapshot = Session::new(vec![closed], saved.typed.clone());
+    files.mark();
+    writer.send(Session::new(vec![(window(&["/tmp"], 0), None)], Vec::new()));
+    drop(writer);
+    files.finish(Some(&snapshot));
+    assert_eq!(load(&files.session), Some(saved.clone()));
+    assert!(!files.crashed());
+
+    files.finish(None);
+    assert_eq!(load(&files.session), Some(saved));
+}
+
+#[test]
 fn linux_last_session_resumes_with_a_settled_crash_marker() {
     assert!(restore_crash(&Startup::Continue, true, true));
     assert!(!restore_crash(&Startup::Continue, true, false), "a run that died early keeps the recovery prompt");

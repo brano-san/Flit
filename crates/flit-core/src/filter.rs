@@ -101,32 +101,65 @@ fn ascii_subsequence(hay: &[u8], needle: &[u8]) -> bool {
     needle.iter().all(|&n| hay.any(|h| h.to_ascii_lowercase() == n))
 }
 
-fn glob(p: &[u8], s: &[u8]) -> bool {
+pub(crate) fn glob(p: &[u8], s: &[u8]) -> bool {
+    glob_match(p, s, false)
+}
+
+pub(crate) fn picker_glob(p: &[u8], s: &[u8]) -> bool {
+    glob_match(p, s, true)
+}
+
+fn class_match(pattern: &[u8], value: u32) -> Option<(usize, bool)> {
+    let negated = pattern.first() == Some(&b'!');
+    let first = usize::from(negated);
+    let close = first + pattern.get(first..)?.iter().enumerate().skip(1).find_map(|(i, &b)| (b == b']').then_some(i))?;
+    let mut class = &pattern[first..close];
+    let mut matched = false;
+    while !class.is_empty() {
+        let (start, width) = name::decode(class);
+        class = &class[width..];
+        if class.first() == Some(&b'-') && class.len() > 1 {
+            let (end, width) = name::decode(&class[1..]);
+            matched |= (start..=end).contains(&value);
+            class = &class[width + 1..];
+        } else {
+            matched |= start == value;
+        }
+    }
+    Some((close + 2, matched != negated))
+}
+
+fn glob_match(p: &[u8], s: &[u8], classes: bool) -> bool {
     let step = |i: usize| i + 1 + s[i + 1..].iter().take_while(|&&b| b & 0xC0 == 0x80).count();
     let (mut pi, mut si, mut star) = (0, 0, None);
     while si < s.len() {
-        match p.get(pi) {
+        let advance = match p.get(pi) {
             Some(b'*') => {
                 star = Some((pi, si));
-                pi += 1;
+                Some((1, si))
             }
-            Some(b'?') => {
-                pi += 1;
-                si = step(si);
-            }
-            Some(&c) if c == s[si].to_ascii_lowercase() => {
-                pi += 1;
-                si += 1;
-            }
-            _ => match star {
-                Some((sp, ss)) => {
-                    let next = step(ss);
-                    star = Some((sp, next));
-                    pi = sp + 1;
-                    si = next;
+            Some(b'?') => Some((1, step(si))),
+            Some(b'[') if classes => {
+                let value = if s[si].is_ascii() { u32::from(s[si].to_ascii_lowercase()) } else { name::decode(&s[si..]).0 };
+                match class_match(&p[pi + 1..], value) {
+                    Some((width, true)) => Some((width, step(si))),
+                    None if s[si] == b'[' => Some((1, si + 1)),
+                    _ => None,
                 }
-                None => return false,
-            },
+            }
+            Some(&c) if c == s[si].to_ascii_lowercase() => Some((1, si + 1)),
+            _ => None,
+        };
+        if let Some((width, next)) = advance {
+            pi += width;
+            si = next;
+        } else if let Some((sp, ss)) = star {
+            let next = step(ss);
+            star = Some((sp, next));
+            pi = sp + 1;
+            si = next;
+        } else {
+            return false;
         }
     }
     p[pi..].iter().all(|&c| c == b'*')

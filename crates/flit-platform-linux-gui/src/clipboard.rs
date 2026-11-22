@@ -23,7 +23,7 @@ const X11_TEXT: [&str; 3] = ["UTF8_STRING", "STRING", "TEXT"];
 
 pub type Payload = Vec<(String, Vec<u8>)>;
 
-fn uris(paths: &[FsPath]) -> Vec<String> {
+pub(crate) fn uris(paths: &[FsPath]) -> Vec<String> {
     paths.iter().map(|p| format!("file://{}", flit_platform_linux::percent_encode(p.as_bytes()))).collect()
 }
 

@@ -37,6 +37,8 @@ mod volumes;
 pub mod palette;
 mod preview_pane;
 pub mod settings;
+pub mod background;
+mod picker;
 mod settings_page;
 mod setting_editor;
 pub mod sidebar;
@@ -452,6 +454,7 @@ pub enum Effect {
     ShellPick(Option<u32>),
     Layout(LayoutCmd),
     Update(crate::update::UpdateRequest),
+    Picked { paths: Vec<FsPath>, filter: usize, choices: crate::pick::Choices },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -708,6 +711,10 @@ pub struct App {
     pub log_level: usize,
     pub default_manager: bool,
     pub quick_access_sync: bool,
+    pub(super) background: bool,
+    pub(super) tray_available: bool,
+    pub(super) portal_picker: bool,
+    picker: Option<picker::Picker>,
     pub updates: update::UpdatePrefs,
     pub language: usize,
     shown_lang: crate::i18n::Lang,
@@ -851,6 +858,10 @@ impl App {
             log_level: settings::LOG_DEFAULT,
             default_manager: false,
             quick_access_sync: false,
+            background: false,
+            tray_available: false,
+            portal_picker: false,
+            picker: None,
             updates: update::UpdatePrefs::default(),
             language: 0,
             shown_lang: crate::i18n::lang(),
@@ -1316,6 +1327,9 @@ impl App {
     }
 
     fn open_entry(&mut self, i: u32, now: Instant) {
+        if self.picker_open_entry(i, now) {
+            return;
+        }
         let t = self.tab();
         if t.view_loc.is_recycle_bin() {
             let name = name::display(t.view.as_ref().unwrap().listing().name(i)).into_owned();
@@ -1423,6 +1437,9 @@ impl App {
         }
         let snap = self.with_saved_servers(k, snap);
         let resort = self.tabs[k].on_snapshot(snap);
+        if current {
+            self.apply_pick_filter(k);
+        }
         if std::mem::take(&mut self.tabs[k].properties_due) && k == self.cur {
             self.properties_dialog();
         }
@@ -1449,6 +1466,10 @@ impl App {
         match ev {
             ProviderEvent::Changes { tab, gen, changes } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
+                    if self.picker_uses_mime() {
+                        self.reload(k, now);
+                        return;
+                    }
                     if let Some(dir) = self.tabs[k].view_loc.to_windows() {
                         for c in &changes {
                             self.shell_overlays.forget(dir.as_bytes(), &c.name);
@@ -1658,13 +1679,17 @@ impl App {
         let active = self.panels.here == self.panels.active;
         let (caption, inset) = self.panel_edges(area);
         let ops_button = active && self.ops_button_visible();
-        let status_bar = active && (self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
+        let status_bar = active && (self.picker.is_some() || self.prefs.status_bar || self.tab().error.is_some() || self.tab().filter.is_some());
         let (n, actions) = (self.tabs.len(), self.tab_actions_button);
         let at = if active && self.focus == Focus::TabBar && self.kb < n { self.kb } else { self.cur };
         let target = (at, self.tabs[at].id);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
-        let status_h = self.status_slide(if status_bar { s(STATUS_H) } else { 0.0 });
+        let status_h = if active && self.picker.is_some() {
+            s(self.picker_height(area.w))
+        } else {
+            self.status_slide(if status_bar { s(STATUS_H) } else { 0.0 })
+        };
         let l = &mut self.layout;
         l.row_h = s(ROW_H);
         l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
@@ -1878,7 +1903,18 @@ impl App {
         }
     }
 
+    pub fn set_tray_available(&mut self, available: bool) {
+        if self.tray_available != available {
+            self.tray_available = available;
+            self.layout();
+            self.dirty = true;
+        }
+    }
+
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
+        if self.picker_event(ev, now) {
+            return;
+        }
         if let Event::WindowButtons(buttons) = ev {
             if self.panels.buttons != *buttons {
                 self.panels.buttons = buttons.clone();
@@ -2383,7 +2419,7 @@ impl App {
         let plain = !m.ctrl && !m.shift;
         let opened_by_first_click = std::mem::take(&mut self.clicked_open);
         let entry = self.tab().view.as_ref().and_then(|v| v.rows().get(row).copied());
-        if let Some(i) = entry.filter(|_| button == MouseButton::Left && clicks >= 2 && !opened_by_first_click) {
+        if let Some(i) = entry.filter(|_| self.picker.is_none() && button == MouseButton::Left && clicks >= 2 && !opened_by_first_click) {
             if self.modified_double_click(i, now) {
                 return;
             }
@@ -2424,6 +2460,9 @@ impl App {
     }
 
     fn single_click_opens(&self, i: u32) -> bool {
+        if self.picker.is_some() {
+            return false;
+        }
         let t = self.tab();
         let Some(v) = t.view.as_ref().filter(|_| !t.view_loc.is_recycle_bin()) else { return false };
         match v.listing().entries.get(i as usize).is_some_and(|e| e.is_dir()) {
@@ -2855,7 +2894,11 @@ impl App {
         self.draw_toolbar(g, palette.area(Area::Toolbar));
         if self.layout.status.h > 0.0 {
             let from = g.dl.instances.len();
-            self.draw_status(g, arena, th);
+            if self.picker.is_some() {
+                self.draw_picker(g, th);
+            } else {
+                self.draw_status(g, arena, th);
+            }
             g.dl.confine(from, self.layout.status);
         }
         if active {

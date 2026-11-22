@@ -38,6 +38,8 @@ assets = [
     ["../../assets/flit-indexd.service", "usr/lib/systemd/user/", "644"],
     ["../../assets/flit-indexd.socket", "usr/lib/systemd/user/", "644"],
     ["../../assets/flit.desktop", "usr/share/applications/", "644"],
+    ["../../assets/flit.portal", "usr/share/xdg-desktop-portal/portals/", "644"],
+    ["../../assets/org.freedesktop.impl.portal.desktop.flit.service", "usr/share/dbus-1/services/", "644"],
     ["../../assets/icon/hicolor/scalable/apps/flit.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
     ["../../assets/icon/hicolor/256x256/apps/flit.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
     ["../../assets/icon/hicolor/128x128/apps/flit.png", "usr/share/icons/hicolor/128x128/apps/", "644"],
@@ -55,6 +57,8 @@ assets = [
     { source = "../../assets/flit-indexd.service", dest = "/usr/lib/systemd/user/flit-indexd.service", mode = "644" },
     { source = "../../assets/flit-indexd.socket", dest = "/usr/lib/systemd/user/flit-indexd.socket", mode = "644" },
     { source = "../../assets/flit.desktop", dest = "/usr/share/applications/flit.desktop", mode = "644" },
+    { source = "../../assets/flit.portal", dest = "/usr/share/xdg-desktop-portal/portals/flit.portal", mode = "644" },
+    { source = "../../assets/org.freedesktop.impl.portal.desktop.flit.service", dest = "/usr/share/dbus-1/services/org.freedesktop.impl.portal.desktop.flit.service", mode = "644" },
     { source = "../../assets/icon/hicolor/scalable/apps/flit.svg", dest = "/usr/share/icons/hicolor/scalable/apps/flit.svg", mode = "644" },
     { source = "../../assets/icon/hicolor/256x256/apps/flit.png", dest = "/usr/share/icons/hicolor/256x256/apps/flit.png", mode = "644" },
     { source = "../../assets/icon/hicolor/48x48/apps/flit.png", dest = "/usr/share/icons/hicolor/48x48/apps/flit.png", mode = "644" },
@@ -67,7 +71,7 @@ fontconfig = "*"
 
 [target.'cfg(windows)'.dependencies]
 flit-platform-windows.workspace = true
-windows = { workspace = true, features = ["Win32_Storage_FileSystem"] }
+windows = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_System_Console"] }
 zip = { version = "7.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(not(windows))'.dependencies]

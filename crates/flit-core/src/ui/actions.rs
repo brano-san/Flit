@@ -690,6 +690,9 @@ impl App {
     }
 
     pub fn supports(&self, id: &str) -> bool {
+        if !self.picker_allows(id) {
+            return false;
+        }
         if id == "drive.add_server" {
             let path = self.current_location().path();
             return self.caps.supports(id) && path.is_network() && path.is_root();
