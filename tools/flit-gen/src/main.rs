@@ -36,10 +36,68 @@ const UNICODE_FILES: [&str; 20] = [
 const UNICODE_DIRS: [&str; 4] = ["Документы", "中文目录", "📁 Emoji", "עברית"];
 
 const VOCAB: &[&str] = &[
-    "report", "Invoice", "photo", "backup", "notes", "draft", "budget", "meeting", "Résumé", "café", "naïve", "Straße", "Ångström", "Zürich", "señal", "Łódź",
-    "отчёт", "Документ", "фото", "бюджет", "Ёлка", "встреча", "черновик", "Счёт", "архив", "Привет", "έγγραφο", "Αναφορά", "文件", "报告", "照片", "会议记录",
-    "ファイル", "写真", "東京", "보고서", "사진", "تقرير", "صورة", "דוח", "תמונה", "दस्तावेज़", "रिपोर्ट", "ภาพถ่าย", "รายงาน", "🎉", "📁", "🦀",
-    "👨\u{200D}👩\u{200D}👧", "✅", "🔥", "Ünïcödé", "ﬁnal", "e\u{301}clair", "2024", "v2", "final", "copy", "IMG", "DSC", "scan", "temp",
+    "report",
+    "Invoice",
+    "photo",
+    "backup",
+    "notes",
+    "draft",
+    "budget",
+    "meeting",
+    "Résumé",
+    "café",
+    "naïve",
+    "Straße",
+    "Ångström",
+    "Zürich",
+    "señal",
+    "Łódź",
+    "отчёт",
+    "Документ",
+    "фото",
+    "бюджет",
+    "Ёлка",
+    "встреча",
+    "черновик",
+    "Счёт",
+    "архив",
+    "Привет",
+    "έγγραφο",
+    "Αναφορά",
+    "文件",
+    "报告",
+    "照片",
+    "会议记录",
+    "ファイル",
+    "写真",
+    "東京",
+    "보고서",
+    "사진",
+    "تقرير",
+    "صورة",
+    "דוח",
+    "תמונה",
+    "दस्तावेज़",
+    "रिपोर्ट",
+    "ภาพถ่าย",
+    "รายงาน",
+    "🎉",
+    "📁",
+    "🦀",
+    "👨\u{200D}👩\u{200D}👧",
+    "✅",
+    "🔥",
+    "Ünïcödé",
+    "ﬁnal",
+    "e\u{301}clair",
+    "2024",
+    "v2",
+    "final",
+    "copy",
+    "IMG",
+    "DSC",
+    "scan",
+    "temp",
 ];
 const SEPS: [&str; 4] = [" ", "_", "-", "."];
 const TEXT_EXTS: [&str; 8] = ["txt", "md", "json", "csv", "log", "rs", "py", "html"];
@@ -218,7 +276,9 @@ impl Plan {
             for worker in workers {
                 match join_writer(worker) {
                     Ok(bytes) => total += bytes,
-                    Err(e) => { error.get_or_insert(e); }
+                    Err(e) => {
+                        error.get_or_insert(e);
+                    }
                 }
             }
             error.map_or(Ok(total), Err)

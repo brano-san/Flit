@@ -258,7 +258,11 @@ impl App {
     pub(super) fn selection_kind(&self) -> MenuKind {
         let t = self.tab();
         let all_dirs = t.view.as_ref().is_some_and(|v| v.selected_count() > 0 && v.selected().all(|i| v.listing().entries[i as usize].is_dir()));
-        if all_dirs { MenuKind::Folder } else { MenuKind::File }
+        if all_dirs {
+            MenuKind::Folder
+        } else {
+            MenuKind::File
+        }
     }
 
     pub(super) fn ask_pin(&mut self, key: String, pin: bool, anchor: Rect, now: Instant) {
@@ -343,7 +347,11 @@ impl App {
 
     pub(super) fn tab_list_anchor(&self) -> Rect {
         let a = self.layout.actions;
-        if a.w > 0.0 { a } else { Rect::new(self.layout.title.right() - 1.0, self.layout.title.y, 1.0, self.layout.title.h) }
+        if a.w > 0.0 {
+            a
+        } else {
+            Rect::new(self.layout.title.right() - 1.0, self.layout.title.y, 1.0, self.layout.title.h)
+        }
     }
 
     pub(super) fn tab_row_glyph(&self, row: usize) -> &'static str {
@@ -486,11 +494,19 @@ impl App {
     }
 
     pub(super) fn sizes_allowed(&self, loc: &Location) -> bool {
-        if self.network_place(loc) { self.settings.opts.sizes_network } else { self.settings.opts.sizes_ssd || self.settings.opts.sizes_hdd || self.settings.opts.sizes_network }
+        if self.network_place(loc) {
+            self.settings.opts.sizes_network
+        } else {
+            self.settings.opts.sizes_ssd || self.settings.opts.sizes_hdd || self.settings.opts.sizes_network
+        }
     }
 
     pub(super) fn measure_allowed(&self, loc: &Location) -> bool {
-        if self.network_place(loc) { self.settings.opts.sizes_network } else { self.settings.opts.sizes_ssd || self.settings.opts.sizes_hdd }
+        if self.network_place(loc) {
+            self.settings.opts.sizes_network
+        } else {
+            self.settings.opts.sizes_ssd || self.settings.opts.sizes_hdd
+        }
     }
 
     pub(super) fn set_sizes_allowed(&mut self, kind: usize, on: bool) {

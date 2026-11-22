@@ -36,7 +36,11 @@ pub(super) fn union(rects: impl IntoIterator<Item = Rect>) -> Rect {
     for r in rects.into_iter().filter(|r| r.w > 0.0) {
         (x0, y0, x1, y1) = (x0.min(r.x), y0.min(r.y), x1.max(r.right()), y1.max(r.bottom()));
     }
-    if x0 > x1 { Rect::default() } else { Rect::new(x0, y0, x1 - x0, y1 - y0) }
+    if x0 > x1 {
+        Rect::default()
+    } else {
+        Rect::new(x0, y0, x1 - x0, y1 - y0)
+    }
 }
 
 pub(super) fn put(t: &mut Tree, targets: &mut Vec<(u64, Hit)>, parent: usize, hit: Hit, role: Role, name: &str, r: Rect) -> usize {
@@ -107,23 +111,23 @@ impl App {
 
         if l.address.w > 0.0 && !self.search.active {
             let loc = self.tab().location().display().into_owned();
-                let a = t.add(0, ADDRESS, Role::ToolBar, S::A11yRegionAddress.t(), l.address);
-                t.nodes[a].value = loc;
-                t.nodes[a].help = description("nav.address").into();
-                let tab = self.tab();
-                for (i, r) in l.crumbs.iter().enumerate().filter(|(_, r)| r.w > 0.0) {
-                    if let Some((label, target)) = tab.crumb(i) {
-                        let k = put(&mut t, &mut targets, a, Hit::Crumb(i), Role::Button, label, *r);
-                        if let Some(&c) = l.crumb_chevrons.get(i).filter(|c| c.w > 0.0) {
-                            let k = put(&mut t, &mut targets, a, Hit::CrumbChevron(i), Role::Button, &format!("{label} ›"), c);
-                            t.nodes[k].help = S::TooltipCrumb.t().into();
-                        }
-                        t.nodes[k].help = match i < tab.crumbs.len() {
-                            true => target.display().into_owned(),
-                            false => format!("{}: {}", S::AddressVisitedDeeper.t(), target.display()),
-                        };
+            let a = t.add(0, ADDRESS, Role::ToolBar, S::A11yRegionAddress.t(), l.address);
+            t.nodes[a].value = loc;
+            t.nodes[a].help = description("nav.address").into();
+            let tab = self.tab();
+            for (i, r) in l.crumbs.iter().enumerate().filter(|(_, r)| r.w > 0.0) {
+                if let Some((label, target)) = tab.crumb(i) {
+                    let k = put(&mut t, &mut targets, a, Hit::Crumb(i), Role::Button, label, *r);
+                    if let Some(&c) = l.crumb_chevrons.get(i).filter(|c| c.w > 0.0) {
+                        let k = put(&mut t, &mut targets, a, Hit::CrumbChevron(i), Role::Button, &format!("{label} ›"), c);
+                        t.nodes[k].help = S::TooltipCrumb.t().into();
                     }
+                    t.nodes[k].help = match i < tab.crumbs.len() {
+                        true => target.display().into_owned(),
+                        false => format!("{}: {}", S::AddressVisitedDeeper.t(), target.display()),
+                    };
                 }
+            }
         }
 
         let sb = &self.nav.sidebar;

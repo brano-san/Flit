@@ -99,12 +99,24 @@ fn prune_keeps_the_newest_dumps() {
     prune(&dir, 3);
     let mut left: Vec<String> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
     left.sort();
-    assert_eq!(left, [
-        "flit-crash-5.dmp", "flit-crash-5.raw", "flit-crash-5.report.txt", "flit-crash-5.txt",
-        "flit-crash-6.dmp", "flit-crash-6.raw", "flit-crash-6.report.txt", "flit-crash-6.txt",
-        "flit-crash-7.dmp", "flit-crash-7.raw", "flit-crash-7.report.txt", "flit-crash-7.txt",
-        "flit.log",
-    ]);
+    assert_eq!(
+        left,
+        [
+            "flit-crash-5.dmp",
+            "flit-crash-5.raw",
+            "flit-crash-5.report.txt",
+            "flit-crash-5.txt",
+            "flit-crash-6.dmp",
+            "flit-crash-6.raw",
+            "flit-crash-6.report.txt",
+            "flit-crash-6.txt",
+            "flit-crash-7.dmp",
+            "flit-crash-7.raw",
+            "flit-crash-7.report.txt",
+            "flit-crash-7.txt",
+            "flit.log",
+        ]
+    );
     let _ = std::fs::remove_dir_all(dir);
 }
 

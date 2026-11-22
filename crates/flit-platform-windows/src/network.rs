@@ -8,8 +8,8 @@ use std::sync::Mutex;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_CANCELLED, ERROR_CONNECTION_UNAVAIL, ERROR_INVALID_PASSWORD, ERROR_LOGON_FAILURE, ERROR_NOT_AUTHENTICATED, HANDLE, NO_ERROR, WIN32_ERROR};
 use windows::Win32::NetworkManagement::WNet::{
-    WNetAddConnection3W, WNetCloseEnum, WNetConnectionDialog1W, WNetDisconnectDialog, WNetDisconnectDialog1W, WNetEnumResourceW, WNetGetConnectionW, WNetOpenEnumW, CONNECTDLGSTRUCTW, CONNECT_INTERACTIVE, CONNDLG_USE_MRU, DISCDLGSTRUCTW, DISC_UPDATE_PROFILE, NETRESOURCEW, RESOURCETYPE_DISK, RESOURCE_REMEMBERED,
-    WNET_OPEN_ENUM_USAGE,
+    WNetAddConnection3W, WNetCloseEnum, WNetConnectionDialog1W, WNetDisconnectDialog, WNetDisconnectDialog1W, WNetEnumResourceW, WNetGetConnectionW, WNetOpenEnumW, CONNECTDLGSTRUCTW, CONNECT_INTERACTIVE, CONNDLG_USE_MRU, DISCDLGSTRUCTW, DISC_UPDATE_PROFILE,
+    NETRESOURCEW, RESOURCETYPE_DISK, RESOURCE_REMEMBERED, WNET_OPEN_ENUM_USAGE,
 };
 use windows::Win32::NetworkManagement::WindowsFirewall::{NET_FW_PROFILE_TYPE2, NET_FW_PROFILE2_DOMAIN, NET_FW_PROFILE2_PRIVATE, NET_FW_PROFILE2_PUBLIC};
 use windows::Win32::Storage::FileSystem::GetDriveTypeW;
@@ -28,11 +28,7 @@ pub(crate) fn discovery_enabled() -> Option<bool> {
     crate::com_sta();
     let policy: INetFwPolicy2 = unsafe { CoCreateInstance(&NetFwPolicy2, None, CLSCTX_INPROC_SERVER) }.ok()?;
     let active = unsafe { policy.CurrentProfileTypes() }.ok()?;
-    discovery_state(
-        active,
-        |profile| unsafe { policy.get_FirewallEnabled(profile) }.ok().map(|enabled| enabled.0 != 0),
-        || unsafe { policy.get_IsRuleGroupCurrentlyEnabled(&windows::core::BSTR::from("@FirewallAPI.dll,-32752")) }.ok().map(|enabled| enabled.0 != 0),
-    )
+    discovery_state(active, |profile| unsafe { policy.get_FirewallEnabled(profile) }.ok().map(|enabled| enabled.0 != 0), || unsafe { policy.get_IsRuleGroupCurrentlyEnabled(&windows::core::BSTR::from("@FirewallAPI.dll,-32752")) }.ok().map(|enabled| enabled.0 != 0))
 }
 
 fn discovery_state(active: i32, mut firewall_enabled: impl FnMut(NET_FW_PROFILE_TYPE2) -> Option<bool>, group_enabled: impl FnOnce() -> Option<bool>) -> Option<bool> {

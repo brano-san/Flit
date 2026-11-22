@@ -75,12 +75,7 @@ fn bench_fontconfig() {
     let read = t.elapsed();
     assert_eq!(cached, r);
     std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
-    println!(
-        "fontconfig init first {first:?}, again {warm:?}; resolve (sans, mono, {} fallbacks) {resolve:?}; {} families {list:?}; cache read {read:?} ({} bytes)",
-        r.fallback.len(),
-        families.len(),
-        r.encode().len()
-    );
+    println!("fontconfig init first {first:?}, again {warm:?}; resolve (sans, mono, {} fallbacks) {resolve:?}; {} families {list:?}; cache read {read:?} ({} bytes)", r.fallback.len(), families.len(), r.encode().len());
 }
 
 #[test]

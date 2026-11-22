@@ -51,7 +51,6 @@ fn autostart_desktop_quotes_the_program_and_has_no_file_arguments() {
     assert!(autostart_desktop("/home/user/Flit\nExec=other", false).is_err());
 }
 
-
 #[test]
 fn archive_open_with_entries_use_the_supported_formats_without_setting_defaults() {
     let exe = r"C:\Flit portable\flit.exe";
@@ -120,10 +119,13 @@ fn archive_registration_skips_extensions_with_no_other_handler() {
         ".tgz" => Some(r"Applications\flit.exe".into()),
         _ => None,
     });
-    let extensions: Vec<_> = entries.iter().filter_map(|(target, _)| match target {
-        Target::Registry { key, name } if name == "Flit.Archive" => key.strip_prefix(r"Software\Classes\").and_then(|key| key.strip_suffix(r"\OpenWithProgids")),
-        _ => None,
-    }).collect();
+    let extensions: Vec<_> = entries
+        .iter()
+        .filter_map(|(target, _)| match target {
+            Target::Registry { key, name } if name == "Flit.Archive" => key.strip_prefix(r"Software\Classes\").and_then(|key| key.strip_suffix(r"\OpenWithProgids")),
+            _ => None,
+        })
+        .collect();
     assert_eq!(extensions, [".zip", ".7z"]);
     assert!(archive_entries(r"C:\Flit\flit.exe", |_| None).is_empty());
 }
@@ -147,11 +149,7 @@ fn appimage_registration_uses_one_stable_launch_path_across_mounts() {
         }
         assert_eq!(journal.inspect().unwrap().changes.len(), 1);
         let bytes = system.read(&target).unwrap().unwrap().bytes;
-        let expected = if group == Group::Protocol {
-            r#"Exec="/home/user/Flit 100%%.AppImage" --flit-link %u"#
-        } else {
-            r#"Exec="/home/user/Flit 100%%.AppImage""#
-        };
+        let expected = if group == Group::Protocol { r#"Exec="/home/user/Flit 100%%.AppImage" --flit-link %u"# } else { r#"Exec="/home/user/Flit 100%%.AppImage""# };
         assert!(String::from_utf8(bytes).unwrap().lines().any(|line| line == expected));
         journal.undo(&system, Some(group)).unwrap();
     }
@@ -167,7 +165,6 @@ fn msix_documentation_covers_the_handler_registered_at_install_time() {
     assert!(architecture.contains("Windows регистрирует обработчик `flit:` при установке MSIX"));
     assert!(architecture.contains("`--unregister` не снимает регистрацию из манифеста"));
 }
-
 
 #[test]
 fn background_mode_starts_flit_at_sign_in_without_a_window_and_undo_restores_the_original() {

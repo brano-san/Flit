@@ -69,7 +69,28 @@ impl Format {
     }
 }
 
-const BROWSABLE: &[(&str, Format)] = &[("zip", Format::Zip), ("7z", Format::SevenZ), ("rar", Format::Rar), ("tar", Format::Tar), ("tgz", Format::TarGz), ("gz", Format::Gz), ("lzh", Format::Lzh), ("lha", Format::Lzh), ("jar", Format::Zip), ("war", Format::Zip), ("ear", Format::Zip), ("apk", Format::Zip), ("aar", Format::Zip), ("msix", Format::Zip), ("appx", Format::Zip), ("msixbundle", Format::Zip), ("appxbundle", Format::Zip), ("nupkg", Format::Zip), ("vsix", Format::Zip), ("xpi", Format::Zip)];
+const BROWSABLE: &[(&str, Format)] = &[
+    ("zip", Format::Zip),
+    ("7z", Format::SevenZ),
+    ("rar", Format::Rar),
+    ("tar", Format::Tar),
+    ("tgz", Format::TarGz),
+    ("gz", Format::Gz),
+    ("lzh", Format::Lzh),
+    ("lha", Format::Lzh),
+    ("jar", Format::Zip),
+    ("war", Format::Zip),
+    ("ear", Format::Zip),
+    ("apk", Format::Zip),
+    ("aar", Format::Zip),
+    ("msix", Format::Zip),
+    ("appx", Format::Zip),
+    ("msixbundle", Format::Zip),
+    ("appxbundle", Format::Zip),
+    ("nupkg", Format::Zip),
+    ("vsix", Format::Zip),
+    ("xpi", Format::Zip),
+];
 
 const ZIP_BASED: &[&str] = &["epub", "docx", "xlsx", "pptx", "odt", "ods", "odp"];
 
@@ -108,7 +129,11 @@ pub fn format_of(name: &[u8]) -> Option<Format> {
 
 pub fn stem(name: &[u8]) -> &[u8] {
     let cut = if is_tar_gz(name) { name.len() - 7 } else { name.iter().rposition(|&c| c == b'.').unwrap_or(name.len()) };
-    if cut == 0 { name } else { &name[..cut] }
+    if cut == 0 {
+        name
+    } else {
+        &name[..cut]
+    }
 }
 
 pub fn splits(path: &FsPath) -> Vec<(FsPath, Vec<u8>)> {
@@ -229,10 +254,14 @@ impl ArchiveOp {
         let all = |v: &[FsPath]| v.iter().map(&f).collect::<Option<Vec<_>>>();
         Some(match self {
             ArchiveOp::Compress { items, archive, options } => ArchiveOp::Compress { items: all(items)?, archive: f(archive)?, options: options.clone() },
-            ArchiveOp::Extract { archives, dest, place } => ArchiveOp::Extract { archives: all(archives)?, dest: match dest {
-                Some(d) => Some(f(d)?),
-                None => None,
-            }, place: *place },
+            ArchiveOp::Extract { archives, dest, place } => ArchiveOp::Extract {
+                archives: all(archives)?,
+                dest: match dest {
+                    Some(d) => Some(f(d)?),
+                    None => None,
+                },
+                place: *place,
+            },
             ArchiveOp::Open { item } => ArchiveOp::Open { item: f(item)? },
         })
     }

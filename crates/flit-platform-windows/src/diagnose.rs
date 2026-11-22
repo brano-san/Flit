@@ -25,10 +25,13 @@ pub fn gpus() -> Vec<String> {
             let d = unsafe { a.GetDesc1() }.ok()?;
             let n = d.Description.iter().position(|&c| c == 0).unwrap_or(d.Description.len());
             let name = String::from_utf16_lossy(&d.Description[..n]);
-            let driver = unsafe { a.CheckInterfaceSupport(&IDXGIDevice::IID) }.map_or_else(|_| "unknown".into(), |v| {
-                let v = v as u64;
-                format!("{}.{}.{}.{}", v >> 48, (v >> 32) & 0xFFFF, (v >> 16) & 0xFFFF, v & 0xFFFF)
-            });
+            let driver = unsafe { a.CheckInterfaceSupport(&IDXGIDevice::IID) }.map_or_else(
+                |_| "unknown".into(),
+                |v| {
+                    let v = v as u64;
+                    format!("{}.{}.{}.{}", v >> 48, (v >> 32) & 0xFFFF, (v >> 16) & 0xFFFF, v & 0xFFFF)
+                },
+            );
             Some(format!("{name} (vendor 0x{:04X}, device 0x{:04X}, {} MB dedicated), driver {driver}", d.VendorId, d.DeviceId, d.DedicatedVideoMemory >> 20))
         })
         .collect()

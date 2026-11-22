@@ -9,12 +9,8 @@ use std::process::ExitStatus;
 #[test]
 fn a_missing_discovery_component_is_reported_with_its_distribution_package() {
     use flit_core::provider::NetworkWarning;
-    assert_eq!(discovery_warning(Some(false), false, "ID=debian"), Some(NetworkWarning::LinuxMissing {
-        avahi: Some("avahi-daemon"), gvfs: Some("gvfs-backends"),
-    }));
-    assert_eq!(discovery_warning(Some(false), true, "ID=fedora"), Some(NetworkWarning::LinuxMissing {
-        avahi: Some("avahi"), gvfs: None,
-    }));
+    assert_eq!(discovery_warning(Some(false), false, "ID=debian"), Some(NetworkWarning::LinuxMissing { avahi: Some("avahi-daemon"), gvfs: Some("gvfs-backends") }));
+    assert_eq!(discovery_warning(Some(false), true, "ID=fedora"), Some(NetworkWarning::LinuxMissing { avahi: Some("avahi"), gvfs: None }));
     assert_eq!(discovery_warning(Some(true), true, "ID=arch"), None);
     assert_eq!(discovery_warning(None, true, "ID=opensuse"), None);
 }
@@ -179,13 +175,7 @@ fn server(uri: &str) -> FsPath {
 fn gvfs_network_lines_become_servers_with_their_addresses() {
     assert_eq!(
         parse_network(GVFS_LATER),
-        [
-            found("Файлы на сервере", "sftp://brano-2.local:22/"),
-            found("BRANO", "smb://brano-2.local:445/"),
-            found("Team DAV", "dav+sd://Team%20DAV._webdav._tcp.local"),
-            found("nfs export", "nfs://brano-2.local:2049/export"),
-            found("Windows Network", SMB_ROOT),
-        ],
+        [found("Файлы на сервере", "sftp://brano-2.local:22/"), found("BRANO", "smb://brano-2.local:445/"), found("Team DAV", "dav+sd://Team%20DAV._webdav._tcp.local"), found("nfs export", "nfs://brano-2.local:2049/export"), found("Windows Network", SMB_ROOT),],
         "{SOURCE}"
     );
     assert_eq!(parse_network(GVFS_FIRST), [found("Windows Network", SMB_ROOT)]);
@@ -204,11 +194,7 @@ fn gvfs_output_without_addresses_or_with_junk_gives_nothing() {
 
 #[test]
 fn shares_keep_unicode_names_and_hide_administrative_shares() {
-    assert_eq!(
-        parse_shares(SHARES),
-        [found("Общие документы", "smb://brano-2.local/%D0%9E%D0%B1%D1%89%D0%B8%D0%B5%20%D0%B4%D0%BE%D0%BA%D1%83%D0%BC%D0%B5%D0%BD%D1%82%D1%8B"), found("private", "smb://brano-2.local/private")],
-        "{SOURCE}"
-    );
+    assert_eq!(parse_shares(SHARES), [found("Общие документы", "smb://brano-2.local/%D0%9E%D0%B1%D1%89%D0%B8%D0%B5%20%D0%B4%D0%BE%D0%BA%D1%83%D0%BC%D0%B5%D0%BD%D1%82%D1%8B"), found("private", "smb://brano-2.local/private")], "{SOURCE}");
 }
 
 #[test]
@@ -279,11 +265,7 @@ fn hung_commands_cannot_extend_discovery_past_six_seconds() {
     assert_eq!(result, Ok(()));
     assert!(listing.is_empty());
     assert_eq!(p.elapsed(), Duration::from_secs(6));
-    assert_eq!(p.asked, [
-        (Query::Network, Duration::ZERO, Duration::from_secs(5)),
-        (Query::Avahi, Duration::ZERO, Duration::from_secs(5)),
-        (Query::Network, Duration::from_millis(5250), Duration::from_millis(750)),
-    ]);
+    assert_eq!(p.asked, [(Query::Network, Duration::ZERO, Duration::from_secs(5)), (Query::Avahi, Duration::ZERO, Duration::from_secs(5)), (Query::Network, Duration::from_millis(5250), Duration::from_millis(750)),]);
 }
 
 #[test]
@@ -296,11 +278,7 @@ fn smb_groups_and_computers_follow_gio_attributes() {
 #[test]
 fn smb_browse_opens_workgroups_and_only_adds_unique_computers() {
     let mut p = Schedule::quick(&[GVFS_LATER, GVFS_FIRST, GVFS_FIRST]);
-    p.groups = vec![
-        (SMB_ROOT, parse_smb_browse(WORKGROUPS).collect()),
-        ("smb://WORKGROUP/", parse_smb_browse(COMPUTERS).collect()),
-        ("smb://LAB/", vec![found("Duplicate", "smb://flitwin/")]),
-    ];
+    p.groups = vec![(SMB_ROOT, parse_smb_browse(WORKGROUPS).collect()), ("smb://WORKGROUP/", parse_smb_browse(COMPUTERS).collect()), ("smb://LAB/", vec![found("Duplicate", "smb://flitwin/")])];
     let (result, listing, batches) = run(|out| discover(&mut p, out), |_| true);
     assert_eq!(result, Ok(()));
     assert_eq!(batches[0], 4);
@@ -350,10 +328,7 @@ fn the_network_order_uses_display_names_and_the_shared_sort_keys() {
 #[test]
 fn avahi_has_results_ready_when_gio_reports_it_cannot_browse() {
     let mut p = Schedule::new(vec![(Duration::from_secs(4), Listed::Unsupported)]);
-    p.avahi = vec![
-        (Duration::from_millis(500), Reply::AvahiItem(found("Box", "smb://box.local/"))),
-        (Duration::from_secs(1), Reply::AvahiDone(Ok(()))),
-    ];
+    p.avahi = vec![(Duration::from_millis(500), Reply::AvahiItem(found("Box", "smb://box.local/"))), (Duration::from_secs(1), Reply::AvahiDone(Ok(())))];
     let (result, listing, _) = run(|out| discover(&mut p, out), |n| n == 0);
     assert_eq!(result, Ok(()));
     assert_eq!(p.elapsed(), Duration::from_secs(4));

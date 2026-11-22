@@ -91,9 +91,7 @@ impl Field {
     }
 
     pub fn key(&mut self, key: Key, m: Mods) -> FieldKey {
-        let editing = matches!(key, Key::Left | Key::Right | Key::Home | Key::End | Key::Backspace | Key::Delete)
-            || (m.ctrl && !m.alt && matches!(key, Key::Char('A' | 'C' | 'X' | 'V' | 'Z' | 'Y')))
-            || (key == Key::Insert && m.ctrl != m.shift && !m.alt);
+        let editing = matches!(key, Key::Left | Key::Right | Key::Home | Key::End | Key::Backspace | Key::Delete) || (m.ctrl && !m.alt && matches!(key, Key::Char('A' | 'C' | 'X' | 'V' | 'Z' | 'Y'))) || (key == Key::Insert && m.ctrl != m.shift && !m.alt);
         if !editing {
             return FieldKey::Ignored;
         }

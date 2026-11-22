@@ -51,7 +51,11 @@ pub(super) fn sideways(dx: f32, dy: f32, shift: bool) -> f32 {
 
 impl App {
     pub(super) fn wheel_px(&self, line: f32, page: f32) -> f32 {
-        if self.wheel_lines == WHEEL_PAGE { page } else { self.wheel_lines as f32 * line }
+        if self.wheel_lines == WHEEL_PAGE {
+            page
+        } else {
+            self.wheel_lines as f32 * line
+        }
     }
 
     pub(super) fn wheel(&mut self, ev: &Event, now: Instant) {

@@ -148,13 +148,14 @@ impl X11 {
     }
 
     fn server_frames(&self) -> bool {
-        let Some(wm) = supporting_wm(self.root, |window| {
-            self.conn.get_property(false, window, self.atoms._NET_SUPPORTING_WM_CHECK, AtomEnum::WINDOW, 0, 1).ok()?.reply().ok()
-        }) else {
+        let Some(wm) = supporting_wm(self.root, |window| self.conn.get_property(false, window, self.atoms._NET_SUPPORTING_WM_CHECK, AtomEnum::WINDOW, 0, 1).ok()?.reply().ok()) else {
             tracing::debug!("no compatible X11 window manager found");
             return false;
         };
-        let name = self.conn.get_property(false, wm, self.atoms._NET_WM_NAME, AtomEnum::ANY, 0, 256).ok()
+        let name = self
+            .conn
+            .get_property(false, wm, self.atoms._NET_WM_NAME, AtomEnum::ANY, 0, 256)
+            .ok()
             .and_then(|cookie| cookie.reply().ok())
             .filter(|reply| reply.format == 8 && [self.atoms.UTF8_STRING, AtomEnum::STRING.into()].contains(&reply.type_))
             .map(|reply| String::from_utf8_lossy(&reply.value).into_owned())
@@ -283,10 +284,7 @@ impl X11 {
         self.watch_properties(self.root)?;
         let mut watched = WatchedWindows::default();
         let a = &self.atoms;
-        let mut fds = [
-            libc::pollfd { fd: ready.as_raw_fd(), events: libc::POLLIN, revents: 0 },
-            libc::pollfd { fd: self.conn.as_raw_fd(), events: libc::POLLIN, revents: 0 },
-        ];
+        let mut fds = [libc::pollfd { fd: ready.as_raw_fd(), events: libc::POLLIN, revents: 0 }, libc::pollfd { fd: self.conn.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
         loop {
             for command in commands.try_iter() {
                 match command {
@@ -331,13 +329,16 @@ impl X11 {
                 }
             }
             if !watched.dirty.is_empty() {
-                watched.refresh(|window| match self.sides(window) {
-                    Ok(sides) => Some(sides),
-                    Err(e) => {
-                        tracing::debug!("cannot read the X11 tiling state: {e}");
-                        None
-                    }
-                }, |id, sides| report(Update::Edges(id, sides)));
+                watched.refresh(
+                    |window| match self.sides(window) {
+                        Ok(sides) => Some(sides),
+                        Err(e) => {
+                            tracing::debug!("cannot read the X11 tiling state: {e}");
+                            None
+                        }
+                    },
+                    |id, sides| report(Update::Edges(id, sides)),
+                );
                 continue;
             }
             if unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, -1) } < 0 {

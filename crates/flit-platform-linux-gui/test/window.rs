@@ -2,15 +2,7 @@ use super::*;
 use flit_core::ui::{MenuItem, MenuKind};
 
 fn context_reply(kind: MenuKind, label: S) -> Event {
-    Event::ShowMenu {
-        items: vec![MenuItem::command(label.t(), String::new())],
-        x: 0.0,
-        y: 0.0,
-        launches: Vec::new(),
-        kind,
-        shell: Vec::new(),
-        pending: false,
-    }
+    Event::ShowMenu { items: vec![MenuItem::command(label.t(), String::new())], x: 0.0, y: 0.0, launches: Vec::new(), kind, shell: Vec::new(), pending: false }
 }
 
 #[test]
@@ -151,11 +143,16 @@ fn a_window_closed_during_a_minimized_check_is_released_on_the_ui_thread() {
     let (inside, entered) = mpsc::channel();
     let (go, wait) = mpsc::channel::<()>();
     let worker = std::thread::spawn(move || {
-        check_minimized(checks, |_| {
-            inside.send(()).unwrap();
-            wait.recv().unwrap();
-            Some(true)
-        }, &back, || {});
+        check_minimized(
+            checks,
+            |_| {
+                inside.send(()).unwrap();
+                wait.recv().unwrap();
+                Some(true)
+            },
+            &back,
+            || {},
+        );
     });
     entered.recv().unwrap();
     drop(window);

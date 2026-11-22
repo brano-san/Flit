@@ -41,13 +41,21 @@ struct HubHandler {
 impl WindowHandler<Win32> for HubHandler {
     fn created(&mut self, _: &Win32Window) {}
     fn event(&mut self, _: &Win32Window, _: Event) {}
-    fn hit_test(&mut self, _: &Win32Window, _: f32, _: f32) -> HitArea { HitArea::Client }
+    fn hit_test(&mut self, _: &Win32Window, _: f32, _: f32) -> HitArea {
+        HitArea::Client
+    }
     fn redraw(&mut self, _: &Win32Window) {}
     fn woken(&mut self, _: &Win32Window) {}
     fn destroyed(&mut self, _: &Win32Window) {}
-    fn session_ending_without_windows(&mut self) { self.saved = true; }
-    fn quit(&mut self) { self.quit = true; }
-    fn drag(&mut self, _: &Win32Window, _: DragEvent) -> DropReply { DropReply::default() }
+    fn session_ending_without_windows(&mut self) {
+        self.saved = true;
+    }
+    fn quit(&mut self) {
+        self.quit = true;
+    }
+    fn drag(&mut self, _: &Win32Window, _: DragEvent) -> DropReply {
+        DropReply::default()
+    }
 }
 
 #[test]
@@ -70,9 +78,5 @@ fn the_windowless_hub_saves_on_confirmed_end_session_before_returning() {
 }
 
 fn test_hub() -> Shared<HubHandler> {
-    Shared {
-        handler: RefCell::default(), nodes: RefCell::default(), dead: RefCell::default(),
-        woken: Cell::new(false), quit_requested: Cell::new(false), next_id: Cell::new(1),
-        hinst: HINSTANCE::default(), hub: HWND::default(), wake_pending: Arc::default(), tray: None,
-    }
+    Shared { handler: RefCell::default(), nodes: RefCell::default(), dead: RefCell::default(), woken: Cell::new(false), quit_requested: Cell::new(false), next_id: Cell::new(1), hinst: HINSTANCE::default(), hub: HWND::default(), wake_pending: Arc::default(), tray: None }
 }

@@ -70,10 +70,21 @@ fn visible_folder_icons_are_prepared_together_and_scrolled_away_ones_are_skipped
     let done = batch_icons(&mut shell, 7, reqs, &visible);
     assert_eq!(shell.prepared, vec![vec![2, 3, 6]], "one preparation for the visible folders only");
     assert_eq!(shell.drawn, vec![2, 3, 6]);
-    let results: Vec<(u64, &str)> = done.iter().map(|d| match d {
-        Done::Icon { window: 7, req, result } => (req.key, match result { IconResult::Ready(_) => "ready", IconResult::Failed => "failed", IconResult::Skipped => "skipped", IconResult::Shared(..) => "shared" }),
-        _ => panic!("only icon results"),
-    }).collect();
+    let results: Vec<(u64, &str)> = done
+        .iter()
+        .map(|d| match d {
+            Done::Icon { window: 7, req, result } => (
+                req.key,
+                match result {
+                    IconResult::Ready(_) => "ready",
+                    IconResult::Failed => "failed",
+                    IconResult::Skipped => "skipped",
+                    IconResult::Shared(..) => "shared",
+                },
+            ),
+            _ => panic!("only icon results"),
+        })
+        .collect();
     assert_eq!(results.len(), 4, "every request gets an answer so none stays pending");
     for want in [(2, "ready"), (3, "failed"), (4, "skipped"), (6, "ready")] {
         assert!(results.contains(&want), "{want:?} in {results:?}");

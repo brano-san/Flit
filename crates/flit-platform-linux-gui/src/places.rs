@@ -61,14 +61,7 @@ pub fn drive_of(v: &Volume) -> Option<Drive> {
 }
 
 pub fn drives() -> Vec<Drive> {
-    volumes()
-        .iter()
-        .filter_map(drive_of)
-        .chain(unmounted())
-        .chain(gvfs(&gvfs_root()))
-        .chain(phones(&gvfs_root()))
-        .chain([network_drive()])
-        .collect()
+    volumes().iter().filter_map(drive_of).chain(unmounted()).chain(gvfs(&gvfs_root())).chain(phones(&gvfs_root())).chain([network_drive()]).collect()
 }
 
 pub fn network_drive() -> Drive {
@@ -262,7 +255,11 @@ pub fn local_path_within(uri: &str, wait: std::time::Duration) -> std::io::Resul
 }
 
 fn fuse_unmounter() -> &'static str {
-    if crate::shell::on_path(std::ffi::OsStr::new("fusermount3")).is_none() && crate::shell::on_path(std::ffi::OsStr::new("fusermount")).is_some() { "fusermount" } else { "fusermount3" }
+    if crate::shell::on_path(std::ffi::OsStr::new("fusermount3")).is_none() && crate::shell::on_path(std::ffi::OsStr::new("fusermount")).is_some() {
+        "fusermount"
+    } else {
+        "fusermount3"
+    }
 }
 
 pub fn disconnect_command(point: &Path, table: &[Mount], gvfs_root: &Path) -> Vec<std::ffi::OsString> {
@@ -299,15 +296,8 @@ fn unmounted() -> Vec<Drive> {
 
 const ENCRYPTED: [&str; 2] = ["crypto_LUKS", "BitLocker"];
 const NOT_DATA: [&str; 9] = ["", "swap", "crypto_LUKS", "LVM2_member", "linux_raid_member", "zfs_member", "bcache", "squashfs", "BitLocker"];
-const SYSTEM_PARTITIONS: [&str; 7] = [
-    "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
-    "0xef",
-    "e3c9e316-0b5c-4db8-817d-f92df00215ae",
-    "de94bba4-06d1-4d40-a16a-bfd50179d6ac",
-    "21686148-6449-6e6f-744e-656564454649",
-    "bc13c2ff-59e6-4262-a352-b275fd6f7172",
-    "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f",
-];
+const SYSTEM_PARTITIONS: [&str; 7] =
+    ["c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "0xef", "e3c9e316-0b5c-4db8-817d-f92df00215ae", "de94bba4-06d1-4d40-a16a-bfd50179d6ac", "21686148-6449-6e6f-744e-656564454649", "bc13c2ff-59e6-4262-a352-b275fd6f7172", "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f"];
 
 fn data_partition(f: &HashMap<&str, &str>) -> bool {
     let get = |k: &str| f.get(k).copied().unwrap_or("");

@@ -30,10 +30,16 @@ pub fn sizes(output: &[u8]) -> Option<Vec<Option<Size>>> {
             _ => {}
         }
     }
-    Some(sizes.into_iter().zip(rotation).map(|(s, a)| {
-        let Size { width, height } = s?;
-        Some(if matches!(a.rem_euclid(360), 90 | 270) { Size { width: height, height: width } } else { Size { width, height } })
-    }).collect())
+    Some(
+        sizes
+            .into_iter()
+            .zip(rotation)
+            .map(|(s, a)| {
+                let Size { width, height } = s?;
+                Some(if matches!(a.rem_euclid(360), 90 | 270) { Size { width: height, height: width } } else { Size { width, height } })
+            })
+            .collect(),
+    )
 }
 
 fn page_size(value: &str) -> Option<Size> {
@@ -43,6 +49,5 @@ fn page_size(value: &str) -> Option<Size> {
         return None;
     }
     let height: f32 = parts.next()?.parse().ok()?;
-    (parts.next()? == "pts" && width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
-        .then_some(Size { width, height })
+    (parts.next()? == "pts" && width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0).then_some(Size { width, height })
 }

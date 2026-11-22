@@ -132,9 +132,7 @@ impl FileOps for AgentOps<'_> {
     }
 
     fn can_restore(&self, backup: &FsPath, original: &FsPath) -> bool {
-        self.trash.zip(host(backup)).zip(host(original)).is_some_and(|((trash, backup), original)| {
-            trash.entry(backup).is_ok_and(|(_, stored)| stored == original)
-        })
+        self.trash.zip(host(backup)).zip(host(original)).is_some_and(|((trash, backup), original)| trash.entry(backup).is_ok_and(|(_, stored)| stored == original))
     }
 
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
@@ -163,20 +161,12 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
         replay::run(&mut agent, plan, Some(ops::undo_fs()), &job)
     } else {
         let reviewed = !matches!(op, FileOp::Rename { .. });
-        let prepared = if job.ctl().includes_companions() {
-            job.prepare_companions(&crate::LinuxFs, op.clone())
-        } else {
-            Ok(op.clone())
-        };
+        let prepared = if job.ctl().includes_companions() { job.prepare_companions(&crate::LinuxFs, op.clone()) } else { Ok(op.clone()) };
         let op = match prepared {
             Ok(op) => op,
             Err(error) => {
                 ctx.ops().remove(&id);
-                let error = if job.cancelled() {
-                    flit_core::provider::OpError::new(flit_platform::PlatformErrorKind::Cancelled, flit_platform::CANCELLED)
-                } else {
-                    error.into()
-                };
+                let error = if job.cancelled() { flit_core::provider::OpError::new(flit_platform::PlatformErrorKind::Cancelled, flit_platform::CANCELLED) } else { error.into() };
                 ctx.send(Event::OpDone { id, error: Some(error), items: Vec::new() });
                 return;
             }

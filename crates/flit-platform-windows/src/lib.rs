@@ -106,17 +106,7 @@ pub(crate) fn error_reason(e: &windows::core::Error) -> String {
 pub(crate) fn dark_mode() -> bool {
     let mut v = 1u32;
     let mut n = 4u32;
-    let r = unsafe {
-        RegGetValueW(
-            HKEY_CURRENT_USER,
-            w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"),
-            w!("AppsUseLightTheme"),
-            RRF_RT_REG_DWORD,
-            None,
-            Some(&mut v as *mut u32 as _),
-            Some(&mut n),
-        )
-    };
+    let r = unsafe { RegGetValueW(HKEY_CURRENT_USER, w!(r"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"), w!("AppsUseLightTheme"), RRF_RT_REG_DWORD, None, Some(&mut v as *mut u32 as _), Some(&mut n)) };
     r.is_ok() && v == 0
 }
 
@@ -127,7 +117,11 @@ pub(crate) fn double_click_time() -> std::time::Duration {
 pub(crate) fn wheel_lines() -> u32 {
     let mut lines = 3u32;
     let read = unsafe { SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, Some(&mut lines as *mut u32 as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0)) };
-    if read.is_ok() { lines } else { 3 }
+    if read.is_ok() {
+        lines
+    } else {
+        3
+    }
 }
 
 pub(crate) fn com_sta() {

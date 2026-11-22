@@ -49,7 +49,11 @@ struct Raw {
 }
 
 pub fn unix_ticks(secs: i64) -> i64 {
-    if secs <= 0 { 0 } else { (secs + UNIX_EPOCH_SECS) * TICKS_PER_SEC }
+    if secs <= 0 {
+        0
+    } else {
+        (secs + UNIX_EPOCH_SECS) * TICKS_PER_SEC
+    }
 }
 
 pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
@@ -343,7 +347,11 @@ fn build(archive: &FsPath, path: &Path, len: u64, offset_min: i32) -> Result<Ind
     for (ordinal, r) in raws.into_iter().enumerate() {
         let text = entry_text(&r.name, r.utf8, legacy);
         let zip_name = if format == Format::Zip {
-            if r.utf8 { String::from_utf8_lossy(&r.name).into_owned() } else { names::cp437(&r.name) }
+            if r.utf8 {
+                String::from_utf8_lossy(&r.name).into_owned()
+            } else {
+                names::cp437(&r.name)
+            }
         } else {
             String::new()
         };

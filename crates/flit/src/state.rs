@@ -498,13 +498,7 @@ impl Saved {
         let p = &self.persisted;
         let folders = p.folders.entries();
         let prefs = ViewPrefs { defaults: legacy(p.prefs.defaults), ..p.prefs.clone() };
-        let layouts = LayoutRecord {
-            view: look(&p.view),
-            defaults: look(&p.prefs.defaults),
-            folders: folders.iter().map(|(_, v)| look(v)).collect(),
-            thumbnails: p.prefs.thumbnails,
-            thumb_cache_mb: p.prefs.thumb_cache_mb,
-        };
+        let layouts = LayoutRecord { view: look(&p.view), defaults: look(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| look(v)).collect(), thumbnails: p.prefs.thumbnails, thumb_cache_mb: p.prefs.thumb_cache_mb };
         let gits = GitRecord { view: git_look(&p.view), defaults: git_look(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| git_look(v)).collect() };
         let zooms = ZoomRecord { view: zoomed(&p.view), defaults: zoomed(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| zoomed(v)).collect(), retain_filter: p.prefs.retain_filter };
         let wides = WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() };
@@ -572,13 +566,10 @@ fn load_from(f: &std::path::Path) -> Option<Saved> {
 }
 
 pub fn load<P: ProfilePlatform + ShellPlatform>() -> Saved {
-    file::<P>()
-        .as_deref()
-        .and_then(load_from)
-        .unwrap_or_else(|| {
-            let pinned = if flit_platform::isolated_gui_test() { Vec::new() } else { P::bookmarks() };
-            Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None).with_nav(NavState { pinned, ..NavState::default() })
-        })
+    file::<P>().as_deref().and_then(load_from).unwrap_or_else(|| {
+        let pinned = if flit_platform::isolated_gui_test() { Vec::new() } else { P::bookmarks() };
+        Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None).with_nav(NavState { pinned, ..NavState::default() })
+    })
 }
 
 pub fn save<P: ProfilePlatform>(s: &Saved) {

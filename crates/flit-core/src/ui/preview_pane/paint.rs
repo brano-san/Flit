@@ -317,7 +317,13 @@ impl App {
             return;
         }
         if !self.folder_stand_in(g, kind, r.w as u32, r, 255, &mut requests) {
-            let glyph = if e.attrs & attr::VOLUME != 0 { crate::ui::G_DRIVE } else if e.is_dir() { crate::ui::G_FOLDER } else { crate::ui::G_FILE };
+            let glyph = if e.attrs & attr::VOLUME != 0 {
+                crate::ui::G_DRIVE
+            } else if e.is_dir() {
+                crate::ui::G_FOLDER
+            } else {
+                crate::ui::G_FILE
+            };
             centered(g, r, glyph, FontStyle::new(FontFamily::Icons, r.h * 0.8, false), self.theme().text_dim);
         }
         if let (false, Some(path)) = (self.icons.contains_key(&key), s.path.clone()) {
@@ -459,7 +465,13 @@ impl App {
             }
             let r = Rect::new(x, row, w, h);
             let bit = |mask: u32| matches!(hit, PaneHit::Tag(k) if mask & (1 << k) != 0);
-            let fill = if bit(all) { Some(t.selection) } else if self.hover == Hit::Preview(hit) { Some(t.button_hover) } else { None };
+            let fill = if bit(all) {
+                Some(t.selection)
+            } else if self.hover == Hit::Preview(hit) {
+                Some(t.button_hover)
+            } else {
+                None
+            };
             if let Some(c) = fill {
                 g.dl.round_rect(r, c, h / 2.0);
             }

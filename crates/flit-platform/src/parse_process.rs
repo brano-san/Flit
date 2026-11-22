@@ -46,14 +46,16 @@ fn sandbox(bwrap: &Path, exe: &Path, input: &Path, mapped: &Path) -> Command {
 
 #[cfg(target_os = "linux")]
 fn sandbox_command(cache: &OnceLock<Option<PathBuf>>, exe: &Path, input: &Path, find: impl FnOnce() -> Option<PathBuf>) -> Option<(Command, PathBuf)> {
-    let bwrap = cache.get_or_init(|| {
-        let bwrap = find()?;
-        let mapped = Path::new("/source/flit");
-        let mut probe = sandbox(&bwrap, exe, exe, mapped);
-        probe.args([SUBCOMMAND, PROBE_TASK]).arg(mapped);
-        collect(&mut probe, 0, &|| true, TIMEOUT).ok()?;
-        Some(bwrap)
-    }).as_deref()?;
+    let bwrap = cache
+        .get_or_init(|| {
+            let bwrap = find()?;
+            let mapped = Path::new("/source/flit");
+            let mut probe = sandbox(&bwrap, exe, exe, mapped);
+            probe.args([SUBCOMMAND, PROBE_TASK]).arg(mapped);
+            collect(&mut probe, 0, &|| true, TIMEOUT).ok()?;
+            Some(bwrap)
+        })
+        .as_deref()?;
     let mapped = Path::new("/source").join(input.file_name()?);
     let cmd = sandbox(bwrap, exe, &input.canonicalize().ok()?, &mapped);
     Some((cmd, mapped))
@@ -122,11 +124,14 @@ pub fn bounded(cmd: &mut Command, max_output: usize, timeout: Duration, current:
 fn wait(child: &mut Child, cap: u64, max_output: usize, current: &dyn Fn() -> bool, until: Instant) -> Result<(ExitStatus, Vec<u8>), Error> {
     let (tx, rx) = std::sync::mpsc::sync_channel(1);
     let stdout = child.stdout.take().ok_or(Error::Failed)?;
-    std::thread::Builder::new().name("flit-parser-output".into()).spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stdout.take(cap).read_to_end(&mut bytes).is_ok() && bytes.len() <= max_output;
-        let _ = tx.send(result.then_some(bytes));
-    }).map_err(|_| Error::Failed)?;
+    std::thread::Builder::new()
+        .name("flit-parser-output".into())
+        .spawn(move || {
+            let mut bytes = Vec::new();
+            let result = stdout.take(cap).read_to_end(&mut bytes).is_ok() && bytes.len() <= max_output;
+            let _ = tx.send(result.then_some(bytes));
+        })
+        .map_err(|_| Error::Failed)?;
     let mut data = None;
     loop {
         if !current() {

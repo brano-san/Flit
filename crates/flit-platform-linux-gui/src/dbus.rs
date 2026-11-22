@@ -209,7 +209,8 @@ pub(crate) fn load() -> Option<&'static Api> {
     API.get_or_init(|| {
         let api = Api::load()?;
         (unsafe { (api.threads_init)() } != 0).then_some(api)
-    }).as_ref()
+    })
+    .as_ref()
 }
 
 pub fn request(method: &str, uris: &[Vec<u8>]) -> Option<Open> {
@@ -287,9 +288,7 @@ impl<'a> Connection<'a> {
             let raw = (api.open_private)(address.as_ptr(), &mut err.1);
             let raw = NonNull::new(raw).ok_or_else(|| err.1.message())?;
             let conn = Self { api, raw };
-            if (api.register)(raw.as_ptr(), &mut err.1) == 0
-                || name.is_some_and(|name| (api.request_name)(raw.as_ptr(), name.as_ptr(), NAME_DO_NOT_QUEUE, &mut err.1) != PRIMARY_OWNER)
-            {
+            if (api.register)(raw.as_ptr(), &mut err.1) == 0 || name.is_some_and(|name| (api.request_name)(raw.as_ptr(), name.as_ptr(), NAME_DO_NOT_QUEUE, &mut err.1) != PRIMARY_OWNER) {
                 return Err(err.1.message());
             }
             conn
@@ -332,9 +331,7 @@ struct Message<'a> {
 impl Message<'_> {
     fn method(&self) -> Option<(String, String)> {
         let raw = self.raw.as_ptr();
-        unsafe {
-            ((self.api.msg_type)(raw) == TYPE_METHOD_CALL).then(|| (text((self.api.member)(raw)), text((self.api.interface)(raw))))
-        }
+        unsafe { ((self.api.msg_type)(raw) == TYPE_METHOD_CALL).then(|| (text((self.api.member)(raw)), text((self.api.interface)(raw)))) }
     }
 
     fn args(&self) -> (Vec<Vec<u8>>, String) {
@@ -368,10 +365,7 @@ impl Drop for Message<'_> {
     }
 }
 pub fn session_address() -> Option<String> {
-    ["DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_ADDRESS"]
-        .iter()
-        .find_map(|k| std::env::var(k).ok().filter(|a| !a.is_empty()))
-        .or_else(|| Some(format!("unix:path={}/bus", crate::xdg::runtime_dir()?.display())))
+    ["DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_ADDRESS"].iter().find_map(|k| std::env::var(k).ok().filter(|a| !a.is_empty())).or_else(|| Some(format!("unix:path={}/bus", crate::xdg::runtime_dir()?.display())))
 }
 
 pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool)) {

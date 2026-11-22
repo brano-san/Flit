@@ -25,7 +25,9 @@ impl Temp {
     }
 }
 impl Drop for Temp {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 #[test]
@@ -34,7 +36,9 @@ fn users_can_save_metadata_export_it_as_xmp_and_import_it_to_another_file() {
     let path = temp.item("beach.jpg");
     let other = temp.item("forest.jpg");
     let sidecar = temp.item("beach.xmp");
-    for image in [&path, &other] { fs::write(std_path(image), b"the same file contents").unwrap(); }
+    for image in [&path, &other] {
+        fs::write(std_path(image), b"the same file contents").unwrap();
+    }
     let empty = Metadata::default();
     let metadata = Metadata { rating: 9, comment: "Blue & green <water> '☀'".into(), tags: vec!["Travel".into(), "Лето".into()] };
     assert_eq!(request(Request::Store { path: path.clone(), before: empty.clone(), after: metadata.clone() }).unwrap(), metadata);

@@ -27,13 +27,14 @@ enum Control {
 
 impl Control {
     fn id(self) -> u64 {
-        A11Y_BASE + match self {
-            Self::Name => 0,
-            Self::Filter => 1,
-            Self::Accept => 2,
-            Self::Cancel => 3,
-            Self::Choice(i) => 4 + i as u64,
-        }
+        A11Y_BASE
+            + match self {
+                Self::Name => 0,
+                Self::Filter => 1,
+                Self::Accept => 2,
+                Self::Cancel => 3,
+                Self::Choice(i) => 4 + i as u64,
+            }
     }
 }
 
@@ -81,9 +82,7 @@ impl Picker {
     fn controls(&self) -> impl Iterator<Item = Control> {
         let saving = matches!(self.request.mode, Mode::Save(_));
         let filters = !self.filters.is_empty();
-        [saving.then_some(Control::Name), filters.then_some(Control::Filter)].into_iter().flatten()
-            .chain((0..self.request.choices.len()).map(Control::Choice))
-            .chain([Control::Accept, Control::Cancel])
+        [saving.then_some(Control::Name), filters.then_some(Control::Filter)].into_iter().flatten().chain((0..self.request.choices.len()).map(Control::Choice)).chain([Control::Accept, Control::Cancel])
     }
 }
 
@@ -113,9 +112,7 @@ impl App {
     }
 
     pub(super) fn picker_uses_mime(&self) -> bool {
-        self.dialogs.picker.as_ref().is_some_and(|picker| {
-            !picker.request.directories() && picker.filters.iter().any(|filter| !filter.mime_types.is_empty())
-        })
+        self.dialogs.picker.as_ref().is_some_and(|picker| !picker.request.directories() && picker.filters.iter().any(|filter| !filter.mime_types.is_empty()))
     }
 
     pub(super) fn apply_pick_filter(&mut self, tab: usize) {
@@ -159,11 +156,12 @@ impl App {
         }
         let directories = picker.request.directories();
         let multiple = matches!(picker.request.mode, Mode::Open { multiple: true, .. });
-        let paths: Vec<_> = view.into_iter().flat_map(|view| {
-            view.selected().filter(|&i| view.listing().entries[i as usize].is_dir() == directories)
-        }).take(if multiple { max } else { 1 })
-            .filter_map(|i| pick::local_path(&t.entry_location(i)?).cloned()).collect();
-        if directories && paths.is_empty() { current.into_iter().cloned().collect() } else { paths }
+        let paths: Vec<_> = view.into_iter().flat_map(|view| view.selected().filter(|&i| view.listing().entries[i as usize].is_dir() == directories)).take(if multiple { max } else { 1 }).filter_map(|i| pick::local_path(&t.entry_location(i)?).cloned()).collect();
+        if directories && paths.is_empty() {
+            current.into_iter().cloned().collect()
+        } else {
+            paths
+        }
     }
 
     fn picker_activate(&mut self, control: Control, now: Instant) {
@@ -260,11 +258,7 @@ impl App {
                 out.push((Control::Filter, part(&mut right, width.min(self.s(250.0)))));
             }
             if matches!(picker.request.mode, Mode::Save(_)) {
-                let name = if stacked {
-                    Rect::new(area.x + pad, area.y - self.s(32.0) + self.s(2.0), (area.w - 2.0 * pad).max(0.0), h)
-                } else {
-                    Rect::new(area.x + pad, area.y + (area.h - h) * 0.5, (right - area.x - pad).max(0.0), h)
-                };
+                let name = if stacked { Rect::new(area.x + pad, area.y - self.s(32.0) + self.s(2.0), (area.w - 2.0 * pad).max(0.0), h) } else { Rect::new(area.x + pad, area.y + (area.h - h) * 0.5, (right - area.x - pad).max(0.0), h) };
                 out.push((Control::Name, name));
             }
         }
@@ -392,8 +386,7 @@ impl App {
         if self.dialogs.picker.is_none() {
             return true;
         }
-        matches!(id, "item.open" | "app.quit" | "tab.close" | "folder.dropdown")
-            || ["address.", "list.", "nav.", "select.", "text.", "view."].iter().any(|prefix| id.starts_with(prefix))
+        matches!(id, "item.open" | "app.quit" | "tab.close" | "folder.dropdown") || ["address.", "list.", "nav.", "select.", "text.", "view."].iter().any(|prefix| id.starts_with(prefix))
     }
 }
 

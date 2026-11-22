@@ -23,7 +23,11 @@ fn base_name(path: &str) -> &str {
     let separator = |c| c == '/' || (!path.starts_with('/') && c == '\\');
     let trimmed = path.trim_end_matches(separator);
     let name = trimmed.rsplit(separator).next().unwrap_or(trimmed);
-    if name.is_empty() { path } else { name }
+    if name.is_empty() {
+        path
+    } else {
+        name
+    }
 }
 
 pub fn split(text: &str, posix: bool) -> Vec<(String, bool)> {
@@ -51,18 +55,45 @@ pub fn split(text: &str, posix: bool) -> Vec<(String, bool)> {
 
 fn percent_values(code: char, p: &Places) -> Option<Vec<String>> {
     let first = p.items.first().map_or(p.dir, String::as_str);
-    let parent = |path: &str| path.trim_end_matches(|c| c == '/' || (!path.starts_with('/') && c == '\\')).rsplit_once(|c| c == '/' || (!path.starts_with('/') && c == '\\')).map_or_else(|| p.dir.to_owned(), |(dir, _)| {
-        if dir.is_empty() { "/".to_owned() }
-        else if dir.ends_with(':') { format!("{dir}{}", &path[dir.len()..dir.len() + 1]) }
-        else { dir.to_owned() }
-    });
+    let parent = |path: &str| {
+        path.trim_end_matches(|c| c == '/' || (!path.starts_with('/') && c == '\\')).rsplit_once(|c| c == '/' || (!path.starts_with('/') && c == '\\')).map_or_else(
+            || p.dir.to_owned(),
+            |(dir, _)| {
+                if dir.is_empty() {
+                    "/".to_owned()
+                } else if dir.ends_with(':') {
+                    format!("{dir}{}", &path[dir.len()..dir.len() + 1])
+                } else {
+                    dir.to_owned()
+                }
+            },
+        )
+    };
     Some(match code {
         'f' => vec![first.to_owned()],
-        'F' => if p.items.is_empty() { vec![p.dir.to_owned()] } else { p.items.to_vec() },
+        'F' => {
+            if p.items.is_empty() {
+                vec![p.dir.to_owned()]
+            } else {
+                p.items.to_vec()
+            }
+        }
         'n' => vec![base_name(first).to_owned()],
-        'N' => if p.items.is_empty() { vec![base_name(p.dir).to_owned()] } else { p.items.iter().map(|s| base_name(s).to_owned()).collect() },
+        'N' => {
+            if p.items.is_empty() {
+                vec![base_name(p.dir).to_owned()]
+            } else {
+                p.items.iter().map(|s| base_name(s).to_owned()).collect()
+            }
+        }
         'd' => vec![if p.items.is_empty() { p.dir.to_owned() } else { parent(first) }],
-        'D' => if p.items.is_empty() { vec![p.dir.to_owned()] } else { p.items.iter().map(|s| parent(s)).collect() },
+        'D' => {
+            if p.items.is_empty() {
+                vec![p.dir.to_owned()]
+            } else {
+                p.items.iter().map(|s| parent(s)).collect()
+            }
+        }
         _ => return None,
     })
 }
@@ -74,21 +105,47 @@ fn percent_fill(token: &str, p: &Places) -> Option<Vec<String>> {
         if ch == '{' {
             let tail: String = chars.clone().collect();
             if let Some(name) = NAMES.iter().find(|name| tail.strip_prefix(**name).is_some_and(|rest| rest.starts_with('}'))) {
-                for _ in 0..name.len() + 1 { chars.next(); }
+                for _ in 0..name.len() + 1 {
+                    chars.next();
+                }
                 let value = p.value(name);
-                for s in &mut out { s.push_str(&value); }
+                for s in &mut out {
+                    s.push_str(&value);
+                }
                 continue;
             }
         }
-        if ch != '%' { for s in &mut out { s.push(ch); } continue; }
-        let Some(code) = chars.next() else { for s in &mut out { s.push('%'); } break; };
-        if code == '%' { for s in &mut out { s.push('%'); } continue; }
+        if ch != '%' {
+            for s in &mut out {
+                s.push(ch);
+            }
+            continue;
+        }
+        let Some(code) = chars.next() else {
+            for s in &mut out {
+                s.push('%');
+            }
+            break;
+        };
+        if code == '%' {
+            for s in &mut out {
+                s.push('%');
+            }
+            continue;
+        }
         match percent_values(code, p) {
             Some(values) => {
-                if out.len() > 1 && values.len() > 1 { return None; }
+                if out.len() > 1 && values.len() > 1 {
+                    return None;
+                }
                 out = out.iter().flat_map(|prefix| values.iter().map(move |value| format!("{prefix}{value}"))).collect();
             }
-            None => for s in &mut out { s.push('%'); s.push(code); },
+            None => {
+                for s in &mut out {
+                    s.push('%');
+                    s.push(code);
+                }
+            }
         }
     }
     Some(out)

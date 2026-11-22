@@ -6,7 +6,6 @@ use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::UI::Shell::PropertiesSystem::PSGetPropertyKeyFromName;
 use windows::Win32::UI::Shell::{BHID_EnumItems, IEnumShellItems, IShellItem, IShellItem2, SHCreateItemFromParsingName, SIGDN_FILESYSPATH};
 
-
 pub(crate) fn imported(items: Vec<(FsPath, bool)>, known: &[FsPath]) -> Vec<Location> {
     let same = |a: &FsPath, b: &FsPath| a.as_bytes().eq_ignore_ascii_case(b.as_bytes());
     let mut out: Vec<FsPath> = Vec::new();

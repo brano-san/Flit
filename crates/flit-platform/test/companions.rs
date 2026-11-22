@@ -12,7 +12,9 @@ impl Fs for Directory {
         Ok(())
     }
 
-    fn seek_penalty(&self, _: &FsPath) -> Option<bool> { None }
+    fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+        None
+    }
 }
 
 #[test]
@@ -25,17 +27,9 @@ fn copying_and_moving_a_primary_include_explicitly_selected_companions_once() {
     let orphan = dir.join(b"unpaired.xmp");
     for moving in [false, true] {
         let job = Job::detached(Resolve::Skip);
-        let op = |items| if moving {
-            FileOp::Move { items, dest: dest.clone() }
-        } else {
-            FileOp::Copy { items, dest: dest.clone() }
-        };
-        assert_eq!(job.prepare_companions(&Directory, op(vec![xmp.clone(), primary.clone(), orphan.clone()])).unwrap(),
-            op(vec![primary.clone(), orphan.clone()]));
-        assert_eq!(job.companion_targets(&primary, &dest.join(b"renamed.jpg")), [
-            (xmp.clone(), dest.join(b"renamed.jpg.xmp")),
-            (apple.clone(), dest.join(b"._renamed.jpg")),
-        ]);
+        let op = |items| if moving { FileOp::Move { items, dest: dest.clone() } } else { FileOp::Copy { items, dest: dest.clone() } };
+        assert_eq!(job.prepare_companions(&Directory, op(vec![xmp.clone(), primary.clone(), orphan.clone()])).unwrap(), op(vec![primary.clone(), orphan.clone()]));
+        assert_eq!(job.companion_targets(&primary, &dest.join(b"renamed.jpg")), [(xmp.clone(), dest.join(b"renamed.jpg.xmp")), (apple.clone(), dest.join(b"._renamed.jpg")),]);
         assert!(job.companion_targets(&orphan, &dest.join(b"unpaired.xmp")).is_empty());
     }
 }

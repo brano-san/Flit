@@ -25,9 +25,7 @@ impl Clock {
 }
 
 pub fn extensions(value: &str) -> Option<Vec<Vec<u8>>> {
-    (value.split(';').count() <= MAX_EXTS).then(|| value.split(';').map(|e| {
-        e.trim_start_matches('.').chars().flat_map(char::to_lowercase).collect::<String>().into_bytes()
-    }).collect())
+    (value.split(';').count() <= MAX_EXTS).then(|| value.split(';').map(|e| e.trim_start_matches('.').chars().flat_map(char::to_lowercase).collect::<String>().into_bytes()).collect())
 }
 
 pub fn size_range(value: &str) -> Option<(u64, u64)> {
@@ -133,7 +131,6 @@ fn date_value(x: &str, clock: Clock) -> Option<(i128, i128)> {
     };
     Some((clock.day_start(first) as i128, clock.day_start(last) as i128))
 }
-
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SearchPaths {

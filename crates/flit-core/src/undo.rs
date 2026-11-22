@@ -81,7 +81,13 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
         return steps.pop();
     }
     Some(Step::Checked(Replay {
-        steps: steps.into_iter().filter_map(|step| match step { Step::Run(op) => Some(op), _ => None }).collect(),
+        steps: steps
+            .into_iter()
+            .filter_map(|step| match step {
+                Step::Run(op) => Some(op),
+                _ => None,
+            })
+            .collect(),
         checks: Vec::new(),
         recheck_tree: false,
         captured_ns: None,
@@ -110,7 +116,9 @@ pub fn inverse_ops(report: &OpReport) -> Option<Vec<Step>> {
         FileOp::Copy { .. } | FileOp::Link { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::Restore(_) | FileOp::Archive(_) => created(),
         FileOp::Segments { .. } => created(),
         FileOp::Dedup { keep, backups, .. } => {
-            if backups.is_empty() { return None; }
+            if backups.is_empty() {
+                return None;
+            }
             FileOp::RestoreDedup { keep: keep.clone(), backups: backups.clone() }
         }
         FileOp::RestoreDedup { keep, .. } => FileOp::Dedup { keep: keep.clone(), candidates: items.iter().map(|(_, to)| to.clone()).collect(), backups: Vec::new() },
@@ -127,7 +135,20 @@ pub fn inverse_ops(report: &OpReport) -> Option<Vec<Step>> {
             FileOp::Restore(recycled)
         }
         FileOp::Access(changes) => FileOp::Access(changes.iter().rev().map(|c| AccessChange { item: c.item.clone(), from: c.to, to: c.from }).collect()),
-        FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::PasteLinkAs { .. } | FileOp::NewStream { .. } | FileOp::Delete(_) | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::FolderIcon { .. } | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) => return None,
+        FileOp::Paste { .. }
+        | FileOp::PasteLink { .. }
+        | FileOp::PasteLinkAs { .. }
+        | FileOp::NewStream { .. }
+        | FileOp::Delete(_)
+        | FileOp::Purge(_)
+        | FileOp::EmptyBin
+        | FileOp::FolderIcon { .. }
+        | FileOp::InstallFonts(_)
+        | FileOp::LockScreen(_)
+        | FileOp::SetAccess { .. }
+        | FileOp::SetAttributes { .. }
+        | FileOp::PasteDropped { .. }
+        | FileOp::GrantAccess(_) => return None,
     })];
     if !report.undo.replaced.is_empty() {
         let restore = report.undo.replaced.iter().filter_map(|(to, backup)| Some((backup.clone()?, to.clone()))).collect();
@@ -276,8 +297,7 @@ impl Entry {
     }
 
     fn overlaps(&self, other: &Self) -> bool {
-        self.provider == other.provider
-            && self.paths.iter().any(|a| other.paths.iter().any(|b| a.same(b) || a.is_inside(b) || b.is_inside(a)))
+        self.provider == other.provider && self.paths.iter().any(|a| other.paths.iter().any(|b| a.same(b) || a.is_inside(b) || b.is_inside(a)))
     }
 }
 

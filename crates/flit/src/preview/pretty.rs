@@ -199,7 +199,9 @@ fn xml_elements(text: &str) -> Option<Vec<XmlElement>> {
                     elements.push(XmlElement { preserve, children: false });
                 }
             }
-            Event::End(_) => { stack.pop()?; }
+            Event::End(_) => {
+                stack.pop()?;
+            }
             Event::Text(ref t) if significant(t) => elements[*stack.last()?].preserve = true,
             Event::CData(_) | Event::GeneralRef(_) => elements[*stack.last()?].preserve = true,
             Event::Comment(_) | Event::PI(_) => {

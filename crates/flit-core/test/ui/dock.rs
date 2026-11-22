@@ -84,10 +84,7 @@ fn a_junction_is_the_separator_under_the_cursor_with_its_full_length() {
     let low = Rect::new(601.0, 401.0, 299.0, 399.0);
     let low_right = Rect::new(901.0, 401.0, 299.0, 399.0);
     let panels = [(1, left), (2, top), (3, low), (4, low_right)];
-    let seams = [
-        Junction { line: Rect::new(600.0, 0.0, 1.0, 800.0), before: left, after: column, left: 1, right: 2 },
-        Junction { line: Rect::new(900.0, 401.0, 1.0, 399.0), before: low, after: low_right, left: 3, right: 4 },
-    ];
+    let seams = [Junction { line: Rect::new(600.0, 0.0, 1.0, 800.0), before: left, after: column, left: 1, right: 2 }, Junction { line: Rect::new(900.0, 401.0, 1.0, 399.0), before: low, after: low_right, left: 3, right: 4 }];
     for y in [100.0, 600.0] {
         let j = between(&zones(&panels, &seams, WINDOW, (590.0, y), 1.0, any)).expect("outer junction");
         assert_eq!(j.dock, Dock::Between { left: 1, right: 2 });

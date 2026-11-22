@@ -21,9 +21,12 @@ fn preview(path: &Path, size: (u32, u32)) -> (Embedded, mpsc::Receiver<HostEvent
     assert!(api().is_some(), "libmpv is required for this test");
     let (tx, events) = mpsc::channel();
     let start = Start { path: path.into(), video: true, gen: 1, volume: Some(0.0), area: Some(size), every: Duration::from_millis(16) };
-    let player = Embedded::start(start, Arc::new(move |event| {
-        let _ = tx.send(event);
-    }));
+    let player = Embedded::start(
+        start,
+        Arc::new(move |event| {
+            let _ = tx.send(event);
+        }),
+    );
     (player, events)
 }
 
@@ -47,12 +50,8 @@ fn first_frame(path: &Path, size: (u32, u32), paused: bool) -> Bitmap {
 fn reference(path: &Path, hdr: bool, size: (u32, u32)) -> Vec<u8> {
     let (w, h) = size;
     let convert = if hdr { REFERENCE } else { "format=rgb24" };
-    let output = Command::new("ffmpeg")
-        .args(["-v", "error", "-threads", "2", "-filter_threads", "2", "-i"])
-        .arg(path)
-        .args(["-vf", &format!("{convert},scale={w}:{h}:flags=area"), "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-threads", "1", "-"])
-        .output()
-        .unwrap();
+    let output =
+        Command::new("ffmpeg").args(["-v", "error", "-threads", "2", "-filter_threads", "2", "-i"]).arg(path).args(["-vf", &format!("{convert},scale={w}:{h}:flags=area"), "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "-threads", "1", "-"]).output().unwrap();
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(output.stdout.len(), w as usize * h as usize * 3);
     output.stdout

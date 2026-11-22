@@ -127,9 +127,13 @@ pub fn set_pseudo(on: bool) {
 
 fn pseudo_enabled() -> bool {
     #[cfg(not(test))]
-    { PSEUDO.load(Ordering::Relaxed) }
+    {
+        PSEUDO.load(Ordering::Relaxed)
+    }
     #[cfg(test)]
-    { PSEUDO.get() }
+    {
+        PSEUDO.get()
+    }
 }
 
 #[inline]
@@ -236,8 +240,7 @@ fn s_row(l: Lang) -> &'static [&'static str] {
     let unix = UNIX_TERMS.load(Ordering::Relaxed);
     if l == Lang::Pseudo {
         static PSEUDO: [OnceLock<Vec<&'static str>>; 2] = [const { OnceLock::new() }; 2];
-        return PSEUDO[usize::from(unix)]
-            .get_or_init(|| s_row_for(Lang::En, unix).iter().map(|s| cache_pseudo(s)).collect());
+        return PSEUDO[usize::from(unix)].get_or_init(|| s_row_for(Lang::En, unix).iter().map(|s| cache_pseudo(s)).collect());
     }
     s_row_for(l, unix)
 }
@@ -254,12 +257,7 @@ fn p_row(l: Lang) -> &'static [&'static [&'static str]] {
     let unix = UNIX_TERMS.load(Ordering::Relaxed);
     if l == Lang::Pseudo {
         static PSEUDO: [OnceLock<Vec<&'static [&'static str]>>; 2] = [const { OnceLock::new() }; 2];
-        return PSEUDO[usize::from(unix)].get_or_init(|| {
-            p_row_for(Lang::En, unix)
-                .iter()
-                .map(|forms| &*Box::leak(forms.iter().map(|s| cache_pseudo(s)).collect::<Box<[_]>>()))
-                .collect()
-        });
+        return PSEUDO[usize::from(unix)].get_or_init(|| p_row_for(Lang::En, unix).iter().map(|forms| &*Box::leak(forms.iter().map(|s| cache_pseudo(s)).collect::<Box<[_]>>())).collect());
     }
     p_row_for(l, unix)
 }
@@ -274,14 +272,8 @@ fn p_row_for(l: Lang, unix: bool) -> &'static [&'static [&'static str]] {
 }
 
 fn accent(c: char) -> char {
-    const LOWER: [char; 26] = [
-        'á', 'ƀ', 'ç', 'ð', 'é', 'ƒ', 'ĝ', 'ĥ', 'ı', 'ĵ', 'ķ', 'ļ', 'ɱ', 'ñ', 'ö', 'þ', 'ɋ', 'ř',
-        'š', 'ţ', 'ü', 'ṽ', 'ŵ', 'ẋ', 'ý', 'ž',
-    ];
-    const UPPER: [char; 26] = [
-        'Á', 'Ƀ', 'Ç', 'Ð', 'É', 'Ƒ', 'Ĝ', 'Ĥ', 'İ', 'Ĵ', 'Ķ', 'Ļ', 'Ɱ', 'Ñ', 'Ö', 'Þ', 'Ɋ', 'Ř',
-        'Ŝ', 'Ţ', 'Ü', 'Ṽ', 'Ŵ', 'Ẋ', 'Ý', 'Ž',
-    ];
+    const LOWER: [char; 26] = ['á', 'ƀ', 'ç', 'ð', 'é', 'ƒ', 'ĝ', 'ĥ', 'ı', 'ĵ', 'ķ', 'ļ', 'ɱ', 'ñ', 'ö', 'þ', 'ɋ', 'ř', 'š', 'ţ', 'ü', 'ṽ', 'ŵ', 'ẋ', 'ý', 'ž'];
+    const UPPER: [char; 26] = ['Á', 'Ƀ', 'Ç', 'Ð', 'É', 'Ƒ', 'Ĝ', 'Ĥ', 'İ', 'Ĵ', 'Ķ', 'Ļ', 'Ɱ', 'Ñ', 'Ö', 'Þ', 'Ɋ', 'Ř', 'Ŝ', 'Ţ', 'Ü', 'Ṽ', 'Ŵ', 'Ẋ', 'Ý', 'Ž'];
     match c {
         'a'..='z' => LOWER[c as usize - 'a' as usize],
         'A'..='Z' => UPPER[c as usize - 'A' as usize],
@@ -657,8 +649,7 @@ struct Template {
 }
 
 fn templates(l: Lang) -> &'static [Template] {
-    static ALL: [OnceLock<Vec<Template>>; Lang::ALL.len() + 1] =
-        [const { OnceLock::new() }; Lang::ALL.len() + 1];
+    static ALL: [OnceLock<Vec<Template>>; Lang::ALL.len() + 1] = [const { OnceLock::new() }; Lang::ALL.len() + 1];
     ALL[l as usize].get_or_init(|| {
         let plain = S::ALL.into_iter().map(|s| Template { key: Key::S(s), text: s.in_lang(l) });
         let plural = P::ALL.into_iter().flat_map(|p| p.forms(l).iter().map(move |&text| Template { key: Key::P(p), text }));

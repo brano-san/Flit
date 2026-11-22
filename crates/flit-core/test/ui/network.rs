@@ -11,11 +11,7 @@ use std::time::Instant;
 fn connection_failure_hides_passwords_from_the_status_line() {
     let mut a = linux();
     let tab = a.tab().id;
-    a.on_provider_event(ProviderEvent::OpDone {
-        tab, id: 0,
-        error: Some("Cannot connect to sftp://ann:secret@nas/docs (password=also-secret&port=22)".into()),
-        report: None,
-    }, Instant::now());
+    a.on_provider_event(ProviderEvent::OpDone { tab, id: 0, error: Some("Cannot connect to sftp://ann:secret@nas/docs (password=also-secret&port=22)".into()), report: None }, Instant::now());
     assert_eq!(a.tab().error.as_deref(), Some("Cannot connect to sftp://ann:***@nas/docs (password=***&port=22)"));
 }
 
@@ -159,10 +155,7 @@ fn an_smb_request_asks_for_user_domain_and_password_and_offers_anonymous_access(
     let mut a = app();
     asked(&mut a, login_ask(ASK_PASSWORD | ASK_USER | ASK_DOMAIN | ASK_ANONYMOUS));
     let f = a.dialogs.form.as_ref().unwrap();
-    assert_eq!(
-        labels(f)[1..],
-        [format!("text:{}=ann", S::SidebarDriveLoginUser.t()), format!("text:{}=WORK", S::SidebarDriveLoginDomain.t()), format!("secret:{}", S::SidebarDriveLoginPassword.t()), format!("check:{}", S::SidebarDriveLoginAnonymous.t())]
-    );
+    assert_eq!(labels(f)[1..], [format!("text:{}=ann", S::SidebarDriveLoginUser.t()), format!("text:{}=WORK", S::SidebarDriveLoginDomain.t()), format!("secret:{}", S::SidebarDriveLoginPassword.t()), format!("check:{}", S::SidebarDriveLoginAnonymous.t())]);
     assert!(!labels(f).iter().any(|l| l.starts_with("choice:")), "no remember choice when gvfs cannot save");
 }
 
@@ -391,10 +384,13 @@ fn an_empty_network_place_checks_once_and_the_banner_opens_sharing_settings() {
     publish(&mut a, false, &[], None);
     assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
     publish(&mut a, true, &[], None);
-    let checks: Vec<_> = a.drain_effects().filter_map(|e| match e {
-        Effect::NetworkDiscovery { tab, gen } => Some((tab, gen)),
-        _ => None,
-    }).collect();
+    let checks: Vec<_> = a
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::NetworkDiscovery { tab, gen } => Some((tab, gen)),
+            _ => None,
+        })
+        .collect();
     assert_eq!(checks, [(a.tab().id, a.tab().gen)]);
     let (tab, gen) = checks[0];
     a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen: gen + 1, warning: Some(NetworkWarning::WindowsDisabled) }, now);
@@ -503,12 +499,7 @@ fn in_network(a: &mut App) {
     assert_eq!(listed(a), [FsPath::network()], "opening Network asks the platform to look for computers");
 }
 
-const SERVERS: [(&str, &str); 4] = [
-    ("sftp://brano-2.local:22/", "Файлы на сервере"),
-    ("smb://brano-2.local:445/", "BRANO"),
-    ("dav+sd://Team%20DAV._webdav._tcp.local", "Team DAV"),
-    ("nfs://brano-2.local:2049/export", "nfs export"),
-];
+const SERVERS: [(&str, &str); 4] = [("sftp://brano-2.local:22/", "Файлы на сервере"), ("smb://brano-2.local:445/", "BRANO"), ("dav+sd://Team%20DAV._webdav._tcp.local", "Team DAV"), ("nfs://brano-2.local:2049/export", "nfs export")];
 
 const SMB: &str = "smb://brano-2.local:445/";
 const SHARE: &str = "smb://brano-2.local/private";
@@ -531,11 +522,14 @@ fn displayed_network() -> App {
 }
 
 fn mount_started(a: &mut App, uri: &str) -> (u64, u64) {
-    let starts: Vec<_> = a.drain_effects().filter_map(|effect| match effect {
-        Effect::Provider { req: ProviderRequest::Launch { tab, launch: Launch::ConnectNetwork { uri, gen } }, .. } => Some((tab, gen, uri)),
-        Effect::Provider { req: ProviderRequest::List { path, .. }, .. } if path.is_network() => panic!("listed {} before mounting", path.display()),
-        _ => None,
-    }).collect();
+    let starts: Vec<_> = a
+        .drain_effects()
+        .filter_map(|effect| match effect {
+            Effect::Provider { req: ProviderRequest::Launch { tab, launch: Launch::ConnectNetwork { uri, gen } }, .. } => Some((tab, gen, uri)),
+            Effect::Provider { req: ProviderRequest::List { path, .. }, .. } if path.is_network() => panic!("listed {} before mounting", path.display()),
+            _ => None,
+        })
+        .collect();
     assert_eq!(starts.len(), 1, "{starts:?}");
     let (tab, gen, actual) = &starts[0];
     assert_eq!(actual, uri);

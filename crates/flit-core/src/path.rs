@@ -35,10 +35,7 @@ const UNIX_HOST: bool = cfg!(unix);
 pub fn is_label(input: &[u8], label: S) -> bool {
     let Ok(text) = std::str::from_utf8(input) else { return false };
     let text = text.trim().to_lowercase();
-    Lang::ALL
-        .into_iter()
-        .chain((crate::i18n::lang() == Lang::Pseudo).then_some(Lang::Pseudo))
-        .any(|l| label.in_lang(l).to_lowercase() == text)
+    Lang::ALL.into_iter().chain((crate::i18n::lang() == Lang::Pseudo).then_some(Lang::Pseudo)).any(|l| label.in_lang(l).to_lowercase() == text)
 }
 
 impl FsPath {
@@ -232,11 +229,7 @@ impl FsPath {
             let root = vec![rest[0].to_ascii_uppercase(), b':', b'\\'];
             return Self::with_segments(root, PathKind::Drive, b'\\', &rest[2..]);
         }
-        let unc_body = if verbatim {
-            rest.strip_prefix(br"UNC\")
-        } else {
-            rest.strip_prefix(br"\\")
-        };
+        let unc_body = if verbatim { rest.strip_prefix(br"UNC\") } else { rest.strip_prefix(br"\\") };
         if let Some(body) = unc_body {
             let mut parts = body.splitn(3, |&c| c == b'\\');
             let server = parts.next().filter(|s| !s.is_empty())?;
@@ -302,7 +295,11 @@ impl FsPath {
     }
 
     pub fn same(&self, other: &Self) -> bool {
-        if self.case_sensitive() { self.s == other.s } else { self.s.eq_ignore_ascii_case(&other.s) }
+        if self.case_sensitive() {
+            self.s == other.s
+        } else {
+            self.s.eq_ignore_ascii_case(&other.s)
+        }
     }
 
     pub fn is_inside(&self, folder: &Self) -> bool {
@@ -312,7 +309,11 @@ impl FsPath {
     }
 
     pub fn sep(&self) -> u8 {
-        if self.kind == PathKind::Unix { b'/' } else { b'\\' }
+        if self.kind == PathKind::Unix {
+            b'/'
+        } else {
+            b'\\'
+        }
     }
 
     pub fn display(&self) -> Cow<'_, str> {
@@ -465,10 +466,18 @@ impl<'de> Deserialize<'de> for FsPath {
 
 fn trim(mut b: &[u8]) -> &[u8] {
     while let [first, rest @ ..] = b {
-        if first.is_ascii_whitespace() || *first == b'"' { b = rest } else { break }
+        if first.is_ascii_whitespace() || *first == b'"' {
+            b = rest
+        } else {
+            break;
+        }
     }
     while let [rest @ .., last] = b {
-        if last.is_ascii_whitespace() || *last == b'"' { b = rest } else { break }
+        if last.is_ascii_whitespace() || *last == b'"' {
+            b = rest
+        } else {
+            break;
+        }
     }
     b
 }

@@ -84,14 +84,16 @@ struct PathScope {
 struct Ancestors(Vec<AtomicU8>);
 
 fn same_path(path: &FsPath, left: &[u8], right: &[u8]) -> bool {
-    if path.case_sensitive() { left == right } else { left.eq_ignore_ascii_case(right) }
+    if path.case_sensitive() {
+        left == right
+    } else {
+        left.eq_ignore_ascii_case(right)
+    }
 }
 
 fn on_volume(v: &VolumeIndex, path: &FsPath) -> bool {
     let root = v.root.strip_suffix(&[v.sep]).unwrap_or(&v.root);
-    path.sep() == v.sep && path.as_bytes().get(..root.len()).is_some_and(|prefix| {
-        same_path(path, root, prefix) && path.as_bytes().get(root.len()).is_none_or(|&b| b == v.sep)
-    })
+    path.sep() == v.sep && path.as_bytes().get(..root.len()).is_some_and(|prefix| same_path(path, root, prefix) && path.as_bytes().get(root.len()).is_none_or(|&b| b == v.sep))
 }
 
 fn at_volume_root(v: &VolumeIndex, path: &FsPath) -> bool {
@@ -598,7 +600,11 @@ impl ResultSet {
                     None => true,
                     Some((bk, bi)) => {
                         let c = e.cmp(order, (vol, i), (self.streams[bk].vol, bi));
-                        if desc { c == Ordering::Greater } else { c == Ordering::Less }
+                        if desc {
+                            c == Ordering::Greater
+                        } else {
+                            c == Ordering::Less
+                        }
                     }
                 };
                 if better {
@@ -736,24 +742,29 @@ impl Engine {
             };
             match &stream.kind {
                 Kind::List(list) => list.iter().copied().enumerate().try_for_each(visit)?,
-                Kind::Perm(bits) => v.perms[order_of(rs.sort.key) as usize].iter().copied()
-                    .enumerate().try_for_each(|(at, i)| {
-                        if at.is_multiple_of(4096) && cancel() { return None; }
-                        if bits.as_ref().is_none_or(|b| b.get(i as usize / 64).is_some_and(|w| w & (1 << (i % 64)) != 0)) {
-                            counts.entry((stream.vol, v.parents[i as usize])).or_insert((i, 0)).1 += 1;
-                        }
-                        Some(())
-                    })?,
+                Kind::Perm(bits) => v.perms[order_of(rs.sort.key) as usize].iter().copied().enumerate().try_for_each(|(at, i)| {
+                    if at.is_multiple_of(4096) && cancel() {
+                        return None;
+                    }
+                    if bits.as_ref().is_none_or(|b| b.get(i as usize / 64).is_some_and(|w| w & (1 << (i % 64)) != 0)) {
+                        counts.entry((stream.vol, v.parents[i as usize])).or_insert((i, 0)).1 += 1;
+                    }
+                    Some(())
+                })?,
             }
         }
         let mut chain = Vec::new();
         let mut counts: Vec<_> = counts.into_iter().collect();
         counts.sort_unstable_by_key(|&((vol, parent), (_, count))| (std::cmp::Reverse(count), vol, parent));
-        let folders = counts.into_iter().take(256).map(|((vol, _), (i, count))| {
-            let mut path = Vec::new();
-            self.volumes[vol].dir_into(i, &mut chain, &mut path);
-            (path, count)
-        }).collect();
+        let folders = counts
+            .into_iter()
+            .take(256)
+            .map(|((vol, _), (i, count))| {
+                let mut path = Vec::new();
+                self.volumes[vol].dir_into(i, &mut chain, &mut path);
+                (path, count)
+            })
+            .collect();
         Some(flit_core::query_attrs::finish_folder_counts(folders))
     }
 
@@ -768,13 +779,17 @@ impl Engine {
             match &stream.kind {
                 Kind::List(ids) => {
                     for (n, &i) in ids.iter().enumerate() {
-                        if n.is_multiple_of(4096) && cancel() { return None; }
+                        if n.is_multiple_of(4096) && cancel() {
+                            return None;
+                        }
                         add(i);
                     }
                 }
                 Kind::Perm(bits) => {
                     for (n, &i) in v.perms[order_of(rs.sort.key) as usize].iter().enumerate() {
-                        if n.is_multiple_of(4096) && cancel() { return None; }
+                        if n.is_multiple_of(4096) && cancel() {
+                            return None;
+                        }
                         if bits.as_ref().is_none_or(|b| b.get(i as usize / 64).is_some_and(|w| w & (1 << (i % 64)) != 0)) {
                             add(i);
                         }

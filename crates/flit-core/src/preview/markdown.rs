@@ -112,14 +112,17 @@ fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, no
             Event::Start(Tag::FootnoteDefinition(label)) => {
                 md.finish();
                 let mut depth = 1;
-                let body = events.by_ref().take_while(|event| {
-                    match event {
-                        Event::Start(Tag::FootnoteDefinition(_)) => depth += 1,
-                        Event::End(TagEnd::FootnoteDefinition) => depth -= 1,
-                        _ => {}
-                    }
-                    depth > 0
-                }).collect();
+                let body = events
+                    .by_ref()
+                    .take_while(|event| {
+                        match event {
+                            Event::Start(Tag::FootnoteDefinition(_)) => depth += 1,
+                            Event::End(TagEnd::FootnoteDefinition) => depth -= 1,
+                            _ => {}
+                        }
+                        depth > 0
+                    })
+                    .collect();
                 notes.definitions.push((label.into_string(), body));
             }
             Event::FootnoteReference(label) => {
@@ -200,11 +203,14 @@ fn render<'a>(md: &mut Markdown, mut events: impl Iterator<Item = Event<'a>>, no
             Event::Start(Tag::Table(align)) => {
                 md.marker();
                 md.finish();
-                let align = align.into_iter().map(|a| match a {
-                    pulldown_cmark::Alignment::Center => Alignment::Center,
-                    pulldown_cmark::Alignment::Right => Alignment::Right,
-                    _ => Alignment::Left,
-                }).collect();
+                let align = align
+                    .into_iter()
+                    .map(|a| match a {
+                        pulldown_cmark::Alignment::Center => Alignment::Center,
+                        pulldown_cmark::Alignment::Right => Alignment::Right,
+                        _ => Alignment::Left,
+                    })
+                    .collect();
                 md.table = Some(Table { align, rows: Vec::new() });
             }
             Event::Start(Tag::TableRow | Tag::TableHead) => {

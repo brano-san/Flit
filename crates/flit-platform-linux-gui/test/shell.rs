@@ -143,9 +143,7 @@ fn pdf_pages_are_loaded_at_their_own_crop_and_rotation() {
     let path = FsPath::parse_exact(path.as_os_str().as_encoded_bytes()).unwrap();
     let cancel = flit_core::provider::GenToken::default();
     cancel.set(7);
-    let req = flit_core::preview::PreviewRequest {
-        gen: 7, cancel, path, kind: flit_core::preview::Kind::Other, size: document.len() as u64, details: false, px: 256,
-    };
+    let req = flit_core::preview::PreviewRequest { gen: 7, cancel, path, kind: flit_core::preview::Kind::Other, size: document.len() as u64, details: false, px: 256 };
     let mut shell = LinuxShell;
     let pages = shell.pdf_document(&req).unwrap();
     use flit_core::preview::pdf::Size;
@@ -647,7 +645,12 @@ fn app_entry(id: &str, exec: &str, categories: &str) -> crate::apps::Entry {
 
 #[test]
 fn the_system_file_manager_is_another_file_manager_than_flit() {
-    let entries = [app_entry("flit.desktop", "flit %U", "System;FileManager;"), app_entry("userapp-flit-x.desktop", "/opt/flit/flit %U", "FileManager;"), app_entry("baobab.desktop", "baobab %U", "GTK;System;"), app_entry("org.gnome.Nautilus.desktop", "nautilus --new-window %U", "GNOME;Utility;Core;FileManager;")];
+    let entries = [
+        app_entry("flit.desktop", "flit %U", "System;FileManager;"),
+        app_entry("userapp-flit-x.desktop", "/opt/flit/flit %U", "FileManager;"),
+        app_entry("baobab.desktop", "baobab %U", "GTK;System;"),
+        app_entry("org.gnome.Nautilus.desktop", "nautilus --new-window %U", "GNOME;Utility;Core;FileManager;"),
+    ];
     let mut assoc = crate::apps::Assoc::default();
     crate::apps::parse_mimeapps("[Default Applications]\ninode/directory=flit.desktop;\n", &mut assoc);
     assert_eq!(other_file_manager(&entries, &assoc).map(|e| e.id.as_str()), Some("org.gnome.Nautilus.desktop"));

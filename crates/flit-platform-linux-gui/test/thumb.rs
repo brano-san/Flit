@@ -70,10 +70,12 @@ fn the_content_not_the_extension_picks_the_decoder_and_webp_decodes() {
     let b = unpack_bitmap(decoded, 15).unwrap();
     assert_eq!((b.width, b.height), (15, 5));
     assert_eq!(&b.rgba[..4], &[128, 0, 0, 128]);
-    let decode = |embedded, error| decode_file(&webp, 15, embedded, |path, size| {
-        assert_eq!((path, size), (webp.as_path(), 15));
-        Err(error)
-    });
+    let decode = |embedded, error| {
+        decode_file(&webp, 15, embedded, |path, size| {
+            assert_eq!((path, size), (webp.as_path(), 15));
+            Err(error)
+        })
+    };
     for embedded in [false, true] {
         assert!(matches!(decode(embedded, parse_process::Error::Unsupported), PreviewPicture::Missing));
         assert!(matches!(decode(embedded, parse_process::Error::Cancelled), PreviewPicture::Missing));

@@ -152,17 +152,7 @@ unsafe fn cleared_texture(gl: &glow::Context, side: u32) -> Result<glow::Texture
 
 unsafe fn update(gl: &glow::Context, tex: glow::Texture, slot: Slot, rgba: &[u8]) {
     gl.bind_texture(glow::TEXTURE_2D, Some(tex));
-    gl.tex_sub_image_2d(
-        glow::TEXTURE_2D,
-        0,
-        slot.x as i32,
-        slot.y as i32,
-        slot.w as i32,
-        slot.h as i32,
-        glow::RGBA,
-        glow::UNSIGNED_BYTE,
-        glow::PixelUnpackData::Slice(Some(&rgba[..(slot.w * slot.h * 4) as usize])),
-    );
+    gl.tex_sub_image_2d(glow::TEXTURE_2D, 0, slot.x as i32, slot.y as i32, slot.w as i32, slot.h as i32, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelUnpackData::Slice(Some(&rgba[..(slot.w * slot.h * 4) as usize])));
 }
 
 impl GlDevice {
@@ -173,11 +163,7 @@ impl GlDevice {
 
     pub fn headless() -> Result<Self, PlatformError> {
         let devices: Vec<Device> = Device::query_devices().map_err(err)?.collect();
-        let device = devices
-            .iter()
-            .find(|d| d.extensions().contains("EGL_MESA_device_software"))
-            .or(devices.first())
-            .ok_or_else(|| PlatformError::new(-1, "no EGL device"))?;
+        let device = devices.iter().find(|d| d.extensions().contains("EGL_MESA_device_software")).or(devices.first()).ok_or_else(|| PlatformError::new(-1, "no EGL device"))?;
         let display = unsafe { Display::with_device(device, None) }.map_err(err)?;
         Self::with_display(display, ConfigSurfaceTypes::empty())
     }
@@ -188,25 +174,14 @@ impl GlDevice {
 
     fn with_display(display: Display, surfaces: ConfigSurfaceTypes) -> Result<Self, PlatformError> {
         let _span = tracing::info_span!("gl_device").entered();
-        let template = ConfigTemplateBuilder::new()
-            .with_alpha_size(0)
-            .with_depth_size(0)
-            .with_stencil_size(0)
-            .with_api(Api::GLES3)
-            .with_surface_type(surfaces)
-            .build();
+        let template = ConfigTemplateBuilder::new().with_alpha_size(0).with_depth_size(0).with_stencil_size(0).with_api(Api::GLES3).with_surface_type(surfaces).build();
         let rgb8 = Some(ColorBufferType::Rgb { r_size: 8, g_size: 8, b_size: 8 });
         let config = unsafe { display.find_configs(template) }
             .map_err(err)?
             .filter(|c| c.color_buffer_type() == rgb8 && c.num_samples() <= 1)
             .min_by_key(|c| (c.alpha_size(), c.depth_size(), c.stencil_size()))
             .ok_or_else(|| PlatformError::new(-1, "no 8-bit OpenGL ES 3 config"))?;
-        let attrs = |robustness| {
-            ContextAttributesBuilder::new()
-                .with_context_api(ContextApi::Gles(Some(Version::new(3, 0))))
-                .with_robustness(robustness)
-                .build(None)
-        };
+        let attrs = |robustness| ContextAttributesBuilder::new().with_context_api(ContextApi::Gles(Some(Version::new(3, 0)))).with_robustness(robustness).build(None);
         let (context, robust) = match unsafe { display.create_context(&config, &attrs(Robustness::RobustLoseContextOnReset)) } {
             Ok(c) => (c, true),
             Err(_) => (unsafe { display.create_context(&config, &attrs(Robustness::NotRobust)) }.map_err(err)?, false),
@@ -216,24 +191,12 @@ impl GlDevice {
             let gl = glow::Context::from_loader_function_cstr(|s| display.get_proc_address(s));
             let renderer = gl.get_parameter_string(glow::RENDERER);
             let software = ["llvmpipe", "softpipe", "SwiftShader"].iter().any(|s| renderer.contains(s));
-            let reset_status = (robust
-                && ["GL_KHR_robustness", "GL_EXT_robustness"].iter().any(|e| gl.supported_extensions().contains(*e)))
-            .then(|| ResetStatus::load(&display))
-            .flatten();
+            let reset_status = (robust && ["GL_KHR_robustness", "GL_EXT_robustness"].iter().any(|e| gl.supported_extensions().contains(*e))).then(|| ResetStatus::load(&display)).flatten();
             let program = program(&gl, shader::FRAGMENT).map_err(|e| PlatformError::new(-1, format!("ui shader: {e}")))?;
-            let lcd_program = if gl.supported_extensions().contains(LCD_EXTENSION) {
-                self::program(&gl, shader::FRAGMENT_LCD).map_err(|e| tracing::warn!("subpixel text shader: {e}")).ok()
-            } else {
-                None
-            };
+            let lcd_program = if gl.supported_extensions().contains(LCD_EXTENSION) { self::program(&gl, shader::FRAGMENT_LCD).map_err(|e| tracing::warn!("subpixel text shader: {e}")).ok() } else { None };
             crate::fonts::set_lcd_blend(lcd_program.is_some());
             let sampler = gl.create_sampler().map_err(err)?;
-            for (name, value) in [
-                (glow::TEXTURE_MIN_FILTER, glow::LINEAR),
-                (glow::TEXTURE_MAG_FILTER, glow::LINEAR),
-                (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE),
-                (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE),
-            ] {
+            for (name, value) in [(glow::TEXTURE_MIN_FILTER, glow::LINEAR), (glow::TEXTURE_MAG_FILTER, glow::LINEAR), (glow::TEXTURE_WRAP_S, glow::CLAMP_TO_EDGE), (glow::TEXTURE_WRAP_T, glow::CLAMP_TO_EDGE)] {
                 gl.sampler_parameter_i32(sampler, name, value as i32);
             }
             for unit in 0..3 {
@@ -245,17 +208,7 @@ impl GlDevice {
             gl.blend_func(glow::ONE, glow::ONE_MINUS_SRC_ALPHA);
             context.make_not_current_in_place().map_err(err)?;
             tracing::info!(renderer, robust, lcd = lcd_program.is_some(), "gl device ready");
-            let shared = Shared {
-                gl,
-                context,
-                display,
-                config,
-                program,
-                lcd_program,
-                empty,
-                reset_status,
-                render_thread: Cell::new(None),
-            };
+            let shared = Shared { gl, context, display, config, program, lcd_program, empty, reset_status, render_thread: Cell::new(None) };
             Ok(Self { shared: Rc::new(shared), software })
         }
     }
@@ -337,13 +290,7 @@ impl GlRenderer {
             gl.bind_vertex_array(Some(vao));
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(instances));
             let stride = size_of::<Instance>() as i32;
-            for (loc, n, ty, offset) in [
-                (0, 4, glow::FLOAT, 0),
-                (1, 4, glow::FLOAT, 16),
-                (2, 4, glow::FLOAT, 32),
-                (3, 4, glow::UNSIGNED_BYTE, 48),
-                (4, 2, glow::FLOAT, 52),
-            ] {
+            for (loc, n, ty, offset) in [(0, 4, glow::FLOAT, 0), (1, 4, glow::FLOAT, 16), (2, 4, glow::FLOAT, 32), (3, 4, glow::UNSIGNED_BYTE, 48), (4, 2, glow::FLOAT, 52)] {
                 gl.vertex_attrib_pointer_f32(loc, n, ty, ty == glow::UNSIGNED_BYTE, stride, offset);
             }
             gl.vertex_attrib_pointer_i32(5, 1, glow::UNSIGNED_INT, stride, 60);
@@ -354,19 +301,7 @@ impl GlRenderer {
             gl.bind_vertex_array(None);
             let atlas = cleared_texture(gl, atlas_size)?;
             tracing::info!(software = dev.software, "renderer ready");
-            Ok(Self {
-                shared: dev.shared.clone(),
-                target,
-                vao,
-                instances,
-                globals,
-                atlas,
-                thumbs: None,
-                preview: None,
-                preview_size: (0, 0),
-                backdrop: None,
-                size: (w.max(1), h.max(1)),
-            })
+            Ok(Self { shared: dev.shared.clone(), target, vao, instances, globals, atlas, thumbs: None, preview: None, preview_size: (0, 0), backdrop: None, size: (w.max(1), h.max(1)) })
         }
     }
 

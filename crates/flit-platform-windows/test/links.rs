@@ -26,7 +26,6 @@ fn equal_unc_share_names_do_not_prove_that_an_unknown_volume_supports_hard_links
     assert_eq!(item_choices(&source, &destination, true, false, Some(&known), Some(&other)).0, [true, true, false, false]);
 }
 
-
 struct Temp(std::path::PathBuf);
 
 impl Temp {
@@ -73,7 +72,8 @@ fn elevated_arguments_preserve_unpaired_utf16_and_never_substitute_a_neighbor() 
         assert_eq!(decoded(OsString::from(&args[3])), Some(path.clone()));
         assert_eq!(OsString::from_wide(&units).encode_wide().collect::<Vec<_>>(), units);
         Ok(0)
-    }).unwrap();
+    })
+    .unwrap();
     assert_eq!(launched.get(), 1);
 }
 
@@ -86,7 +86,8 @@ fn a_whole_batch_of_symbolic_links_goes_through_one_elevated_launch() {
     elevated_with(&pairs, |args| {
         launches.borrow_mut().push(args.to_vec());
         Ok(0)
-    }).unwrap();
+    })
+    .unwrap();
     let launches = launches.into_inner();
     assert_eq!(launches.len(), 1);
     let args = &launches[0];
@@ -112,7 +113,8 @@ fn a_batch_longer_than_one_command_line_is_split_but_keeps_every_link() {
         assert!(args.iter().map(|a| a.len() + 3).sum::<usize>() < 32767);
         launches.borrow_mut().push(args.len());
         Ok(0)
-    }).unwrap();
+    })
+    .unwrap();
     let launches = launches.into_inner();
     assert!(launches.len() > 1);
     assert_eq!(launches.iter().map(|n| n - 1).sum::<usize>(), 3 * pairs.len());

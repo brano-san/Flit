@@ -208,7 +208,14 @@ impl Target_Impl {
             (Some((_, slot @ Some(_))), Some(data)) => {
                 let mut e = allowed;
                 let t = slot.as_ref()?;
-                let ok = unsafe { if entering { t.DragEnter(&data, keys, *pt, &mut e) } else { t.DragOver(keys, *pt, &mut e) } }.is_ok();
+                let ok = unsafe {
+                    if entering {
+                        t.DragEnter(&data, keys, *pt, &mut e)
+                    } else {
+                        t.DragOver(keys, *pt, &mut e)
+                    }
+                }
+                .is_ok();
                 if !ok && entering {
                     *slot = None;
                 }

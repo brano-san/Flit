@@ -136,12 +136,7 @@ impl App {
                 crate::ui::field::text_entries(m, &r.edit, false, a.text_on_clipboard());
                 m.separator();
             }
-            for (id, label) in [
-                ("rename.insert_id", S::ActionsRenameInsertId),
-                ("rename.insert_date", S::ActionsRenameInsertDate),
-                ("rename.insert_created", S::ActionsRenameInsertCreated),
-                ("rename.insert_modified", S::ActionsRenameInsertModified),
-            ] {
+            for (id, label) in [("rename.insert_id", S::ActionsRenameInsertId), ("rename.insert_date", S::ActionsRenameInsertDate), ("rename.insert_created", S::ActionsRenameInsertCreated), ("rename.insert_modified", S::ActionsRenameInsertModified)] {
                 m.action(id, label.t());
             }
             m.separator();
@@ -176,9 +171,7 @@ impl App {
         let l = v.listing();
         let folded = nocase.then(|| crate::name::display(name).to_lowercase());
         let dir = t.entry_dir(idx);
-        (0..l.len() as u32)
-            .filter(|&i| i != idx && l.entries[i as usize].attrs & attr::DELETED == 0 && l.folder(i) == l.folder(idx))
-            .any(|i| same_name(l.name(i), name, folded.as_deref()) && t.entry_dir(i) == dir)
+        (0..l.len() as u32).filter(|&i| i != idx && l.entries[i as usize].attrs & attr::DELETED == 0 && l.folder(i) == l.folder(idx)).any(|i| same_name(l.name(i), name, folded.as_deref()) && t.entry_dir(i) == dir)
     }
 
     pub(super) fn commit_rename(&mut self) -> bool {

@@ -443,7 +443,11 @@ pub fn set_default(desktop: &Path, mime: &str) -> io::Result<()> {
 pub fn with_files(command: &str) -> String {
     let command = command.replace(['\n', '\r'], " ");
     let codes = crate::shell::split_args(&command).iter().any(|a| matches!(a.as_str(), "%f" | "%F" | "%u" | "%U"));
-    if codes { command.trim().to_owned() } else { format!("{} %F", command.trim()) }
+    if codes {
+        command.trim().to_owned()
+    } else {
+        format!("{} %F", command.trim())
+    }
 }
 
 fn program_name(exec: &str) -> String {

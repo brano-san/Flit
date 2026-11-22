@@ -202,9 +202,7 @@ pub(crate) fn private_polling_pipe(name: &[u16]) -> Result<File, PlatformError> 
     let security = pipe_security(true).map_err(|e| PlatformError::new(-1, e))?;
     let attrs = SECURITY_ATTRIBUTES { nLength: size_of::<SECURITY_ATTRIBUTES>() as u32, lpSecurityDescriptor: security.0 .0, bInheritHandle: false.into() };
     let mode = PIPE_ACCESS_DUPLEX | FILE_FLAG_FIRST_PIPE_INSTANCE;
-    let h = unsafe {
-        CreateNamedPipeW(PCWSTR(name.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 64 * 1024, 64 * 1024, 0, Some(&attrs))
-    };
+    let h = unsafe { CreateNamedPipeW(PCWSTR(name.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_NOWAIT | PIPE_REJECT_REMOTE_CLIENTS, 1, 64 * 1024, 64 * 1024, 0, Some(&attrs)) };
     if h.is_invalid() {
         return Err(err(windows::core::Error::from_thread()));
     }
@@ -286,7 +284,6 @@ impl PipeInstance {
             Err(e) => Instance::Standalone(e),
         }
     }
-
 }
 
 impl SingleInstance for PipeInstance {

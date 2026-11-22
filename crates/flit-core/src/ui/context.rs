@@ -427,13 +427,7 @@ impl ContextMenu {
                 }
             }
         } else {
-            let mut scored: Vec<(i32, usize, Vec<Range<usize>>)> = self
-                .nodes
-                .iter()
-                .enumerate()
-                .filter(|(_, n)| matches!(n.what, What::Command { .. }))
-                .filter_map(|(i, n)| fuzzy(&query, &n.path).map(|m| (m.score, i, m.ranges)))
-                .collect();
+            let mut scored: Vec<(i32, usize, Vec<Range<usize>>)> = self.nodes.iter().enumerate().filter(|(_, n)| matches!(n.what, What::Command { .. })).filter_map(|(i, n)| fuzzy(&query, &n.path).map(|m| (m.score, i, m.ranges))).collect();
             scored.sort_by_key(|&(s, i, _)| (Reverse(s), i));
             rows.extend(scored.into_iter().map(|(_, i, marks)| Row::Node { node: i, marks, pinned: pinned.contains(&i), path: true }));
         }
@@ -486,8 +480,22 @@ impl ContextMenu {
         let anchored = self.anchored;
         let total = (head + self.content_h + PAD * s).min(if anchored { b.bottom() - self.rect.y } else { b.h });
         let (x, y) = self.start;
-        let x = if anchored { self.rect.x } else if x + w <= b.right() { x } else { (x - w).max(b.x) };
-        let y = if anchored { self.rect.y } else if y + total <= b.bottom() { y } else if y - total >= b.y { y - total } else { b.bottom() - total };
+        let x = if anchored {
+            self.rect.x
+        } else if x + w <= b.right() {
+            x
+        } else {
+            (x - w).max(b.x)
+        };
+        let y = if anchored {
+            self.rect.y
+        } else if y + total <= b.bottom() {
+            y
+        } else if y - total >= b.y {
+            y - total
+        } else {
+            b.bottom() - total
+        };
         self.rect = Rect::new(x.min(b.right() - w).max(b.x), y.max(b.y), w, total);
         let r = self.rect;
         self.field = Rect::new(r.x + PAD * s, r.y + PAD * s, r.w - 2.0 * PAD * s, FIELD_H * s);
@@ -561,8 +569,12 @@ impl ContextMenu {
         if let Some(k) = self.arrows.iter().position(|r| r.contains(x, y)) {
             return Some(CtxHit::Scroll(k == 1));
         }
-        if self.thumb.contains(x, y) { return Some(CtxHit::ScrollThumb); }
-        if self.track.contains(x, y) { return Some(CtxHit::ScrollTrack); }
+        if self.thumb.contains(x, y) {
+            return Some(CtxHit::ScrollThumb);
+        }
+        if self.track.contains(x, y) {
+            return Some(CtxHit::ScrollTrack);
+        }
         if !self.list.contains(x, y) {
             return Some(CtxHit::Box);
         }
@@ -636,7 +648,9 @@ impl ContextMenu {
 
     pub fn mouse_up(&mut self, x: f32, y: f32) -> MenuOutcome {
         let pressed = self.pressed.take();
-        if self.grab.take().is_some() { return MenuOutcome::Open; }
+        if self.grab.take().is_some() {
+            return MenuOutcome::Open;
+        }
         if !self.armed {
             return MenuOutcome::Open;
         }

@@ -50,19 +50,13 @@ fn benches(c: &mut Criterion) {
     c.bench_function("listing_build_100k (utf16 → wtf8 + keys)", |b| b.iter(|| black_box(listing(&n100k))));
 
     let view = ViewSpec::default();
-    c.bench_function("sort_name_100k", |b| {
-        b.iter_batched(Vec::new, |mut o| sort::sort(&l, &k, view, &mut o), BatchSize::LargeInput)
-    });
+    c.bench_function("sort_name_100k", |b| b.iter_batched(Vec::new, |mut o| sort::sort(&l, &k, view, &mut o), BatchSize::LargeInput));
 
     let by_size = ViewSpec { sort: SortSpec { field: SortField::Size, descending: true, ..Default::default() }, show_hidden: false, ..Default::default() };
-    c.bench_function("sort_size_100k", |b| {
-        b.iter_batched(Vec::new, |mut o| sort::sort(&l, &k, by_size, &mut o), BatchSize::LargeInput)
-    });
+    c.bench_function("sort_size_100k", |b| b.iter_batched(Vec::new, |mut o| sort::sort(&l, &k, by_size, &mut o), BatchSize::LargeInput));
 
     let by_type = ViewSpec { sort: SortSpec { field: SortField::Type, descending: false, ..Default::default() }, show_hidden: false, ..Default::default() };
-    c.bench_function("sort_type_100k", |b| {
-        b.iter_batched(Vec::new, |mut o| sort::sort(&l, &k, by_type, &mut o), BatchSize::LargeInput)
-    });
+    c.bench_function("sort_type_100k", |b| b.iter_batched(Vec::new, |mut o| sort::sort(&l, &k, by_type, &mut o), BatchSize::LargeInput));
 
     let (a, z) = ("file0123 copy (2).txt".as_bytes(), "file123 copy (10).txt".as_bytes());
     c.bench_function("natural_cmp_pair", |b| b.iter(|| sort::natural_cmp(black_box(a), black_box(z), CaseMode::Insensitive)));

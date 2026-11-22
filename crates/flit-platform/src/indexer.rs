@@ -115,11 +115,7 @@ impl IndexSink for Feed<'_> {
 }
 
 pub fn start_indexer<S: IndexSource + 'static>(source: S, shared: Arc<SharedIndex>, snapshots: Option<PathBuf>) -> Result<(), PlatformError> {
-    std::thread::Builder::new()
-        .name("flit-indexer".into())
-        .spawn(move || run(source, shared, snapshots))
-        .map(drop)
-        .map_err(|e| PlatformError::new(-1, format!("cannot start the indexer: {e}")))
+    std::thread::Builder::new().name("flit-indexer".into()).spawn(move || run(source, shared, snapshots)).map(drop).map_err(|e| PlatformError::new(-1, format!("cannot start the indexer: {e}")))
 }
 
 fn scan<S: IndexSource>(source: &mut S, shared: &SharedIndex, info: &VolumeInfo) -> Option<Checkpoint> {

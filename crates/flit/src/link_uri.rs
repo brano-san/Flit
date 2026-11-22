@@ -62,9 +62,7 @@ fn folder(text: &str, windows: bool) -> Option<FsPath> {
     } else {
         text.strip_prefix('/').filter(|rest| !rest.contains('\\'))?
     };
-    if rest.starts_with(separator) || rest.split(separator).any(|part| {
-        part == "." || part == ".." || (windows && (part.ends_with([' ', '.']) || part.contains([':', '"', '<', '>', '|', '*', '?'])))
-    }) {
+    if rest.starts_with(separator) || rest.split(separator).any(|part| part == "." || part == ".." || (windows && (part.ends_with([' ', '.']) || part.contains([':', '"', '<', '>', '|', '*', '?'])))) {
         return None;
     }
     FsPath::parse_exact(text.as_bytes())

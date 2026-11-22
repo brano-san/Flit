@@ -128,10 +128,17 @@ fn install_swaps_the_binaries_and_keeps_the_old_ones_until_next_start() {
     let (pair, public) = keys(7);
     let bytes = full_archive();
     let (mut asked, mut installing) = (Vec::new(), 0);
-    let r = install(&release(sign(&pair, &bytes)), &exe, &public, &mut |url| {
-        asked.push(url.to_owned());
-        Ok(bytes.clone())
-    }, &mut || installing += 1, None);
+    let r = install(
+        &release(sign(&pair, &bytes)),
+        &exe,
+        &public,
+        &mut |url| {
+            asked.push(url.to_owned());
+            Ok(bytes.clone())
+        },
+        &mut || installing += 1,
+        None,
+    );
     assert_eq!(r, Ok(()));
     assert_eq!((asked, installing), (vec!["https://example.com/flit.zip".to_owned()], 1));
     for name in BINARIES {
@@ -322,10 +329,7 @@ fn a_package_manager_is_only_reported_after_a_successful_new_version_check() {
     assert_eq!(message, UpdateEvent::Checked { manual: true, found: Ok(None) });
     let release = Release { version: "9.0.0".into(), notes: String::new(), url: String::new(), signature: String::new() };
     let installation = ManagedInstallation::Package("sudo apt install --only-upgrade flit".into());
-    assert_eq!(
-        checked(true, Ok(Some(release.clone())), || Some(installation.clone())),
-        UpdateEvent::Managed { manual: true, release, installation }
-    );
+    assert_eq!(checked(true, Ok(Some(release.clone())), || Some(installation.clone())), UpdateEvent::Managed { manual: true, release, installation });
 }
 
 #[test]

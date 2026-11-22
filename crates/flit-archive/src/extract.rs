@@ -236,7 +236,11 @@ fn stream(plan: &Plan<'_>, out: &mut Out<'_>, password: Option<&Secret>) -> Resu
     let last = by_ordinal.keys().copied().max().unwrap_or(0);
     let put = |out: &mut Out<'_>, i: usize, rel: &str, reader: &mut dyn Read| {
         let item = &plan.index.items[i];
-        if item.dir { out.dir(rel) } else { out.file(item, rel, plan.index.declared, reader, read_error) }
+        if item.dir {
+            out.dir(rel)
+        } else {
+            out.file(item, rel, plan.index.declared, reader, read_error)
+        }
     };
     match plan.index.format {
         Format::Zip => {

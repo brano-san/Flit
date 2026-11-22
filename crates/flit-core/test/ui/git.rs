@@ -143,7 +143,9 @@ fn git_narrow_bottom_bar_keeps_files_folders_and_the_filter_minimum() {
 fn an_in_progress_git_sequence_offers_abort_without_running_it_immediately() {
     let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
     let mut ev = repo(&app);
-    if let GitEvent::Status { info: Some(i), .. } = &mut ev { Arc::make_mut(i).sequence = Some(crate::git::Sequence::Merge); }
+    if let GitEvent::Status { info: Some(i), .. } = &mut ev {
+        Arc::make_mut(i).sequence = Some(crate::git::Sequence::Merge);
+    }
     app.on_git(ev);
     assert!(app.run_action("git.abort", Instant::now()));
     assert!(app.dialogs.form.is_some());
@@ -214,7 +216,9 @@ fn show_conflicts_selects_only_conflicts_and_keeps_other_tabs_panes_and_windows_
     assert_eq!(app.tab().id, first);
     assert_eq!(app.git_sequence(), Some(Sequence::Merge));
     app.run_action("panel.split_right", Instant::now());
-    if app.tab().id == first { app.run_action("panel.next", Instant::now()); }
+    if app.tab().id == first {
+        app.run_action("panel.next", Instant::now());
+    }
     app.on_git(repo(&app));
     let other_pane = app.tab().id;
     assert!(app.git_sequence().is_none());
@@ -309,7 +313,9 @@ fn new_branch_form_keeps_errors_and_uses_its_original_repository() {
     assert!(f.error && f.note.contains("invalid branch"));
     assert_eq!(f.text(0), "bad name");
     f.set_text(0, "topic/new");
-    if let Control::Check { on, .. } = &mut f.controls[2] { *on = false; }
+    if let Control::Check { on, .. } = &mut f.controls[2] {
+        *on = false;
+    }
     app.drain_effects().for_each(drop);
     app.form_submit(0);
     let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
@@ -371,7 +377,9 @@ fn changing_the_interface_language_never_translates_branch_names() {
     let (mut app, _) = app_in(r"C:\x", &[]);
     app.on_git(repo(&app));
     let mut choices = branch_choices(&app, true);
-    if let GitEvent::Branches { branches, .. } = &mut choices { branches.push(crate::git::Branch { name: "Cancel".into(), remote: false }); }
+    if let GitEvent::Branches { branches, .. } = &mut choices {
+        branches.push(crate::git::Branch { name: "Cancel".into(), remote: false });
+    }
     app.on_git(choices);
     i18n::set_lang(Lang::Fr);
     app.relabel_form(Lang::En);
@@ -407,7 +415,9 @@ fn branch_forms_fit_a_narrow_window_with_every_translation() {
         assert!(!lines.is_empty(), "{lang:?}");
         assert_eq!(lines.join("").split_whitespace().collect::<String>(), text.split_whitespace().collect::<String>(), "{lang:?}");
         let font = crate::text::FontStyle::new(crate::text::FontFamily::Ui, 12.0, false);
-        if gfx.measure(text, font) > f.rows[0].w - 8.0 { assert!(lines.len() > 1, "{lang:?}"); }
+        if gfx.measure(text, font) > f.rows[0].w - 8.0 {
+            assert!(lines.len() > 1, "{lang:?}");
+        }
         assert!(lines.iter().all(|line| gfx.measure(line, font) <= f.rows[0].w - 8.0), "{lang:?}");
         assert_eq!(f.focus, f.controls.len() + 1);
     }
@@ -495,10 +505,14 @@ fn commit_hash_visibility_and_copy_follow_the_active_tab_and_pane() {
     assert_eq!(app.tab().id, first);
     assert!(app.selected_commit_hash().is_some());
     app.run_action("panel.split_right", Instant::now());
-    if app.tab().id == first { app.run_action("panel.next", Instant::now()); }
+    if app.tab().id == first {
+        app.run_action("panel.next", Instant::now());
+    }
     assert_ne!(app.tab().id, first);
     app.on_git(repo(&app));
-    if app.tab().columns.shown(Column::GitHash) { app.run_action("view.column.git_hash", Instant::now()); }
+    if app.tab().columns.shown(Column::GitHash) {
+        app.run_action("view.column.git_hash", Instant::now());
+    }
     assert!(app.selected_commit_hash().is_none());
     app.run_action("panel.previous", Instant::now());
     assert_eq!(app.tab().id, first);
@@ -822,7 +836,9 @@ fn network_git_records_progress_errors_and_cancellation_in_operations() {
     for op in [GitOp::Fetch, GitOp::Pull, GitOp::Push, GitOp::Sync, GitOp::Clone { url: "https://example.test/project.git".into() }] {
         let (mut app, _) = app_in(r"C:\x", &[]);
         let mut ev = repo(&app);
-        if let GitEvent::Status { info: Some(i), .. } = &mut ev { Arc::make_mut(i).upstream = Some("origin/main".into()); }
+        if let GitEvent::Status { info: Some(i), .. } = &mut ev {
+            Arc::make_mut(i).upstream = Some("origin/main".into());
+        }
         app.on_git(ev);
         app.git_run(op.clone());
         let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());

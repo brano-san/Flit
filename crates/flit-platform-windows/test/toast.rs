@@ -3,7 +3,9 @@ use super::*;
 #[test]
 #[ignore = "displays a real Windows notification; requires an interactive desktop"]
 fn native_launch_notification_is_accepted_by_windows() {
-    unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap(); }
+    unsafe {
+        CoInitializeEx(None, COINIT_MULTITHREADED).ok().unwrap();
+    }
     assert!(prepare(), "Flit notification registration failed");
     let notifier = ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(APP_ID)).unwrap();
     let text = flit_core::tr!(flit_core::i18n::S::UserMenuStarted, program = "Flit notification verification");

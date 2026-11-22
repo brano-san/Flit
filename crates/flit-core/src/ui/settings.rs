@@ -279,14 +279,30 @@ const UNITS: Choices = &[("binary", S::SettingsChoiceUnitsBinary), ("decimal", S
 const CONFIRMS: [ConfirmDelete; 3] = [ConfirmDelete::Always, ConfirmDelete::Permanent, ConfirmDelete::Never];
 const CONFIRM_CHOICES: Choices = &[("always", S::SettingsChoiceConfirmAlways), ("permanent", S::SettingsChoiceConfirmPermanent), ("never", S::SettingsChoiceConfirmNever)];
 const CONFLICTS: [Option<Resolve>; 6] = [None, Some(Resolve::KeepBoth), Some(Resolve::Replace), Some(Resolve::Skip), Some(Resolve::SkipSame), Some(Resolve::ReplaceOlder)];
-const CONFLICT_CHOICES: Choices = &[("ask", S::SettingsChoiceConflictAsk), ("keep_both", S::SettingsChoiceConflictKeepBoth), ("replace", S::SettingsChoiceConflictReplace), ("skip", S::SettingsChoiceConflictSkip), ("skip_same", S::SettingsChoiceConflictSkipSame), ("replace_older", S::SettingsChoiceConflictReplaceOlder)];
-const LAYOUT_CHOICES: Choices = &[("details", S::SettingsChoiceLayoutDetails), ("list", S::SettingsChoiceLayoutList), ("cards", S::SettingsChoiceLayoutCards), ("columns", S::SettingsChoiceLayoutColumns), ("grid", S::SettingsChoiceLayoutGrid), ("adaptive", S::SettingsChoiceLayoutAdaptive)];
+const CONFLICT_CHOICES: Choices = &[
+    ("ask", S::SettingsChoiceConflictAsk),
+    ("keep_both", S::SettingsChoiceConflictKeepBoth),
+    ("replace", S::SettingsChoiceConflictReplace),
+    ("skip", S::SettingsChoiceConflictSkip),
+    ("skip_same", S::SettingsChoiceConflictSkipSame),
+    ("replace_older", S::SettingsChoiceConflictReplaceOlder),
+];
+const LAYOUT_CHOICES: Choices =
+    &[("details", S::SettingsChoiceLayoutDetails), ("list", S::SettingsChoiceLayoutList), ("cards", S::SettingsChoiceLayoutCards), ("columns", S::SettingsChoiceLayoutColumns), ("grid", S::SettingsChoiceLayoutGrid), ("adaptive", S::SettingsChoiceLayoutAdaptive)];
 const SORTS: [SortField; 6] = [SortField::Name, SortField::Modified, SortField::Created, SortField::Size, SortField::Type, SortField::Tag];
 const SORT_CHOICES: Choices = &[("name", S::SettingsChoiceSortName), ("modified", S::SettingsChoiceSortModified), ("created", S::SettingsChoiceSortCreated), ("size", S::SettingsChoiceSortSize), ("type", S::SettingsChoiceSortType), ("tags", S::SettingsChoiceSortTags)];
 const FOLDERS: [Folders; 4] = [Folders::First, Folders::Last, Folders::Mixed, Folders::HiddenLast];
 const FOLDER_CHOICES: Choices = &[("first", S::SettingsChoiceFolderFirst), ("last", S::SettingsChoiceFolderLast), ("mixed", S::SettingsChoiceFolderMixed), ("hidden_last", S::SettingsChoiceFolderHiddenLast)];
 const GROUPS: [GroupField; 7] = [GroupField::None, GroupField::Name, GroupField::Modified, GroupField::Created, GroupField::Size, GroupField::Type, GroupField::Tag];
-const GROUP_CHOICES: Choices = &[("none", S::SettingsChoiceGroupNone), ("name", S::SettingsChoiceGroupName), ("modified", S::SettingsChoiceGroupModified), ("created", S::SettingsChoiceGroupCreated), ("size", S::SettingsChoiceGroupSize), ("type", S::SettingsChoiceGroupType), ("tags", S::SettingsChoiceGroupTags)];
+const GROUP_CHOICES: Choices = &[
+    ("none", S::SettingsChoiceGroupNone),
+    ("name", S::SettingsChoiceGroupName),
+    ("modified", S::SettingsChoiceGroupModified),
+    ("created", S::SettingsChoiceGroupCreated),
+    ("size", S::SettingsChoiceGroupSize),
+    ("type", S::SettingsChoiceGroupType),
+    ("tags", S::SettingsChoiceGroupTags),
+];
 const ARCHIVES: [Format; 4] = Format::WRITABLE;
 const ARCHIVE_CHOICES: Choices = &[("zip", S::SettingsChoiceArchiveZip), ("7z", S::SettingsChoiceArchive7z), ("tar", S::SettingsChoiceArchiveTar), ("gz", S::SettingsChoiceArchiveGz)];
 const SCHEMES: [Mode; 2] = [Mode::Dark, Mode::Light];
@@ -323,7 +339,16 @@ pub const CHECK_UPDATES: &str = "updates.check_on_start";
 const LOG_CHOICES: Choices = &[("off", S::SettingsChoiceLogOff), ("error", S::SettingsChoiceLogError), ("warn", S::SettingsChoiceLogWarn), ("info", S::SettingsChoiceLogInfo), ("debug", S::SettingsChoiceLogDebug)];
 
 pub const LANGUAGE: &str = "general.language";
-const LANGUAGE_CHOICES: Choices = &[("system", S::SettingsChoiceLanguageSystem), ("en", S::SettingsChoiceLanguageEn), ("ru", S::SettingsChoiceLanguageRu), ("de", S::SettingsChoiceLanguageDe), ("fr", S::SettingsChoiceLanguageFr), ("es", S::SettingsChoiceLanguageEs), ("uk", S::SettingsChoiceLanguageUk), ("zh-CN", S::SettingsChoiceLanguageZhCn)];
+const LANGUAGE_CHOICES: Choices = &[
+    ("system", S::SettingsChoiceLanguageSystem),
+    ("en", S::SettingsChoiceLanguageEn),
+    ("ru", S::SettingsChoiceLanguageRu),
+    ("de", S::SettingsChoiceLanguageDe),
+    ("fr", S::SettingsChoiceLanguageFr),
+    ("es", S::SettingsChoiceLanguageEs),
+    ("uk", S::SettingsChoiceLanguageUk),
+    ("zh-CN", S::SettingsChoiceLanguageZhCn),
+];
 
 pub fn language_of(choice: usize) -> Lang {
     choice.checked_sub(1).and_then(|k| Lang::ALL.get(k).copied()).unwrap_or_else(i18n::system_lang)
@@ -373,7 +398,14 @@ pub static SETTINGS: &[Setting] = &[
     toggle("general.menu_open_window", Page::Menu, S::SettingsTitleGeneralMenuOpenWindow, S::SettingsHelpGeneralMenuOpenWindow, |a| shown_in_menu(a, "item.open_window"), |a, on| show_in_menu(a, "item.open_window", on)),
     toggle("general.menu_copy_path", Page::Menu, S::SettingsTitleGeneralMenuCopyPath, S::SettingsHelpGeneralMenuCopyPath, |a| shown_in_menu(a, "item.copy_path"), |a, on| show_in_menu(a, "item.copy_path", on)),
     toggle("general.menu_shortcut", Page::Menu, S::SettingsTitleGeneralMenuShortcut, S::SettingsHelpGeneralMenuShortcut, |a| shown_in_menu(a, "file.shortcut"), |a, on| show_in_menu(a, "file.shortcut", on)),
-    toggle("general.menu_new_folder_with_selection", Page::Menu, S::SettingsTitleGeneralMenuNewFolderWithSelection, S::SettingsHelpGeneralMenuNewFolderWithSelection, |a| shown_in_menu(a, "file.new_folder_with_selection"), |a, on| show_in_menu(a, "file.new_folder_with_selection", on)),
+    toggle(
+        "general.menu_new_folder_with_selection",
+        Page::Menu,
+        S::SettingsTitleGeneralMenuNewFolderWithSelection,
+        S::SettingsHelpGeneralMenuNewFolderWithSelection,
+        |a| shown_in_menu(a, "file.new_folder_with_selection"),
+        |a, on| show_in_menu(a, "file.new_folder_with_selection", on),
+    ),
     toggle("general.menu_stream", Page::Menu, S::SettingsTitleGeneralMenuStream, S::SettingsHelpGeneralMenuStream, |a| shown_in_menu(a, "file.new_stream"), |a, on| show_in_menu(a, "file.new_stream", on)),
     toggle("general.menu_panes", Page::Menu, S::SettingsTitleGeneralMenuPanes, S::SettingsHelpGeneralMenuPanes, |a| shown_in_menu(a, "pane.menu"), |a, on| show_in_menu(a, "pane.menu", on)),
     toggle("general.menu_pin", Page::Menu, S::SettingsTitleGeneralMenuPin, S::SettingsHelpGeneralMenuPin, |a| shown_in_menu(a, "item.pin"), |a, on| show_in_menu(a, "item.pin", on)),
@@ -405,21 +437,36 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.show_hidden", Page::Files, S::OptionsTitleShowHidden, S::OptionsHelpShowHidden, |a| a.show_hidden, |a, on| a.set_show_hidden(on)),
     toggle("files.system", Page::Files, S::OptionsTitleShowSystem, S::OptionsHelpShowSystem, |a| a.prefs.show_system, |a, on| a.set_pref(|p| &mut p.show_system, on)),
     toggle("files.dotfiles", Page::Files, S::SettingsTitleFilesDotfiles, S::SettingsHelpFilesDotfiles, |a| a.prefs.show_dotfiles, |a, on| a.set_pref(|p| &mut p.show_dotfiles, on)),
-    toggle("files.streams", Page::Files, S::SettingsTitleFilesStreams, S::SettingsHelpFilesStreams, |a| a.prefs.show_streams, |a, on| {
-        if a.prefs.show_streams != on {
-            a.toggle_streams(Instant::now());
-        }
-    }),
+    toggle(
+        "files.streams",
+        Page::Files,
+        S::SettingsTitleFilesStreams,
+        S::SettingsHelpFilesStreams,
+        |a| a.prefs.show_streams,
+        |a, on| {
+            if a.prefs.show_streams != on {
+                a.toggle_streams(Instant::now());
+            }
+        },
+    ),
     choice("files.confirm_delete", Page::Files, S::SettingsTitleFilesConfirmDelete, S::SettingsHelpFilesConfirmDelete, CONFIRM_CHOICES, |a| pos(&CONFIRMS, &a.confirm_delete), |a, i| a.confirm_delete = CONFIRMS[i]),
     toggle("files.warn_extension", Page::Files, S::SettingsTitleFilesWarnExtension, S::SettingsHelpFilesWarnExtension, |a| a.warn_extension_change, |a, on| a.warn_extension_change = on),
     choice("files.conflicts", Page::Files, S::SettingsTitleFilesConflicts, S::SettingsHelpFilesConflicts, CONFLICT_CHOICES, |a| pos(&CONFLICTS, &a.conflict_default), |a, i| a.conflict_default = CONFLICTS[i]),
     choice("files.size_units", Page::Files, S::SettingsTitleFilesSizeUnits, S::SettingsHelpFilesSizeUnits, UNITS, |a| usize::from(a.style.decimal), |a, i| a.set_style(|s| s.decimal = i == 1)),
     toggle(BUILTIN_ARCHIVES, Page::Files, S::SettingsTitleFilesBuiltinArchives, S::SettingsHelpFilesBuiltinArchives, |a| a.builtin_archives, |a, on| a.builtin_archives = on),
     toggle("files.archives_as_folders", Page::Files, S::SettingsTitleFilesArchivesAsFolders, S::SettingsHelpFilesArchivesAsFolders, |a| a.archives_as_folders, |a, on| a.archives_as_folders = on),
-    choice("files.archive_format", Page::Files, S::SettingsTitleFilesArchiveFormat, S::SettingsHelpFilesArchiveFormat, ARCHIVE_CHOICES, |a| pos(&ARCHIVES, &a.archive.prefs.compression.format), |a, i| {
-        let c = &mut a.archive.prefs.compression;
-        (c.format, c.level) = (ARCHIVES[i], ARCHIVES[i].default_level());
-    }),
+    choice(
+        "files.archive_format",
+        Page::Files,
+        S::SettingsTitleFilesArchiveFormat,
+        S::SettingsHelpFilesArchiveFormat,
+        ARCHIVE_CHOICES,
+        |a| pos(&ARCHIVES, &a.archive.prefs.compression.format),
+        |a, i| {
+            let c = &mut a.archive.prefs.compression;
+            (c.format, c.level) = (ARCHIVES[i], ARCHIVES[i].default_level());
+        },
+    ),
     toggle("layout.same_for_all", Page::Files, S::SettingsTitleLayoutSameForAll, S::SettingsHelpLayoutSameForAll, |a| a.prefs.same_for_all, |a, on| a.set_pref(|p| &mut p.same_for_all, on)),
     choice("layout.default_layout", Page::Files, S::SettingsTitleLayoutDefaultLayout, S::SettingsHelpLayoutDefaultLayout, LAYOUT_CHOICES, |a| pos(&LAYOUTS, &a.prefs.defaults.layout), |a, i| a.prefs.defaults.layout = LAYOUTS[i]),
     choice("layout.default_sort", Page::Files, S::SettingsTitleLayoutDefaultSort, S::SettingsHelpLayoutDefaultSort, SORT_CHOICES, |a| pos(&SORTS, &a.prefs.defaults.sort.field), |a, i| a.prefs.defaults.sort.field = SORTS[i]),
@@ -431,38 +478,85 @@ pub static SETTINGS: &[Setting] = &[
     toggle("layout.column_type", Page::Files, S::SettingsTitleLayoutColumnType, S::SettingsHelpLayoutColumnType, |a| a.prefs.defaults.columns.shown(Column::Type), |a, on| set_column(a, Column::Type, on)),
     toggle("layout.column_size", Page::Files, S::SettingsTitleLayoutColumnSize, S::SettingsHelpLayoutColumnSize, |a| a.prefs.defaults.columns.shown(Column::Size), |a, on| set_column(a, Column::Size, on)),
     toggle("layout.column_tags", Page::Files, S::SettingsTitleLayoutColumnTags, S::SettingsHelpLayoutColumnTags, |a| a.prefs.defaults.columns.shown(Column::Tag), |a, on| set_column(a, Column::Tag, on)),
-    toggle("layout.auto_fit", Page::Files, S::SettingsTitleLayoutAutoFit, S::SettingsHelpLayoutAutoFit, |a| a.prefs.auto_fit, |a, on| {
-        if a.prefs.auto_fit != on {
-            a.toggle_auto_fit();
-        }
-    }),
-    choice("layout.rule_network", Page::Files, S::LayoutsRulesNetwork, S::LayoutsRulesNetworkHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.network), |a, i| {
-        a.settings.opts.view_rules.network = RULE_LAYOUTS[i];
-        a.refresh_view_rules();
-    }),
-    choice("layout.rule_removable", Page::Files, S::LayoutsRulesRemovable, S::LayoutsRulesRemovableHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.removable), |a, i| {
-        a.settings.opts.view_rules.removable = RULE_LAYOUTS[i];
-        a.refresh_view_rules();
-    }),
-    choice("layout.rule_archive", Page::Files, S::LayoutsRulesArchive, S::LayoutsRulesArchiveHelp, RULE_CHOICES, |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.archive), |a, i| {
-        a.settings.opts.view_rules.archive = RULE_LAYOUTS[i];
-        a.refresh_view_rules();
-    }),
+    toggle(
+        "layout.auto_fit",
+        Page::Files,
+        S::SettingsTitleLayoutAutoFit,
+        S::SettingsHelpLayoutAutoFit,
+        |a| a.prefs.auto_fit,
+        |a, on| {
+            if a.prefs.auto_fit != on {
+                a.toggle_auto_fit();
+            }
+        },
+    ),
+    choice(
+        "layout.rule_network",
+        Page::Files,
+        S::LayoutsRulesNetwork,
+        S::LayoutsRulesNetworkHelp,
+        RULE_CHOICES,
+        |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.network),
+        |a, i| {
+            a.settings.opts.view_rules.network = RULE_LAYOUTS[i];
+            a.refresh_view_rules();
+        },
+    ),
+    choice(
+        "layout.rule_removable",
+        Page::Files,
+        S::LayoutsRulesRemovable,
+        S::LayoutsRulesRemovableHelp,
+        RULE_CHOICES,
+        |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.removable),
+        |a, i| {
+            a.settings.opts.view_rules.removable = RULE_LAYOUTS[i];
+            a.refresh_view_rules();
+        },
+    ),
+    choice(
+        "layout.rule_archive",
+        Page::Files,
+        S::LayoutsRulesArchive,
+        S::LayoutsRulesArchiveHelp,
+        RULE_CHOICES,
+        |a| pos(&RULE_LAYOUTS, &a.settings.opts.view_rules.archive),
+        |a, i| {
+            a.settings.opts.view_rules.archive = RULE_LAYOUTS[i];
+            a.refresh_view_rules();
+        },
+    ),
     toggle("layout.rule_search_grid", Page::Files, S::LayoutsRulesSearch, S::LayoutsRulesSearchHelp, |a| a.settings.opts.view_rules.search_grid, |a, on| a.settings.opts.view_rules.search_grid = on),
     Setting {
         id: "layout.rule_pictures_min",
         page: Page::Files,
         title: S::LayoutsRulesPicturesShare,
         help: S::LayoutsRulesPicturesShareHelp,
-        kind: Kind::Number { min: 0, max: 100, step: 5, unit: S::SettingsUnitPercent, zero: Some(S::SettingsChoiceLogOff), get: |a| i64::from(a.settings.opts.view_rules.pictures_min), set: |a, v| {
-            a.settings.opts.view_rules.pictures_min = v as u8;
-            a.refresh_view_rules();
-        } },
+        kind: Kind::Number {
+            min: 0,
+            max: 100,
+            step: 5,
+            unit: S::SettingsUnitPercent,
+            zero: Some(S::SettingsChoiceLogOff),
+            get: |a| i64::from(a.settings.opts.view_rules.pictures_min),
+            set: |a, v| {
+                a.settings.opts.view_rules.pictures_min = v as u8;
+                a.refresh_view_rules();
+            },
+        },
     },
-    choice("layout.rule_pictures_layout", Page::Files, S::LayoutsRulesPictures, S::LayoutsRulesPicturesHelp, PICTURE_CHOICES, |a| pos(&PICTURE_LAYOUTS, &a.settings.opts.view_rules.pictures), |a, i| {
-        a.settings.opts.view_rules.pictures = PICTURE_LAYOUTS[i];
-        a.refresh_view_rules();
-    }),
+    choice(
+        "layout.rule_pictures_layout",
+        Page::Files,
+        S::LayoutsRulesPictures,
+        S::LayoutsRulesPicturesHelp,
+        PICTURE_CHOICES,
+        |a| pos(&PICTURE_LAYOUTS, &a.settings.opts.view_rules.pictures),
+        |a, i| {
+            a.settings.opts.view_rules.pictures = PICTURE_LAYOUTS[i];
+            a.refresh_view_rules();
+        },
+    ),
     Setting {
         id: CACHE,
         page: Page::Data,
@@ -484,10 +578,17 @@ pub static SETTINGS: &[Setting] = &[
     Setting { id: "advanced.search_exclusions", page: Page::Data, title: S::SettingsTitleAdvancedSearchExclusions, help: S::SettingsHelpAdvancedSearchExclusions, kind: Kind::Paths(|a| a.search.exclusions.clone(), |a, paths| a.set_search_exclusions(paths)) },
     toggle("input.act_on_press", Page::Input, S::OptionsTitleActOnPress, S::OptionsHelpActOnPress, |a| a.settings.opts.act_on_press, |a, on| a.settings.opts.act_on_press = on),
     toggle(CHECKBOXES, Page::Input, S::OptionsTitleSelectionBoxes, S::OptionsHelpSelectionBoxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
-    toggle("input.single_click", Page::Input, S::OptionsTitleSingleClick, S::OptionsHelpSingleClick, |a| a.single_click_files == ClickOpen::Always && a.single_click_folders == ClickOpen::Always, |a, on| {
-        let mode = if on { ClickOpen::Always } else { ClickOpen::Never };
-        (a.single_click_files, a.single_click_folders) = (mode, mode);
-    }),
+    toggle(
+        "input.single_click",
+        Page::Input,
+        S::OptionsTitleSingleClick,
+        S::OptionsHelpSingleClick,
+        |a| a.single_click_files == ClickOpen::Always && a.single_click_folders == ClickOpen::Always,
+        |a, on| {
+            let mode = if on { ClickOpen::Always } else { ClickOpen::Never };
+            (a.single_click_files, a.single_click_folders) = (mode, mode);
+        },
+    ),
     choice("files.single_click_files", Page::Input, S::SettingsTitleFilesSingleClickFiles, S::SettingsHelpFilesSingleClickFiles, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_files), |a, i| a.single_click_files = CLICKS[i]),
     choice("files.single_click_folders", Page::Input, S::SettingsTitleFilesSingleClickFolders, S::SettingsHelpFilesSingleClickFolders, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_folders), |a, i| a.single_click_folders = CLICKS[i]),
     choice("files.single_click_columns", Page::Input, S::SettingsTitleFilesSingleClickColumns, S::SettingsHelpFilesSingleClickColumns, CLICK_CHOICES, |a| pos(&CLICKS, &a.single_click_columns), |a, i| a.single_click_columns = CLICKS[i]),
@@ -507,15 +608,33 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.select_previous", Page::Input, S::SettingsTitleFilesSelectPrevious, S::SettingsHelpFilesSelectPrevious, |a| a.select_previous, |a, on| a.select_previous = on),
     toggle("general.smooth_scroll", Page::Input, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::Input, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
-    toggle("general.mru_tabs", Page::Input, S::SettingsTitleGeneralMruTabs, S::SettingsHelpGeneralMruTabs, |a| a.mru_tabs, |a, on| { a.finish_tab_cycle(); a.mru_tabs = on; }),
+    toggle(
+        "general.mru_tabs",
+        Page::Input,
+        S::SettingsTitleGeneralMruTabs,
+        S::SettingsHelpGeneralMruTabs,
+        |a| a.mru_tabs,
+        |a, on| {
+            a.finish_tab_cycle();
+            a.mru_tabs = on;
+        },
+    ),
     Setting { id: "files.saved_filters", page: Page::Input, title: S::ActionsFilterSaved, help: S::DescribeFilterSaved, kind: Kind::Strings(|a| a.settings.saved_filters.clone(), |a, v| a.set_saved_filters(v)) },
     choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.settings.opts.inspector_at), |a, i| a.settings.opts.inspector_at = INSPECTORS[i]),
     choice("windows.svg_background", Page::Windows, S::PreviewSvgBackground, S::PreviewSvgBackgroundHelp, SVG_BACKGROUNDS, |a| a.settings.opts.svg_background as usize, |a, i| a.settings.opts.svg_background = crate::preview::SvgBackground::ALL[i]),
-    choice("general.startup", Page::Windows, S::OptionsTitleLoadOnStartup, S::OptionsHelpLoadOnStartup, STARTUP, |a| match a.startup {
-        Startup::Continue => 0,
-        Startup::NewTab => 1,
-        Startup::Folders(_) => 2,
-    }, |a, i| a.set_startup(i)),
+    choice(
+        "general.startup",
+        Page::Windows,
+        S::OptionsTitleLoadOnStartup,
+        S::OptionsHelpLoadOnStartup,
+        STARTUP,
+        |a| match a.startup {
+            Startup::Continue => 0,
+            Startup::NewTab => 1,
+            Startup::Folders(_) => 2,
+        },
+        |a, i| a.set_startup(i),
+    ),
     Setting { id: "general.startup_pages", page: Page::Windows, title: S::SettingsTitleGeneralStartupPages, help: S::SettingsHelpGeneralStartupPages, kind: Kind::Paths(|a| a.startup_pages.clone(), |a, v| a.set_startup_pages(v)) },
     choice("windows.new_tab", Page::Windows, S::OptionsTitleNewTabShow, S::OptionsHelpNewTabShow, NEW_TAB_CHOICES, |a| pos(&NEW_TABS, &a.settings.opts.new_tab), |a, i| a.settings.opts.new_tab = NEW_TABS[i]),
     toggle("general.open_in_running", Page::Windows, S::SettingsTitleGeneralOpenInRunning, S::SettingsHelpGeneralOpenInRunning, |a| a.open_target != OpenTarget::NewWindow, |a, on| a.open_target = if on { OpenTarget::NewTab } else { OpenTarget::NewWindow }),
@@ -554,11 +673,17 @@ pub static SETTINGS: &[Setting] = &[
 
 impl Setting {
     pub fn offered(&self, caps: crate::caps::Caps) -> bool {
-        if caps.unix_paths { !WINDOWS_ONLY.contains(&self.id) } else { !LINUX_ONLY.contains(&self.id) }
+        if caps.unix_paths {
+            !WINDOWS_ONLY.contains(&self.id)
+        } else {
+            !LINUX_ONLY.contains(&self.id)
+        }
     }
 
     pub fn enabled(&self, a: &App) -> bool {
-        self.id != LONG_PATHS && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id)) && (self.id != WINDOW_TITLE || a.server_frames != Some(false))
+        self.id != LONG_PATHS
+            && (a.builtin_archives || !NEEDS_BUILTIN_ARCHIVES.contains(&self.id))
+            && (self.id != WINDOW_TITLE || a.server_frames != Some(false))
             && (!a.about.system_integration_unavailable || !matches!(self.id, AUTOSTART | PROTOCOL_LINKS))
             && (self.id != BACKGROUND || !a.caps.unix_paths || a.tray_available || a.settings.background)
     }
@@ -912,7 +1037,9 @@ impl App {
     }
 
     fn set_companions(&mut self, on: bool) {
-        if self.settings.hide_companions == on { return; }
+        if self.settings.hide_companions == on {
+            return;
+        }
         self.settings.hide_companions = on;
         for k in 0..self.tabs.items.len() {
             self.sync_spec(k);

@@ -69,8 +69,7 @@ impl App {
     pub(super) fn pump_shell_props(&mut self, now: Instant) {
         let kinds = self.column_kinds();
         let shell = kinds.contains(&Column::ImageSize);
-        let portable = kinds.contains(&Column::Rating) && self.metadata_enabled()
-            && PORTABLE_COLUMNS.iter().any(|&c| self.tab().columns.shown(c));
+        let portable = kinds.contains(&Column::Rating) && self.metadata_enabled() && PORTABLE_COLUMNS.iter().any(|&c| self.tab().columns.shown(c));
         let visible_system = shell && SHELL_COLUMNS.iter().any(|&c| self.tab().columns.shown(c));
         let system = visible_system || (shell && self.tab().view_spec.needs_props());
         if !system && !portable {

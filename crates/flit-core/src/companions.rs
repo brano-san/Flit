@@ -44,14 +44,17 @@ fn folded(name: &[u8]) -> Vec<u8> {
 
 pub fn associated(list: &Listing, case_sensitive: bool) -> Vec<Companion<'_>> {
     let eligible = |i: u32| list.entries[i as usize].attrs & (attr::DIR | attr::DELETED | attr::STREAM) == 0;
-    let possible: Vec<_> = (0..list.len() as u32).filter(|&i| eligible(i))
-        .filter_map(|i| Some((i, sidecar(list.name(i))?))).collect();
+    let possible: Vec<_> = (0..list.len() as u32).filter(|&i| eligible(i)).filter_map(|i| Some((i, sidecar(list.name(i))?))).collect();
     if possible.is_empty() {
         return Vec::new();
     }
     let key = |i: u32, name: &[u8]| {
         let folder = list.folder(i);
-        if case_sensitive { (folder.to_vec(), name.to_vec()) } else { (folded(folder), folded(name)) }
+        if case_sensitive {
+            (folder.to_vec(), name.to_vec())
+        } else {
+            (folded(folder), folded(name))
+        }
     };
     let mut names = FxHashMap::default();
     let mut stems = FxHashMap::default();
@@ -65,17 +68,20 @@ pub fn associated(list: &Listing, case_sensitive: bool) -> Vec<Companion<'_>> {
             stems.entry(key(i, stem)).and_modify(|v| *v = None).or_insert(Some(i));
         }
     }
-    possible.into_iter().filter_map(|(sidecar, (base, kind))| {
-        let key = key(sidecar, base);
-        if let Some(owner) = names.get(&key) {
-            Some(Companion { owner: (*owner)?, sidecar, kind })
-        } else if let Kind::Full(ext) = kind {
-            let owner = stems.get(&key).copied().flatten()?;
-            Some(Companion { owner, sidecar, kind: Kind::Stem(ext) })
-        } else {
-            None
-        }
-    }).collect()
+    possible
+        .into_iter()
+        .filter_map(|(sidecar, (base, kind))| {
+            let key = key(sidecar, base);
+            if let Some(owner) = names.get(&key) {
+                Some(Companion { owner: (*owner)?, sidecar, kind })
+            } else if let Kind::Full(ext) = kind {
+                let owner = stems.get(&key).copied().flatten()?;
+                Some(Companion { owner, sidecar, kind: Kind::Stem(ext) })
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 pub fn hidden(list: &Listing, case_sensitive: bool) -> FxHashSet<u32> {

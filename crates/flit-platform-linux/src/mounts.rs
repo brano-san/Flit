@@ -11,7 +11,35 @@ pub const MOUNTINFO: &str = "/proc/self/mountinfo";
 pub const BY_LABEL: &str = "/dev/disk/by-label";
 
 const PSEUDO: [&str; 29] = [
-    "proc", "sysfs", "tmpfs", "devtmpfs", "devpts", "cgroup", "cgroup2", "mqueue", "debugfs", "tracefs", "securityfs", "pstore", "bpf", "fusectl", "configfs", "hugetlbfs", "autofs", "binfmt_misc", "nsfs", "ramfs", "efivarfs", "rpc_pipefs", "selinuxfs", "rootfs", "squashfs", "fuse.portal", "fuse.gvfsd-fuse", "fuse.snapfuse", "nfsd",
+    "proc",
+    "sysfs",
+    "tmpfs",
+    "devtmpfs",
+    "devpts",
+    "cgroup",
+    "cgroup2",
+    "mqueue",
+    "debugfs",
+    "tracefs",
+    "securityfs",
+    "pstore",
+    "bpf",
+    "fusectl",
+    "configfs",
+    "hugetlbfs",
+    "autofs",
+    "binfmt_misc",
+    "nsfs",
+    "ramfs",
+    "efivarfs",
+    "rpc_pipefs",
+    "selinuxfs",
+    "rootfs",
+    "squashfs",
+    "fuse.portal",
+    "fuse.gvfsd-fuse",
+    "fuse.snapfuse",
+    "nfsd",
 ];
 const SYSTEM_DIRS: [&[u8]; 18] = [b"/boot", b"/efi", b"/proc", b"/sys", b"/dev", b"/run", b"/tmp", b"/var", b"/usr", b"/etc", b"/root", b"/snap", b"/srv", b"/opt", b"/nix", b"/gnu", b"/mnt/wsl", b"/mnt/wslg"];
 const NETWORK: [&str; 16] = ["nfs", "nfs4", "cifs", "smb3", "smbfs", "ncpfs", "afs", "ceph", "glusterfs", "fuse.glusterfs", "fuse.sshfs", "sshfs", "fuse.rclone", "davfs", "fuse.davfs2", "fuse.s3fs"];
@@ -79,14 +107,7 @@ fn parse_line(line: &[u8]) -> Option<Mount> {
     }
     let number = |f: &[u8]| std::str::from_utf8(f).ok()?.parse::<u32>().ok();
     let (major, minor) = fields[2].split_at(fields[2].iter().position(|&b| b == b':')?);
-    Some(Mount {
-        id: number(fields[0])?,
-        dev: (number(major)?, number(&minor[1..])?),
-        root: unescape(fields[3]),
-        point: unescape(fields[4]),
-        fstype: String::from_utf8_lossy(&unescape(fields[dash + 1])).into_owned(),
-        source: unescape(fields[dash + 2]),
-    })
+    Some(Mount { id: number(fields[0])?, dev: (number(major)?, number(&minor[1..])?), root: unescape(fields[3]), point: unescape(fields[4]), fstype: String::from_utf8_lossy(&unescape(fields[dash + 1])).into_owned(), source: unescape(fields[dash + 2]) })
 }
 
 pub fn parse(text: &[u8]) -> Vec<Mount> {

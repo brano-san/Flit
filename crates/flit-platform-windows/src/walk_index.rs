@@ -61,10 +61,7 @@ impl RootWatch {
         let queue = Arc::new(Mutex::new(Queue::default()));
         let (armed_tx, armed) = bounded(1);
         let (q, stop_h) = (queue.clone(), stop.clone());
-        let thread = std::thread::Builder::new()
-            .name("flit-walk-watch".into())
-            .spawn(move || watch_loop(dir, event, stop_h, q, armed_tx))
-            .ok()?;
+        let thread = std::thread::Builder::new().name("flit-walk-watch".into()).spawn(move || watch_loop(dir, event, stop_h, q, armed_tx)).ok()?;
         armed.recv().ok().filter(|&ok| ok)?;
         Some(Self { queue, stop, thread: Some(thread) })
     }

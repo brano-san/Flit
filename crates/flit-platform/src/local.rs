@@ -188,8 +188,7 @@ impl OperationPaths {
 
     fn conflicts(&self, other: &Self) -> bool {
         let overlap = |a: &FsPath, b: &FsPath| a.same(b) || a.is_inside(b) || b.is_inside(a);
-        self.writes.iter().any(|a| other.writes.iter().chain(&other.reads).any(|b| overlap(a, b)))
-            || self.reads.iter().any(|a| other.writes.iter().any(|b| overlap(a, b)))
+        self.writes.iter().any(|a| other.writes.iter().chain(&other.reads).any(|b| overlap(a, b))) || self.reads.iter().any(|a| other.writes.iter().any(|b| overlap(a, b)))
     }
 }
 
@@ -345,9 +344,7 @@ impl LocalProvider {
                         }
                         let event = match gen {
                             Some(gen) => Some(ProviderEvent::NetworkConnected { tab, gen, result: done.map_err(|e| e.to_string()) }),
-                            None => shell_event(tab, done.map(|p| p.map(|path| {
-                                if save { ProviderEvent::SavedServerConnected { tab, address: uri, path } } else { ProviderEvent::Navigate { tab, path } }
-                            }))),
+                            None => shell_event(tab, done.map(|p| p.map(|path| if save { ProviderEvent::SavedServerConnected { tab, address: uri, path } } else { ProviderEvent::Navigate { tab, path } }))),
                         };
                         if let Some(event) = event {
                             let _ = events.send(event);
@@ -443,11 +440,7 @@ impl LocalProvider {
                             (true, _) => cancelled(op),
                             (false, Ok(mut sh)) => {
                                 let reviewed = !matches!(op, FileOp::Rename { .. });
-                                let planned = if job.ctl().includes_companions() {
-                                    job.prepare_companions(&*fs, op)
-                                } else {
-                                    Ok(op)
-                                };
+                                let planned = if job.ctl().includes_companions() { job.prepare_companions(&*fs, op) } else { Ok(op) };
                                 match planned {
                                     Ok(op) if !reviewed || S::reviews_transfer_conflicts() || job.preflight_conflicts(|| crate::conflicts::collect(&*fs, &op, job.ctl())) => perform(&mut sh, op, cut, &job),
                                     Ok(op) => cancelled(op),
@@ -721,8 +714,16 @@ fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake:
     items.retain(|(i, name)| {
         progress.record();
         let path = dir.join(name);
-        let kind = if path.is_network() || fs.remote(&path) { 2 } else if fs.seek_penalty(&path) == Some(true) { 1 } else { 0 };
-        if !allowed[kind] { skipped.push(*i); }
+        let kind = if path.is_network() || fs.remote(&path) {
+            2
+        } else if fs.seek_penalty(&path) == Some(true) {
+            1
+        } else {
+            0
+        };
+        if !allowed[kind] {
+            skipped.push(*i);
+        }
         allowed[kind]
     });
     if !skipped.is_empty() {
@@ -870,7 +871,11 @@ fn list<F: Fs + ?Sized>(fs: &F, gen: u64, path: &FsPath, view: ViewSpec, case: C
 const MEASURE_REPORT_EVERY: Duration = Duration::from_millis(200);
 
 fn on_disk(size: u64, cluster: u64) -> u64 {
-    if cluster == 0 { 0 } else { size.div_ceil(cluster) * cluster }
+    if cluster == 0 {
+        0
+    } else {
+        size.div_ceil(cluster) * cluster
+    }
 }
 
 fn accessed(path: &FsPath) -> i64 {

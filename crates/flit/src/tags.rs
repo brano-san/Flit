@@ -145,10 +145,16 @@ impl Book {
             return;
         }
         let mut refused = 0;
-        let resolved: Vec<_> = items.into_iter().filter_map(|item| match (self.key_of)(&item) {
-            Some(key) => Some((item, key)),
-            None => { refused += 1; None }
-        }).collect();
+        let resolved: Vec<_> = items
+            .into_iter()
+            .filter_map(|item| match (self.key_of)(&item) {
+                Some(key) => Some((item, key)),
+                None => {
+                    refused += 1;
+                    None
+                }
+            })
+            .collect();
         let on = on.unwrap_or_else(|| resolved.iter().any(|(_, key)| self.store.files.get(key).is_none_or(|f| f.mask & (1 << tag) == 0)));
         for (item, key) in resolved {
             let mask = self.store.update(key, item.clone(), |m| if on { m | 1 << tag } else { m & !(1 << tag) });
@@ -283,7 +289,11 @@ pub fn run_command<P: FilePlatform + ProfilePlatform + ShellPlatform>(o: &Open) 
     }
     let out = book.apply(TagRequest::Command { name: o.tag.clone().unwrap_or_default(), items });
     let status = out.status.unwrap_or_default();
-    if out.files.is_empty() { Err(status) } else { Ok(status) }
+    if out.files.is_empty() {
+        Err(status)
+    } else {
+        Ok(status)
+    }
 }
 
 pub struct TagWorker {

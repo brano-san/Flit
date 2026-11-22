@@ -15,9 +15,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-const TERMINALS: [&str; 19] = [
-    "xdg-terminal-exec", "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "mate-terminal", "tilix", "terminator", "lxterminal", "kitty", "ghostty", "alacritty", "foot", "wezterm", "cosmic-term", "qterminal", "xterm",
-];
+const TERMINALS: [&str; 19] =
+    ["xdg-terminal-exec", "x-terminal-emulator", "gnome-terminal", "kgx", "ptyxis", "konsole", "xfce4-terminal", "mate-terminal", "tilix", "terminator", "lxterminal", "kitty", "ghostty", "alacritty", "foot", "wezterm", "cosmic-term", "qterminal", "xterm"];
 const HELPER_TIMEOUT: Duration = Duration::from_millis(500);
 pub const TEXT_SCALE_RANGE: std::ops::RangeInclusive<f64> = 0.5..=3.0;
 
@@ -152,10 +151,7 @@ fn xdg_terminal_lists() -> Vec<PathBuf> {
     let home = std::env::var_os("XDG_CONFIG_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")));
     let system = std::env::var_os("XDG_CONFIG_DIRS").filter(|v| !v.is_empty()).unwrap_or_else(|| OsString::from("/etc/xdg"));
     let desktops: Vec<String> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|d| !d.is_empty()).map(str::to_ascii_lowercase).collect();
-    home.into_iter()
-        .chain(std::env::split_paths(&system))
-        .flat_map(|dir| desktops.iter().map(|d| dir.join(format!("{d}-xdg-terminals.list"))).chain([dir.join("xdg-terminals.list")]).collect::<Vec<_>>())
-        .collect()
+    home.into_iter().chain(std::env::split_paths(&system)).flat_map(|dir| desktops.iter().map(|d| dir.join(format!("{d}-xdg-terminals.list"))).chain([dir.join("xdg-terminals.list")]).collect::<Vec<_>>()).collect()
 }
 
 pub fn preferred_terminal(lists: &[PathBuf], find: impl Fn(&OsStr) -> Option<PathBuf>) -> Option<PathBuf> {
@@ -284,10 +280,16 @@ pub fn elf_program(head: &[u8]) -> bool {
     let (wide, le) = (head[4] == 2, head[5] == 1);
     let u16_at = |at: usize| head.get(at..at + 2).map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
     let u32_at = |at: usize| head.get(at..at + 4).map(|b| if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) });
-    let u64_at = |at: usize| head.get(at..at + 8).map(|b| {
-        let a: [u8; 8] = b.try_into().unwrap_or_default();
-        if le { u64::from_le_bytes(a) } else { u64::from_be_bytes(a) }
-    });
+    let u64_at = |at: usize| {
+        head.get(at..at + 8).map(|b| {
+            let a: [u8; 8] = b.try_into().unwrap_or_default();
+            if le {
+                u64::from_le_bytes(a)
+            } else {
+                u64::from_be_bytes(a)
+            }
+        })
+    };
     match u16_at(16) {
         Some(2) => true,
         Some(3) => {
@@ -894,13 +896,11 @@ impl Shell for LinuxShell {
 
 impl FileOps for LinuxShell {
     fn rename_local_noreplace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
-        flit_platform_linux::rename_local_noreplace(from, to)
-            .map_err(|e| PlatformError::from_io(&e, e.to_string()))
+        flit_platform_linux::rename_local_noreplace(from, to).map_err(|e| PlatformError::from_io(&e, e.to_string()))
     }
 
     fn verify_dedup_data(&mut self, path: &FsPath) -> Result<(), PlatformError> {
-        let attribute = flit_platform_linux::portable_metadata::other_user_attribute(path)
-            .map_err(|e| PlatformError::from_io(&e, e.to_string()))?;
+        let attribute = flit_platform_linux::portable_metadata::other_user_attribute(path).map_err(|e| PlatformError::from_io(&e, e.to_string()))?;
         if let Some(name) = attribute {
             return Err(PlatformError::new(-1, flit_core::tr_en!(S::DedupRichDataNamed, name = flit_core::name::display(&name))));
         }
@@ -1088,7 +1088,7 @@ fn place_icon_name(path: &FsPath) -> &'static str {
     }
 }
 
-static OWN_FILES:std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
+static OWN_FILES: std::sync::Mutex<Option<(String, bool)>> = std::sync::Mutex::new(None);
 
 pub fn uri_list(paths: &[FsPath]) -> String {
     paths.iter().map(|p| format!("file://{}\r\n", flit_platform_linux::percent_encode(p.as_bytes()))).collect()
@@ -1288,7 +1288,12 @@ pub(crate) fn gsettings_string(out: &str) -> Option<String> {
     let mut escape = false;
     for c in inside.chars() {
         if escape {
-            value.push(match c { 'n' => '\n', 'r' => '\r', 't' => '\t', _ => c });
+            value.push(match c {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                _ => c,
+            });
             escape = false;
         } else if c == '\\' {
             escape = true;
@@ -1329,7 +1334,6 @@ pub fn probe_animations() -> Option<bool> {
     let ask = |args: &[&str]| helper(args).and_then(|mut c| c.stdout(Stdio::piped()).spawn().ok()).and_then(|child| wait_output(child, HELPER_TIMEOUT)).and_then(|r| String::from_utf8(r).ok()).and_then(|r| parse_flag(&r));
     session_bus().then(|| ask(&portal)).flatten().or_else(|| ask(&gsettings))
 }
-
 
 pub fn numbers(out: &str) -> Vec<f64> {
     out.split(|c: char| !(c.is_ascii_digit() || c == '.' || c == '-' || c == 'e' || c == 'E' || c == '+')).filter_map(|w| w.parse::<f64>().ok()).collect()
@@ -1398,9 +1402,7 @@ pub fn play_media(video: bool, path: &Path, socket: Option<&Path>, volume: Optio
         }
         return with.spawn().map(|c| (c, socket.is_some())).map_err(|e| spawn_error("mpv", &e));
     }
-    let mut with = command("gst-play-1.0", &[])
-        .or_else(|| if video { command("ffplay", &["-autoexit"]) } else { command("ffplay", &["-autoexit", "-nodisp"]) })
-        .or_else(|| if video { None } else { command("paplay", &[]) }).ok_or_else(|| tool_missing("mpv"))?;
+    let mut with = command("gst-play-1.0", &[]).or_else(|| if video { command("ffplay", &["-autoexit"]) } else { command("ffplay", &["-autoexit", "-nodisp"]) }).or_else(|| if video { None } else { command("paplay", &[]) }).ok_or_else(|| tool_missing("mpv"))?;
     with.spawn().map(|c| (c, false)).map_err(|e| spawn_error(&with.get_program().to_string_lossy(), &e))
 }
 

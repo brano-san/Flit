@@ -1,9 +1,48 @@
 use crate::i18n::{self, S};
 use std::fmt::Write;
 
-const MONTHS: [S; 12] = [S::FormatMonthJanuary, S::FormatMonthFebruary, S::FormatMonthMarch, S::FormatMonthApril, S::FormatMonthMay, S::FormatMonthJune, S::FormatMonthJuly, S::FormatMonthAugust, S::FormatMonthSeptember, S::FormatMonthOctober, S::FormatMonthNovember, S::FormatMonthDecember];
-const MONTHS_OF: [S; 12] = [S::FormatMonthOfJanuary, S::FormatMonthOfFebruary, S::FormatMonthOfMarch, S::FormatMonthOfApril, S::FormatMonthOfMay, S::FormatMonthOfJune, S::FormatMonthOfJuly, S::FormatMonthOfAugust, S::FormatMonthOfSeptember, S::FormatMonthOfOctober, S::FormatMonthOfNovember, S::FormatMonthOfDecember];
-const MONTHS_SHORT: [S; 12] = [S::FormatMonthShortJan, S::FormatMonthShortFeb, S::FormatMonthShortMar, S::FormatMonthShortApr, S::FormatMonthShortMay, S::FormatMonthShortJun, S::FormatMonthShortJul, S::FormatMonthShortAug, S::FormatMonthShortSep, S::FormatMonthShortOct, S::FormatMonthShortNov, S::FormatMonthShortDec];
+const MONTHS: [S; 12] = [
+    S::FormatMonthJanuary,
+    S::FormatMonthFebruary,
+    S::FormatMonthMarch,
+    S::FormatMonthApril,
+    S::FormatMonthMay,
+    S::FormatMonthJune,
+    S::FormatMonthJuly,
+    S::FormatMonthAugust,
+    S::FormatMonthSeptember,
+    S::FormatMonthOctober,
+    S::FormatMonthNovember,
+    S::FormatMonthDecember,
+];
+const MONTHS_OF: [S; 12] = [
+    S::FormatMonthOfJanuary,
+    S::FormatMonthOfFebruary,
+    S::FormatMonthOfMarch,
+    S::FormatMonthOfApril,
+    S::FormatMonthOfMay,
+    S::FormatMonthOfJune,
+    S::FormatMonthOfJuly,
+    S::FormatMonthOfAugust,
+    S::FormatMonthOfSeptember,
+    S::FormatMonthOfOctober,
+    S::FormatMonthOfNovember,
+    S::FormatMonthOfDecember,
+];
+const MONTHS_SHORT: [S; 12] = [
+    S::FormatMonthShortJan,
+    S::FormatMonthShortFeb,
+    S::FormatMonthShortMar,
+    S::FormatMonthShortApr,
+    S::FormatMonthShortMay,
+    S::FormatMonthShortJun,
+    S::FormatMonthShortJul,
+    S::FormatMonthShortAug,
+    S::FormatMonthShortSep,
+    S::FormatMonthShortOct,
+    S::FormatMonthShortNov,
+    S::FormatMonthShortDec,
+];
 const DAYS: [S; 7] = [S::FormatDaySunday, S::FormatDayMonday, S::FormatDayTuesday, S::FormatDayWednesday, S::FormatDayThursday, S::FormatDayFriday, S::FormatDaySaturday];
 const DAYS_SHORT: [S; 7] = [S::FormatDayShortSun, S::FormatDayShortMon, S::FormatDayShortTue, S::FormatDayShortWed, S::FormatDayShortThu, S::FormatDayShortFri, S::FormatDayShortSat];
 const UNITS: [S; 6] = [S::FormatSizeB, S::FormatSizeKb, S::FormatSizeMb, S::FormatSizeGb, S::FormatSizeTb, S::FormatSizePb];
@@ -225,7 +264,11 @@ fn first_char(s: &str) -> &str {
 }
 
 fn meridiem(h: i64) -> &'static str {
-    if h < 12 { S::FormatDateAm.t() } else { S::FormatDatePm.t() }
+    if h < 12 {
+        S::FormatDateAm.t()
+    } else {
+        S::FormatDatePm.t()
+    }
 }
 
 fn has_day_number(chars: &[char]) -> bool {

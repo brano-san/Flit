@@ -251,13 +251,17 @@ fn cancelling_while_the_drop_is_staged_removes_its_private_files() {
     let found = Arc::new(Mutex::new(None));
     let seen = found.clone();
     let prefix = format!("flit-drop-{}-", std::process::id());
-    let job = Job::new(ctl, Box::new(move |p| {
-        if p.stage == Stage::Preparing {
-            let stage = std::fs::read_dir(std::env::temp_dir()).unwrap().filter_map(Result::ok).map(|e| e.path()).find(|p| p.file_name().unwrap().to_string_lossy().starts_with(&prefix) && p.join("cancel-writing.txt").exists());
-            *seen.lock().unwrap() = stage;
-            cancelled.cancel();
-        }
-    }), Box::new(|_| panic!("no conflict before staging finishes")));
+    let job = Job::new(
+        ctl,
+        Box::new(move |p| {
+            if p.stage == Stage::Preparing {
+                let stage = std::fs::read_dir(std::env::temp_dir()).unwrap().filter_map(Result::ok).map(|e| e.path()).find(|p| p.file_name().unwrap().to_string_lossy().starts_with(&prefix) && p.join("cancel-writing.txt").exists());
+                *seen.lock().unwrap() = stage;
+                cancelled.cancel();
+            }
+        }),
+        Box::new(|_| panic!("no conflict before staging finishes")),
+    );
     let out = queued(&dest, &queued_file("cancel-writing.txt", &vec![b'x'; WRITE_CHUNK * 2]), &job);
     assert!(out.items.is_empty());
     assert_eq!(out.error.unwrap().message, flit_platform::CANCELLED);

@@ -19,20 +19,23 @@ fn api() -> Option<&'static Api> {
     API.get_or_init(|| unsafe {
         let lib = NonNull::new(libc::dlopen(c"libglib-2.0.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL))?;
         let symbol = |name: &CStr| NonNull::new(libc::dlsym(lib.as_ptr(), name.as_ptr()));
-        let load = || Some(Api {
-            parse: std::mem::transmute_copy(&symbol(c"g_variant_parse")?),
-            kind: std::mem::transmute_copy(&symbol(c"g_variant_get_type_string")?),
-            equal: std::mem::transmute_copy(&symbol(c"g_variant_equal")?),
-            compare: std::mem::transmute_copy(&symbol(c"g_variant_compare")?),
-            double: std::mem::transmute_copy(&symbol(c"g_variant_get_double")?),
-            unref: std::mem::transmute_copy(&symbol(c"g_variant_unref")?),
-        });
+        let load = || {
+            Some(Api {
+                parse: std::mem::transmute_copy(&symbol(c"g_variant_parse")?),
+                kind: std::mem::transmute_copy(&symbol(c"g_variant_get_type_string")?),
+                equal: std::mem::transmute_copy(&symbol(c"g_variant_equal")?),
+                compare: std::mem::transmute_copy(&symbol(c"g_variant_compare")?),
+                double: std::mem::transmute_copy(&symbol(c"g_variant_get_double")?),
+                unref: std::mem::transmute_copy(&symbol(c"g_variant_unref")?),
+            })
+        };
         let api = load();
         if api.is_none() {
             libc::dlclose(lib.as_ptr());
         }
         api
-    }).as_ref()
+    })
+    .as_ref()
 }
 
 struct Value<'a> {
@@ -69,7 +72,13 @@ pub(super) fn matches(actual: &str, kind: &str, op: &str, value: &str) -> bool {
     unsafe {
         if kind == "d" {
             let (a, b) = ((api.double)(left), (api.double)(right));
-            return match op { "eq" => a == b, "ne" => a != b, "lt" => a < b, "gt" => a > b, _ => false };
+            return match op {
+                "eq" => a == b,
+                "ne" => a != b,
+                "lt" => a < b,
+                "gt" => a > b,
+                _ => false,
+            };
         }
         match op {
             "eq" => (api.equal)(left, right) != 0,

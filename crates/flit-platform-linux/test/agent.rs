@@ -272,12 +272,7 @@ fn a_batch_over_the_frame_limit_falls_back_to_the_first_individual_question() {
     use flit_core::provider::{Conflict, Resolve};
 
     let prefix = format!("/{}", vec!["a".repeat(240); 8].join("/"));
-    let conflicts: Vec<_> = (0..5000).map(|i| Conflict {
-        source: FsPath::parse(&format!("{prefix}/in/{i}")).unwrap(),
-        target: FsPath::parse(&format!("{prefix}/out/{i}")).unwrap(),
-        from: Meta::default(),
-        to: Meta::default(),
-    }).collect();
+    let conflicts: Vec<_> = (0..5000).map(|i| Conflict { source: FsPath::parse(&format!("{prefix}/in/{i}")).unwrap(), target: FsPath::parse(&format!("{prefix}/out/{i}")).unwrap(), from: Meta::default(), to: Meta::default() }).collect();
     let ctl = OpCtl::default();
     assert!(review_conflicts(1, conflicts.clone(), &ctl, |_| panic!("oversized event was sent")));
     assert_eq!(ctl.resolve(&conflicts[0], || ctl.answer(Resolve::Skip, true)), Some(Resolve::Skip));

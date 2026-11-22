@@ -19,13 +19,7 @@ const TYPE_ERROR: c_int = 3;
 const POLL_MS: c_int = 50;
 const UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 const INVALID_ARGS: &str = "org.freedesktop.DBus.Error.InvalidArgs";
-const NO_GVFS: [&str; 5] = [
-    "org.freedesktop.DBus.Error.ServiceUnknown",
-    "org.freedesktop.DBus.Error.NameHasNoOwner",
-    "org.freedesktop.DBus.Error.UnknownMethod",
-    "org.freedesktop.DBus.Error.UnknownObject",
-    "org.freedesktop.DBus.Error.UnknownInterface",
-];
+const NO_GVFS: [&str; 5] = ["org.freedesktop.DBus.Error.ServiceUnknown", "org.freedesktop.DBus.Error.NameHasNoOwner", "org.freedesktop.DBus.Error.UnknownMethod", "org.freedesktop.DBus.Error.UnknownObject", "org.freedesktop.DBus.Error.UnknownInterface"];
 const ALREADY_MOUNTED: &str = "_g_2dio_2derror_2dquark.Code17";
 const INFO_WAIT: Duration = Duration::from_secs(5);
 const SMB_PORT: u16 = 445;

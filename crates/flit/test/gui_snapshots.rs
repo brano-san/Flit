@@ -75,16 +75,14 @@ fn load_listing(app: &mut App, dir: &Path) {
 
 fn show_conflict(app: &mut App, dir: &Path, folder: &FsPath, now: Instant) {
     app.paste();
-    let id = app.drain_effects().find_map(|effect| match effect {
-        Effect::Provider { req: ProviderRequest::Op { id, .. }, .. } => Some(id),
-        _ => None,
-    }).expect("paste operation");
-    let conflict = Conflict {
-        source: folder.join(b"Drafts").join(SAMPLE.as_bytes()),
-        target: folder.join(SAMPLE.as_bytes()),
-        from: meta(&dir.join("Drafts").join(SAMPLE)),
-        to: meta(&dir.join(SAMPLE)),
-    };
+    let id = app
+        .drain_effects()
+        .find_map(|effect| match effect {
+            Effect::Provider { req: ProviderRequest::Op { id, .. }, .. } => Some(id),
+            _ => None,
+        })
+        .expect("paste operation");
+    let conflict = Conflict { source: folder.join(b"Drafts").join(SAMPLE.as_bytes()), target: folder.join(SAMPLE.as_bytes()), from: meta(&dir.join("Drafts").join(SAMPLE)), to: meta(&dir.join(SAMPLE)) };
     app.on_provider_event(ProviderEvent::OpConflict { tab: app.tab().id, id, conflict }, now);
 }
 
@@ -127,16 +125,19 @@ fn capture_frame() {
     let now = Instant::now();
     let mut app = App::new(Persisted::default(), vec![route], 0, theme == "dark", 1.0, SIZE, now);
     app.set_caps(flit_core::caps::Caps { unix_paths: unix });
-    let doc = settings::parse(&serde_json::json!({
-        "appearance.system_scheme": false,
-        "appearance.color_scheme": theme,
-        "appearance.animations": false,
-        "appearance.font": if unix { "" } else { "Segoe UI" },
-        "appearance.inspector_font": if unix { "" } else { "Consolas" },
-        "files.thumbnails": "never",
-        "files.auto_sizes": false,
-        "files.extensions": true
-    }).to_string());
+    let doc = settings::parse(
+        &serde_json::json!({
+            "appearance.system_scheme": false,
+            "appearance.color_scheme": theme,
+            "appearance.animations": false,
+            "appearance.font": if unix { "" } else { "Segoe UI" },
+            "appearance.inspector_font": if unix { "" } else { "Consolas" },
+            "files.thumbnails": "never",
+            "files.auto_sizes": false,
+            "files.extensions": true
+        })
+        .to_string(),
+    );
     assert!(doc.problems.is_empty(), "{:?}", doc.problems);
     app.apply_doc(&doc);
     assert_eq!(app.is_dark(), theme == "dark");
@@ -168,10 +169,13 @@ fn capture_frame() {
 
     app.frame(&mut gfx, now);
     if scene == "inspector" {
-        let request = app.drain_effects().find_map(|effect| match effect {
-            Effect::Preview(request) if request.path.file_name() == SAMPLE.as_bytes() => Some(request),
-            _ => None,
-        }).expect("selected text file should start a preview");
+        let request = app
+            .drain_effects()
+            .find_map(|effect| match effect {
+                Effect::Preview(request) if request.path.file_name() == SAMPLE.as_bytes() => Some(request),
+                _ => None,
+            })
+            .expect("selected text file should start a preview");
         let text = fs::read_to_string(dir.join(SAMPLE)).unwrap();
         app.on_preview(request.gen, PreviewData::Doc(preview::text_doc(&text, None)));
         app.frame(&mut gfx, now);
@@ -266,7 +270,8 @@ fn capture_child(scene: &str, theme: &str, fixture: &Path, output: &Path) {
         .env("FLIT_CAPTURE_FIXTURE", fixture)
         .env("FLIT_CAPTURE_SCENE", scene)
         .env("FLIT_CAPTURE_THEME", theme)
-        .spawn().unwrap();
+        .spawn()
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if let Some(status) = child.try_wait().unwrap() {

@@ -23,10 +23,15 @@ pub fn cli(args: &[OsString]) -> Option<Result<Open, S>> {
         _ => return None,
     };
 
-    Some(route.and_then(|route| route.to_str()).and_then(|uri| {
-        parse(uri, cfg!(windows), &|_| true)?;
-        Some(Open { paths: vec![uri.as_bytes().to_vec()], ..Default::default() })
-    }).ok_or(S::SettingsPageSystemLinkInvalid))
+    Some(
+        route
+            .and_then(|route| route.to_str())
+            .and_then(|uri| {
+                parse(uri, cfg!(windows), &|_| true)?;
+                Some(Open { paths: vec![uri.as_bytes().to_vec()], ..Default::default() })
+            })
+            .ok_or(S::SettingsPageSystemLinkInvalid),
+    )
 }
 
 pub fn handles(open: &Open) -> bool {
@@ -90,4 +95,3 @@ fn local_directory(path: &Path) -> bool {
 #[cfg(test)]
 #[path = "../test/system_link.rs"]
 mod tests;
-

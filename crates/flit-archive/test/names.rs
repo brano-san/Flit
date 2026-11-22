@@ -42,7 +42,8 @@ fn western_and_asian_names_are_recognized() {
 
 #[test]
 fn unsafe_entry_names_are_rejected() {
-    for bad in ["../evil.txt", "a/../../evil", "/etc/passwd", "\\\\server\\share\\x", "C:/Windows/x.dll", "c:x", "file.txt:stream", "CON", "dir/nul.txt", "COM1.log", "LPT9", "COM¹", "aux .txt", "trailing.", "space ", "a/b./c", "ctl\u{1}x", "q?.txt", "", "./", "a/<b>"] {
+    for bad in ["../evil.txt", "a/../../evil", "/etc/passwd", "\\\\server\\share\\x", "C:/Windows/x.dll", "c:x", "file.txt:stream", "CON", "dir/nul.txt", "COM1.log", "LPT9", "COM¹", "aux .txt", "trailing.", "space ", "a/b./c", "ctl\u{1}x", "q?.txt", "", "./", "a/<b>"]
+    {
         assert_eq!(safe_path_for(bad, true), None, "{bad:?}");
     }
     for windows in [true, false] {

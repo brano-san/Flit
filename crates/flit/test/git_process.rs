@@ -10,11 +10,7 @@ fn chunked_git_progress_survives_carriage_returns_and_unterminated_final_lines()
     stderr.feed(b"ects:  45% (9/20)\r\nmalformed progress: 80%\rWriting objects: 101%\n", &mut track);
     stderr.feed(b"Resolving deltas: 100% (20/20)", &mut track);
     stderr.flush(&mut track);
-    assert_eq!(progress, [
-        GitProgress { phase: GitPhase::Counting, percent: 35 },
-        GitProgress { phase: GitPhase::Receiving, percent: 45 },
-        GitProgress { phase: GitPhase::Resolving, percent: 100 },
-    ]);
+    assert_eq!(progress, [GitProgress { phase: GitPhase::Counting, percent: 35 }, GitProgress { phase: GitPhase::Receiving, percent: 45 }, GitProgress { phase: GitPhase::Resolving, percent: 100 },]);
 }
 
 #[test]

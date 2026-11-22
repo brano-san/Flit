@@ -61,7 +61,11 @@ struct Top {
 }
 
 fn check(r: libc::c_int) -> io::Result<()> {
-    if r < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+    if r < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 fn errno(code: i32) -> io::Error {
@@ -78,7 +82,11 @@ pub(crate) fn rename_exact(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr)
 
 fn rename_noreplace(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr) -> io::Result<()> {
     let result = unsafe { libc::syscall(libc::SYS_renameat2, sdir, sname.as_ptr(), ddir, dname.as_ptr(), RENAME_NOREPLACE) };
-    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 fn rename_fallback(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr, result: io::Result<()>) -> io::Result<()> {
@@ -103,7 +111,11 @@ fn rename_at(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr, replace: bool
 
 fn seek(fd: RawFd, at: u64, whence: libc::c_int) -> io::Result<u64> {
     let r = unsafe { libc::lseek(fd, at as libc::off_t, whence) };
-    if r < 0 { Err(io::Error::last_os_error()) } else { Ok(r as u64) }
+    if r < 0 {
+        Err(io::Error::last_os_error())
+    } else {
+        Ok(r as u64)
+    }
 }
 
 fn sparse(st: &libc::stat) -> bool {
@@ -258,9 +270,7 @@ fn undo_stamp(path: &FsPath) -> io::Result<(flit_core::undo::Stamp, bool)> {
 }
 
 fn undo_children(dir: &FsPath) -> io::Result<Vec<FsPath>> {
-    std::fs::read_dir(host(dir).ok_or_else(|| errno(libc::EINVAL))?)?.map(|e| {
-        Ok(dir.join(e?.file_name().as_bytes()))
-    }).collect()
+    std::fs::read_dir(host(dir).ok_or_else(|| errno(libc::EINVAL))?)?.map(|e| Ok(dir.join(e?.file_name().as_bytes()))).collect()
 }
 
 fn reserve_stage(dir: RawFd) -> io::Result<(CString, OwnedFd)> {
@@ -376,11 +386,7 @@ impl<'a> Engine<'a> {
 
     fn note_io(&mut self, path: &FsPath, e: &io::Error) {
         if self.first.is_none() {
-            self.first_kind = if e.raw_os_error() == Some(libc::ECANCELED) {
-                flit_platform::PlatformErrorKind::Cancelled
-            } else {
-                PlatformError::from_io(e, "").kind
-            };
+            self.first_kind = if e.raw_os_error() == Some(libc::ECANCELED) { flit_platform::PlatformErrorKind::Cancelled } else { PlatformError::from_io(e, "").kind };
         }
         self.note(failed_at(path, e));
     }
@@ -718,8 +724,7 @@ impl<'a> Engine<'a> {
             }
             if mode == Mode::Across {
                 if let Err(error) = unlink_at(sdir, sname, false) {
-                    if placed_node.is_some_and(|n| node_at(ddir, dname, false).is_ok_and(|now| (now.dev, now.ino) == (n.dev, n.ino)))
-                        && rename_exact(ddir, dname, dir, new).is_ok() {
+                    if placed_node.is_some_and(|n| node_at(ddir, dname, false).is_ok_and(|now| (now.dev, now.ino) == (n.dev, n.ino))) && rename_exact(ddir, dname, dir, new).is_ok() {
                         restore();
                     }
                     return Err(error);
@@ -992,7 +997,9 @@ impl<'a> Engine<'a> {
             _ => Vec::new(),
         };
         self.keep(source, result);
-        if companions.is_empty() { return; }
+        if companions.is_empty() {
+            return;
+        }
         let job = Job::detached(Resolve::Skip);
         let mut engine = Engine::new(&job);
         for (from, to) in companions {
@@ -1332,15 +1339,20 @@ impl<'a> Engine<'a> {
     fn delete(&mut self, items: &[FsPath], state: Option<&Path>) {
         self.preparing();
         let tops = self.tops(items);
-        let stages: Vec<_> = items.iter().zip(&tops).map(|(path, top)| {
-            let state = state?;
-            let top = top.as_ref().filter(|t| !t.node.mounted_on(t.parent_dev) && !self.stopped())?;
-            let (stamp, _) = undo_stamp(path).ok()?;
-            flit_platform::pending::stage_delete(state, path, stamp, false, |_, to| {
-                let dir = top.dir.as_raw_fd();
-                rename_exact(dir, &top.name, dir, &cstring(to.file_name())?)
-            }).ok()
-        }).collect();
+        let stages: Vec<_> = items
+            .iter()
+            .zip(&tops)
+            .map(|(path, top)| {
+                let state = state?;
+                let top = top.as_ref().filter(|t| !t.node.mounted_on(t.parent_dev) && !self.stopped())?;
+                let (stamp, _) = undo_stamp(path).ok()?;
+                flit_platform::pending::stage_delete(state, path, stamp, false, |_, to| {
+                    let dir = top.dir.as_raw_fd();
+                    rename_exact(dir, &top.name, dir, &cstring(to.file_name())?)
+                })
+                .ok()
+            })
+            .collect();
         let mut total = Tally::default();
         let mut allowed = Vec::with_capacity(items.len());
         for ((item, t), stage) in items.iter().zip(&tops).zip(&stages) {
@@ -1373,11 +1385,7 @@ impl<'a> Engine<'a> {
                 };
                 let matches = || undo_stamp(&path).is_ok_and(|(stamp, _)| record.matches(stamp));
                 let deleted = if matches() && !self.stopped() {
-                    let prepared = if t.node.is_dir() {
-                        record.inventory(&path, undo_fs(), || self.stopped())
-                    } else {
-                        Ok(())
-                    };
+                    let prepared = if t.node.is_dir() { record.inventory(&path, undo_fs(), || self.stopped()) } else { Ok(()) };
                     match prepared.and_then(|()| record.begin_delete()) {
                         Ok(()) => self.delete_at(dir, &name, &path, &t.node),
                         Err(error) => {
@@ -1398,9 +1406,7 @@ impl<'a> Engine<'a> {
                     match restored {
                         Ok(()) => record.finish(),
                         Err(error) => {
-                            self.first = Some(flit_core::i18n::fill(S::ErrorsOpsSavedFile.in_lang(self.lang), &[
-                                ("original", &item.display()), ("saved", &path.display()), ("error", &reason(&path, &error)),
-                            ]));
+                            self.first = Some(flit_core::i18n::fill(S::ErrorsOpsSavedFile.in_lang(self.lang), &[("original", &item.display()), ("saved", &path.display()), ("error", &reason(&path, &error))]));
                             self.failed += 1;
                         }
                     }
@@ -1425,9 +1431,7 @@ impl<'a> Engine<'a> {
             if self.stopped() {
                 break;
             }
-            let moved = host(p).ok_or_else(|| errno(libc::EINVAL)).and_then(|h| {
-                if self.job.ctl().replay().is_some() { trash.trash_checked(h) } else { trash.trash(h) }
-            });
+            let moved = host(p).ok_or_else(|| errno(libc::EINVAL)).and_then(|h| if self.job.ctl().replay().is_some() { trash.trash_checked(h) } else { trash.trash(h) });
             match moved.map(|to| fs_path(&to)) {
                 Ok(Some(to)) => self.done.push((p.clone(), to)),
                 Ok(None) => self.note(format!("{} was moved to the Trash under a name Flit cannot record", p.display())),
@@ -1496,11 +1500,18 @@ fn process_is_live(pid: u32) -> bool {
 }
 
 fn recover_pending(state: &Path, live: impl Fn(u32) -> bool) {
-    flit_platform::pending::recover(state, live, undo_fs(), delete_pending, |staged, original, _| {
-        let item = top(staged)?;
-        let dir = item.dir.as_raw_fd();
-        rename_noreplace(dir, &item.name, dir, &cstring(original.file_name())?)
-    }, |_| Ok(()));
+    flit_platform::pending::recover(
+        state,
+        live,
+        undo_fs(),
+        delete_pending,
+        |staged, original, _| {
+            let item = top(staged)?;
+            let dir = item.dir.as_raw_fd();
+            rename_noreplace(dir, &item.name, dir, &cstring(original.file_name())?)
+        },
+        |_| Ok(()),
+    );
 }
 
 fn delete_pending(path: &FsPath) -> io::Result<()> {

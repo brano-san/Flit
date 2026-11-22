@@ -36,9 +36,7 @@ pub enum PrettyFormat {
 
 impl PrettyFormat {
     pub fn for_ext(ext: &[u8]) -> Option<Self> {
-        [(b"json".as_slice(), Self::Json), (b"yaml", Self::Yaml), (b"yml", Self::Yaml), (b"toml", Self::Toml), (b"xml", Self::Xml)]
-            .into_iter()
-            .find_map(|(suffix, format)| ext.eq_ignore_ascii_case(suffix).then_some(format))
+        [(b"json".as_slice(), Self::Json), (b"yaml", Self::Yaml), (b"yml", Self::Yaml), (b"toml", Self::Toml), (b"xml", Self::Xml)].into_iter().find_map(|(suffix, format)| ext.eq_ignore_ascii_case(suffix).then_some(format))
     }
 }
 
@@ -358,10 +356,8 @@ impl Doc {
 }
 
 fn cp1252(c: u8) -> char {
-    const HIGH: [u16; 32] = [
-        0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F, 0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014,
-        0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178,
-    ];
+    const HIGH: [u16; 32] =
+        [0x20AC, 0x81, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0x8D, 0x017D, 0x8F, 0x90, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0x9D, 0x017E, 0x0178];
     match c {
         0x80..=0x9F => char::from_u32(HIGH[(c - 0x80) as usize] as u32).unwrap_or('\u{FFFD}'),
         _ => c as char,
@@ -369,8 +365,36 @@ fn cp1252(c: u8) -> char {
 }
 
 const RTF_SKIP: &[&str] = &[
-    "fonttbl", "colortbl", "stylesheet", "info", "pict", "object", "header", "footer", "headerl", "headerr", "footerl", "footerr", "footnote", "fldinst", "themedata", "colorschememapping", "datastore",
-    "xmlnstbl", "listtable", "listoverridetable", "rsidtbl", "generator", "latentstyles", "filetbl", "revtbl", "pgdsctbl", "mmathPr", "wgrffmtfilter", "xe", "tc",
+    "fonttbl",
+    "colortbl",
+    "stylesheet",
+    "info",
+    "pict",
+    "object",
+    "header",
+    "footer",
+    "headerl",
+    "headerr",
+    "footerl",
+    "footerr",
+    "footnote",
+    "fldinst",
+    "themedata",
+    "colorschememapping",
+    "datastore",
+    "xmlnstbl",
+    "listtable",
+    "listoverridetable",
+    "rsidtbl",
+    "generator",
+    "latentstyles",
+    "filetbl",
+    "revtbl",
+    "pgdsctbl",
+    "mmathPr",
+    "wgrffmtfilter",
+    "xe",
+    "tc",
 ];
 
 struct Rtf {

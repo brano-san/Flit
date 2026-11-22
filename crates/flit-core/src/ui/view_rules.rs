@@ -103,9 +103,7 @@ impl App {
         }
         if rules.location_rules() {
             let drive = self.nav.sidebar.places.drives.iter().filter(|d| !d.unmounted && below(path, &d.path)).max_by_key(|d| d.path.as_bytes().len());
-            let network = path.kind() == PathKind::Unc || path.is_network()
-                || path.as_bytes().get(..8).is_some_and(|p| p.eq_ignore_ascii_case(br"\\?\UNC\"))
-                || drive.is_some_and(|d| d.remote.is_some());
+            let network = path.kind() == PathKind::Unc || path.is_network() || path.as_bytes().get(..8).is_some_and(|p| p.eq_ignore_ascii_case(br"\\?\UNC\")) || drive.is_some_and(|d| d.remote.is_some());
             if let Some(mode) = rules.network.filter(|_| network) {
                 return Some(mode);
             }
@@ -113,9 +111,7 @@ impl App {
                 return Some(mode);
             }
         }
-        if rules.pictures_min == 0 || !done || !v.snap().done || v.snap().error.is_some()
-            || !matches!(path.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim | PathKind::Unix)
-        {
+        if rules.pictures_min == 0 || !done || !v.snap().done || v.snap().error.is_some() || !matches!(path.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim | PathKind::Unix) {
             return None;
         }
         let snap = v.snap().clone();

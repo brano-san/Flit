@@ -75,7 +75,11 @@ fn small_copies_share_a_volume_flush_and_only_report_bytes_after_it() {
     let (mut calls, expected) = (0, 16 * MIB as u64);
     let (confirmed, failures) = volumes.finish_with(|fd| {
         calls += 1;
-        if fd == bad_fd { Err(io::Error::other("flush failed")) } else { Ok(()) }
+        if fd == bad_fd {
+            Err(io::Error::other("flush failed"))
+        } else {
+            Ok(())
+        }
     });
     assert_eq!((calls, confirmed, failures.len()), (2, expected, 1));
     assert_eq!(volumes.finish_with(|_| panic!("volume flushed twice")).0, 0);

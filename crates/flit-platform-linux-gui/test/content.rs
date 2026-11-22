@@ -120,10 +120,16 @@ fn closing_the_search_stops_a_slow_engine() {
     let started = Instant::now();
     let mut seen = 0;
     let calls = std::cell::Cell::new(0);
-    let r = search_with(&[engine(Kind::Baloo, slow)], None, "first", &|| {
-        calls.set(calls.get() + 1);
-        calls.get() < 5
-    }, &mut |_, _| seen += 1);
+    let r = search_with(
+        &[engine(Kind::Baloo, slow)],
+        None,
+        "first",
+        &|| {
+            calls.set(calls.get() + 1);
+            calls.get() < 5
+        },
+        &mut |_, _| seen += 1,
+    );
     assert!(r.is_ok());
     assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
     assert_eq!(seen, 1);

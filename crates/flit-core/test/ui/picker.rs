@@ -69,10 +69,7 @@ fn picker_filters_a_directory_by_file_type_and_keeps_unclassified_files_visible(
         }
     }
     app.apply_snapshot(0, Arc::new(snap));
-    app.start_picker(Request {
-        filters: vec![Filter { label: "Text".into(), patterns: Vec::new(), mime_types: vec!["text/plain".into()] }],
-        ..Request::default()
-    });
+    app.start_picker(Request { filters: vec![Filter { label: "Text".into(), patterns: Vec::new(), mime_types: vec!["text/plain".into()] }], ..Request::default() });
     let view = app.tab().view.as_ref().unwrap();
     let visible: Vec<_> = view.rows().iter().map(|&i| view.listing().name(i)).collect();
     assert_eq!(visible, [b"README".as_slice(), b"unknown"]);

@@ -12,12 +12,16 @@ impl FileOps for Recovery {
         crate::fileops::verify_dedup_data(path)
     }
 
-    fn file_identity(&mut self, path: &FsPath) -> Option<FileKey> { crate::tags::file_key(path) }
+    fn file_identity(&mut self, path: &FsPath) -> Option<FileKey> {
+        crate::tags::file_key(path)
+    }
 
     fn keep_dedup_backup(&mut self, path: &FsPath, original: &FsPath) -> Option<FsPath> {
         assert!(std_path(original).is_file());
         assert_ne!(self.file_identity(path), self.file_identity(original));
-        if self.1 { return None; }
+        if self.1 {
+            return None;
+        }
         let copy = self.0.join(b"recycle-record");
         fs::rename(std_path(path), std_path(&copy)).ok()?;
         Some(copy)
@@ -37,8 +41,12 @@ impl FileOps for Recovery {
         OpOutcome { items: pairs.clone(), error: None }
     }
 
-    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> { unreachable!() }
-    fn clear_clipboard(&mut self) { unreachable!() }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        unreachable!()
+    }
+    fn clear_clipboard(&mut self) {
+        unreachable!()
+    }
 }
 
 struct Temp(FsPath);
@@ -53,7 +61,9 @@ impl Temp {
     }
 }
 impl Drop for Temp {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(std_path(&self.0)); }
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(std_path(&self.0));
+    }
 }
 
 fn replace_and_undo(target_name: &[u8]) {
@@ -61,7 +71,9 @@ fn replace_and_undo(target_name: &[u8]) {
     let keep = temp.0.join(b"keep.txt");
     let target = temp.0.join(target_name);
     let bytes = b"same bytes";
-    for path in [&keep, &target] { fs::write(std_path(path), bytes).unwrap(); }
+    for path in [&keep, &target] {
+        fs::write(std_path(path), bytes).unwrap();
+    }
     let mut recovery = Recovery(temp.0.clone(), false);
     let saved = recovery.file_identity(&target).unwrap();
     let job = Job::detached(Resolve::Skip);
@@ -123,7 +135,9 @@ fn replacement_rejects_an_unknown_stream_on_the_kept_file_by_name() {
     let keep = temp.0.join(b"keep.txt");
     let target = temp.0.join(b"duplicate.txt");
     let stream = temp.0.join(b"keep.txt:details");
-    for item in [&keep, &target] { fs::write(std_path(item), b"same").unwrap(); }
+    for item in [&keep, &target] {
+        fs::write(std_path(item), b"same").unwrap();
+    }
     fs::write(std_path(&stream), b"metadata").unwrap();
     let mut recovery = Recovery(temp.0.clone(), false);
     let first = recovery.file_identity(&target);
@@ -141,7 +155,9 @@ fn replacement_accepts_download_marks_and_round_trips_the_targets_streams() {
     let keep = temp.0.join(b"keep.txt");
     let target = temp.0.join(b"duplicate.txt");
     let stream = temp.0.join(b"duplicate.txt:details");
-    for item in [&keep, &target] { fs::write(std_path(item), b"same").unwrap(); }
+    for item in [&keep, &target] {
+        fs::write(std_path(item), b"same").unwrap();
+    }
     fs::write(std_path(&temp.0.join(b"keep.txt:Zone.Identifier")), b"[ZoneTransfer]\r\nZoneId=3\r\n").unwrap();
     fs::write(std_path(&stream), b"metadata").unwrap();
     let mut recovery = Recovery(temp.0.clone(), false);
@@ -162,7 +178,9 @@ fn a_failed_backup_rolls_back_without_losing_the_target_name_or_identity() {
     let temp = Temp::new();
     let keep = temp.0.join(b"keep.txt");
     let target = temp.0.join(b"original.txt");
-    for item in [&keep, &target] { fs::write(std_path(item), b"equal").unwrap(); }
+    for item in [&keep, &target] {
+        fs::write(std_path(item), b"equal").unwrap();
+    }
     let mut recovery = Recovery(temp.0.clone(), true);
     let original = recovery.file_identity(&target);
     let op = FileOp::Dedup { keep, candidates: vec![target.clone()], backups: Vec::new() };

@@ -202,14 +202,8 @@ pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
     let pkexec = pkexec()?;
     let exe = std::env::current_exe().map_err(|e| unelevated(format!("cannot find the Flit program: {}", flit_core::fmt::io_reason(&e))))?;
     let exe = agent_program(&exe).map_err(|e| unelevated(e.to_string()))?;
-    let mut child = Command::new(pkexec)
-        .args(helper_args(&exe))
-        .args(job.has_companion_groups().then_some(COMPANIONS_FLAG))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| unelevated(format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
+    let mut child =
+        Command::new(pkexec).args(helper_args(&exe)).args(job.has_companion_groups().then_some(COMPANIONS_FLAG)).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| unelevated(format!("pkexec: {}", flit_core::fmt::io_reason(&e))))?;
     let (Some(stdin), Some(stdout), Some(mut stderr)) = (child.stdin.take(), child.stdout.take(), child.stderr.take()) else {
         let _ = child.kill();
         return Err(PlatformError::new(-1, "pkexec started without its pipes"));
@@ -285,9 +279,7 @@ pub fn access_needs_root(op: &FileOp) -> bool {
         return false;
     }
     let me = unsafe { libc::geteuid() };
-    let changes = |p: &FsPath, uid: Option<u32>, gid: Option<u32>| {
-        owners(p).is_some_and(|(u, g)| u != me || uid.is_some_and(|uid| uid != u) || gid.is_some_and(|gid| gid != g && !member(gid)))
-    };
+    let changes = |p: &FsPath, uid: Option<u32>, gid: Option<u32>| owners(p).is_some_and(|(u, g)| u != me || uid.is_some_and(|uid| uid != u) || gid.is_some_and(|gid| gid != g && !member(gid)));
     match op {
         FileOp::SetAccess { items, edit } => items.iter().any(|i| changes(i, edit.owner, edit.group)),
         FileOp::Access(list) => list.iter().any(|c| changes(&c.item, Some(c.to.uid), Some(c.to.gid))),

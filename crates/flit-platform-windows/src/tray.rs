@@ -1,4 +1,7 @@
-use flit_platform::{tray::{Action, Menu, Tray}, SystemPlatform};
+use flit_platform::{
+    tray::{Action, Menu, Tray},
+    SystemPlatform,
+};
 use std::cell::Cell;
 use std::time::{Duration, Instant};
 use windows::core::{w, PCWSTR};
@@ -65,7 +68,9 @@ impl Icon {
     pub fn new(hwnd: HWND) -> Self {
         let taskbar_created = unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) };
         if taskbar_created != 0 && crate::Windows::elevated() {
-            unsafe { let _ = ChangeWindowMessageFilterEx(hwnd, taskbar_created, MSGFLT_ALLOW, None); }
+            unsafe {
+                let _ = ChangeWindowMessageFilterEx(hwnd, taskbar_created, MSGFLT_ALLOW, None);
+            }
         }
         Self { hwnd, added: Cell::new(false), appearance: Cell::new(None), retry: Cell::new(Retry::Ready), taskbar_created }
     }
@@ -146,7 +151,9 @@ impl Icon {
 
     fn stop_retry(&self, state: Retry) {
         if matches!(self.retry.replace(state), Retry::Waiting(_)) {
-            unsafe { let _ = KillTimer(Some(self.hwnd), RETRY_TIMER); }
+            unsafe {
+                let _ = KillTimer(Some(self.hwnd), RETRY_TIMER);
+            }
         }
     }
 
@@ -164,7 +171,9 @@ impl Icon {
 
     fn remove(&self) {
         if self.added.replace(false) {
-            unsafe { let _ = Shell_NotifyIconW(NIM_DELETE, &self.data()); }
+            unsafe {
+                let _ = Shell_NotifyIconW(NIM_DELETE, &self.data());
+            }
         }
     }
 }
@@ -179,10 +188,7 @@ impl Drop for Icon {
 fn taskbar_light() -> bool {
     let mut light = 0u32;
     let mut size = size_of::<u32>() as u32;
-    let result = unsafe {
-        RegGetValueW(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"), w!("SystemUsesLightTheme"),
-            RRF_RT_REG_DWORD, None, Some((&mut light as *mut u32).cast()), Some(&mut size))
-    };
+    let result = unsafe { RegGetValueW(HKEY_CURRENT_USER, w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"), w!("SystemUsesLightTheme"), RRF_RT_REG_DWORD, None, Some((&mut light as *mut u32).cast()), Some(&mut size)) };
     result.is_ok() && light != 0
 }
 
@@ -204,9 +210,7 @@ fn icon_pixels(light: bool, width: usize, height: usize) -> (Vec<u8>, Vec<u8>) {
         let edge = if base_y <= 4 { 7 } else { 14 };
         for x in 0..width {
             let base_x = x * 16 / width;
-            if (3..13).contains(&base_y) && (2..edge).contains(&base_x)
-                && (matches!(base_y, 3 | 5 | 12) || base_x == 2 || base_x == edge - 1)
-            {
+            if (3..13).contains(&base_y) && (2..edge).contains(&base_x) && (matches!(base_y, 3 | 5 | 12) || base_x == 2 || base_x == edge - 1) {
                 mask[y * stride + x / 8] &= !(0x80 >> (x % 8));
                 pixels[(y * width + x) * 4..][..4].copy_from_slice(&[ink, ink, ink, 255]);
             }

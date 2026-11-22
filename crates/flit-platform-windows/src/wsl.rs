@@ -44,13 +44,7 @@ pub fn wsl_exe() -> PathBuf {
 }
 
 pub fn shell(distro: &str, script: &str) -> io::Result<Child> {
-    let child = Command::new(wsl_exe())
-        .args(["-d", distro, "--exec", "/bin/sh", "-c", script])
-        .creation_flags(CREATE_NO_WINDOW.0)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let child = Command::new(wsl_exe()).args(["-d", distro, "--exec", "/bin/sh", "-c", script]).creation_flags(CREATE_NO_WINDOW.0).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
     let assigned = job().map(|job| unsafe { AssignProcessToJobObject(job, HANDLE(child.as_raw_handle())) });
     if !matches!(assigned, Some(Ok(()))) {
         tracing::warn!("wsl.exe for {distro} runs outside the Flit job object: {assigned:?}");

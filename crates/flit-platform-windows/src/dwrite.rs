@@ -41,16 +41,7 @@ impl IDWritePixelSnapping_Impl for Collector_Impl {
 }
 
 impl IDWriteTextRenderer_Impl for Collector_Impl {
-    fn DrawGlyphRun(
-        &self,
-        _: *const c_void,
-        x: f32,
-        y: f32,
-        _: DWRITE_MEASURING_MODE,
-        run: *const DWRITE_GLYPH_RUN,
-        desc: *const DWRITE_GLYPH_RUN_DESCRIPTION,
-        _: Ref<IUnknown>,
-    ) -> windows_core::Result<()> {
+    fn DrawGlyphRun(&self, _: *const c_void, x: f32, y: f32, _: DWRITE_MEASURING_MODE, run: *const DWRITE_GLYPH_RUN, desc: *const DWRITE_GLYPH_RUN_DESCRIPTION, _: Ref<IUnknown>) -> windows_core::Result<()> {
         unsafe {
             let run = &*run;
             let desc = &*desc;
@@ -58,11 +49,7 @@ impl IDWriteTextRenderer_Impl for Collector_Impl {
             let n = run.glyphCount as usize;
             let ids = if n == 0 || run.glyphIndices.is_null() { vec![0; n] } else { from_raw_parts(run.glyphIndices, n).to_vec() };
             let advances = if run.glyphAdvances.is_null() { vec![0.0; n] } else { from_raw_parts(run.glyphAdvances, n).to_vec() };
-            let offsets = if run.glyphOffsets.is_null() {
-                vec![(0.0, 0.0); n]
-            } else {
-                from_raw_parts(run.glyphOffsets, n).iter().map(|o| (o.advanceOffset, o.ascenderOffset)).collect()
-            };
+            let offsets = if run.glyphOffsets.is_null() { vec![(0.0, 0.0); n] } else { from_raw_parts(run.glyphOffsets, n).iter().map(|o| (o.advanceOffset, o.ascenderOffset)).collect() };
             let cluster_map = if desc.clusterMap.is_null() { Vec::new() } else { from_raw_parts(desc.clusterMap, desc.stringLength as usize).to_vec() };
             self.runs.borrow_mut().push(Run { face, x, y, rtl: run.bidiLevel & 1 == 1, ids, advances, offsets, text_pos: desc.textPosition, cluster_map });
         }
@@ -181,10 +168,7 @@ impl DWriteText {
             return Some(f.clone());
         }
         let f = unsafe {
-            let f = self
-                .factory
-                .CreateTextFormat(self.family(style.family), &self.collection, Self::weight(style.bold), DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, style.px().max(1.0), w!("en-us"))
-                .ok()?;
+            let f = self.factory.CreateTextFormat(self.family(style.family), &self.collection, Self::weight(style.bold), DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, style.px().max(1.0), w!("en-us")).ok()?;
             let _ = f.SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             f
         };
@@ -308,31 +292,10 @@ impl TextBackend for DWriteText {
         let id = key.id;
         let advance = 0.0f32;
         let offset = DWRITE_GLYPH_OFFSET::default();
-        let run = DWRITE_GLYPH_RUN {
-            fontFace: ManuallyDrop::new(Some(face.clone())),
-            fontEmSize: key.size_q as f32 / 4.0,
-            glyphCount: 1,
-            glyphIndices: &id,
-            glyphAdvances: &advance,
-            glyphOffsets: &offset,
-            isSideways: false.into(),
-            bidiLevel: 0,
-        };
+        let run = DWRITE_GLYPH_RUN { fontFace: ManuallyDrop::new(Some(face.clone())), fontEmSize: key.size_q as f32 / 4.0, glyphCount: 1, glyphIndices: &id, glyphAdvances: &advance, glyphOffsets: &offset, isSideways: false.into(), bidiLevel: 0 };
         let result = unsafe {
             (|| {
-                let analysis = self
-                    .factory
-                    .CreateGlyphRunAnalysis(
-                        &run,
-                        None,
-                        DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC,
-                        DWRITE_MEASURING_MODE_NATURAL,
-                        DWRITE_GRID_FIT_MODE_DEFAULT,
-                        DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE,
-                        key.subpx as f32 / 4.0,
-                        0.0,
-                    )
-                    .ok()?;
+                let analysis = self.factory.CreateGlyphRunAnalysis(&run, None, DWRITE_RENDERING_MODE_NATURAL_SYMMETRIC, DWRITE_MEASURING_MODE_NATURAL, DWRITE_GRID_FIT_MODE_DEFAULT, DWRITE_TEXT_ANTIALIAS_MODE_GRAYSCALE, key.subpx as f32 / 4.0, 0.0).ok()?;
                 let r = analysis.GetAlphaTextureBounds(DWRITE_TEXTURE_ALIASED_1x1).ok()?;
                 let (w, h) = ((r.right - r.left).max(0) as u32, (r.bottom - r.top).max(0) as u32);
                 out.left = r.left;

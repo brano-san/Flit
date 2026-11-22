@@ -116,15 +116,7 @@ impl DrawList {
     }
 
     fn push(&mut self, r: Rect, uv: [f32; 4], color: Color, radius: f32, border: f32, kind: u32) {
-        self.instances.push(Instance {
-            rect: [r.x, r.y, r.w, r.h],
-            uv,
-            clip: self.clip,
-            color: color.0,
-            radius,
-            border,
-            kind,
-        });
+        self.instances.push(Instance { rect: [r.x, r.y, r.w, r.h], uv, clip: self.clip, color: color.0, radius, border, kind });
     }
 
     pub fn rect(&mut self, r: Rect, color: Color) {
@@ -132,7 +124,11 @@ impl DrawList {
     }
 
     fn corner(&self, radius: f32) -> f32 {
-        if self.round { radius } else { 0.0 }
+        if self.round {
+            radius
+        } else {
+            0.0
+        }
     }
 
     pub fn round_rect(&mut self, r: Rect, color: Color, radius: f32) {

@@ -79,10 +79,18 @@ fn reply(app: &mut App, asks: Vec<Ask>) -> usize {
     let mut n = 0;
     for (tab, gen, ask, _, names) in asks {
         n += names.len();
-        app.on_shell_props(tab, gen, ask, names.into_iter().map(|name| {
-            let v = reader(&name);
-            (name, v)
-        }).collect());
+        app.on_shell_props(
+            tab,
+            gen,
+            ask,
+            names
+                .into_iter()
+                .map(|name| {
+                    let v = reader(&name);
+                    (name, v)
+                })
+                .collect(),
+        );
     }
     n
 }

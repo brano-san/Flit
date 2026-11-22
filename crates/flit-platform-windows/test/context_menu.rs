@@ -267,10 +267,7 @@ fn shell_items_from_programs_are_kept_and_duplicates_of_flit_and_windows_items_a
     let by = |want: Place| items.iter().filter(|(_, i)| place(i) == want).map(|(l, _)| *l).collect::<Vec<_>>();
     assert_eq!(by(Place::App), ["Copilot", "Edit with Notepad++", "Open with Code", "Git Bash here", "7-Zip", "What's locking this file?", "Open with"]);
     assert_eq!(by(Place::Duplicate), ["Open", "Copy as path", "Cut", "Copy", "Create shortcut", "Delete", "Rename", "Properties", "Open in new tab"]);
-    assert_eq!(
-        by(Place::Windows),
-        ["Edit", "Edit with Notepad++ (legacy)", "Add to Favorites", "Give access to", "Share", "Restore previous versions", "Include in library", "Send to", "blank"]
-    );
+    assert_eq!(by(Place::Windows), ["Edit", "Edit with Notepad++ (legacy)", "Add to Favorites", "Give access to", "Share", "Restore previous versions", "Include in library", "Send to", "blank"]);
 }
 
 #[test]
@@ -350,10 +347,13 @@ fn shell_item_bitmaps_become_premultiplied_rgba_icons_and_callbacks_stay_bare() 
         add_item(hmenu, 3, "Plain", windows::Win32::Graphics::Gdi::HBITMAP::default());
         let (items, ids) = shell_items(None, hmenu);
         assert_eq!(ids, [1, 2, 3]);
-        let images: Vec<Option<MenuImage>> = items.iter().map(|i| match i {
-            MenuItem::Command { image, .. } => image.clone(),
-            _ => None,
-        }).collect();
+        let images: Vec<Option<MenuImage>> = items
+            .iter()
+            .map(|i| match i {
+                MenuItem::Command { image, .. } => image.clone(),
+                _ => None,
+            })
+            .collect();
         let Some(MenuImage::Pixels { bitmap, key }) = &images[0] else { panic!("{images:?}") };
         assert_eq!((bitmap.width, bitmap.height), (16, 16));
         assert_eq!(&bitmap.rgba[..4], [0x80, 0x20, 0x10, 0x80], "BGRA turns RGBA and no channel exceeds alpha");
@@ -457,11 +457,15 @@ fn bench_menu_prepare() {
         ms.sort_by(f64::total_cmp);
         eprintln!("BENCH {label:<44} first {first:>9.3} ms   median {:>9.3} ms   max {:>9.3} ms", ms[ms.len() / 2], ms[ms.len() - 1]);
     };
-    let time = |f: &dyn Fn(usize)| (0..runs).map(|k| {
-        let started = Instant::now();
-        f(k);
-        started.elapsed().as_secs_f64() * 1e3
-    }).collect::<Vec<_>>();
+    let time = |f: &dyn Fn(usize)| {
+        (0..runs)
+            .map(|k| {
+                let started = Instant::now();
+                f(k);
+                started.elapsed().as_secs_f64() * 1e3
+            })
+            .collect::<Vec<_>>()
+    };
     let shell_only = time(&|k| unsafe {
         let (_, h) = query(HWND::default(), &shell_menu(k, false)).unwrap();
         let _ = DestroyMenu(h);
@@ -574,13 +578,7 @@ unsafe fn walk_labels(menu: &IContextMenu, hmenu: HMENU, depth: usize, out: &mut
     }
     for i in 0..GetMenuItemCount(Some(hmenu)) {
         let mut buf = [0u16; 256];
-        let mut info = MENUITEMINFOW {
-            cbSize: size_of::<MENUITEMINFOW>() as u32,
-            fMask: MIIM_STRING | MIIM_SUBMENU | MIIM_ID | MIIM_FTYPE | MIIM_BITMAP | MIIM_STATE,
-            dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()),
-            cch: buf.len() as u32,
-            ..Default::default()
-        };
+        let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_STRING | MIIM_SUBMENU | MIIM_ID | MIIM_FTYPE | MIIM_BITMAP | MIIM_STATE, dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()), cch: buf.len() as u32, ..Default::default() };
         let _ = GetMenuItemInfoW(hmenu, i as u32, true, &mut info);
         if info.fType.0 & MFT_SEPARATOR.0 != 0 {
             out.push(format!("{}-", "  ".repeat(depth)));

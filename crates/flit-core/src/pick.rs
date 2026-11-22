@@ -25,15 +25,9 @@ impl Filter {
         if self.patterns.is_empty() && self.mime_types.is_empty() {
             return true;
         }
-        if !self.mime_types.is_empty() && mime.is_none_or(|types| {
-            self.mime_types.iter().any(|wanted| {
-                wanted == "*/*" || types.iter().any(|actual| {
-                    actual == wanted || wanted.strip_suffix("/*").is_some_and(|media| {
-                        actual.split_once('/').is_some_and(|(kind, _)| kind == media)
-                    })
-                })
-            })
-        }) {
+        if !self.mime_types.is_empty()
+            && mime.is_none_or(|types| self.mime_types.iter().any(|wanted| wanted == "*/*" || types.iter().any(|actual| actual == wanted || wanted.strip_suffix("/*").is_some_and(|media| actual.split_once('/').is_some_and(|(kind, _)| kind == media)))))
+        {
             return true;
         }
         if self.patterns.is_empty() {

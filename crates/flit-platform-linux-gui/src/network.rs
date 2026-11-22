@@ -69,8 +69,7 @@ fn attribute<'a>(attrs: &'a str, key: &str) -> Option<&'a str> {
 fn has_host(uri: &str) -> bool {
     let Some((scheme, rest)) = uri.split_once("://") else { return false };
     let host = rest.split('/').next().unwrap_or_default().rsplit('@').next().unwrap_or_default();
-    matches!(scheme, "smb" | "sftp" | "ssh" | "dav" | "davs" | "dav+sd" | "davs+sd" | "nfs" | "ftp" | "ftps" | "afp")
-        && !host.is_empty() && !uri.contains('\\') && !uri.chars().any(|c| c.is_whitespace() || c.is_control())
+    matches!(scheme, "smb" | "sftp" | "ssh" | "dav" | "davs" | "dav+sd" | "davs+sd" | "nfs" | "ftp" | "ftps" | "afp") && !host.is_empty() && !uri.contains('\\') && !uri.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 fn label(value: &str) -> String {
@@ -88,19 +87,21 @@ fn entries(listed: &str) -> impl Iterator<Item = (&str, &str, Option<&str>)> {
 }
 
 pub fn parse_network(listed: &str) -> Vec<Found> {
-    entries(listed).filter_map(|(name, shown, target)| {
-        let uri = target.filter(|uri| *uri == SMB_ROOT || has_host(uri)).or_else(|| {
-            (target.is_none_or(str::is_empty) && (name == "smb-root" || shown == "Windows Network")).then_some(SMB_ROOT)
-        })?;
-        Some(Found { name: label(shown), uri: uri.to_owned() })
-    }).collect()
+    entries(listed)
+        .filter_map(|(name, shown, target)| {
+            let uri = target.filter(|uri| *uri == SMB_ROOT || has_host(uri)).or_else(|| (target.is_none_or(str::is_empty) && (name == "smb-root" || shown == "Windows Network")).then_some(SMB_ROOT))?;
+            Some(Found { name: label(shown), uri: uri.to_owned() })
+        })
+        .collect()
 }
 
 pub fn parse_shares(listed: &str) -> Vec<Found> {
-    entries(listed).filter_map(|(name, shown, uri)| {
-        let uri = uri.filter(|uri| has_host(uri))?;
-        (!name.ends_with('$') && !shown.ends_with('$')).then(|| Found { name: shown.to_owned(), uri: uri.to_owned() })
-    }).collect()
+    entries(listed)
+        .filter_map(|(name, shown, uri)| {
+            let uri = uri.filter(|uri| has_host(uri))?;
+            (!name.ends_with('$') && !shown.ends_with('$')).then(|| Found { name: shown.to_owned(), uri: uri.to_owned() })
+        })
+        .collect()
 }
 
 fn parse_smb_browse(listed: &str) -> impl Iterator<Item = Found> + '_ {
@@ -452,13 +453,8 @@ fn browse_avahi(program: &Path, wait: Duration, tx: Sender<Reply>) -> io::Result
         if let Some(item) = parse_avahi(line) {
             let _ = tx.send(Reply::AvahiItem(item));
         }
-    }).and_then(|out| {
-        if out.status.success() {
-            Ok(())
-        } else {
-            Err(io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()))
-        }
     })
+    .and_then(|out| if out.status.success() { Ok(()) } else { Err(io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned())) })
 }
 
 struct SystemDiscovery {
@@ -526,9 +522,7 @@ pub fn read_dir(dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsErro
 
 pub(crate) fn avahi_running() -> Option<bool> {
     avahi_bus_owner().or_else(|| {
-        let daemon = crate::tools::require("avahi-daemon").ok().or_else(|| {
-            ["/usr/sbin/avahi-daemon", "/usr/bin/avahi-daemon"].into_iter().map(std::path::PathBuf::from).find(|p| p.is_file())
-        });
+        let daemon = crate::tools::require("avahi-daemon").ok().or_else(|| ["/usr/sbin/avahi-daemon", "/usr/bin/avahi-daemon"].into_iter().map(std::path::PathBuf::from).find(|p| p.is_file()));
         let Some(daemon) = daemon else { return Some(false) };
         let mut command = Command::new(daemon);
         command.arg("--check");
@@ -538,10 +532,7 @@ pub(crate) fn avahi_running() -> Option<bool> {
 
 fn avahi_bus_owner() -> Option<bool> {
     let mut command = crate::tools::command("gdbus").ok()?;
-    command.args([
-        "call", "--system", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
-        "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.Avahi",
-    ]);
+    command.args(["call", "--system", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.Avahi"]);
     let output = crate::places::run_within(command, Duration::from_secs(2)).ok()?;
     match std::str::from_utf8(&output.stdout).ok()?.trim() {
         "(true,)" if output.status.success() => Some(true),

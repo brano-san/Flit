@@ -48,11 +48,7 @@ pub(crate) fn parse_info(b: &[u8]) -> Option<Info> {
 pub(crate) fn roots() -> Vec<FsPath> {
     let Some(sid) = user_sid() else { return Vec::new() };
     let mask = unsafe { GetLogicalDrives() };
-    (b'A'..=b'Z')
-        .filter(|&d| mask & (1 << (d - b'A')) != 0)
-        .filter(|&d| unsafe { GetDriveTypeW(PCWSTR([d as u16, b':' as u16, b'\\' as u16, 0].as_ptr())) } == DRIVE_FIXED)
-        .filter_map(|d| FsPath::parse(&format!(r"{}:\$Recycle.Bin\{sid}", d as char)))
-        .collect()
+    (b'A'..=b'Z').filter(|&d| mask & (1 << (d - b'A')) != 0).filter(|&d| unsafe { GetDriveTypeW(PCWSTR([d as u16, b':' as u16, b'\\' as u16, 0].as_ptr())) } == DRIVE_FIXED).filter_map(|d| FsPath::parse(&format!(r"{}:\$Recycle.Bin\{sid}", d as char))).collect()
 }
 
 pub(crate) fn info_file(recycled: &FsPath) -> Option<FsPath> {
@@ -87,10 +83,12 @@ pub(crate) fn list(roots: &[FsPath], out: &mut ListingBuilder<'_>) -> Result<(),
     for root in roots {
         let (Some(l), Ok(dir)) = (entries(root), open_dir(root, FILE_LIST_DIRECTORY.0, false).map(Handle)) else { continue };
         let payloads: HashMap<&[u8], u32> = (0..l.len() as u32).filter_map(|i| Some((l.name(i).strip_prefix(b"$R")?, l.entries[i as usize].attrs))).collect();
-        let items: Vec<(&[u8], u32, u32)> = (0..l.len() as u32).filter_map(|i| {
-            let id = l.name(i).strip_prefix(b"$I")?;
-            Some((id, i, *payloads.get(id)?))
-        }).collect();
+        let items: Vec<(&[u8], u32, u32)> = (0..l.len() as u32)
+            .filter_map(|i| {
+                let id = l.name(i).strip_prefix(b"$I")?;
+                Some((id, i, *payloads.get(id)?))
+            })
+            .collect();
         let read = |&(_, i, _): &(&[u8], u32, u32)| read_info(&dir, l.name(i));
         let infos: Vec<Option<Info>> = match NtFs.seek_penalty(root) {
             Some(true) => items.iter().map(read).collect(),
@@ -238,12 +236,12 @@ pub(crate) fn find_recycled(original: &FsPath, stamp: flit_core::undo::Stamp) ->
     let sid = user_sid()?;
     let root = root.join(BIN_FOLDER).join(sid.as_bytes());
     let listing = entries(&root)?;
-    (0..listing.len() as u32).filter_map(|index| {
-        let name = listing.name(index);
-        name.starts_with(b"$R").then(|| root.join(name))
-    }).find(|candidate| crate::engine::undo_stamp(candidate).is_ok_and(|(current, _)| {
-        current.device == stamp.device && current.file == stamp.file
-    }) && is_original(candidate, original))
+    (0..listing.len() as u32)
+        .filter_map(|index| {
+            let name = listing.name(index);
+            name.starts_with(b"$R").then(|| root.join(name))
+        })
+        .find(|candidate| crate::engine::undo_stamp(candidate).is_ok_and(|(current, _)| current.device == stamp.device && current.file == stamp.file) && is_original(candidate, original))
 }
 
 pub(crate) fn is_original(recycled: &FsPath, original: &FsPath) -> bool {

@@ -8,9 +8,7 @@ use windows::Win32::Storage::FileSystem::{ReplaceFileW, REPLACEFILE_IGNORE_MERGE
 use windows::Win32::System::Com::StructuredStorage::PROPVARIANT;
 use windows::Win32::System::Com::{CoCreateInstance, IPersistFile, CLSCTX_INPROC_SERVER, STGM, STGM_READ, STGM_READWRITE};
 use windows::Win32::UI::Shell::PropertiesSystem::IPropertyStore;
-use windows::Win32::UI::Shell::{
-    IShellLinkW, SHGetKnownFolderPath, SetCurrentProcessExplicitAppUserModelID, ShellLink, FOLDERID_CommonStartMenu, FOLDERID_Desktop, FOLDERID_PublicDesktop, FOLDERID_StartMenu, FOLDERID_UserPinned, KF_FLAG_DEFAULT,
-};
+use windows::Win32::UI::Shell::{IShellLinkW, SHGetKnownFolderPath, SetCurrentProcessExplicitAppUserModelID, ShellLink, FOLDERID_CommonStartMenu, FOLDERID_Desktop, FOLDERID_PublicDesktop, FOLDERID_StartMenu, FOLDERID_UserPinned, KF_FLAG_DEFAULT};
 
 const PKEY_APP_ID: PROPERTYKEY = PROPERTYKEY { fmtid: GUID::from_u128(0x9f4c2855_9f79_4b39_a8d0_e1d42de1d5f3), pid: 5 };
 const MAX_DEPTH: usize = 6;
@@ -200,9 +198,7 @@ fn known(id: &GUID) -> Option<PathBuf> {
 }
 
 fn roots() -> Vec<PathBuf> {
-    let pinned = known(&FOLDERID_UserPinned)
-        .or_else(|| std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned")))
-        .map(|d| d.join("TaskBar"));
+    let pinned = known(&FOLDERID_UserPinned).or_else(|| std::env::var_os("APPDATA").map(|d| PathBuf::from(d).join(r"Microsoft\Internet Explorer\Quick Launch\User Pinned"))).map(|d| d.join("TaskBar"));
     [known(&FOLDERID_StartMenu), known(&FOLDERID_CommonStartMenu), pinned, known(&FOLDERID_Desktop), known(&FOLDERID_PublicDesktop)].into_iter().flatten().collect()
 }
 

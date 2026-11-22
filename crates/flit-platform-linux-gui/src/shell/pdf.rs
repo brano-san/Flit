@@ -12,14 +12,12 @@ const MAX_PNG: u64 = 4 << 20;
 const INITIAL_PAGES: u32 = 128;
 
 pub(super) fn document_command(path: &Path, last: u32) -> Vec<OsString> {
-    ["pdfinfo", "-f", "1", "-l", &last.to_string()].into_iter().map(OsString::from)
-        .chain([path.as_os_str().to_owned()]).collect()
+    ["pdfinfo", "-f", "1", "-l", &last.to_string()].into_iter().map(OsString::from).chain([path.as_os_str().to_owned()]).collect()
 }
 
 pub(super) fn page_command(path: &Path, page: u32, size: u32) -> Vec<OsString> {
     let (page, size) = (page.to_string(), size.to_string());
-    ["pdftoppm", "-png", "-f", &page, "-l", &page, "-singlefile", "-cropbox", "-scale-to", &size]
-        .into_iter().map(OsString::from).chain([path.as_os_str().to_owned()]).collect()
+    ["pdftoppm", "-png", "-f", &page, "-l", &page, "-singlefile", "-cropbox", "-scale-to", &size].into_iter().map(OsString::from).chain([path.as_os_str().to_owned()]).collect()
 }
 
 fn output(args: &[OsString], max: u64, req: &PreviewRequest) -> Option<Vec<u8>> {
@@ -27,14 +25,16 @@ fn output(args: &[OsString], max: u64, req: &PreviewRequest) -> Option<Vec<u8>> 
     if !current() {
         return None;
     }
-    let mut child = Command::new(&args[0]).args(&args[1..]).env("LC_ALL", "C")
-        .stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped()).spawn().ok()?;
+    let mut child = Command::new(&args[0]).args(&args[1..]).env("LC_ALL", "C").stdin(Stdio::null()).stderr(Stdio::null()).stdout(Stdio::piped()).spawn().ok()?;
     let reader = child.stdout.take().and_then(|pipe| {
-        std::thread::Builder::new().name("flit-poppler-output".into()).spawn(move || {
-            let mut bytes = Vec::new();
-            pipe.take(max + 1).read_to_end(&mut bytes).ok()?;
-            (bytes.len() as u64 <= max).then_some(bytes)
-        }).ok()
+        std::thread::Builder::new()
+            .name("flit-poppler-output".into())
+            .spawn(move || {
+                let mut bytes = Vec::new();
+                pipe.take(max + 1).read_to_end(&mut bytes).ok()?;
+                (bytes.len() as u64 <= max).then_some(bytes)
+            })
+            .ok()
     });
     let deadline = Instant::now() + TIMEOUT;
     if let Some(reader) = reader {

@@ -85,9 +85,7 @@ fn archive_preview<S: Shell>(shell: &mut S, req: &PreviewRequest, result: Result
     use parse_process::Error;
     match result {
         Ok(bytes) => {
-            let names = bytes.strip_prefix(parse_process::ARCHIVE_HEADER).filter(|names| {
-                (names.is_empty() || names.ends_with(b"\n")) && std::str::from_utf8(names).is_ok()
-            });
+            let names = bytes.strip_prefix(parse_process::ARCHIVE_HEADER).filter(|names| (names.is_empty() || names.ends_with(b"\n")) && std::str::from_utf8(names).is_ok());
             Some(names.map_or_else(cannot_open, |names| PreviewData::Doc(preview::build(Kind::Text, names))))
         }
         Err(Error::TooLarge) => Some(basic(shell, req, Some(Note::TooLarge))),
@@ -149,13 +147,16 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
         let path = std_path(&req.path);
         let result = raw::load(&path, req.px, raw::Source::Inspector, || req.cancel.is_current(req.gen));
         return req.cancel.is_current(req.gen).then(|| {
-            result.map_or_else(|| {
-                if cfg!(windows) && std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
-                    shell.preview_image(&req.path, req.px).map_or_else(|| basic(shell, req, None), PreviewData::Image)
-                } else {
-                    PreviewData::Basic { poster: None, note: None }
-                }
-            }, PreviewData::Image)
+            result.map_or_else(
+                || {
+                    if cfg!(windows) && std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+                        shell.preview_image(&req.path, req.px).map_or_else(|| basic(shell, req, None), PreviewData::Image)
+                    } else {
+                        PreviewData::Basic { poster: None, note: None }
+                    }
+                },
+                PreviewData::Image,
+            )
         });
     }
     match req.kind {
@@ -202,7 +203,11 @@ pub(crate) fn thumbnail<S: Shell>(shell: &mut S, req: &flit_core::ui::IconReques
             return None;
         }
     }
-    if current() { shell.thumbnail_current(req, &current) } else { None }
+    if current() {
+        shell.thumbnail_current(req, &current)
+    } else {
+        None
+    }
 }
 
 #[cfg(test)]

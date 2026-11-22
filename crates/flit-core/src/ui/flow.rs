@@ -57,11 +57,19 @@ impl Flow {
     }
 
     fn ext(&self) -> f32 {
-        if self.p.across { self.p.cell.0 } else { self.p.cell.1 }
+        if self.p.across {
+            self.p.cell.0
+        } else {
+            self.p.cell.1
+        }
     }
 
     fn slot_ext(&self) -> f32 {
-        if self.p.across { self.p.cell.1 } else { self.p.cell.0 }
+        if self.p.across {
+            self.p.cell.1
+        } else {
+            self.p.cell.0
+        }
     }
 
     fn head_slots(&self, s: &Span) -> usize {
@@ -82,7 +90,11 @@ impl Flow {
 
     fn span_extent(&self, s: &Span) -> f64 {
         let (n, ext) = (self.bands(s) as f64, self.ext() as f64);
-        if s.head && !self.p.across { self.p.head as f64 + (n - 1.0) * ext } else { n * ext }
+        if s.head && !self.p.across {
+            self.p.head as f64 + (n - 1.0) * ext
+        } else {
+            n * ext
+        }
     }
 
     fn band_span(&self, s: &Span, b: usize) -> (f64, f32) {
@@ -136,7 +148,11 @@ impl Flow {
             return Rect::new(0.0, at, self.p.per as f32 * self.p.cell.0, ext);
         }
         let cross = slot as f32 * self.slot_ext();
-        if self.p.across { Rect::new(at, cross, ext, self.p.cell.1) } else { Rect::new(cross, at, self.p.cell.0, ext) }
+        if self.p.across {
+            Rect::new(at, cross, ext, self.p.cell.1)
+        } else {
+            Rect::new(cross, at, self.p.cell.0, ext)
+        }
     }
 
     fn locate(&self, along: f64) -> Option<(usize, usize)> {

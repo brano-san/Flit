@@ -37,7 +37,9 @@ struct TestEngine(IMFMediaEngine);
 
 impl Drop for TestEngine {
     fn drop(&mut self) {
-        unsafe { let _ = self.0.Shutdown(); }
+        unsafe {
+            let _ = self.0.Shutdown();
+        }
     }
 }
 
@@ -64,7 +66,9 @@ impl TestWindow {
 impl Drop for TestWindow {
     fn drop(&mut self) {
         forget(self.0);
-        unsafe { let _ = DestroyWindow(self.0); }
+        unsafe {
+            let _ = DestroyWindow(self.0);
+        }
     }
 }
 
@@ -125,9 +129,7 @@ fn compare_bytes(clip: &str, frame: &[u8], baseline: &[u8]) {
 fn compare(clip: &str, frame: &[u8], expected: &[u8]) {
     let (mean, white) = brightness(frame);
     let (reference_mean, reference_white) = brightness(expected);
-    let total_error: u64 = frame.chunks_exact(4).zip(expected.chunks_exact(4)).map(|(a, b)| {
-        (0..3).map(|i| u64::from(a[i].abs_diff(b[i]))).sum::<u64>()
-    }).sum();
+    let total_error: u64 = frame.chunks_exact(4).zip(expected.chunks_exact(4)).map(|(a, b)| (0..3).map(|i| u64::from(a[i].abs_diff(b[i]))).sum::<u64>()).sum();
     let rgb_error = total_error as f64 / (WIDTH * HEIGHT * 3) as f64;
     eprintln!("{clip}: mean {mean:.3}/{reference_mean:.3}, white {white:.5}/{reference_white:.5}, RGB MAE {rgb_error:.3}");
     assert!((mean - reference_mean).abs() <= 10.0, "{clip}: mean {mean:.3}, reference {reference_mean:.3}");
@@ -136,10 +138,7 @@ fn compare(clip: &str, frame: &[u8], expected: &[u8]) {
 }
 
 unsafe fn transferred_frame(device: &ID3D11Device, engine: &IMFMediaEngine) -> windows_core::Result<Vec<u8>> {
-    let desc = D3D11_TEXTURE2D_DESC {
-        Width: WIDTH as u32, Height: HEIGHT as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-        SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32, ..Default::default()
-    };
+    let desc = D3D11_TEXTURE2D_DESC { Width: WIDTH as u32, Height: HEIGHT as u32, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_B8G8R8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32, ..Default::default() };
     let mut target = None;
     device.CreateTexture2D(&desc, None, Some(&mut target))?;
     let target = target.unwrap();
@@ -181,7 +180,9 @@ fn transferred_preview_matches_reference() {
                 if let Ok(error) = engine.GetError() {
                     panic!("{clip}: media error {}, {:?}", error.GetErrorCode(), error.GetExtendedErrorCode());
                 }
-                if engine.GetReadyState() < 2 { return None; }
+                if engine.GetReadyState() < 2 {
+                    return None;
+                }
                 let mut pts = 0;
                 let hr = (engine.vtable().OnVideoStreamTick)(engine.as_raw(), &mut pts);
                 hr.ok().unwrap();
@@ -197,10 +198,7 @@ fn transferred_preview_matches_reference() {
 unsafe fn window_frame(hwnd: HWND) -> Vec<u8> {
     let dc = CreateCompatibleDC(None);
     assert!(!dc.is_invalid());
-    let info = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: WIDTH as i32, biHeight: -(HEIGHT as i32), biPlanes: 1, biBitCount: 32, ..Default::default() },
-        ..Default::default()
-    };
+    let info = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: WIDTH as i32, biHeight: -(HEIGHT as i32), biPlanes: 1, biBitCount: 32, ..Default::default() }, ..Default::default() };
     let mut bits = std::ptr::null_mut();
     let dib = CreateDIBSection(Some(dc), &info, DIB_RGB_COLORS, &mut bits, None, 0).unwrap();
     let old = SelectObject(dc, HGDIOBJ(dib.0));
@@ -240,10 +238,15 @@ unsafe fn legacy_window_frame(path: &FsPath, rect: Option<Rect>) -> Vec<u8> {
 
 unsafe fn wait_event(hwnd: HWND, description: &str, mut condition: impl FnMut(HostEvent) -> bool) {
     wait_for(description, || {
-        take(hwnd).into_iter().any(|event| {
-            if let HostEvent::Failed { message, .. } = &event { panic!("{description}: {message}"); }
-            condition(event)
-        }).then_some(())
+        take(hwnd)
+            .into_iter()
+            .any(|event| {
+                if let HostEvent::Failed { message, .. } = &event {
+                    panic!("{description}: {message}");
+                }
+                condition(event)
+            })
+            .then_some(())
     });
 }
 
@@ -378,9 +381,7 @@ fn a_failed_video_effect_reopens_once_and_restores_playback() {
         assert!(player.engine.IsPaused().as_bool());
         wait_for("resized video in the lower-right quarter", || {
             let pixels = window_frame(host);
-            pixels.chunks_exact(WIDTH * 4).skip(HEIGHT / 2).step_by(10)
-                .flat_map(|row| row.chunks_exact(4).skip(WIDTH / 2).step_by(10))
-                .any(|p| p[0].abs_diff(p[1]) > 30).then_some(())
+            pixels.chunks_exact(WIDTH * 4).skip(HEIGHT / 2).step_by(10).flat_map(|row| row.chunks_exact(4).skip(WIDTH / 2).step_by(10)).any(|p| p[0].abs_diff(p[1]) > 30).then_some(())
         });
         player.engine.SetErrorCode(MF_MEDIA_ENGINE_ERR_DECODE).unwrap();
         assert!(player.update(&path, host, at).is_err());

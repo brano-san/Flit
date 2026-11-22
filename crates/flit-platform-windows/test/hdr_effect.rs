@@ -63,11 +63,7 @@ fn only_decoded_hdr_video_is_tone_mapped() {
 fn unchanged_video_returns_the_decoders_original_sample() {
     unsafe {
         let _mf = Foundation::start();
-        for (format, primaries, transfer) in [
-            (MFVideoFormat_NV12, MFVideoPrimaries_BT709, MFVideoTransFunc_709),
-            (MFVideoFormat_P010, MFVideoPrimaries_BT2020, MFVideoTransFunc_709),
-            (MFVideoFormat_P010, MFVideoPrimaries_Unknown, MFVideoTransFunc_Unknown),
-        ] {
+        for (format, primaries, transfer) in [(MFVideoFormat_NV12, MFVideoPrimaries_BT709, MFVideoTransFunc_709), (MFVideoFormat_P010, MFVideoPrimaries_BT2020, MFVideoTransFunc_709), (MFVideoFormat_P010, MFVideoPrimaries_Unknown, MFVideoTransFunc_Unknown)] {
             let kind = video(format, primaries, transfer);
             let input = Input::decoded(&kind).unwrap();
             let output = input.output_type(0).unwrap();

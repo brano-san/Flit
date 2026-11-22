@@ -54,21 +54,9 @@ fn usn_record(buf: &[u8]) -> Option<(Option<UsnRecord<'_>>, usize)> {
     let fields = parent_at + id_size;
     let at = usize::from(u16_at(rec, fields + 34)?);
     let name_len = usize::from(u16_at(rec, fields + 32)?);
-    let ids = if id_size == 8 {
-        Some((u64_at(rec, 8)?, u64_at(rec, parent_at)?))
-    } else {
-        narrow_id(rec, 8)?.zip(narrow_id(rec, parent_at)?)
-    };
+    let ids = if id_size == 8 { Some((u64_at(rec, 8)?, u64_at(rec, parent_at)?)) } else { narrow_id(rec, 8)?.zip(narrow_id(rec, parent_at)?) };
     let parsed = match ids {
-        Some((frn, parent)) => Some(UsnRecord {
-            frn,
-            parent,
-            usn: i64_at(rec, fields)?,
-            time: i64_at(rec, fields + 8)?,
-            reason: u32_at(rec, fields + 16)?,
-            attrs: u32_at(rec, fields + 28)?,
-            name: rec.get(at..at + name_len)?,
-        }),
+        Some((frn, parent)) => Some(UsnRecord { frn, parent, usn: i64_at(rec, fields)?, time: i64_at(rec, fields + 8)?, reason: u32_at(rec, fields + 16)?, attrs: u32_at(rec, fields + 28)?, name: rec.get(at..at + name_len)? }),
         None => None,
     };
     Some((parsed, len))

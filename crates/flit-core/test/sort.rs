@@ -9,10 +9,7 @@ fn sorted(names: &[&str], case: CaseMode) -> Vec<String> {
 
 #[test]
 fn strcmplogicalw_doc_order() {
-    let want = [
-        "2string", "3string", "20string", "st2ring", "st3ring", "st20ring", "string2", "string3",
-        "string20",
-    ];
+    let want = ["2string", "3string", "20string", "st2ring", "st3ring", "st20ring", "string2", "string3", "string20"];
     let mut shuffled = want;
     shuffled.reverse();
     shuffled.swap(1, 6);
@@ -21,14 +18,8 @@ fn strcmplogicalw_doc_order() {
 
 #[test]
 fn numbers_and_classes() {
-    assert_eq!(
-        sorted(&["a10", "a9", "a01", "a1", "a", "a.txt", "a 1", "_x", "!y", "9", "B", "b"], CaseMode::Insensitive),
-        ["!y", "_x", "9", "a", "a 1", "a.txt", "a01", "a1", "a9", "a10", "B", "b"]
-    );
-    assert_eq!(
-        sorted(&["f100000000000000000000000", "f99999999999999999999999"], CaseMode::Insensitive),
-        ["f99999999999999999999999", "f100000000000000000000000"]
-    );
+    assert_eq!(sorted(&["a10", "a9", "a01", "a1", "a", "a.txt", "a 1", "_x", "!y", "9", "B", "b"], CaseMode::Insensitive), ["!y", "_x", "9", "a", "a 1", "a.txt", "a01", "a1", "a9", "a10", "B", "b"]);
+    assert_eq!(sorted(&["f100000000000000000000000", "f99999999999999999999999"], CaseMode::Insensitive), ["f99999999999999999999999", "f100000000000000000000000"]);
 }
 
 #[test]
@@ -555,12 +546,8 @@ fn shell_property_columns_sort_by_value_and_files_without_one_go_last_both_ways(
         want.extend(others);
         want
     };
-    let cases: [(SortField, &[&str]); 4] = [
-        (SortField::Dimensions, &["d.jpg", "b.jpg", "a.jpg"]),
-        (SortField::Duration, &["e.mp3", "h.mp3", "g.mp3", "f.mp3"]),
-        (SortField::Artist, &["f.mp3", "h.mp3", "g.mp3", "e.mp3"]),
-        (SortField::Version, &["y.exe", "x.exe", "z.dll"]),
-    ];
+    let cases: [(SortField, &[&str]); 4] =
+        [(SortField::Dimensions, &["d.jpg", "b.jpg", "a.jpg"]), (SortField::Duration, &["e.mp3", "h.mp3", "g.mp3", "f.mp3"]), (SortField::Artist, &["f.mp3", "h.mp3", "g.mp3", "e.mp3"]), (SortField::Version, &["y.exe", "x.exe", "z.dll"])];
     for (field, shown) in cases {
         assert_eq!(by(&l, &k, field, false), rest(shown, false), "{field:?}");
         let mut reversed = shown.to_vec();
@@ -611,7 +598,12 @@ fn fast_sort_matches_comparator_for_shell_properties() {
     for i in 0..l.len() as u32 {
         let r = u64::from(i).wrapping_mul(2654435761) >> 7;
         let values = ColumnValues {
-            text: vec![if r % 3 == 0 { String::new() } else { "d".into() }, if r % 4 == 0 { String::new() } else { "t".into() }, ["", "Abba", "abba", "Artist 10", "artist 9", "Ölbild long artist name"][(r % 6) as usize].into(), ["", "1.2", "10.0.1", "9.9.9", "10.0.1.2", "bad"][(r % 6) as usize].into()],
+            text: vec![
+                if r % 3 == 0 { String::new() } else { "d".into() },
+                if r % 4 == 0 { String::new() } else { "t".into() },
+                ["", "Abba", "abba", "Artist 10", "artist 9", "Ölbild long artist name"][(r % 6) as usize].into(),
+                ["", "1.2", "10.0.1", "9.9.9", "10.0.1.2", "bad"][(r % 6) as usize].into(),
+            ],
             width: (r % 3 != 0).then_some((r % 50) as u32 * 10),
             height: (r % 3 != 0).then_some((r % 7) as u32 * 100),
             duration: (r % 4 != 0).then_some((r % 40) * 600_000_000),

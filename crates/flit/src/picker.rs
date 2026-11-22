@@ -51,7 +51,11 @@ pub fn cli(request: Option<Request>, started: Instant) -> i32 {
     match choose(request, started) {
         Ok(Some((paths, _, _))) => {
             let result = write_paths(&paths);
-            if result.is_ok() { 0 } else { 2 }
+            if result.is_ok() {
+                0
+            } else {
+                2
+            }
         }
         Ok(None) => 1,
         Err(e) => {
@@ -73,7 +77,11 @@ pub fn portal_request(started: Instant) -> i32 {
     match choose(request, started) {
         Ok(Some((paths, filter, choices))) => {
             let paths: Vec<_> = paths.iter().map(|p| p.as_bytes()).collect();
-            if serde_json::to_writer(io::stdout().lock(), &(paths, filter, choices)).is_ok() { 0 } else { 2 }
+            if serde_json::to_writer(io::stdout().lock(), &(paths, filter, choices)).is_ok() {
+                0
+            } else {
+                2
+            }
         }
         Ok(None) => 1,
         Err(e) => {
@@ -89,13 +97,11 @@ fn write_paths(paths: &[FsPath]) -> io::Result<()> {
         use windows::Win32::System::Console::{GetConsoleMode, GetStdHandle, WriteConsoleW, CONSOLE_MODE, STD_OUTPUT_HANDLE};
 
         let mut mode = CONSOLE_MODE::default();
-        let console = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.ok()
-            .filter(|handle| unsafe { GetConsoleMode(*handle, &mut mode) }.is_ok());
+        let console = unsafe { GetStdHandle(STD_OUTPUT_HANDLE) }.ok().filter(|handle| unsafe { GetConsoleMode(*handle, &mut mode) }.is_ok());
         if let Some(handle) = console {
             return write_console_paths(paths, |units| {
                 let mut written = 0;
-                unsafe { WriteConsoleW(handle, units, Some(&mut written), None) }
-                    .map_err(io::Error::other)?;
+                unsafe { WriteConsoleW(handle, units, Some(&mut written), None) }.map_err(io::Error::other)?;
                 Ok(written as usize)
             });
         }

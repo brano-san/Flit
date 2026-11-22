@@ -158,13 +158,7 @@ fn create_device(driver: D3D_DRIVER_TYPE) -> windows::core::Result<(ID3D11Device
 }
 
 fn buffer(device: &ID3D11Device, bytes: usize, bind: D3D11_BIND_FLAG) -> Result<ID3D11Buffer, PlatformError> {
-    let desc = D3D11_BUFFER_DESC {
-        ByteWidth: bytes as u32,
-        Usage: D3D11_USAGE_DYNAMIC,
-        BindFlags: bind.0 as u32,
-        CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32,
-        ..Default::default()
-    };
+    let desc = D3D11_BUFFER_DESC { ByteWidth: bytes as u32, Usage: D3D11_USAGE_DYNAMIC, BindFlags: bind.0 as u32, CPUAccessFlags: D3D11_CPU_ACCESS_WRITE.0 as u32, ..Default::default() };
     let mut b = None;
     unsafe { device.CreateBuffer(&desc, None, Some(&mut b)).map_err(err)? };
     com_output(b).map_err(err)
@@ -197,14 +191,7 @@ impl D3dDevice {
             ];
             device.CreateInputLayout(&elements, VS, Some(&mut layout)).map_err(err)?;
             let mut sampler = None;
-            let sd = D3D11_SAMPLER_DESC {
-                Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR,
-                AddressU: D3D11_TEXTURE_ADDRESS_CLAMP,
-                AddressV: D3D11_TEXTURE_ADDRESS_CLAMP,
-                AddressW: D3D11_TEXTURE_ADDRESS_CLAMP,
-                MaxLOD: f32::MAX,
-                ..Default::default()
-            };
+            let sd = D3D11_SAMPLER_DESC { Filter: D3D11_FILTER_MIN_MAG_MIP_LINEAR, AddressU: D3D11_TEXTURE_ADDRESS_CLAMP, AddressV: D3D11_TEXTURE_ADDRESS_CLAMP, AddressW: D3D11_TEXTURE_ADDRESS_CLAMP, MaxLOD: f32::MAX, ..Default::default() };
             device.CreateSamplerState(&sd, Some(&mut sampler)).map_err(err)?;
             let mut bd = D3D11_BLEND_DESC::default();
             bd.RenderTarget[0] = D3D11_RENDER_TARGET_BLEND_DESC {
@@ -252,9 +239,7 @@ fn device_lost(code: HRESULT) -> bool {
 }
 
 impl D3dRenderer {
-    fn with_target(
-        dev: &D3dDevice, size: (u32, u32), atlas_size: u32, present: Option<Presentation>, rtv: Option<ID3D11RenderTargetView>,
-    ) -> Result<Self, PlatformError> {
+    fn with_target(dev: &D3dDevice, size: (u32, u32), atlas_size: u32, present: Option<Presentation>, rtv: Option<ID3D11RenderTargetView>) -> Result<Self, PlatformError> {
         let device = &dev.gpu.device;
         let capacity = 16 * 1024;
         let instances = buffer(device, capacity * size_of::<Instance>(), D3D11_BIND_VERTEX_BUFFER)?;
@@ -265,10 +250,7 @@ impl D3dRenderer {
             present.sync.waited.set(false);
         }
         tracing::info!(warp = dev.warp, "renderer ready");
-        Ok(Self {
-            dev: dev.gpu.clone(), present, rtv, instances, capacity, globals, atlas, atlas_srv,
-            thumbs: None, preview: None, backdrop: None, size,
-        })
+        Ok(Self { dev: dev.gpu.clone(), present, rtv, instances, capacity, globals, atlas, atlas_srv, thumbs: None, preview: None, backdrop: None, size })
     }
 
     pub fn offscreen(dev: &D3dDevice, (w, h): (u32, u32), atlas_size: u32) -> Result<Self, PlatformError> {
@@ -385,8 +367,7 @@ impl D3dRenderer {
         }
         self.dev.ctx.Unmap(&staging, 0);
         let tmp = path.with_extension("tmp");
-        std::fs::write(&tmp, png(w as u32, h as u32, &raw)).and_then(|_| std::fs::rename(&tmp, path))
-            .map_err(|error| PlatformError::new(-1, format!("{}: {error}", path.display())))
+        std::fs::write(&tmp, png(w as u32, h as u32, &raw)).and_then(|_| std::fs::rename(&tmp, path)).map_err(|error| PlatformError::new(-1, format!("{}: {error}", path.display())))
     }
 }
 

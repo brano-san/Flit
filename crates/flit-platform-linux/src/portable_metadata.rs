@@ -12,7 +12,9 @@ const NAMES: [&CStr; 3] = [c"user.baloo.rating", c"user.xdg.comment", c"user.xdg
 fn open(path: &FsPath) -> io::Result<File> {
     let path = crate::host(path).ok_or(io::ErrorKind::InvalidInput)?;
     let file = OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)?;
-    if !file.metadata()?.is_file() { return Err(io::ErrorKind::InvalidInput.into()); }
+    if !file.metadata()?.is_file() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
     Ok(file)
 }
 
@@ -24,9 +26,7 @@ pub fn other_user_attribute(path: &FsPath) -> io::Result<Option<Vec<u8>>> {
         let e = io::Error::last_os_error();
         return if e.raw_os_error() == Some(libc::ENOTSUP) { Ok(None) } else { Err(e) };
     }
-    Ok(names[..count as usize].split(|&b| b == 0)
-        .find(|&name| name.starts_with(b"user.") && !matches!(name, b"user.xdg.origin.url" | b"user.xdg.referrer.url"))
-        .map(<[u8]>::to_vec))
+    Ok(names[..count as usize].split(|&b| b == 0).find(|&name| name.starts_with(b"user.") && !matches!(name, b"user.xdg.origin.url" | b"user.xdg.referrer.url")).map(<[u8]>::to_vec))
 }
 
 fn read_attr(file: &File, name: &CStr) -> io::Result<Option<Vec<u8>>> {
@@ -57,9 +57,15 @@ fn write_attr(file: &File, name: &CStr, value: Option<&[u8]>) -> io::Result<()> 
         Some(value) => unsafe { libc::fsetxattr(fd, name.as_ptr(), value.as_ptr().cast(), value.len(), 0) },
         None => unsafe { libc::fremovexattr(fd, name.as_ptr()) },
     };
-    if result == 0 { return Ok(()); }
+    if result == 0 {
+        return Ok(());
+    }
     let e = io::Error::last_os_error();
-    if value.is_none() && e.raw_os_error() == Some(libc::ENODATA) { Ok(()) } else { Err(e) }
+    if value.is_none() && e.raw_os_error() == Some(libc::ENODATA) {
+        Ok(())
+    } else {
+        Err(e)
+    }
 }
 
 type Attributes = [Option<Vec<u8>>; 3];
@@ -73,7 +79,11 @@ fn describe(attrs: &Attributes) -> io::Result<Metadata> {
     let rating = text(0)?;
     let rating = if rating.is_empty() { 0 } else { rating.parse::<u8>().map_err(|_| io::Error::from(io::ErrorKind::InvalidData))? };
     let meta = Metadata { rating, comment: text(1)?.to_owned(), tags: Metadata::tags_from_text(text(2)?) };
-    if meta.valid() { Ok(meta) } else { Err(io::ErrorKind::InvalidData.into()) }
+    if meta.valid() {
+        Ok(meta)
+    } else {
+        Err(io::ErrorKind::InvalidData.into())
+    }
 }
 
 pub fn read(path: &FsPath) -> io::Result<Metadata> {
@@ -86,17 +96,21 @@ pub fn write(path: &FsPath, before: &Metadata, after: &Metadata) -> io::Result<(
     if describe(&old)? != *before {
         return Err(io::Error::other(S::PortableMetaChanged.en()));
     }
-    let mut next = [
-        (after.rating != 0).then(|| after.rating.to_string().into_bytes()),
-        (!after.comment.is_empty()).then(|| after.comment.as_bytes().to_vec()),
-        (!after.tags.is_empty()).then(|| after.tags.join(",").into_bytes()),
-    ];
-    if before.rating == after.rating { next[0].clone_from(&old[0]); }
-    if before.comment == after.comment { next[1].clone_from(&old[1]); }
-    if before.tags == after.tags { next[2].clone_from(&old[2]); }
+    let mut next = [(after.rating != 0).then(|| after.rating.to_string().into_bytes()), (!after.comment.is_empty()).then(|| after.comment.as_bytes().to_vec()), (!after.tags.is_empty()).then(|| after.tags.join(",").into_bytes())];
+    if before.rating == after.rating {
+        next[0].clone_from(&old[0]);
+    }
+    if before.comment == after.comment {
+        next[1].clone_from(&old[1]);
+    }
+    if before.tags == after.tags {
+        next[2].clone_from(&old[2]);
+    }
 
     for (i, attribute) in NAMES.iter().enumerate() {
-        if old[i] == next[i] { continue; }
+        if old[i] == next[i] {
+            continue;
+        }
         if let Err(e) = write_attr(&file, attribute, next[i].as_deref()) {
             for k in (0..i).filter(|&k| old[k] != next[k]) {
                 if read_attr(&file, NAMES[k])? == next[k] {

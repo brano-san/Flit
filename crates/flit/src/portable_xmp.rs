@@ -36,7 +36,9 @@ fn kind(reader: &NsReader<&[u8]>, tag: &BytesStart<'_>) -> Shape {
 
 fn rating(text: &str) -> Option<u8> {
     let stars = text.trim().parse::<f64>().ok()?;
-    if stars == -1.0 { return Some(0); }
+    if stars == -1.0 {
+        return Some(0);
+    }
     (0.0..=5.0).contains(&stars).then(|| (stars * 2.0).round() as u8)
 }
 
@@ -77,10 +79,16 @@ pub fn read(text: &str, before: &Metadata) -> Option<Metadata> {
                 if matches!(kind, Shape::Rating | Shape::Comment | Shape::Subject) {
                     seen = true;
                 }
-                if kind == Shape::Comment { value.comment.clear(); }
-                if kind == Shape::Subject { value.tags.clear(); }
+                if kind == Shape::Comment {
+                    value.comment.clear();
+                }
+                if kind == Shape::Subject {
+                    value.tags.clear();
+                }
                 nodes.push(Node { kind, value: String::new(), default_language: is_default(&tag) });
-                if nodes.len() > 64 { return None; }
+                if nodes.len() > 64 {
+                    return None;
+                }
             }
             Event::Empty(tag) => {
                 let kind = kind(&reader, &tag);

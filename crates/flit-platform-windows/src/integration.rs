@@ -1,10 +1,7 @@
 use flit_platform::PlatformError;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, WIN32_ERROR};
-use windows::Win32::System::Registry::{
-    RegCloseKey, RegDeleteKeyValueW, RegDeleteKeyW, RegDeleteTreeW, RegGetValueW, RegOpenKeyExW, RegQueryInfoKeyW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_MULTI_SZ, REG_SZ, REG_VALUE_TYPE, RRF_NOEXPAND,
-    RRF_RT_ANY,
-};
+use windows::Win32::System::Registry::{RegCloseKey, RegDeleteKeyValueW, RegDeleteKeyW, RegDeleteTreeW, RegGetValueW, RegOpenKeyExW, RegQueryInfoKeyW, RegSetKeyValueW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_MULTI_SZ, REG_SZ, REG_VALUE_TYPE, RRF_NOEXPAND, RRF_RT_ANY};
 use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_ASSOCCHANGED, SHCNF_IDLIST};
 
 const WIN_E: &str = r"CLSID\{52205fd8-5dfb-447d-801a-d0b52f2e83e1}\shell\opennewwindow\command";

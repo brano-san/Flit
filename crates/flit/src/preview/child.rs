@@ -2,14 +2,7 @@ use std::ffi::OsStr;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::Duration;
 
-pub(super) fn run(
-    mode: &str,
-    args: &[&OsStr],
-    max_output: u64,
-    timeout: Duration,
-    max_memory: Option<usize>,
-    current: impl Fn() -> bool,
-) -> Option<(ExitStatus, Vec<u8>)> {
+pub(super) fn run(mode: &str, args: &[&OsStr], max_output: u64, timeout: Duration, max_memory: Option<usize>, current: impl Fn() -> bool) -> Option<(ExitStatus, Vec<u8>)> {
     if !current() {
         return None;
     }
@@ -78,6 +71,5 @@ fn start_limited(child: &mut std::process::Child, job: &std::os::windows::io::Ow
     use windows::Win32::Foundation::HANDLE;
     use windows::Win32::System::JobObjects::AssignProcessToJobObject;
 
-    unsafe { AssignProcessToJobObject(HANDLE(job.as_raw_handle()), HANDLE(child.as_raw_handle())) }.is_ok()
-        && child.stdin.take().is_some_and(|mut stdin| stdin.write_all(&[1]).is_ok())
+    unsafe { AssignProcessToJobObject(HANDLE(job.as_raw_handle()), HANDLE(child.as_raw_handle())) }.is_ok() && child.stdin.take().is_some_and(|mut stdin| stdin.write_all(&[1]).is_ok())
 }

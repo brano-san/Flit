@@ -740,11 +740,7 @@ impl Ctl {
 
     fn recover(&mut self, id: ReqId, failure: Failure) {
         let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
-        let valid = if let Some(plan) = o.ctl.replay() {
-            plan.steps.iter().any(|op| check_failure(op, &failure).is_ok())
-        } else {
-            check_failure(&o.request, &failure).is_ok()
-        };
+        let valid = if let Some(plan) = o.ctl.replay() { plan.steps.iter().any(|op| check_failure(op, &failure).is_ok()) } else { check_failure(&o.request, &failure).is_ok() };
         if !valid {
             return self.crashed("a failure path lies outside the operation");
         }
@@ -763,11 +759,7 @@ impl Ctl {
 
     fn finished(&mut self, id: ReqId, error: Option<OpError>, items: Vec<(FsPath, FsPath)>) {
         let Some(Pending::Op(o)) = self.pending.remove(&id) else { return };
-        let valid = if let Some(plan) = o.ctl.replay() {
-            items.iter().all(|item| plan.steps.iter().any(|op| check_report(op, std::slice::from_ref(item)).is_ok()))
-        } else {
-            check_report(&o.request, &items).is_ok()
-        };
+        let valid = if let Some(plan) = o.ctl.replay() { items.iter().all(|item| plan.steps.iter().any(|op| check_report(op, std::slice::from_ref(item)).is_ok())) } else { check_report(&o.request, &items).is_ok() };
         if !valid {
             self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(self.lost().into()), report: None });
             return self.crashed("a reported path lies outside the operation");
@@ -779,18 +771,21 @@ impl Ctl {
         report.undo.replaced = o.replaced;
         report.undo.checked = o.undo.or_else(|| undo::inverse(&report).map(|_| Step::Refuse(S::ErrorsOpsUndoUnavailable.en())));
         if !report.items.is_empty() && matches!(report.undo.checked, Some(Step::Checked(_))) && o.ctl.replay().is_none() {
-            let expected = undo::inverse_ops(&report).unwrap_or_default().into_iter().filter_map(|step| match step {
-                Step::Run(FileOp::Delete(paths)) => Some(FileOp::Trash(paths)),
-                Step::Run(op) => Some(op),
-                _ => None,
-            }).collect::<Vec<_>>();
+            let expected = undo::inverse_ops(&report)
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|step| match step {
+                    Step::Run(FileOp::Delete(paths)) => Some(FileOp::Trash(paths)),
+                    Step::Run(op) => Some(op),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
             if !matches!(&report.undo.checked, Some(Step::Checked(plan)) if plan.steps == expected) {
                 report.undo.checked = Some(Step::Refuse(S::ErrorsOpsUndoUnavailable.en()));
             }
         }
         if let (Some(previous), Some(Step::Checked(next))) = (o.ctl.replay(), &report.undo.checked) {
-            let known: HashSet<_> = previous.checks.iter().map(|(path, _)| path)
-                .chain(report.items.iter().flat_map(|(from, to)| [from, to])).collect();
+            let known: HashSet<_> = previous.checks.iter().map(|(path, _)| path).chain(report.items.iter().flat_map(|(from, to)| [from, to])).collect();
             if !next.checks.iter().all(|(path, _)| known.contains(path)) {
                 report.undo.checked = Some(Step::Refuse(S::ErrorsOpsUndoUnavailable.en()));
             }

@@ -94,12 +94,18 @@ fn content_cache_reuses_reads_between_windows_sizes_and_theme_epochs() {
     let cache = Mutex::new(None);
     let reads = std::cell::Cell::new(0);
     for _ in 0..4 {
-        let names = content_names_in(&cache, &file, true, |_| { reads.set(reads.get() + 1); "image/png".into() });
+        let names = content_names_in(&cache, &file, true, |_| {
+            reads.set(reads.get() + 1);
+            "image/png".into()
+        });
         assert_eq!(names, icon_names("image/png"));
     }
     assert_eq!(reads.get(), 1);
     std::fs::write(&file, b"a longer document").unwrap();
-    let names = content_names_in(&cache, &file, true, |_| { reads.set(reads.get() + 1); "application/pdf".into() });
+    let names = content_names_in(&cache, &file, true, |_| {
+        reads.set(reads.get() + 1);
+        "application/pdf".into()
+    });
     assert_eq!(names, icon_names("application/pdf"));
     assert_eq!(reads.get(), 2);
     assert_eq!(cache.lock().unwrap().as_ref().unwrap().entries.len(), 1);
@@ -137,11 +143,13 @@ fn a_hung_content_read_does_not_hold_up_icons_of_other_files() {
     let (release, hold) = channel::<()>();
     let hung = {
         let cache = cache.clone();
-        std::thread::spawn(move || content_names_in(&cache, &slow, true, |_| {
-            started.send(()).unwrap();
-            let _ = hold.recv_timeout(Duration::from_secs(10));
-            "image/png".into()
-        }))
+        std::thread::spawn(move || {
+            content_names_in(&cache, &slow, true, |_| {
+                started.send(()).unwrap();
+                let _ = hold.recv_timeout(Duration::from_secs(10));
+                "image/png".into()
+            })
+        })
     };
     entered.recv_timeout(Duration::from_secs(5)).unwrap();
     let (done, finished) = channel();
@@ -169,7 +177,9 @@ fn content_type_results_are_freed_even_if_conversion_is_unknown() {
         assert_eq!(unsafe { CStr::from_ptr(content) }.to_bytes(), b"image/png");
         CString::new("image/png").unwrap().into_raw()
     }
-    unsafe extern "C" fn unknown(_: *const libc::c_char) -> *mut libc::c_char { std::ptr::null_mut() }
+    unsafe extern "C" fn unknown(_: *const libc::c_char) -> *mut libc::c_char {
+        std::ptr::null_mut()
+    }
     unsafe extern "C" fn free(p: *mut libc::c_void) {
         if !p.is_null() {
             drop(unsafe { CString::from_raw(p.cast()) });
@@ -188,7 +198,9 @@ fn content_type_results_are_freed_even_if_conversion_is_unknown() {
 fn extensionless_png_and_replaced_content_choose_their_mime_icons_but_programs_do_not_sniff() {
     use crate::temp::Temp;
     use std::os::unix::fs::PermissionsExt;
-    if content_api().is_none() { return; }
+    if content_api().is_none() {
+        return;
+    }
     let temp = Temp::new("content-icons");
     let path = temp.path().join("image");
     std::fs::write(&path, b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR\0\0\0\x01\0\0\0\x01\x08\x02\0\0\0").unwrap();
@@ -218,10 +230,7 @@ fn picker_can_identify_extensionless_text_and_keeps_missing_types_unknown() {
 
 #[test]
 fn portal_can_filter_magic_only_types_and_normalizes_aliases() {
-    let types = PickerTypes {
-        registered: ["application/x-from-magic".into()].into_iter().collect(),
-        aliases: [("application/x-magic-alias".into(), "application/x-from-magic".into())].into_iter().collect(),
-    };
+    let types = PickerTypes { registered: ["application/x-from-magic".into()].into_iter().collect(), aliases: [("application/x-magic-alias".into(), "application/x-from-magic".into())].into_iter().collect() };
     assert_eq!(types.resolve("application/x-from-magic".into()).as_deref(), Some("application/x-from-magic"));
     assert_eq!(types.resolve("application/x-magic-alias".into()).as_deref(), Some("application/x-from-magic"));
     assert_eq!(types.resolve("text/plain".into()).as_deref(), Some("text/plain"));

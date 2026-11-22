@@ -217,10 +217,7 @@ impl Tab {
             self.slot.ask_kind(gen);
         }
         fx.push(Effect::Provider { provider: provider.clone(), req: ProviderRequest::Watch { tab: self.id, gen, path: Some(path.clone()) } });
-        fx.push(Effect::Provider {
-            provider,
-            req: ProviderRequest::List { tab: self.id, gen, path, view: self.view_spec, case, out: self.slot.clone(), cancel: self.cancel.clone() },
-        });
+        fx.push(Effect::Provider { provider, req: ProviderRequest::List { tab: self.id, gen, path, view: self.view_spec, case, out: self.slot.clone(), cancel: self.cancel.clone() } });
     }
 
     pub(super) fn list_network(&mut self, case: CaseMode, fx: &mut Vec<Effect>) {
@@ -456,16 +453,10 @@ impl Tab {
         let count = self.type_ahead.chars().count();
         let repeated = count > 1 && self.type_ahead.chars().all(|c| c == first);
         let cur = v.focus.and_then(|f| v.row_of(f));
-        let find = |needle: &str, start: usize, v: &DirView| -> Option<usize> {
-            (0..n).map(|k| (start + k) % n).find(|&r| name::starts_with_ci(v.listing().label(v.rows()[r]), needle))
-        };
+        let find = |needle: &str, start: usize, v: &DirView| -> Option<usize> { (0..n).map(|k| (start + k) % n).find(|&r| name::starts_with_ci(v.listing().label(v.rows()[r]), needle)) };
         let single = first.to_string();
         let next = cur.map_or(0, |r| r + 1);
-        let found = if count == 1 {
-            find(&single, next, v)
-        } else {
-            find(&self.type_ahead, cur.unwrap_or(0), v).or_else(|| if repeated { find(&single, next, v) } else { None })
-        };
+        let found = if count == 1 { find(&single, next, v) } else { find(&self.type_ahead, cur.unwrap_or(0), v).or_else(|| if repeated { find(&single, next, v) } else { None }) };
         let Some(r) = found else { return false };
         let i = v.rows()[r];
         v.clear_selection();
@@ -550,4 +541,3 @@ pub(super) struct TabMotion {
     pub fold: Option<TreeFold>,
     pub fold_parent: Option<u32>,
 }
-

@@ -120,15 +120,7 @@ fn numbers_follow_the_language() {
     let mut s = String::new();
     decimal(&mut s, 12.5, 1);
     assert_eq!(s, "12,5");
-    let cldr = [
-        (Lang::En, "1,000", "12,345"),
-        (Lang::Ru, "1\u{A0}000", "12\u{A0}345"),
-        (Lang::Uk, "1\u{A0}000", "12\u{A0}345"),
-        (Lang::De, "1.000", "12.345"),
-        (Lang::Fr, "1\u{202F}000", "12\u{202F}345"),
-        (Lang::Es, "1000", "12.345"),
-        (Lang::ZhCn, "1,000", "12,345"),
-    ];
+    let cldr = [(Lang::En, "1,000", "12,345"), (Lang::Ru, "1\u{A0}000", "12\u{A0}345"), (Lang::Uk, "1\u{A0}000", "12\u{A0}345"), (Lang::De, "1.000", "12.345"), (Lang::Fr, "1\u{202F}000", "12\u{202F}345"), (Lang::Es, "1000", "12.345"), (Lang::ZhCn, "1,000", "12,345")];
     for (l, four, five) in cldr {
         set_lang(l);
         assert_eq!((num(1000).to_string(), num(12345).to_string()), (four.to_owned(), five.to_owned()), "{l:?}");

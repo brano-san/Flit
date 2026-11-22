@@ -28,7 +28,9 @@ impl Folder {
 }
 
 impl Drop for Folder {
-    fn drop(&mut self) { let _ = fs::remove_dir_all(&self.0); }
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
 }
 
 struct Publisher;
@@ -40,10 +42,16 @@ impl FileOps for Publisher {
         Ok(())
     }
 
-    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome { unreachable!() }
+    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
+        unreachable!()
+    }
 
-    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> { unreachable!() }
-    fn clear_clipboard(&mut self) { unreachable!() }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        unreachable!()
+    }
+    fn clear_clipboard(&mut self) {
+        unreachable!()
+    }
 }
 
 #[test]
@@ -125,7 +133,9 @@ struct Interrupted<'a> {
 
 impl FileOps for Interrupted<'_> {
     fn rename_local_noreplace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
-        if std_path(to).exists() { return Err(PlatformError::new(-1, "collision")); }
+        if std_path(to).exists() {
+            return Err(PlatformError::new(-1, "collision"));
+        }
         Publisher.rename_local_noreplace(from, to)?;
         if std::mem::replace(&mut self.first, false) {
             if let Some(job) = self.job {
@@ -137,9 +147,15 @@ impl FileOps for Interrupted<'_> {
         Ok(())
     }
 
-    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome { unreachable!() }
-    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> { unreachable!() }
-    fn clear_clipboard(&mut self) { unreachable!() }
+    fn file_op(&mut self, _: &FileOp, _: &Job) -> OpOutcome {
+        unreachable!()
+    }
+    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+        unreachable!()
+    }
+    fn clear_clipboard(&mut self) {
+        unreachable!()
+    }
 }
 
 #[test]

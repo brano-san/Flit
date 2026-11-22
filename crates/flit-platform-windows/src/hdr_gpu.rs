@@ -22,26 +22,13 @@ struct Planes {
 
 impl Planes {
     unsafe fn new(device: &ID3D11Device, width: u32, height: u32) -> Result<Self> {
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: width,
-            Height: height,
-            MipLevels: 1,
-            ArraySize: 1,
-            Format: DXGI_FORMAT_P010,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
-            BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
-            ..Default::default()
-        };
+        let desc = D3D11_TEXTURE2D_DESC { Width: width, Height: height, MipLevels: 1, ArraySize: 1, Format: DXGI_FORMAT_P010, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32, ..Default::default() };
         let mut texture = None;
         device.CreateTexture2D(&desc, None, Some(&mut texture))?;
         let texture = com_output(texture)?;
         let mut views = [None, None];
         for (slot, format) in views.iter_mut().zip([DXGI_FORMAT_R16_UNORM, DXGI_FORMAT_R16G16_UNORM]) {
-            let view = D3D11_SHADER_RESOURCE_VIEW_DESC {
-                Format: format,
-                ViewDimension: D3D11_SRV_DIMENSION_TEXTURE2D,
-                Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 } },
-            };
+            let view = D3D11_SHADER_RESOURCE_VIEW_DESC { Format: format, ViewDimension: D3D11_SRV_DIMENSION_TEXTURE2D, Anonymous: D3D11_SHADER_RESOURCE_VIEW_DESC_0 { Texture2D: D3D11_TEX2D_SRV { MostDetailedMip: 0, MipLevels: 1 } } };
             device.CreateShaderResourceView(&texture, Some(&view), Some(slot))?;
         }
         Ok(Self { size: (width, height), texture, views })
@@ -128,11 +115,7 @@ impl ToneMapper {
         if let Some(view) = self.targets.get(&key) {
             return Ok(view.clone());
         }
-        let array_view = D3D11_RENDER_TARGET_VIEW_DESC {
-            Format: desc.Format,
-            ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2DARRAY,
-            Anonymous: D3D11_RENDER_TARGET_VIEW_DESC_0 { Texture2DArray: D3D11_TEX2D_ARRAY_RTV { MipSlice: 0, FirstArraySlice: slice, ArraySize: 1 } },
-        };
+        let array_view = D3D11_RENDER_TARGET_VIEW_DESC { Format: desc.Format, ViewDimension: D3D11_RTV_DIMENSION_TEXTURE2DARRAY, Anonymous: D3D11_RENDER_TARGET_VIEW_DESC_0 { Texture2DArray: D3D11_TEX2D_ARRAY_RTV { MipSlice: 0, FirstArraySlice: slice, ArraySize: 1 } } };
         let mut target = None;
         self.device.CreateRenderTargetView(output, (desc.ArraySize > 1).then_some(&array_view as *const _), Some(&mut target))?;
         let target = com_output(target)?;

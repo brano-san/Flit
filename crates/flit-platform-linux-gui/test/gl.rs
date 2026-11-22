@@ -37,9 +37,7 @@ fn gradient(side: u32, alpha: u8) -> Vec<u8> {
 }
 
 fn checker(side: u32) -> Vec<u8> {
-    (0..side * side)
-        .flat_map(|i| if ((i % side) / 4 + (i / side) / 4).is_multiple_of(2) { [230, 230, 230, 255] } else { [40, 90, 200, 255] })
-        .collect()
+    (0..side * side).flat_map(|i| if ((i % side) / 4 + (i / side) / 4).is_multiple_of(2) { [230, 230, 230, 255] } else { [40, 90, 200, 255] }).collect()
 }
 
 fn uv(slot: Slot) -> [f32; 4] {
@@ -264,14 +262,7 @@ fn measures_draw_cpu_time_for_a_listing() {
             total.push(t.elapsed().as_secs_f64() * 1e3);
         }
     }
-    println!(
-        "{renderer_name}: {} instances, render() CPU p50 {:.3} ms p99 {:.3} ms, with glFinish p50 {:.3} ms p99 {:.3} ms",
-        dl.instances.len(),
-        percentile(&mut cpu, 0.5),
-        percentile(&mut cpu, 0.99),
-        percentile(&mut total, 0.5),
-        percentile(&mut total, 0.99)
-    );
+    println!("{renderer_name}: {} instances, render() CPU p50 {:.3} ms p99 {:.3} ms, with glFinish p50 {:.3} ms p99 {:.3} ms", dl.instances.len(), percentile(&mut cpu, 0.5), percentile(&mut cpu, 0.99), percentile(&mut total, 0.5), percentile(&mut total, 0.99));
 }
 
 const LCD: Slot = Slot { x: 40, y: 0, w: 4, h: 4 };

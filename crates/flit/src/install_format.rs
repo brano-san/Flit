@@ -11,14 +11,11 @@ enum Probe {
 pub fn appimage_path<'a>(exe: &Path, appimage: Option<&'a OsStr>, appdir: Option<&OsStr>) -> Option<&'a Path> {
     let image = Path::new(appimage?);
     let dir = Path::new(appdir?);
-    let absolute = |path: &Path| path.as_os_str().as_encoded_bytes().starts_with(b"/")
-        && !path.components().any(|part| part == std::path::Component::ParentDir);
+    let absolute = |path: &Path| path.as_os_str().as_encoded_bytes().starts_with(b"/") && !path.components().any(|part| part == std::path::Component::ParentDir);
     if !absolute(image) || !absolute(dir) || dir.parent().is_none() || image.starts_with(dir) {
         return None;
     }
-    exe.strip_prefix(dir).ok()
-        .filter(|relative| !relative.as_os_str().is_empty() && !relative.components().any(|part| part == std::path::Component::ParentDir))
-        .map(|_| image)
+    exe.strip_prefix(dir).ok().filter(|relative| !relative.as_os_str().is_empty() && !relative.components().any(|part| part == std::path::Component::ParentDir)).map(|_| image)
 }
 
 fn detect(exe: &Path, appimage: Option<&OsStr>, appdir: Option<&OsStr>, mut query: impl FnMut(Probe, &Path) -> Option<String>) -> Option<ManagedInstallation> {
@@ -28,8 +25,7 @@ fn detect(exe: &Path, appimage: Option<&OsStr>, appdir: Option<&OsStr>, mut quer
     if let Some(package) = query(Probe::Dpkg, exe).as_deref().and_then(|text| dpkg_owner(text, exe)) {
         return Some(ManagedInstallation::Package(format!("sudo apt install --only-upgrade {package}")));
     }
-    query(Probe::Rpm, exe).as_deref().and_then(|text| text.lines().find_map(package_name))
-        .map(|package| ManagedInstallation::Package(format!("sudo dnf upgrade {package}")))
+    query(Probe::Rpm, exe).as_deref().and_then(|text| text.lines().find_map(package_name)).map(|package| ManagedInstallation::Package(format!("sudo dnf upgrade {package}")))
 }
 
 fn package_name(name: &str) -> Option<&str> {
@@ -38,9 +34,7 @@ fn package_name(name: &str) -> Option<&str> {
 }
 
 fn dpkg_owner<'a>(text: &'a str, exe: &Path) -> Option<&'a str> {
-    text.lines().filter_map(|line| line.split_once(": ")).find_map(|(owners, path)| {
-        (Path::new(path) == exe).then(|| owners.split(',').find_map(package_name)).flatten()
-    })
+    text.lines().filter_map(|line| line.split_once(": ")).find_map(|(owners, path)| (Path::new(path) == exe).then(|| owners.split(',').find_map(package_name)).flatten())
 }
 
 #[cfg(not(windows))]
@@ -60,4 +54,3 @@ pub fn managed(exe: &Path) -> Option<ManagedInstallation> {
 #[cfg(test)]
 #[path = "../test/install_format.rs"]
 mod tests;
-

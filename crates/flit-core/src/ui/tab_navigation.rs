@@ -290,7 +290,11 @@ impl App {
         } else if loc.is_recycle_bin() {
             S::UiEmptyBin
         } else if self.caps.unix_paths && loc.path().is_network() {
-            if loc.path().is_root() { S::UiEmptyNetwork } else { S::UiEmptyNetworkConnect }
+            if loc.path().is_root() {
+                S::UiEmptyNetwork
+            } else {
+                S::UiEmptyNetworkConnect
+            }
         } else {
             S::UiEmptyFolder
         }

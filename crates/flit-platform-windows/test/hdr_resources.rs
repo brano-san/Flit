@@ -7,14 +7,10 @@ use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 fn software_frames_reuse_the_upload_texture_and_pooled_render_target_views() {
     unsafe {
         let mut device = None;
-        D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            None, D3D11_SDK_VERSION, Some(&mut device), None, None).unwrap();
+        D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, None, D3D11_SDK_VERSION, Some(&mut device), None, None).unwrap();
         let device = device.unwrap();
         let mut mapper = ToneMapper::new(&device).unwrap();
-        let desc = D3D11_TEXTURE2D_DESC {
-            Width: 4, Height: 4, ArraySize: 2, MipLevels: 1, Format: DXGI_FORMAT_B8G8R8A8_UNORM,
-            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32, ..Default::default()
-        };
+        let desc = D3D11_TEXTURE2D_DESC { Width: 4, Height: 4, ArraySize: 2, MipLevels: 1, Format: DXGI_FORMAT_B8G8R8A8_UNORM, SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 }, BindFlags: D3D11_BIND_RENDER_TARGET.0 as u32, ..Default::default() };
         let mut output = None;
         device.CreateTexture2D(&desc, None, Some(&mut output)).unwrap();
         let output = output.unwrap();

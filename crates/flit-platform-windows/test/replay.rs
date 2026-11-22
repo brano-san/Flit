@@ -72,7 +72,11 @@ impl Drop for TransferFixture {
 
 impl Recycle for TransferFixture {
     fn direct(&self, path: &FsPath) -> Option<FsPath> {
-        if self.shell_only { None } else { self.put_in_bin(path) }
+        if self.shell_only {
+            None
+        } else {
+            self.put_in_bin(path)
+        }
     }
 
     fn shell(&self, path: &FsPath, _: &Job) -> Result<FsPath, flit_platform::PlatformError> {
@@ -246,11 +250,12 @@ fn grouped_undo_checks_descendants_even_when_directory_timestamps_drift() {
     std::fs::create_dir(&contents).unwrap();
     t.write(r"source\tree\original", b"moving");
     let report = t.apply(FileOp::Move { items: vec![t.path(r"source\tree")], dest: t.path("destination") });
-    let Some(Step::Checked(mut plan)) = flit_core::undo::inverse(&report) else { panic!("expected a checked step"); };
+    let Some(Step::Checked(mut plan)) = flit_core::undo::inverse(&report) else {
+        panic!("expected a checked step");
+    };
     plan.recheck_tree = true;
     let unexpected = t.write(r"destination\tree\foreign", b"preserve");
-    std::fs::File::options().write(true).open(crate::fileops::std_path(&unexpected)).unwrap()
-        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(1)).unwrap();
+    std::fs::File::options().write(true).open(crate::fileops::std_path(&unexpected)).unwrap().set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(1)).unwrap();
     let (refused, _) = t.execute(Step::Checked(plan.clone()));
     assert!(refused.error.is_some());
     assert_eq!(t.read(r"destination\tree\foreign"), b"preserve");
@@ -269,9 +274,7 @@ fn a_staged_delete_disappears_before_removal_and_is_resumed_after_a_crash() {
     t.write(r"source\remove\remaining", b"second");
     let foreign = t.write(r"source\.flit-deleting-foreign", b"keep");
 
-    let (staged, crashed_record) = flit_platform::pending::stage_delete(&state, &delete, undo_stamp(&delete).unwrap().0, false, |from, to| {
-        move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)
-    }).unwrap();
+    let (staged, crashed_record) = flit_platform::pending::stage_delete(&state, &delete, undo_stamp(&delete).unwrap().0, false, |from, to| move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)).unwrap();
     assert!(!exists(&delete) && exists(&staged));
     crashed_record.inventory(&staged, undo_fs(), || false).unwrap();
     crashed_record.begin_delete().unwrap();
@@ -318,15 +321,17 @@ fn a_failed_or_cancelled_cross_volume_replacement_preserves_both_sides() {
         let to = t.write(r"destination\item", b"old destination");
         let job = Job::detached(Resolve::Replace);
         let mut engine = Engine { recycle: &t, pending_state: Some(t.dir.join("state")), ..Engine::new(&job) };
-        let error = engine.replace_staged(&from, &to, Mode::Across, |staged| {
-            std::fs::write(crate::fileops::std_path(staged), b"partial").unwrap();
-            if cancelled {
-                job.ctl().cancel();
-                Ok(())
-            } else {
-                Err(ERROR_DISK_FULL.to_hresult().into())
-            }
-        }).unwrap_err();
+        let error = engine
+            .replace_staged(&from, &to, Mode::Across, |staged| {
+                std::fs::write(crate::fileops::std_path(staged), b"partial").unwrap();
+                if cancelled {
+                    job.ctl().cancel();
+                    Ok(())
+                } else {
+                    Err(ERROR_DISK_FULL.to_hresult().into())
+                }
+            })
+            .unwrap_err();
         assert_eq!(code(&error), if cancelled { ERROR_CANCELLED } else { ERROR_DISK_FULL });
         assert_eq!(t.read(r"source\item"), b"whole source");
         assert_eq!(t.read(r"destination\item"), b"old destination");
@@ -339,29 +344,35 @@ fn a_failed_or_cancelled_cross_volume_replacement_preserves_both_sides() {
 fn cancelled_delete_restores_all_unprocessed_names_and_closes_the_journal() {
     let t = TransferFixture::new();
     let state = t.dir.join("state");
-    let paths: Vec<_> = (0..10).map(|index| {
-        let path = t.path(&format!(r"source\item-{index}"));
-        std::fs::create_dir(crate::fileops::std_path(&path)).unwrap();
-        path
-    }).collect();
+    let paths: Vec<_> = (0..10)
+        .map(|index| {
+            let path = t.path(&format!(r"source\item-{index}"));
+            std::fs::create_dir(crate::fileops::std_path(&path)).unwrap();
+            path
+        })
+        .collect();
     let stage = LinkStage::new(&t.path(r"source\output"), LinkKind::Hard, false, Some(&state)).unwrap();
     t.write(r"source\.flit-stage-user.txt", b"ordinary file");
     let ctl = flit_core::provider::OpCtl::default();
     let cancel = ctl.clone();
     let directory = t.path("source");
-    let job = Job::new(ctl, Box::new(move |progress| {
-        if progress.stage == Stage::Running && progress.items == 0 {
-            let stages = undo_children(&directory).unwrap();
-            assert_eq!(stages.len(), 12);
-            assert!(stages.iter().filter(|path| flit_platform::pending::is_stage_name(path.file_name())).all(|path| {
-                let attributes = unsafe { GetFileAttributesW(PCWSTR(wide(path).as_ptr())) };
-                attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0
-            }));
-            std::thread::sleep(std::time::Duration::from_millis(40));
-        } else if progress.items == 1 {
-            cancel.cancel();
-        }
-    }), Box::new(|_| {}));
+    let job = Job::new(
+        ctl,
+        Box::new(move |progress| {
+            if progress.stage == Stage::Running && progress.items == 0 {
+                let stages = undo_children(&directory).unwrap();
+                assert_eq!(stages.len(), 12);
+                assert!(stages.iter().filter(|path| flit_platform::pending::is_stage_name(path.file_name())).all(|path| {
+                    let attributes = unsafe { GetFileAttributesW(PCWSTR(wide(path).as_ptr())) };
+                    attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0
+                }));
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            } else if progress.items == 1 {
+                cancel.cancel();
+            }
+        }),
+        Box::new(|_| {}),
+    );
     let mut engine = Engine::new(&job);
     assert!(engine.delete(&paths, Some(&state)).is_none());
     drop(stage);
@@ -379,9 +390,7 @@ fn a_folder_listing_excludes_both_kinds_of_operation_stages() {
     let directory = t.path("source");
     let state = t.dir.join("state");
     let original = t.write(r"source\victim", b"delete stage");
-    let (staged, record) = flit_platform::pending::stage_delete(&state, &original, undo_stamp(&original).unwrap().0, false, |from, to| {
-        move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)
-    }).unwrap();
+    let (staged, record) = flit_platform::pending::stage_delete(&state, &original, undo_stamp(&original).unwrap().0, false, |from, to| move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)).unwrap();
     let stage = LinkStage::new(&t.path(r"source\output"), LinkKind::Hard, false, Some(&state)).unwrap();
     t.write(r"source\.flit-stage-project.txt", b"regular file");
     let mut keep = |_: &ListingBuilder<'_>| true;
@@ -403,16 +412,19 @@ fn a_cancelled_delete_with_an_occupied_name_is_visible_and_restored_when_free() 
     let path = crate::fileops::std_path(&original);
     let ctl = flit_core::provider::OpCtl::default();
     let cancel = ctl.clone();
-    let job = Job::new(ctl, Box::new(move |progress| {
-        if progress.stage == Stage::Running {
-            std::fs::write(&path, b"occupant").unwrap();
-            cancel.cancel();
-        }
-    }), Box::new(|_| {}));
+    let job = Job::new(
+        ctl,
+        Box::new(move |progress| {
+            if progress.stage == Stage::Running {
+                std::fs::write(&path, b"occupant").unwrap();
+                cancel.cancel();
+            }
+        }),
+        Box::new(|_| {}),
+    );
     let mut engine = Engine::new(&job);
     assert!(engine.delete(std::slice::from_ref(&original), Some(&state)).is_none());
-    let staged = undo_children(&t.path("source")).unwrap().into_iter()
-        .find(|path| flit_platform::pending::is_delete_name(path.file_name())).unwrap();
+    let staged = undo_children(&t.path("source")).unwrap().into_iter().find(|path| flit_platform::pending::is_delete_name(path.file_name())).unwrap();
     assert!(engine.done.is_empty() && engine.error().unwrap().message.contains(staged.display().as_ref()));
     assert_visible_delete_stage(&t, &staged);
     assert_eq!(std::fs::read_dir(state.join("pending-deletes")).unwrap().count(), 1);
@@ -436,18 +448,21 @@ fn a_changed_stage_identity_is_kept_visible_and_is_never_restored_as_the_origina
     let original = t.write(r"source\saved", b"original");
     let detour = t.path(r"source\different-name");
     let (dir, detour_path) = (t.path("source"), detour.clone());
-    let job = Job::new(flit_core::provider::OpCtl::default(), Box::new(move |progress| {
-        if progress.stage == Stage::Running {
-            let staged = undo_children(&dir).unwrap().into_iter().next().unwrap();
-            move_file(&staged, &detour_path, MOVE_FILE_FLAGS(0)).unwrap();
-            std::fs::write(crate::fileops::std_path(&staged), b"foreign").unwrap();
-            set_hidden(&staged, true).unwrap();
-        }
-    }), Box::new(|_| {}));
+    let job = Job::new(
+        flit_core::provider::OpCtl::default(),
+        Box::new(move |progress| {
+            if progress.stage == Stage::Running {
+                let staged = undo_children(&dir).unwrap().into_iter().next().unwrap();
+                move_file(&staged, &detour_path, MOVE_FILE_FLAGS(0)).unwrap();
+                std::fs::write(crate::fileops::std_path(&staged), b"foreign").unwrap();
+                set_hidden(&staged, true).unwrap();
+            }
+        }),
+        Box::new(|_| {}),
+    );
     let mut engine = Engine::new(&job);
     engine.delete(std::slice::from_ref(&original), Some(&state));
-    let staged = undo_children(&t.path("source")).unwrap().into_iter()
-        .find(|path| flit_platform::pending::is_delete_name(path.file_name())).unwrap();
+    let staged = undo_children(&t.path("source")).unwrap().into_iter().find(|path| flit_platform::pending::is_delete_name(path.file_name())).unwrap();
     assert!(engine.error().unwrap().message.contains(staged.display().as_ref()));
     assert_visible_delete_stage(&t, &staged);
     recover_pending(&state, |_| false);
@@ -470,12 +485,16 @@ fn a_directory_with_an_unwritable_inventory_is_restored_without_deleting_its_chi
     t.write(r"source\tree\child", b"keep");
     let logs = state.join("pending-deletes");
     let sabotage = logs.clone();
-    let job = Job::new(flit_core::provider::OpCtl::default(), Box::new(move |progress| {
-        if progress.stage == Stage::Running {
-            let log = std::fs::read_dir(&sabotage).unwrap().next().unwrap().unwrap().path();
-            std::fs::write(log.with_extension("objects"), b"unusable inventory").unwrap();
-        }
-    }), Box::new(|_| {}));
+    let job = Job::new(
+        flit_core::provider::OpCtl::default(),
+        Box::new(move |progress| {
+            if progress.stage == Stage::Running {
+                let log = std::fs::read_dir(&sabotage).unwrap().next().unwrap().unwrap().path();
+                std::fs::write(log.with_extension("objects"), b"unusable inventory").unwrap();
+            }
+        }),
+        Box::new(|_| {}),
+    );
     let mut engine = Engine::new(&job);
     engine.delete(std::slice::from_ref(&original), Some(&state));
     assert!(engine.done.is_empty() && engine.error().is_some());
@@ -490,9 +509,7 @@ fn recovery_restores_the_name_of_a_directory_when_inventory_never_finished() {
     let original = t.path(r"source\tree");
     std::fs::create_dir(crate::fileops::std_path(&original)).unwrap();
     t.write(r"source\tree\child", b"keep");
-    let (staged, record) = flit_platform::pending::stage_delete(&state, &original, undo_stamp(&original).unwrap().0, false, |from, to| {
-        move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)
-    }).unwrap();
+    let (staged, record) = flit_platform::pending::stage_delete(&state, &original, undo_stamp(&original).unwrap().0, false, |from, to| move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)).unwrap();
     set_hidden(&staged, true).unwrap();
     assert!(record.inventory(&staged, undo_fs(), || true).is_err());
     drop(record);
@@ -511,12 +528,9 @@ fn a_locked_delete_marker_does_not_rearm_cancelled_cleanup_on_restart() {
     let t = TransferFixture::new();
     let state = t.dir.join("state");
     let original = t.write(r"source\file", b"keep");
-    let (staged, record) = flit_platform::pending::stage_delete(&state, &original, undo_stamp(&original).unwrap().0, false, |from, to| {
-        move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)
-    }).unwrap();
+    let (staged, record) = flit_platform::pending::stage_delete(&state, &original, undo_stamp(&original).unwrap().0, false, |from, to| move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)).unwrap();
     record.begin_delete().unwrap();
-    let marker = std::fs::read_dir(state.join("pending-deletes")).unwrap().map(|entry| entry.unwrap().path())
-        .find(|path| path.extension().is_some_and(|ext| ext == "delete")).unwrap();
+    let marker = std::fs::read_dir(state.join("pending-deletes")).unwrap().map(|entry| entry.unwrap().path()).find(|path| path.extension().is_some_and(|ext| ext == "delete")).unwrap();
     let lock = std::fs::OpenOptions::new().read(true).share_mode(FILE_SHARE_READ.0).open(&marker).unwrap();
     record.keep();
     assert!(marker.exists());
@@ -534,9 +548,7 @@ fn assert_visible_delete_stage(t: &TransferFixture, path: &FsPath) {
     let mut keep = |_: &ListingBuilder<'_>| true;
     let mut listing = ListingBuilder::new(CaseMode::Sensitive, &mut keep);
     NtFs.read_dir(&t.path("source"), &mut listing).unwrap();
-    assert!((0..listing.listing.len() as u32).any(|i| {
-        listing.listing.name(i) == path.file_name() && listing.listing.entries[i as usize].meta().attrs & attr::HIDDEN == 0
-    }));
+    assert!((0..listing.listing.len() as u32).any(|i| { listing.listing.name(i) == path.file_name() && listing.listing.entries[i as usize].meta().attrs & attr::HIDDEN == 0 }));
 }
 
 #[test]
@@ -548,11 +560,13 @@ fn copy_and_move_replacements_skip_shell_when_direct_recycling_is_unavailable() 
         let target = t.write(r"destination\data", b"old");
         let job = Job::detached(Resolve::Replace);
         let mut engine = Engine { recycle: &t, ..Engine::new(&job) };
-        let err = engine.replace_staged(&source, &target, Mode::Copy, |staged| {
-            std::fs::write(crate::fileops::std_path(staged), b"part of new").unwrap();
-            assert_eq!(t.read(r"destination\data"), b"old");
-            Err(ERROR_DISK_FULL.to_hresult().into())
-        }).unwrap_err();
+        let err = engine
+            .replace_staged(&source, &target, Mode::Copy, |staged| {
+                std::fs::write(crate::fileops::std_path(staged), b"part of new").unwrap();
+                assert_eq!(t.read(r"destination\data"), b"old");
+                Err(ERROR_DISK_FULL.to_hresult().into())
+            })
+            .unwrap_err();
         assert_eq!(code(&err), ERROR_DISK_FULL);
         assert_eq!(t.read(r"destination\data"), b"old");
         assert_eq!(t.shell_attempts.get(), 0);
@@ -631,12 +645,7 @@ fn disk_full_after_a_real_copy_chunk_preserves_both_versions_and_cleans_the_stag
     let to = t.write(r"destination\chunked", b"old");
     let state = t.dir.join("state");
     let job = Job::detached(Resolve::Replace);
-    let mut engine = Engine {
-        recycle: &t,
-        pending_state: Some(state.clone()),
-        fail_after_chunk: Some(|done| (done > 0).then_some(ERROR_DISK_FULL)),
-        ..Engine::new(&job)
-    };
+    let mut engine = Engine { recycle: &t, pending_state: Some(state.clone()), fail_after_chunk: Some(|done| (done > 0).then_some(ERROR_DISK_FULL)), ..Engine::new(&job) };
     let result = engine.transfer(&from, to, stat(&from).unwrap(), Mode::Across, true);
     assert!(matches!(result, Res::Nothing));
     assert!(engine.error().is_some());
@@ -656,11 +665,15 @@ fn failed_cross_volume_rollback_reports_the_recycled_backup_path() {
     let source = std::fs::OpenOptions::new().read(true).share_mode(1).open(crate::fileops::std_path(&from)).unwrap();
     struct RefuseRestore<'a>(&'a TransferFixture);
     impl Recycle for RefuseRestore<'_> {
-        fn direct(&self, path: &FsPath) -> Option<FsPath> { self.0.direct(path) }
+        fn direct(&self, path: &FsPath) -> Option<FsPath> {
+            self.0.direct(path)
+        }
         fn shell(&self, _: &FsPath, _: &Job) -> Result<FsPath, PlatformError> {
             panic!("native replacement must not call the Shell recycler")
         }
-        fn restore(&self, _: &FsPath, _: &FsPath) -> bool { false }
+        fn restore(&self, _: &FsPath, _: &FsPath) -> bool {
+            false
+        }
     }
     let job = Job::detached(Resolve::Replace);
     let recycle = RefuseRestore(&t);
@@ -680,10 +693,7 @@ fn reporting_a_large_directory_does_not_enumerate_descendants_and_trash_can_be_u
     let original = t.path(r"source\large");
     std::fs::create_dir(crate::fileops::std_path(&original)).unwrap();
     let backup = t.put_in_bin(&original).unwrap();
-    let fs = replay::FileSystem {
-        stamp: undo_stamp,
-        children: |_| panic!("reporting and restoring a recycled directory require only the selected root"),
-    };
+    let fs = replay::FileSystem { stamp: undo_stamp, children: |_| panic!("reporting and restoring a recycled directory require only the selected root") };
     let job = Job::detached(Resolve::Replace);
     let report = replay::report(FileOp::Trash(vec![original.clone()]), vec![(original.clone(), backup)], Some(fs), &job);
     let Some(Step::Checked(plan)) = flit_core::undo::inverse(&report) else { panic!("expected checked restore") };
@@ -700,8 +710,7 @@ fn undo_checks_for_nested_changes_even_when_the_root_stamp_still_matches() {
     t.write(r"source\tree\child", b"original");
     let report = t.apply(FileOp::Copy { items: vec![t.path(r"source\tree")], dest: t.path("destination") });
     let child = t.dir.join(r"destination\tree\child");
-    std::fs::File::options().write(true).open(child).unwrap()
-        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(1)).unwrap();
+    std::fs::File::options().write(true).open(child).unwrap().set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(1)).unwrap();
     let (out, _) = t.execute(flit_core::undo::inverse(&report).unwrap());
     assert!(out.error.unwrap().message.contains(r"destination\tree\child"));
     assert!(out.items.is_empty());
@@ -719,12 +728,10 @@ fn ordinary_copy_undo_keeps_a_backdated_addition_when_the_parent_stamp_changed()
     let report = t.apply(FileOp::Copy { items: vec![t.path(r"source\tree")], dest: t.path("destination") });
     let undo = flit_core::undo::inverse(&report).unwrap();
     let root = t.dir.join(r"destination\tree");
-    let directory = std::fs::OpenOptions::new().access_mode(FILE_WRITE_ATTRIBUTES.0)
-        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0).open(&root).unwrap();
+    let directory = std::fs::OpenOptions::new().access_mode(FILE_WRITE_ATTRIBUTES.0).custom_flags(FILE_FLAG_BACKUP_SEMANTICS.0).open(&root).unwrap();
     let before = std::fs::metadata(&root).unwrap().modified().unwrap();
     let addition = t.write(r"destination\tree\added", b"backdated");
-    std::fs::File::options().write(true).open(crate::fileops::std_path(&addition)).unwrap()
-        .set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000)).unwrap();
+    std::fs::File::options().write(true).open(crate::fileops::std_path(&addition)).unwrap().set_modified(SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000)).unwrap();
     directory.set_modified(before + Duration::from_secs(1)).unwrap();
     let (refused, _) = t.execute(undo.clone());
     assert!(refused.error.is_some() && refused.items.is_empty());
@@ -743,16 +750,12 @@ fn undo_reports_when_the_file_identity_cannot_be_read() {
     let t = TransferFixture::new();
     let from = t.path(r"source\file");
     let to = t.path(r"destination\file");
-    let fs = replay::FileSystem {
-        stamp: |_| Err(std::io::Error::from(std::io::ErrorKind::Unsupported)),
-        children: |_| unreachable!(),
-    };
+    let fs = replay::FileSystem { stamp: |_| Err(std::io::Error::from(std::io::ErrorKind::Unsupported)), children: |_| unreachable!() };
     let job = Job::detached(Resolve::Replace);
     let op = FileOp::MoveTo(vec![(from.clone(), to.clone())]);
     let report = replay::report(op, vec![(from, to)], Some(fs), &job);
     assert_eq!(flit_core::undo::inverse(&report), Some(Step::Refuse(S::ErrorsOpsUndoStamp.en())));
 }
-
 
 fn workspace_snapshot(path: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
     fn visit(root: &std::path::Path, dir: &std::path::Path, out: &mut std::collections::BTreeMap<PathBuf, Option<Vec<u8>>>) {

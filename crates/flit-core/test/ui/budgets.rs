@@ -236,7 +236,10 @@ fn ten_thousand_extensionless_content_icons_stay_within_the_ui_budget() {
         b.app = App::new(Persisted { path: path.clone(), ..Default::default() }, Vec::new(), 0, false, 1.0, (1400, 900), Instant::now());
         let mut snap = (*snapshot(&b.app, &names)).clone();
         snap.path = path.path().clone();
-        for e in &mut snap.listing.entries { e.attrs = 0; e.size = 100; }
+        for e in &mut snap.listing.entries {
+            e.attrs = 0;
+            e.size = 100;
+        }
         b.app.tab().slot.publish(Arc::new(snap));
         b.app.poll();
         let start = Instant::now();
@@ -323,7 +326,9 @@ fn scrolling_ten_thousand_files_with_shell_overlays_stays_within_the_ui_budget()
         b.app.set_shell_overlays(true);
         let mut snap = (*snapshot(&b.app, &names)).clone();
         snap.path = path.path().clone();
-        for e in &mut snap.listing.entries { e.attrs = 0; }
+        for e in &mut snap.listing.entries {
+            e.attrs = 0;
+        }
         b.app.tab().slot.publish(Arc::new(snap));
         b.app.poll();
         let start = Instant::now();

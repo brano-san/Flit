@@ -22,7 +22,11 @@ enum Digest {
 unsafe impl Send for Digest {}
 
 fn status(st: windows::Win32::Foundation::NTSTATUS) -> Result<(), PlatformError> {
-    if st.is_ok() { Ok(()) } else { Err(PlatformError::new(st.0 as i64, flit_core::i18n::S::ErrorsEngineHashFailed.en())) }
+    if st.is_ok() {
+        Ok(())
+    } else {
+        Err(PlatformError::new(st.0 as i64, flit_core::i18n::S::ErrorsEngineHashFailed.en()))
+    }
 }
 
 impl Digest {

@@ -10,8 +10,8 @@ use windows::core::{GUID, PCWSTR};
 use windows::Win32::Foundation::{ERROR_GEN_FAILURE, WIN32_ERROR};
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER, STGM_READ, STGM_READWRITE};
 use windows::Win32::UI::Shell::{
-    IShellItem, IShellItemArray, IShellLibrary, SHChangeNotify, SHCreateItemFromParsingName, SHGetKnownFolderPath, ShellLibrary, DSFT_DETECT, FOLDERID_Libraries, KF_FLAG_DEFAULT, LFF_FORCEFILESYSTEM, LSF_FAILIFTHERE,
-    SHCNE_CREATE, SHCNF_PATHW, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY,
+    IShellItem, IShellItemArray, IShellLibrary, SHChangeNotify, SHCreateItemFromParsingName, SHGetKnownFolderPath, ShellLibrary, DSFT_DETECT, FOLDERID_Libraries, KF_FLAG_DEFAULT, LFF_FORCEFILESYSTEM, LSF_FAILIFTHERE, SHCNE_CREATE, SHCNF_PATHW, SIGDN_FILESYSPATH,
+    SIGDN_NORMALDISPLAY,
 };
 
 pub(crate) struct Classic {

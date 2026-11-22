@@ -15,7 +15,9 @@ fn launch_notification_is_sent_only_when_enabled_and_spawn_succeeds() {
         let runs = vec![(vec![program.clone(), "/q".into(), "where.exe".into()], vec![("FLIT_STARTUP_NOTIFY".into(), if enabled { "1" } else { "0" }.into())])];
         launch_commands(&runs, None, |text| notices.push(text.to_owned())).unwrap();
         assert_eq!(notices.len(), usize::from(enabled));
-        if enabled { assert!(notices[0].contains("where.exe")); }
+        if enabled {
+            assert!(notices[0].contains("where.exe"));
+        }
     }
     let mut notices = Vec::new();
     let missing = vec![(vec![r"C:\flit-missing-notification-test.exe".into()], vec![("FLIT_STARTUP_NOTIFY".into(), "1".into())])];
@@ -216,7 +218,8 @@ fn distro_icons_come_from_their_start_menu_shortcut() {
     assert!(shell.icon(&req("flit-no-such-distro")).is_none());
     let shortcut = |d: &String| crate::places::wsl_shortcut(d).is_some_and(|l| std::path::Path::new(&*l.display()).exists());
     for distro in crate::places::wsl_distros().iter().filter(|d| shortcut(d)) {
-        assert!(shell.icon(&req(distro)).is_some_and(|b| b.width <= 32 && b.height <= 32), "{distro}");    }
+        assert!(shell.icon(&req(distro)).is_some_and(|b| b.width <= 32 && b.height <= 32), "{distro}");
+    }
 }
 
 #[test]

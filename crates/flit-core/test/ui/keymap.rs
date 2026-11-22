@@ -77,7 +77,14 @@ fn the_file_keeps_unknown_ids_reports_bad_entries_and_resets_clashes() {
         assert_eq!(k.keys(at(id)), ACTIONS[at(id)].keys, "{id} keeps its defaults");
     }
     let all = problems.join("\n");
-    for part in ["shortcuts of file.cut in the settings file are not a list", "\"Banana\" in the shortcuts of file.paste is not a key", "5 in the shortcuts of edit.undo", "Y cannot be a shortcut of edit.redo", "Ctrl+G was given to both tab.new and view.hidden", "Ctrl+T was given to both tab.new and select.all"] {
+    for part in [
+        "shortcuts of file.cut in the settings file are not a list",
+        "\"Banana\" in the shortcuts of file.paste is not a key",
+        "5 in the shortcuts of edit.undo",
+        "Y cannot be a shortcut of edit.redo",
+        "Ctrl+G was given to both tab.new and view.hidden",
+        "Ctrl+T was given to both tab.new and select.all",
+    ] {
         assert!(all.contains(part), "{part} in\n{all}");
     }
     let out = k.to_json();
@@ -121,10 +128,13 @@ fn shortcuts_live_in_the_settings_file_and_travel_with_export_import_and_reset()
     let mut c = app();
     c.preview_settings_import(settings::parse(&a.export_text()));
     c.form_submit(0);
-    let plan = c.drain_effects().find_map(|e| match e {
-        Effect::Settings(crate::ui::SettingsCmd::ConfirmImport(plan)) => Some(plan),
-        _ => None,
-    }).unwrap();
+    let plan = c
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::Settings(crate::ui::SettingsCmd::ConfirmImport(plan)) => Some(plan),
+            _ => None,
+        })
+        .unwrap();
     c.apply_confirmed_settings_import(*plan, "before.json".into());
     assert_eq!(c.keymap().keys(at("view.hidden")), [ctrl(Key::Char('H')), ctrl(Key::Char('G'))]);
     a.reset_settings();

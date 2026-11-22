@@ -137,17 +137,27 @@ fn bench_dir_sizes() {
     let cancel = GenToken::default();
     let dir = d.path("");
     let mut gen = 0;
-    measure("dir sizes 400 dirs / 10k files", 5, |_| (), |_| {
-        gen += 1;
-        assert_eq!(dir_sizes(&provider, &rx, &dir, gen, &cancel), 100_000);
-    });
+    measure(
+        "dir sizes 400 dirs / 10k files",
+        5,
+        |_| (),
+        |_| {
+            gen += 1;
+            assert_eq!(dir_sizes(&provider, &rx, &dir, gen, &cancel), 100_000);
+        },
+    );
     for big in [r"C:\Windows", r"C:\Program Files"] {
         let p = FsPath::parse(big).unwrap();
         let mut total = 0;
-        measure(&format!("dir sizes {big}"), 3, |_| (), |_| {
-            gen += 1;
-            total = dir_sizes(&provider, &rx, &p, gen, &cancel);
-        });
+        measure(
+            &format!("dir sizes {big}"),
+            3,
+            |_| (),
+            |_| {
+                gen += 1;
+                total = dir_sizes(&provider, &rx, &p, gen, &cancel);
+            },
+        );
         eprintln!("      {big}: {:.1} GB", total as f64 / 1e9);
     }
 }
@@ -159,22 +169,47 @@ fn bench_shell_metadata() {
     let mut sh = ShellCom::new().unwrap();
     let req = |kind, path: FsPath| IconRequest { key: 0, kind, path, size: 16, gen: 0, row: 0 };
     let exts = ["txt", "rs", "pdf", "zip", "png", "docx", "mp4", "json", "exe", "dll", "html", "md", "toml", "ps1", "jpg"];
-    measure("type_name (per extension)", exts.len(), |k| exts[k].as_bytes(), |e| {
-        sh.type_name(e);
-    });
-    measure("icon by type (per extension)", exts.len(), |k| req(IconKind::Type, d.path(&format!("x.{}", exts[k]))), |r| {
-        assert!(sh.icon(&r).is_some());
-    });
-    measure("icon folder", RUNS, |_| req(IconKind::Folder, d.path("")), |r| {
-        assert!(sh.icon(&r).is_some());
-    });
+    measure(
+        "type_name (per extension)",
+        exts.len(),
+        |k| exts[k].as_bytes(),
+        |e| {
+            sh.type_name(e);
+        },
+    );
+    measure(
+        "icon by type (per extension)",
+        exts.len(),
+        |k| req(IconKind::Type, d.path(&format!("x.{}", exts[k]))),
+        |r| {
+            assert!(sh.icon(&r).is_some());
+        },
+    );
+    measure(
+        "icon folder",
+        RUNS,
+        |_| req(IconKind::Folder, d.path("")),
+        |r| {
+            assert!(sh.icon(&r).is_some());
+        },
+    );
     let exes: Vec<FsPath> = std::fs::read_dir(r"C:\Windows\System32").unwrap().filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "exe")).take(RUNS).map(|p| fs_path(&p)).collect();
-    measure("icon per file (exe, distinct)", exes.len(), |k| req(IconKind::File, exes[k].clone()), |r| {
-        assert!(sh.icon(&r).is_some());
-    });
-    measure("icon volume C:", RUNS, |_| req(IconKind::Volume, FsPath::parse(r"C:\").unwrap()), |r| {
-        assert!(sh.icon(&r).is_some());
-    });
+    measure(
+        "icon per file (exe, distinct)",
+        exes.len(),
+        |k| req(IconKind::File, exes[k].clone()),
+        |r| {
+            assert!(sh.icon(&r).is_some());
+        },
+    );
+    measure(
+        "icon volume C:",
+        RUNS,
+        |_| req(IconKind::Volume, FsPath::parse(r"C:\").unwrap()),
+        |r| {
+            assert!(sh.icon(&r).is_some());
+        },
+    );
 }
 
 #[test]
@@ -189,20 +224,40 @@ fn bench_preview_loaders() {
         })
         .collect();
     let mut bytes = 0;
-    measure("decode 4000x3000 jpeg to 1600 px", jpegs.len(), |k| jpegs[k].clone(), |p| {
-        bytes = crate::preview::decode_image(&p, 1600).unwrap().rgba.len();
-    });
+    measure(
+        "decode 4000x3000 jpeg to 1600 px",
+        jpegs.len(),
+        |k| jpegs[k].clone(),
+        |p| {
+            bytes = crate::preview::decode_image(&p, 1600).unwrap().rgba.len();
+        },
+    );
     eprintln!("      bitmap held: {} KB", bytes / 1024);
-    measure("decode 4000x3000 jpeg to 640 px", jpegs.len(), |k| jpegs[k].clone(), |p| {
-        assert!(crate::preview::decode_image(&p, 640).is_some());
-    });
-    measure("shell property groups (jpeg)", jpegs.len(), |k| jpegs[k].clone(), |p| {
-        assert!(!crate::preview::properties(&p).is_empty());
-    });
+    measure(
+        "decode 4000x3000 jpeg to 640 px",
+        jpegs.len(),
+        |k| jpegs[k].clone(),
+        |p| {
+            assert!(crate::preview::decode_image(&p, 640).is_some());
+        },
+    );
+    measure(
+        "shell property groups (jpeg)",
+        jpegs.len(),
+        |k| jpegs[k].clone(),
+        |p| {
+            assert!(!crate::preview::properties(&p).is_empty());
+        },
+    );
     let exts = ["pdf", "txt", "docx", "mp4", "html", "zip", "md", "xlsx"];
-    measure("preview handler lookup (per extension)", exts.len(), |k| exts[k].as_bytes(), |e| {
-        crate::preview::handler(e);
-    });
+    measure(
+        "preview handler lookup (per extension)",
+        exts.len(),
+        |k| exts[k].as_bytes(),
+        |e| {
+            crate::preview::handler(e);
+        },
+    );
 }
 
 #[test]
@@ -217,11 +272,16 @@ fn bench_file_ops() {
     measure("copy 1 file 4 KB other volume", RUNS, |k| c.file(&format!("x{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: other.path("dst") })));
     measure("duplicate 1 file in place", RUNS, |k| c.file(&format!("dup{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: c.path("") })));
     measure("copy 20 files 4 KB", 5, |k| (0..20).map(|i| c.file(&format!("m{k}_{i}.txt"), 4096)).collect::<Vec<_>>(), |items| ok(run(&mut sh, &FileOp::Copy { items, dest: c.path("dst") })));
-    measure("copy folder 50 files", 5, |k| {
-        std::fs::create_dir(c.0.join(format!("tree{k}"))).unwrap();
-        (0..50).for_each(|i| drop(c.file(&format!("tree{k}/f{i}"), 1024)));
-        c.path(&format!("tree{k}"))
-    }, |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: c.path("dst") })));
+    measure(
+        "copy folder 50 files",
+        5,
+        |k| {
+            std::fs::create_dir(c.0.join(format!("tree{k}"))).unwrap();
+            (0..50).for_each(|i| drop(c.file(&format!("tree{k}/f{i}"), 1024)));
+            c.path(&format!("tree{k}"))
+        },
+        |f| ok(run(&mut sh, &FileOp::Copy { items: vec![f], dest: c.path("dst") })),
+    );
     measure("move 1 file same volume", RUNS, |k| c.file(&format!("mv{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Move { items: vec![f], dest: c.path("dst") })));
     measure("move 1 file other volume", RUNS, |k| c.file(&format!("xv{k}.txt"), 4096), |f| ok(run(&mut sh, &FileOp::Move { items: vec![f], dest: other.path("dst") })));
     measure("rename 1 file", RUNS, |k| c.file(&format!("rn{k}.txt"), 10), |f| ok(run(&mut sh, &FileOp::Rename { item: f, name: format!("renamed{}.txt", rand_tag()).into_bytes() })));
@@ -229,10 +289,15 @@ fn bench_file_ops() {
     measure("shortcut 1 file", RUNS, |k| c.file(&format!("ln{k}.txt"), 10), |f| ok(run(&mut sh, &FileOp::Link { items: vec![f], dest: c.path("dst") })));
     let bin = crate::recycle::tests::FakeBin::new("bench-ops");
     let (mut recycled, mut budget, mut seed) = (Vec::new(), u64::MAX, 1u64);
-    measure("recycle 1 file into a fake bin", RUNS, |k| c.file(&format!("tr{k}.txt"), 4096), |f| {
-        let payload = crate::recycle::recycle_into(&bin.path(), &f, &mut budget, &mut seed).unwrap();
-        recycled.push((payload, f));
-    });
+    measure(
+        "recycle 1 file into a fake bin",
+        RUNS,
+        |k| c.file(&format!("tr{k}.txt"), 4096),
+        |f| {
+            let payload = crate::recycle::recycle_into(&bin.path(), &f, &mut budget, &mut seed).unwrap();
+            recycled.push((payload, f));
+        },
+    );
     measure("restore 1 file from a fake bin", recycled.len(), |k| recycled[k].clone(), |p| ok(run(&mut sh, &FileOp::Restore(vec![p]))));
 }
 
@@ -242,15 +307,25 @@ fn bench_shell_ui_objects() {
     crate::com_sta();
     let d = Dir::temp("ui");
     let files: Vec<FsPath> = (0..RUNS).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
-    measure("context menu build+query (file)", RUNS, |k| files[k].clone(), |f| unsafe {
-        let menu: IContextMenu = Pidls::parse(&[f]).unwrap().ui_object(HWND::default()).unwrap();
-        let h = CreatePopupMenu().unwrap();
-        let _ = menu.QueryContextMenu(h, 0, 1, 0x7FFF, CMF_NORMAL);
-        let _ = DestroyMenu(h);
-    });
-    measure("drag data object (1 file)", RUNS, |k| files[k].clone(), |f| {
-        let _: IDataObject = Pidls::parse(&[f]).unwrap().ui_object(HWND::default()).unwrap();
-    });
+    measure(
+        "context menu build+query (file)",
+        RUNS,
+        |k| files[k].clone(),
+        |f| unsafe {
+            let menu: IContextMenu = Pidls::parse(&[f]).unwrap().ui_object(HWND::default()).unwrap();
+            let h = CreatePopupMenu().unwrap();
+            let _ = menu.QueryContextMenu(h, 0, 1, 0x7FFF, CMF_NORMAL);
+            let _ = DestroyMenu(h);
+        },
+    );
+    measure(
+        "drag data object (1 file)",
+        RUNS,
+        |k| files[k].clone(),
+        |f| {
+            let _: IDataObject = Pidls::parse(&[f]).unwrap().ui_object(HWND::default()).unwrap();
+        },
+    );
 }
 
 #[test]
@@ -265,11 +340,16 @@ fn bench_places() {
     eprintln!("      {} libraries, {} recent files", crate::library::libraries().len(), crate::places::recent(24).0.len());
     let docs = crate::library::libraries().into_iter().find(|l| !l.folders.is_empty());
     if let Some(lib) = docs {
-        measure("library listing (merged folders)", RUNS, |_| (), |_| {
-            let mut go = |_: &ListingBuilder<'_>| true;
-            let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
-            NtFs.read_dir(&lib.path, &mut b).unwrap();
-        });
+        measure(
+            "library listing (merged folders)",
+            RUNS,
+            |_| (),
+            |_| {
+                let mut go = |_: &ListingBuilder<'_>| true;
+                let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut go);
+                NtFs.read_dir(&lib.path, &mut b).unwrap();
+            },
+        );
     }
 }
 
@@ -277,9 +357,14 @@ fn bench_places() {
 #[ignore]
 fn bench_new_items() {
     crate::com_sta();
-    measure("templates() HKCR ShellNew scan", RUNS, |_| (), |_| {
-        assert!(crate::places::templates().iter().all(|t| t.ext.starts_with('.') && !t.label.is_empty() && !t.stem.is_empty()));
-    });
+    measure(
+        "templates() HKCR ShellNew scan",
+        RUNS,
+        |_| (),
+        |_| {
+            assert!(crate::places::templates().iter().all(|t| t.ext.starts_with('.') && !t.label.is_empty() && !t.stem.is_empty()));
+        },
+    );
     let found: Vec<String> = crate::places::templates().iter().map(|t| format!("{} ({}, {})", t.label, t.stem, t.ext)).collect();
     eprintln!("      {} templates: {}", found.len(), found.join("; "));
     let d = Dir::temp("new");
@@ -299,12 +384,17 @@ fn bench_new_items() {
         let names: Vec<Vec<u8>> = (0..n).map(|i| format!("photo{i}.jpg").into_bytes()).collect();
         let items: Vec<(&[u8], bool)> = names.iter().map(|n| (n.as_slice(), false)).collect();
         measure(&format!("batch_names for {n} items"), RUNS, |_| (), |_| assert_eq!(flit_core::ui::batch_names("Trip", &items, |_| false).len(), n));
-        measure(&format!("batch rename {n} files"), 5, |k| {
-            let dir = format!("batch{n}_{k}");
-            std::fs::create_dir(d.0.join(&dir)).unwrap();
-            let new_names = flit_core::ui::batch_names("Trip", &items, |_| false);
-            names.iter().zip(new_names).map(|(old, new)| (d.file(&format!("{dir}/{}", String::from_utf8_lossy(old)), 10), d.path(&format!("{dir}/{}", String::from_utf8_lossy(&new))))).collect::<Vec<_>>()
-        }, |pairs| ok(run(&mut sh, &FileOp::MoveTo(pairs))));
+        measure(
+            &format!("batch rename {n} files"),
+            5,
+            |k| {
+                let dir = format!("batch{n}_{k}");
+                std::fs::create_dir(d.0.join(&dir)).unwrap();
+                let new_names = flit_core::ui::batch_names("Trip", &items, |_| false);
+                names.iter().zip(new_names).map(|(old, new)| (d.file(&format!("{dir}/{}", String::from_utf8_lossy(old)), 10), d.path(&format!("{dir}/{}", String::from_utf8_lossy(&new))))).collect::<Vec<_>>()
+            },
+            |pairs| ok(run(&mut sh, &FileOp::MoveTo(pairs))),
+        );
     }
 }
 
@@ -332,11 +422,7 @@ fn fresh(d: &Dir, rel: &str) -> FsPath {
 #[ignore]
 fn bench_thumbnails_without_any_cache() {
     let d = Dir::temp("fresh-thumbs");
-    let walls: Vec<PathBuf> = [r"C:\Windows\Web\Wallpaper", r"C:\Windows\Web\4K\Wallpaper"]
-        .iter()
-        .flat_map(|r| walkdir(Path::new(r)))
-        .filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("jpg")))
-        .collect();
+    let walls: Vec<PathBuf> = [r"C:\Windows\Web\Wallpaper", r"C:\Windows\Web\4K\Wallpaper"].iter().flat_map(|r| walkdir(Path::new(r))).filter(|p| p.extension().is_some_and(|x| x.eq_ignore_ascii_case("jpg"))).collect();
     assert!(!walls.is_empty());
     let files: Vec<FsPath> = (0..RUNS * 2)
         .map(|k| {
@@ -399,10 +485,17 @@ fn everyday_disk_operations_stay_within_their_budgets() {
     within(&mut over, "copy 200 selected files 1 KB", 250.0, 3, |k| fresh(&d, &format!("l200_{k}")), |dest| ok(run(&mut sh, &FileOp::Copy { items: loose.clone(), dest })));
     within(&mut over, "move a folder of 50 files on one volume", 20.0, 3, |k| (tree(&d, &format!("mv{k}"), 50, 10), fresh(&d, &format!("mvd{k}"))), |(f, dest)| ok(run(&mut sh, &FileOp::Move { items: vec![f], dest })));
     within(&mut over, "rename 1 file", 10.0, 5, |k| (d.file(&format!("r{k}.txt"), 1), format!("renamed{k}.txt").into_bytes()), |(item, name)| ok(run(&mut sh, &FileOp::Rename { item, name })));
-    within(&mut over, "batch rename 100 files", 200.0, 3, |k| {
-        let dir = tree(&d, &format!("ren{k}"), 100, 10);
-        (0..100).map(|i| (dir.join(format!("f{i:04}.txt").as_bytes()), dir.join(format!("Trip ({}).txt", i + 1).as_bytes()))).collect::<Vec<_>>()
-    }, |pairs| ok(run(&mut sh, &FileOp::MoveTo(pairs))));
+    within(
+        &mut over,
+        "batch rename 100 files",
+        200.0,
+        3,
+        |k| {
+            let dir = tree(&d, &format!("ren{k}"), 100, 10);
+            (0..100).map(|i| (dir.join(format!("f{i:04}.txt").as_bytes()), dir.join(format!("Trip ({}).txt", i + 1).as_bytes()))).collect::<Vec<_>>()
+        },
+        |pairs| ok(run(&mut sh, &FileOp::MoveTo(pairs))),
+    );
     within(&mut over, "delete a folder of 200 files", 250.0, 3, |k| tree(&d, &format!("del{k}"), 200, 10), |f| ok(run(&mut sh, &FileOp::Delete(vec![f]))));
     within(&mut over, "list drives", 150.0, 3, |_| (), |_| assert!(!crate::places::drives().is_empty()));
     let warm = d.file("warm.txt", 1);
@@ -437,10 +530,15 @@ fn bench_engine() {
     } else {
         eprintln!("      skipped cross-volume moves: {} and {} share a volume", c.0.display(), other.0.display());
     }
-    measure("batch rename 1000 files", 5, |k| {
-        let dir = tree(&c, &format!("ren{k}"), 1000, 10);
-        (0..1000).map(|i| (dir.join(format!("f{i:04}.txt").as_bytes()), dir.join(format!("Trip ({}).txt", i + 1).as_bytes()))).collect::<Vec<_>>()
-    }, |pairs| go(FileOp::MoveTo(pairs)));
+    measure(
+        "batch rename 1000 files",
+        5,
+        |k| {
+            let dir = tree(&c, &format!("ren{k}"), 1000, 10);
+            (0..1000).map(|i| (dir.join(format!("f{i:04}.txt").as_bytes()), dir.join(format!("Trip ({}).txt", i + 1).as_bytes()))).collect::<Vec<_>>()
+        },
+        |pairs| go(FileOp::MoveTo(pairs)),
+    );
 }
 
 fn rand_tag() -> u128 {
@@ -501,12 +599,21 @@ fn bench_context_menu_breakdown() {
     let files: Vec<FsPath> = (0..RUNS * 4).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
     query_menu(file_menu(&files[0]));
     measure("GetUIObjectOf(IContextMenu) only", RUNS, |k| files[k].clone(), |f| drop(file_menu(&f)));
-    for (n, (label, flags)) in [("query + ASYNCVERBSTATE", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU | CMF_ASYNCVERBSTATE), ("query flit flags", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU), ("query + ASYNCVERBSTATE again", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU | CMF_ASYNCVERBSTATE)].into_iter().enumerate() {
-        measure(label, RUNS, |k| file_menu(&files[RUNS * (n + 1) - RUNS + k]), |m| unsafe {
-            let h = CreatePopupMenu().unwrap();
-            let _ = m.QueryContextMenu(h, 0, 1, 0x7FFF, flags);
-            let _ = DestroyMenu(h);
-        });
+    for (n, (label, flags)) in
+        [("query + ASYNCVERBSTATE", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU | CMF_ASYNCVERBSTATE), ("query flit flags", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU), ("query + ASYNCVERBSTATE again", CMF_NORMAL | CMF_CANRENAME | CMF_ITEMMENU | CMF_ASYNCVERBSTATE)]
+            .into_iter()
+            .enumerate()
+    {
+        measure(
+            label,
+            RUNS,
+            |k| file_menu(&files[RUNS * (n + 1) - RUNS + k]),
+            |m| unsafe {
+                let h = CreatePopupMenu().unwrap();
+                let _ = m.QueryContextMenu(h, 0, 1, 0x7FFF, flags);
+                let _ = DestroyMenu(h);
+            },
+        );
     }
 }
 
@@ -521,10 +628,15 @@ fn bench_drag_setup() {
     let d = Dir::temp("drag");
     let files: Vec<FsPath> = (0..RUNS * 2).map(|k| d.file(&format!("f{k}.txt"), 10)).collect();
     let data = |f: &FsPath| -> IDataObject { Pidls::parse(std::slice::from_ref(f)).unwrap().ui_object(HWND::default()).unwrap() };
-    measure("drag image InitializeFromWindow", RUNS, |k| data(&files[k]), |obj| unsafe {
-        let helper: IDragSourceHelper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).unwrap();
-        let _ = helper.InitializeFromWindow(None, Some(&POINT { x: 0, y: 0 }), &obj);
-    });
+    measure(
+        "drag image InitializeFromWindow",
+        RUNS,
+        |k| data(&files[k]),
+        |obj| unsafe {
+            let helper: IDragSourceHelper = CoCreateInstance(&CLSID_DragDropHelper, None, CLSCTX_INPROC_SERVER).unwrap();
+            let _ = helper.InitializeFromWindow(None, Some(&POINT { x: 0, y: 0 }), &obj);
+        },
+    );
 }
 
 fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {

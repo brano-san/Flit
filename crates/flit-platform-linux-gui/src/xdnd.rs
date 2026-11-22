@@ -9,10 +9,7 @@ use winit::event_loop::DndAction;
 use std::time::{Duration, Instant};
 use x11rb::connection::Connection;
 type R<T> = Result<T, Box<dyn std::error::Error>>;
-use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode, GrabStatus, KeyButMask, PropMode, Rectangle, SelectionNotifyEvent, SelectionRequestEvent, Timestamp, Window, WindowClass,
-    SELECTION_NOTIFY_EVENT,
-};
+use x11rb::protocol::xproto::{Atom, AtomEnum, ClientMessageEvent, ConnectionExt, CreateWindowAux, EventMask, GrabMode, GrabStatus, KeyButMask, PropMode, Rectangle, SelectionNotifyEvent, SelectionRequestEvent, Timestamp, Window, WindowClass, SELECTION_NOTIFY_EVENT};
 use x11rb::protocol::Event;
 use x11rb::wrapper::ConnectionExt as _;
 use x11rb::xcb_ffi::XCBConnection;
@@ -118,12 +115,20 @@ pub fn drop_choice(keys: Option<Mods>, proposed: Option<DndAction>, preferred: O
 }
 
 pub fn incoming_choice(content: bool, keys: Option<Mods>, proposed: Option<DndAction>, preferred: Option<DndAction>) -> (Mods, bool) {
-    if content { (Mods::default(), false) } else { drop_choice(keys, proposed, preferred) }
+    if content {
+        (Mods::default(), false)
+    } else {
+        drop_choice(keys, proposed, preferred)
+    }
 }
 
 pub fn incoming_actions(content: bool, effect: u32, preferred: Option<DndAction>) -> Vec<DndAction> {
     if content {
-        if effect & drop_effect::COPY != 0 { vec![DndAction::Copy] } else { Vec::new() }
+        if effect & drop_effect::COPY != 0 {
+            vec![DndAction::Copy]
+        } else {
+            Vec::new()
+        }
     } else {
         offered_actions(effect, preferred)
     }
@@ -151,10 +156,14 @@ pub fn offered_actions(effect: u32, preferred: Option<DndAction>) -> Vec<DndActi
 
 pub fn pointer_mods() -> Option<Mods> {
     static POINTER: OnceLock<Option<(XCBConnection, Window)>> = OnceLock::new();
-    let (conn, root) = POINTER.get_or_init(|| XCBConnection::connect(None).ok().map(|(conn, screen)| {
-        let root = conn.setup().roots[screen].root;
-        (conn, root)
-    })).as_ref()?;
+    let (conn, root) = POINTER
+        .get_or_init(|| {
+            XCBConnection::connect(None).ok().map(|(conn, screen)| {
+                let root = conn.setup().roots[screen].root;
+                (conn, root)
+            })
+        })
+        .as_ref()?;
     let mask = conn.query_pointer(*root).ok()?.reply().ok()?.mask;
     Some(Mods { ctrl: mask.contains(KeyButMask::CONTROL), shift: mask.contains(KeyButMask::SHIFT), alt: mask.contains(KeyButMask::MOD1) })
 }
@@ -357,15 +366,7 @@ impl Source {
         } else {
             false
         };
-        let notify = SelectionNotifyEvent {
-            response_type: SELECTION_NOTIFY_EVENT,
-            sequence: 0,
-            time: req.time,
-            requestor: req.requestor,
-            selection: req.selection,
-            target: req.target,
-            property: if stored { property } else { NONE },
-        };
+        let notify = SelectionNotifyEvent { response_type: SELECTION_NOTIFY_EVENT, sequence: 0, time: req.time, requestor: req.requestor, selection: req.selection, target: req.target, property: if stored { property } else { NONE } };
         self.conn.send_event(false, req.requestor, EventMask::NO_EVENT, notify)?;
         self.conn.flush()?;
         Ok(())
@@ -614,11 +615,15 @@ pub fn drag_picture_soon(paths: Vec<FsPath>, scale: f32) -> Bitmap {
 }
 
 pub fn over_background(image: &Bitmap, background: [u8; 3]) -> Vec<u8> {
-    image.rgba.chunks_exact(4).flat_map(|p| {
-        let keep = 255 - u32::from(p[3]);
-        let mix = |k: usize| (u32::from(p[k]) + (u32::from(background[k]) * keep + 127) / 255).min(255) as u8;
-        [mix(2), mix(1), mix(0), 0]
-    }).collect()
+    image
+        .rgba
+        .chunks_exact(4)
+        .flat_map(|p| {
+            let keep = 255 - u32::from(p[3]);
+            let mix = |k: usize| (u32::from(p[k]) + (u32::from(background[k]) * keep + 127) / 255).min(255) as u8;
+            [mix(2), mix(1), mix(0), 0]
+        })
+        .collect()
 }
 
 pub fn opaque_runs(image: &Bitmap) -> Vec<Rectangle> {

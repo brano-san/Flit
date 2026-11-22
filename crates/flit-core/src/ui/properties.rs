@@ -90,14 +90,7 @@ pub(super) fn contains_text(files: u64, folders: u64) -> String {
 }
 
 pub(super) fn attributes_text(attrs: u32) -> String {
-    let names = [
-        (attr::READONLY, S::PropertiesReadOnly),
-        (attr::HIDDEN, S::PropertiesHidden),
-        (attr::SYSTEM, S::PropertiesSystem),
-        (attr::LINK, S::PropertiesLink),
-        (attr::COMPRESSED, S::PropertiesCompressed),
-        (attr::ENCRYPTED, S::PropertiesEncrypted),
-    ];
+    let names = [(attr::READONLY, S::PropertiesReadOnly), (attr::HIDDEN, S::PropertiesHidden), (attr::SYSTEM, S::PropertiesSystem), (attr::LINK, S::PropertiesLink), (attr::COMPRESSED, S::PropertiesCompressed), (attr::ENCRYPTED, S::PropertiesEncrypted)];
     names.iter().filter(|(bit, _)| attrs & bit != 0).map(|(_, s)| s.t()).collect::<Vec<_>>().join(", ")
 }
 
@@ -178,24 +171,26 @@ impl App {
             add(&mut controls, S::PropertiesName, &shown);
             add(&mut controls, S::PropertiesType, self.type_of(&arena, place_attrs, &file_name[file_name.len() - name::ext_len(file_name)..]));
             crate::tr!(S::PropertiesTitle, name = shown)
-        } else { match items.as_slice() {
-            &[i] => {
-                let arena = Bump::new();
-                let shown = name::display(l.name(i)).into_owned();
-                add(&mut controls, S::PropertiesName, &shown);
-                add(&mut controls, S::PropertiesType, self.type_text(&arena, l, i));
-                crate::tr!(S::PropertiesTitle, name = shown)
+        } else {
+            match items.as_slice() {
+                &[i] => {
+                    let arena = Bump::new();
+                    let shown = name::display(l.name(i)).into_owned();
+                    add(&mut controls, S::PropertiesName, &shown);
+                    add(&mut controls, S::PropertiesType, self.type_text(&arena, l, i));
+                    crate::tr!(S::PropertiesTitle, name = shown)
+                }
+                _ => {
+                    add(&mut controls, S::PropertiesSelected, &contains_text(files, folders));
+                    S::PropertiesTitleMany.t().to_owned()
+                }
             }
-            _ => {
-                add(&mut controls, S::PropertiesSelected, &contains_text(files, folders));
-                S::PropertiesTitleMany.t().to_owned()
-            }
-        } };
+        };
         add(&mut controls, S::PropertiesLocation, &location);
         if !packed {
             rows.file_system = add(&mut controls, S::PropertiesFileSystem, counting);
         }
-        let known = (folders == 0 && !folder).then(||entries.iter().map(|e| e.size).sum::<u64>());
+        let known = (folders == 0 && !folder).then(|| entries.iter().map(|e| e.size).sum::<u64>());
         rows.size = add(&mut controls, S::PropertiesSize, &known.map_or_else(|| counting.to_owned(), |b| self.bytes_text(b)));
         if !packed {
             rows.on_disk = add(&mut controls, S::PropertiesOnDisk, counting);
@@ -270,12 +265,8 @@ impl App {
             return;
         }
         let size = if m.packed { totals.size + totals.unpacked } else { totals.size };
-        let mut values: Vec<(Option<usize>, String)> = vec![
-            (m.rows.size, self.bytes_text(size)),
-            (m.rows.on_disk, self.bytes_text(totals.on_disk)),
-            (m.rows.unpacked, self.bytes_text(totals.unpacked)),
-            (m.rows.contains, contains_text(totals.files + m.files, totals.folders + m.folders)),
-        ];
+        let mut values: Vec<(Option<usize>, String)> =
+            vec![(m.rows.size, self.bytes_text(size)), (m.rows.on_disk, self.bytes_text(totals.on_disk)), (m.rows.unpacked, self.bytes_text(totals.unpacked)), (m.rows.contains, contains_text(totals.files + m.files, totals.folders + m.folders))];
         if done {
             values.push((m.rows.file_system, file_system.unwrap_or_else(|| "—".into())));
         }

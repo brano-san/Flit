@@ -158,9 +158,7 @@ fn review_svg_gzip_enforces_the_expanded_limit_and_loads_fonts() {
 fn review_svg_worker_job_enforces_a_per_process_memory_limit() {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::JobObjects::{
-        JobObjectExtendedLimitInformation, QueryInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
-    };
+    use windows::Win32::System::JobObjects::{JobObjectExtendedLimitInformation, QueryInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_PROCESS_MEMORY};
 
     let bytes = 256 << 20;
     let job = super::child::memory_job(bytes).unwrap();
@@ -252,12 +250,7 @@ fn raw_preview_rejects_truncated_cyclic_and_out_of_range_tiff_catalogs() {
     use std::io::Cursor;
     let mut huge = raw_ifd(38, 512, 0);
     huge[4..8].copy_from_slice(&u32::MAX.to_le_bytes());
-    for bytes in [
-        raw_ifd(38, 512, 0)[..22].to_vec(),
-        raw_ifd(38, 512, 8),
-        raw_ifd(u32::MAX, u32::MAX, 0),
-        huge,
-    ] {
+    for bytes in [raw_ifd(38, 512, 0)[..22].to_vec(), raw_ifd(38, 512, 8), raw_ifd(u32::MAX, u32::MAX, 0), huge] {
         let result = super::raw::locations(&mut Cursor::new(&bytes), bytes.len() as u64, || true);
         assert!(result.is_none_or(|(_, candidates)| candidates.is_empty()));
     }

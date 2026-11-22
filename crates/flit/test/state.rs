@@ -228,7 +228,11 @@ fn pane_state_rides_after_layouts_and_older_files_keep_the_default() {
     let bytes = older_encode(&s);
     assert_eq!(Saved::decode(&bytes).unwrap().pane, pane);
     let older = older_encode(&Saved::new(Persisted::default(), None));
-    let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default()), postcard::to_stdvec(&Tools::default()), postcard::to_stdvec(&SplitPrefs::default())].map(|b| b.unwrap().len()).iter().sum::<usize>() + WORD_LEN;
+    let trailing = [postcard::to_stdvec(&PaneState::default()), postcard::to_stdvec(&NavPrefs::default()), postcard::to_stdvec(&Defaults::default()), postcard::to_stdvec(&Tools::default()), postcard::to_stdvec(&SplitPrefs::default())]
+        .map(|b| b.unwrap().len())
+        .iter()
+        .sum::<usize>()
+        + WORD_LEN;
     let without = &older[..older.len() - trailing];
     assert_eq!(Saved::decode(without).unwrap().pane, PaneState::default());
     let broken = Saved { pane: PaneState { right_w: -1.0, volume: f32::NAN, ..pane }, ..s }.sanitized();
@@ -370,7 +374,8 @@ fn older_encode(s: &Saved) -> Vec<u8> {
 fn wide_len(s: &Saved) -> usize {
     let p = &s.persisted;
     let folders = p.folders.entries();
-    postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len() + 1
+    postcard::to_stdvec(&WideRecord { view: wide(&p.view), defaults: wide(&p.prefs.defaults), folders: folders.iter().map(|(_, v)| wide(v)).collect() }).unwrap().len()
+        + 1
         + postcard::to_stdvec(&IntegrationRecord { git: p.prefs.git_integration, places: s.side.quick.places.clone(), places_hidden: s.side.quick.places_hidden.clone() }).unwrap().len()
         + 2
         + attributes_len(s)
@@ -388,8 +393,7 @@ fn newer_len(s: &Saved) -> usize {
 
 fn hash_and_servers_len(s: &Saved) -> usize {
     let p = &s.persisted;
-    postcard::to_stdvec(&GitHashRecord { view: hash_width(&p.view), defaults: hash_width(&p.prefs.defaults), folders: p.folders.entries().iter().map(|(k, v)| (*k, hash_width(v))).collect() }).unwrap().len()
-        + postcard::to_stdvec(&s.side.saved_servers).unwrap().len()
+    postcard::to_stdvec(&GitHashRecord { view: hash_width(&p.view), defaults: hash_width(&p.prefs.defaults), folders: p.folders.entries().iter().map(|(k, v)| (*k, hash_width(v))).collect() }).unwrap().len() + postcard::to_stdvec(&s.side.saved_servers).unwrap().len()
 }
 
 fn shells_len(s: &Saved) -> usize {
@@ -673,10 +677,7 @@ fn saved_servers_round_trip_without_passwords_and_older_state_keeps_every_other_
     state.side.quick.show_paths = true;
     state.persisted.view.columns.set_width(Column::GitHash, 184.0);
     let legacy_side = state.side.clone();
-    state.side.saved_servers = vec![
-        SavedServer { address: "sftp://guest:private@192.168.1.8:2222/docs/".into(), name: Some("Архив".into()) },
-        SavedServer { address: "smb://nas/share".into(), name: None },
-    ];
+    state.side.saved_servers = vec![SavedServer { address: "sftp://guest:private@192.168.1.8:2222/docs/".into(), name: Some("Архив".into()) }, SavedServer { address: "smb://nas/share".into(), name: None }];
     let mut servers = state.side.saved_servers.clone();
     servers[0].address = "sftp://guest@192.168.1.8:2222/docs".into();
     let bytes = state.encode().unwrap();

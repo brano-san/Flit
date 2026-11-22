@@ -26,8 +26,7 @@ pub(super) enum DiscoveryCheck {
 }
 
 fn empty_network(snap: &crate::listing::DirSnapshot) -> bool {
-    snap.path.is_network() && snap.path.is_root() && snap.done && snap.listing.is_empty()
-        && snap.error.as_ref().is_none_or(|error| error.code == crate::listing::NO_NETWORK_BROWSER_CODE)
+    snap.path.is_network() && snap.path.is_root() && snap.done && snap.listing.is_empty() && snap.error.as_ref().is_none_or(|error| error.code == crate::listing::NO_NETWORK_BROWSER_CODE)
 }
 
 pub fn server_uri(text: &str) -> Option<String> {
@@ -149,8 +148,7 @@ impl App {
     pub(super) fn network_settings_rect(&self) -> Option<Rect> {
         let r = self.layout.list;
         let width = self.cs(190.0).min(r.w - self.cs(24.0));
-        (self.discovery_warning() == Some(NetworkWarning::WindowsDisabled) && width > 0.0 && r.h >= self.cs(106.0))
-            .then(|| Rect::new(r.x + (r.w - width) * 0.5, r.y + self.cs(62.0), width, self.cs(28.0)))
+        (self.discovery_warning() == Some(NetworkWarning::WindowsDisabled) && width > 0.0 && r.h >= self.cs(106.0)).then(|| Rect::new(r.x + (r.w - width) * 0.5, r.y + self.cs(62.0), width, self.cs(28.0)))
     }
 
     pub(super) fn open_network_settings(&mut self) {
@@ -166,10 +164,9 @@ impl App {
         g.dl.round_rect(banner, theme.button_hover, self.cs(4.0));
         let message = match warning {
             NetworkWarning::WindowsDisabled => S::UiEmptyNetworkDiscoveryDisabled.t().to_owned(),
-            NetworkWarning::LinuxMissing { avahi, gvfs } => [
-                avahi.map(|package| crate::tr!(S::UiEmptyNetworkStartAvahi, package = package)),
-                gvfs.map(|package| crate::tr!(S::UiEmptyNetworkInstallGvfs, package = package)),
-            ].into_iter().flatten().collect::<Vec<_>>().join(" "),
+            NetworkWarning::LinuxMissing { avahi, gvfs } => {
+                [avahi.map(|package| crate::tr!(S::UiEmptyNetworkStartAvahi, package = package)), gvfs.map(|package| crate::tr!(S::UiEmptyNetworkInstallGvfs, package = package))].into_iter().flatten().collect::<Vec<_>>().join(" ")
+            }
         };
         self.draw_network_notice(g, Rect { y: banner.y + self.cs(20.0), ..banner }, &message, font, theme.text);
         if let Some(button) = self.network_settings_rect() {
@@ -212,11 +209,7 @@ impl App {
     }
 
     pub(super) fn submit_server(&mut self, mut form: Form) -> Option<Form> {
-        let launch = if form.checked(1) {
-            saved_address(form.text(0)).map(Launch::ConnectAndSaveServer)
-        } else {
-            server_uri(form.text(0)).map(Launch::ConnectServer)
-        };
+        let launch = if form.checked(1) { saved_address(form.text(0)).map(Launch::ConnectAndSaveServer) } else { server_uri(form.text(0)).map(Launch::ConnectServer) };
         let Some(launch) = launch else {
             form.say(S::SidebarDriveServerPrompt.t(), true);
             return Some(form);

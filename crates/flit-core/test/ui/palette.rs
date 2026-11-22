@@ -83,9 +83,7 @@ fn w3_review_windows_palette_does_not_use_hidden_tab_selection_in_search() {
 
     let gen = 1;
     a.on_search_event(crate::ui::SearchEvent::Done { gen, total: 1, version: 0 }, Instant::now());
-    a.on_search_event(crate::ui::SearchEvent::Rows { gen, from: 0, rows: vec![crate::ui::SearchRow {
-        name: b"visible.txt".to_vec(), dir: br"D:\results".to_vec(), meta: Default::default(),
-    }] }, Instant::now());
+    a.on_search_event(crate::ui::SearchEvent::Rows { gen, from: 0, rows: vec![crate::ui::SearchRow { name: b"visible.txt".to_vec(), dir: br"D:\results".to_vec(), meta: Default::default() }] }, Instant::now());
     press(&mut a, Key::Down, NONE);
     a.open_palette();
     a.palette_insert("shell");
@@ -102,13 +100,16 @@ fn w3_windows_palette_builds_the_shell_menu_only_for_the_shell_query() {
     a.palette_insert("shel");
     assert!(!a.drain_effects().any(|e| matches!(e, Effect::PaletteShell { .. })));
     a.palette_insert("l");
-    let ticket = a.drain_effects().find_map(|e| match e {
-        Effect::PaletteShell { ticket, menu } => {
-            assert_eq!(menu.items.len(), 1);
-            Some(ticket)
-        }
-        _ => None,
-    }).unwrap();
+    let ticket = a
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::PaletteShell { ticket, menu } => {
+                assert_eq!(menu.items.len(), 1);
+                Some(ticket)
+            }
+            _ => None,
+        })
+        .unwrap();
     let items = vec![super::super::MenuItem::command("Properties", "")];
     a.on_event(&Event::PaletteShell { ticket: ticket + 1, items: items.clone(), shell: vec![42] }, Instant::now());
     assert!(a.nav.palette.as_ref().unwrap().matches.is_empty());
@@ -412,7 +413,6 @@ fn the_pencil_on_a_command_row_opens_its_shortcuts_and_skips_other_contexts() {
     press(&mut a, Key::F(2), NONE);
     assert_eq!(pick(&a), Pick::Commands, "commands of other contexts are not rebound here");
 }
-
 
 #[test]
 fn a_group_chevron_turns_when_its_group_folds() {

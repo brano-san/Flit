@@ -99,11 +99,19 @@ pub enum SwitchChoice {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Sequence { Merge, Rebase, CherryPick }
+pub enum Sequence {
+    Merge,
+    Rebase,
+    CherryPick,
+}
 
 impl Sequence {
     pub fn command(self) -> &'static str {
-        match self { Self::Merge => "merge", Self::Rebase => "rebase", Self::CherryPick => "cherry-pick" }
+        match self {
+            Self::Merge => "merge",
+            Self::Rebase => "rebase",
+            Self::CherryPick => "cherry-pick",
+        }
     }
 }
 
@@ -218,7 +226,8 @@ impl GitPhase {
             Self::Updating => S::GitProgressUpdating,
             Self::Filtering => S::GitProgressFiltering,
             Self::Unpacking => S::GitProgressUnpacking,
-        }.t()
+        }
+        .t()
     }
 }
 
@@ -249,7 +258,15 @@ pub enum GithubLogin {
 impl GitEvent {
     pub fn tab(&self) -> TabId {
         match self {
-            GitEvent::Status { tab, .. } | GitEvent::Branches { tab, .. } | GitEvent::Started { tab, .. } | GitEvent::Done { tab, .. } | GitEvent::SwitchBlocked { tab, .. } | GitEvent::AuthFailed { tab, .. } | GitEvent::Progress { tab, .. } | GitEvent::TrackedDone { tab, .. } | GitEvent::IndexLockRemoved { tab, .. } => *tab,
+            GitEvent::Status { tab, .. }
+            | GitEvent::Branches { tab, .. }
+            | GitEvent::Started { tab, .. }
+            | GitEvent::Done { tab, .. }
+            | GitEvent::SwitchBlocked { tab, .. }
+            | GitEvent::AuthFailed { tab, .. }
+            | GitEvent::Progress { tab, .. }
+            | GitEvent::TrackedDone { tab, .. }
+            | GitEvent::IndexLockRemoved { tab, .. } => *tab,
         }
     }
 }
@@ -302,7 +319,13 @@ fn child_of<'a>(path: &'a [u8], prefix: &[u8]) -> Option<(&'a [u8], bool)> {
 
 fn merge(map: &mut FxHashMap<Vec<u8>, GitStatus>, name: &[u8], s: GitStatus, nested: bool) {
     let s = if nested && s != GitStatus::Untracked && s != GitStatus::Conflict { GitStatus::Modified } else { s };
-    map.entry(name.to_vec()).and_modify(|cur| if s.rank() > cur.rank() { *cur = s }).or_insert(s);
+    map.entry(name.to_vec())
+        .and_modify(|cur| {
+            if s.rank() > cur.rank() {
+                *cur = s
+            }
+        })
+        .or_insert(s);
 }
 
 pub fn status_entries(out: &[u8]) -> impl Iterator<Item = (u8, u8, &[u8])> {
@@ -422,14 +445,19 @@ pub enum Failure {
     Other,
 }
 
-const AUTH_SIGNS: [&str; 9] = ["could not read username", "could not read password", "terminal prompts disabled", "authentication failed", "permission denied (publickey", "host key verification failed", "invalid username or password", "invalid username or token", "returned error: 401"];
+const AUTH_SIGNS: [&str; 9] =
+    ["could not read username", "could not read password", "terminal prompts disabled", "authentication failed", "permission denied (publickey", "host key verification failed", "invalid username or password", "invalid username or token", "returned error: 401"];
 
 pub fn failure(error: &str) -> Failure {
     if error == crate::i18n::S::GitErrorMissing.en() {
         return Failure::Missing;
     }
     let lower = error.to_ascii_lowercase();
-    if AUTH_SIGNS.iter().any(|s| lower.contains(s)) { Failure::Auth } else { Failure::Other }
+    if AUTH_SIGNS.iter().any(|s| lower.contains(s)) {
+        Failure::Auth
+    } else {
+        Failure::Other
+    }
 }
 
 pub fn op_command(op: &GitOp) -> Option<String> {
@@ -448,9 +476,7 @@ pub fn repo_name(url: &str) -> Option<String> {
     let (scheme, address) = u.split_once("://").map_or((None, u), |(scheme, rest)| (Some(scheme), rest));
     let host_end = address.find(['/', '\\']).unwrap_or(address.len());
     let u = address[..host_end].rfind('@').map_or(address, |at| &address[at + 1..]);
-    let u = if scheme.is_some() && !u.contains(['/','\\']) {
-        u.rsplit_once(':').filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())).map_or(u, |(host, _)| host)
-    } else { u };
+    let u = if scheme.is_some() && !u.contains(['/', '\\']) { u.rsplit_once(':').filter(|(_, port)| !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())).map_or(u, |(host, _)| host) } else { u };
     let u = u.strip_suffix("/.git").or_else(|| u.strip_suffix("\\.git")).unwrap_or(u).trim_end_matches(['/', '\\']);
     let name = u.rsplit(['/', ':', '\\']).next()?;
     let name = name.strip_suffix(".git").unwrap_or(name);
@@ -460,10 +486,14 @@ pub fn repo_name(url: &str) -> Option<String> {
 
 pub fn dropped_repo_url(value: &str) -> Option<&str> {
     let value = value.trim();
-    if value.contains(|c: char| c.is_whitespace() || c.is_control() || c == '\\') { return None; }
+    if value.contains(|c: char| c.is_whitespace() || c.is_control() || c == '\\') {
+        return None;
+    }
     let url = value.split(['?', '#']).next()?.trim_end_matches('/');
     let (authority, path, scp) = if let Some((scheme, rest)) = url.split_once("://") {
-        if !["https", "http", "ssh", "git", "ftp"].iter().any(|s| scheme.eq_ignore_ascii_case(s)) { return None; }
+        if !["https", "http", "ssh", "git", "ftp"].iter().any(|s| scheme.eq_ignore_ascii_case(s)) {
+            return None;
+        }
         let (authority, path) = rest.split_once('/')?;
         (authority, path, false)
     } else {

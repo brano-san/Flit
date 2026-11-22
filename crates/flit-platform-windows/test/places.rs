@@ -69,11 +69,13 @@ fn business_onedrive_accounts_require_an_existing_folder_and_use_its_name_as_fal
     std::fs::create_dir_all(&folder).unwrap();
     let file = root.join("file");
     std::fs::write(&file, "").unwrap();
-    let account = |key: &str, path: Option<&Path>, name: Option<&str>| business_account(key, |field| match field {
-        "UserFolder" => path.map(|p| p.to_str().unwrap().to_owned()),
-        "DisplayName" => name.map(str::to_owned),
-        _ => panic!("unexpected field {field}"),
-    });
+    let account = |key: &str, path: Option<&Path>, name: Option<&str>| {
+        business_account(key, |field| match field {
+            "UserFolder" => path.map(|p| p.to_str().unwrap().to_owned()),
+            "DisplayName" => name.map(str::to_owned),
+            _ => panic!("unexpected field {field}"),
+        })
+    };
     let location = Location::from_local(FsPath::parse(folder.to_str().unwrap()).unwrap());
     assert_eq!(account("Business12", Some(&folder), Some(" Example ")), Some((12, ("Example".into(), location.clone()))));
     assert_eq!(account("business2", Some(&folder), None), Some((2, ("OneDrive - Завод".into(), location))));

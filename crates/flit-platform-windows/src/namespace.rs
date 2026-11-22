@@ -11,7 +11,9 @@ use windows::Win32::Foundation::{PROPERTYKEY, WIN32_ERROR};
 use windows::Win32::System::SystemServices::{SFGAO_FOLDER, SFGAO_HIDDEN, SFGAO_STREAM};
 use windows::Win32::System::Com::CoTaskMemFree;
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
-use windows::Win32::UI::Shell::{BHID_EnumItems, IEnumShellItems, ILClone, ILGetSize, IShellFolder, IShellItem, IShellItem2, SHBindToObject, SHCreateItemFromIDList, SHCreateItemFromParsingName, SHGetIDListFromObject, SHParseDisplayName, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY};
+use windows::Win32::UI::Shell::{
+    BHID_EnumItems, IEnumShellItems, ILClone, ILGetSize, IShellFolder, IShellItem, IShellItem2, SHBindToObject, SHCreateItemFromIDList, SHCreateItemFromParsingName, SHGetIDListFromObject, SHParseDisplayName, SIGDN_DESKTOPABSOLUTEPARSING, SIGDN_NORMALDISPLAY,
+};
 
 const STORAGE: GUID = GUID::from_u128(0xb725f130_47ef_101a_a5f1_02608c9eebac);
 const SIZE: PROPERTYKEY = PROPERTYKEY { fmtid: STORAGE, pid: 12 };
@@ -111,11 +113,15 @@ impl Node for Item {
 
     fn children(&self, each: &mut dyn FnMut(Self) -> bool) -> Result<(), FsError> {
         let items: IEnumShellItems = unsafe { self.raw.BindToHandler(None, &BHID_EnumItems) }.map_err(hr_error)?;
-        enumerate(self.ftp, || {
-            let (mut one, mut n) = ([None], 0u32);
-            unsafe { items.Next(&mut one, Some(&mut n)) }.map_err(hr_error)?;
-            Ok(one[0].take().filter(|_| n != 0).map(|raw| Item { raw, ftp: self.ftp }))
-        }, each)
+        enumerate(
+            self.ftp,
+            || {
+                let (mut one, mut n) = ([None], 0u32);
+                unsafe { items.Next(&mut one, Some(&mut n)) }.map_err(hr_error)?;
+                Ok(one[0].take().filter(|_| n != 0).map(|raw| Item { raw, ftp: self.ftp }))
+            },
+            each,
+        )
     }
 }
 
@@ -156,9 +162,7 @@ fn parse_ftp(uri: &str) -> Result<IShellItem, FsError> {
     let wide: Vec<u16> = uri.encode_utf16().chain(Some(0)).collect();
     let mut pidl = std::ptr::null_mut();
     unsafe { SHParseDisplayName(PCWSTR(wide.as_ptr()), None, &mut pidl, 0, None) }.map_err(hr_error)?;
-    let result = unsafe {
-        SHBindToObject::<_, _, IShellFolder>(None, pidl, None).and_then(|_| SHCreateItemFromIDList(pidl))
-    };
+    let result = unsafe { SHBindToObject::<_, _, IShellFolder>(None, pidl, None).and_then(|_| SHCreateItemFromIDList(pidl)) };
     unsafe { CoTaskMemFree(Some(pidl.cast())) };
     result.map_err(hr_error)
 }

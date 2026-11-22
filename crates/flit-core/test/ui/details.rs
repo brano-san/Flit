@@ -393,10 +393,18 @@ fn hidden_statistics_columns_cancel_work_and_new_entries_do_not_recount_their_ne
     let mut app = app_at(r"C:\x");
     run(&mut app, "view.auto_sizes");
     let fx = deliver_with(&mut app, &[("old", 0, true)], None);
-    let token = fx.iter().find_map(|e| match e { Effect::Provider { req: ProviderRequest::DirSizes { cancel, .. }, .. } => Some(cancel.clone()), _ => None }).unwrap();
+    let token = fx
+        .iter()
+        .find_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::DirSizes { cancel, .. }, .. } => Some(cancel.clone()),
+            _ => None,
+        })
+        .unwrap();
     let gen = app.tab().gen;
     for c in [Column::Size, Column::Folders, Column::Files] {
-        if app.tab().columns.shown(c) { app.toggle_column(c); }
+        if app.tab().columns.shown(c) {
+            app.toggle_column(c);
+        }
     }
     assert!(!token.is_current(gen));
     assert!(!app.tab().sizing(0));
@@ -408,7 +416,14 @@ fn hidden_statistics_columns_cancel_work_and_new_entries_do_not_recount_their_ne
     app.drain_effects().for_each(drop);
     app.tab_mut().view.as_mut().unwrap().apply(&crate::listing::DirChange { label: crate::listing::Label::Keep, name: b"new".to_vec(), kind: crate::listing::ChangeKind::Added, meta: Some(Meta { attrs: attr::DIR, ..Default::default() }) });
     app.compute_dir_sizes();
-    let wanted: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Provider { req: ProviderRequest::DirSizes { items, .. }, .. } => Some(items), _ => None }).flatten().collect();
+    let wanted: Vec<_> = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::DirSizes { items, .. }, .. } => Some(items),
+            _ => None,
+        })
+        .flatten()
+        .collect();
     assert_eq!(wanted, [(1, b"new".to_vec())]);
     assert!(app.tab().sizing(1));
     assert_eq!(app.tab().view.as_ref().unwrap().listing().entries[0].size, 42);
@@ -433,7 +448,9 @@ fn statistics_switches_compute_only_visible_requested_data_and_share_one_scan() 
             assert_eq!(!text.is_empty(), mask & (1 << k) != 0, "mask={mask}, column={col:?}");
         }
         for col in columns {
-            if app.tab().columns.shown(col) { app.toggle_column(col); }
+            if app.tab().columns.shown(col) {
+                app.toggle_column(col);
+            }
         }
         assert!(!app.folder_stats_visible());
     }

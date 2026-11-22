@@ -133,10 +133,7 @@ fn pdf_page_sizes_follow_the_poppler_crop_and_rotation_output() {
 
 #[test]
 fn pdf_rejects_unreasonable_page_metadata() {
-    for output in [
-        "Pages: 9999999999\n",
-        "Pages: 1\nPage 0 size: 160 x 240 pts\n",
-    ] {
+    for output in ["Pages: 9999999999\n", "Pages: 1\nPage 0 size: 160 x 240 pts\n"] {
         assert!(pdf::sizes(output.as_bytes()).is_none());
     }
 }

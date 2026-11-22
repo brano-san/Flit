@@ -14,17 +14,7 @@ pub(crate) fn snap(names: &[&str]) -> Arc<DirSnapshot> {
     let view = ViewSpec::default();
     let mut order = Vec::new();
     sort::sort(&listing, &keys, view, &mut order);
-    Arc::new(DirSnapshot {
-        gen: 1,
-        path: FsPath::parse("C:\\t").unwrap(),
-        listing,
-        keys,
-        order,
-        view,
-        done: true,
-        error: None,
-        elapsed: Duration::ZERO,
-    })
+    Arc::new(DirSnapshot { gen: 1, path: FsPath::parse("C:\\t").unwrap(), listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO })
 }
 
 fn rows(v: &DirView) -> Vec<String> {

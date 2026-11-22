@@ -16,8 +16,10 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 pub(super) const G_TAG: &str = "\u{E8EC}";
-#[cfg(windows)] const G_CLOUD: &str = "\u{E753}";
-#[cfg(windows)] const G_ON_DEVICE: &str = "\u{EC61}";
+#[cfg(windows)]
+const G_CLOUD: &str = "\u{E753}";
+#[cfg(windows)]
+const G_ON_DEVICE: &str = "\u{EC61}";
 const FIX_WINDOW: Duration = Duration::from_secs(10);
 const MAX_MARKS: usize = 6;
 const MARK: f32 = 8.0;
@@ -329,7 +331,11 @@ impl App {
     pub(super) fn mark_reserve(&self, mask: u32) -> f32 {
         let count = if mask == 0 { 0 } else { tags::bits(mask).filter_map(|k| self.tag_defs().get(k)).take(MAX_MARKS).count() };
         let (d, gap) = (self.cs(MARK), self.cs(MARK_GAP));
-        if count == 0 { 0.0 } else { count as f32 * (d + gap) + gap }
+        if count == 0 {
+            0.0
+        } else {
+            count as f32 * (d + gap) + gap
+        }
     }
 
     pub(super) fn name_marks<B: TextBackend>(&self, g: &mut Gfx<B>, e: &Entry, font: FontStyle) -> (f32, f32) {

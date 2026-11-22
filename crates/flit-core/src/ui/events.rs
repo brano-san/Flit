@@ -2,11 +2,13 @@ use super::*;
 
 impl App {
     pub fn on_event(&mut self, ev: &Event, now: Instant) {
-        if self.tabs.tab_cycle && match ev {
-            Event::Key { key, mods, pressed } => !mods.ctrl || (*pressed && *key != Key::Tab && *key != Key::Other),
-            Event::Focus(false) | Event::MouseDown { .. } | Event::Wheel { .. } => true,
-            _ => false,
-        } {
+        if self.tabs.tab_cycle
+            && match ev {
+                Event::Key { key, mods, pressed } => !mods.ctrl || (*pressed && *key != Key::Tab && *key != Key::Other),
+                Event::Focus(false) | Event::MouseDown { .. } | Event::Wheel { .. } => true,
+                _ => false,
+            }
+        {
             self.finish_tab_cycle();
         }
         if matches!(ev, Event::Focus(false)) {
@@ -290,7 +292,12 @@ impl App {
         if !self.settings_open() {
             self.panel_press(x, y);
         }
-        if self.jobs_mouse_down(self.hit(x, y)) || self.settings_mouse_down(self.hit(x, y), (x, y), button, clicks, now) || self.strip_mouse_down(self.hit(x, y), button, clicks, now) || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button) || self.ops_mouse_down(x, y, button, clicks, now) {
+        if self.jobs_mouse_down(self.hit(x, y))
+            || self.settings_mouse_down(self.hit(x, y), (x, y), button, clicks, now)
+            || self.strip_mouse_down(self.hit(x, y), button, clicks, now)
+            || self.autoscroll_down(self.hit(x, y), self.along_of(x, y), button)
+            || self.ops_mouse_down(x, y, button, clicks, now)
+        {
             return;
         }
         let h = self.hit(x, y);

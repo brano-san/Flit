@@ -78,8 +78,7 @@ impl Fs for LinuxGuiFs {
         if dir.kind() != PathKind::Unix {
             return self.read_dir(dir, out);
         }
-        flit_archive::read_dir(dir, out, <crate::Linux as flit_platform::SystemPlatform>::utc_offset_minutes())
-            .unwrap_or_else(|| LinuxFs.read_background_dir(dir, out))
+        flit_archive::read_dir(dir, out, <crate::Linux as flit_platform::SystemPlatform>::utc_offset_minutes()).unwrap_or_else(|| LinuxFs.read_background_dir(dir, out))
     }
 
     fn operation_meta(&self, path: &FsPath) -> Option<flit_core::Meta> {

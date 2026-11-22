@@ -335,7 +335,8 @@ pub fn applies(a: &Action, items: &[Item]) -> bool {
         Count::NotEmpty => !items.is_empty(),
         Count::Nothing => items.is_empty(),
     };
-    count_ok && (!a.removable || items.first().is_some_and(|i| i.removable))
+    count_ok
+        && (!a.removable || items.first().is_some_and(|i| i.removable))
         && items.iter().all(|i| {
             if i.dir {
                 return a.dirs;
@@ -460,13 +461,19 @@ impl NemoList {
 
 fn checked_actions(actions: &[Action]) -> Vec<Action> {
     let bus = std::cell::OnceCell::new();
-    actions.iter().filter(|action| {
-        let Run::Exec { base, .. } = &action.run else { return false };
-        action.passes(dependency, |cmd| exec_condition(cmd, base), |name| {
-            bus.get_or_init(|| crate::dbus::session_address().and_then(|addr| crate::udisks::Bus::open(&addr).ok()))
-                .as_ref().is_some_and(|bus| has_bus_name(bus, name))
-        }, |schema, key| crate::shell::gsettings(&[schema, key]))
-    }).cloned().collect()
+    actions
+        .iter()
+        .filter(|action| {
+            let Run::Exec { base, .. } = &action.run else { return false };
+            action.passes(
+                dependency,
+                |cmd| exec_condition(cmd, base),
+                |name| bus.get_or_init(|| crate::dbus::session_address().and_then(|addr| crate::udisks::Bus::open(&addr).ok())).as_ref().is_some_and(|bus| has_bus_name(bus, name)),
+                |schema, key| crate::shell::gsettings(&[schema, key]),
+            )
+        })
+        .cloned()
+        .collect()
 }
 
 fn cached_nemo(list: &Arc<Mutex<NemoList>>, files: Vec<(PathBuf, String)>, lang: &str, now: Instant, check: impl FnOnce(&[Action]) -> Vec<Action> + Send + 'static) -> Vec<Action> {

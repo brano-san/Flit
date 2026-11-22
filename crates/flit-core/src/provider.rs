@@ -86,7 +86,11 @@ impl SnapshotSlot {
     }
     pub fn kind(&self, gen: u64) -> FolderKind {
         let v = self.kind.load(Ordering::Acquire);
-        if v >> 8 == gen && v & KIND_ASKED != KIND_ASKED { FolderKind::from_u8(v as u8) } else { FolderKind::Unknown }
+        if v >> 8 == gen && v & KIND_ASKED != KIND_ASKED {
+            FolderKind::from_u8(v as u8)
+        } else {
+            FolderKind::Unknown
+        }
     }
 }
 
@@ -227,35 +231,96 @@ impl std::fmt::Debug for DroppedFile {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum FileOp {
     Trash(Vec<FsPath>),
-    Copy { items: Vec<FsPath>, dest: FsPath },
-    Move { items: Vec<FsPath>, dest: FsPath },
-    Link { items: Vec<FsPath>, dest: FsPath },
-    Rename { item: FsPath, name: Vec<u8> },
-    NewFolder { dir: FsPath, name: Vec<u8> },
-    NewFile { dir: FsPath, name: Vec<u8>, template: Template },
-    NewStream { item: FsPath, name: Vec<u8> },
+    Copy {
+        items: Vec<FsPath>,
+        dest: FsPath,
+    },
+    Move {
+        items: Vec<FsPath>,
+        dest: FsPath,
+    },
+    Link {
+        items: Vec<FsPath>,
+        dest: FsPath,
+    },
+    Rename {
+        item: FsPath,
+        name: Vec<u8>,
+    },
+    NewFolder {
+        dir: FsPath,
+        name: Vec<u8>,
+    },
+    NewFile {
+        dir: FsPath,
+        name: Vec<u8>,
+        template: Template,
+    },
+    NewStream {
+        item: FsPath,
+        name: Vec<u8>,
+    },
     MoveTo(Vec<(FsPath, FsPath)>),
     Restore(Vec<(FsPath, FsPath)>),
-    Paste { dest: FsPath },
+    Paste {
+        dest: FsPath,
+    },
     Delete(Vec<FsPath>),
     Purge(Vec<(FsPath, FsPath)>),
     EmptyBin,
     Flatten(Vec<FsPath>),
     Archive(ArchiveOp),
-    FolderIcon { folder: FsPath, icon: Option<FsPath>, index: i32 },
+    FolderIcon {
+        folder: FsPath,
+        icon: Option<FsPath>,
+        index: i32,
+    },
     InstallFonts(Vec<FsPath>),
     LockScreen(FsPath),
-    PasteLink { dest: FsPath },
-    SetAccess { items: Vec<FsPath>, edit: AccessEdit },
+    PasteLink {
+        dest: FsPath,
+    },
+    SetAccess {
+        items: Vec<FsPath>,
+        edit: AccessEdit,
+    },
     Access(Vec<AccessChange>),
-    SetAttributes { items: Vec<FsPath>, set: u32, clear: u32, unblock: bool },
-    PasteDropped { dest: FsPath, moving: bool, #[serde(skip)] data: Option<Arc<DroppedFile>> },
+    SetAttributes {
+        items: Vec<FsPath>,
+        set: u32,
+        clear: u32,
+        unblock: bool,
+    },
+    PasteDropped {
+        dest: FsPath,
+        moving: bool,
+        #[serde(skip)]
+        data: Option<Arc<DroppedFile>>,
+    },
     GrantAccess(FsPath),
-    LinkAs { items: Vec<FsPath>, dest: FsPath, kind: LinkKind },
-    PasteLinkAs { dest: FsPath, kind: LinkKind },
-    Segments { source: FsPath, dest: FsPath, part_size: Option<u64> },
-    Dedup { keep: FsPath, candidates: Vec<FsPath>, backups: Vec<DedupBackup> },
-    RestoreDedup { keep: FsPath, backups: Vec<DedupBackup> },
+    LinkAs {
+        items: Vec<FsPath>,
+        dest: FsPath,
+        kind: LinkKind,
+    },
+    PasteLinkAs {
+        dest: FsPath,
+        kind: LinkKind,
+    },
+    Segments {
+        source: FsPath,
+        dest: FsPath,
+        part_size: Option<u64>,
+    },
+    Dedup {
+        keep: FsPath,
+        candidates: Vec<FsPath>,
+        backups: Vec<DedupBackup>,
+    },
+    RestoreDedup {
+        keep: FsPath,
+        backups: Vec<DedupBackup>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -373,7 +438,14 @@ impl FileOp {
             FileOp::EmptyBin => FileOp::EmptyBin,
             FileOp::Flatten(v) => FileOp::Flatten(all(v)?),
             FileOp::Archive(a) => FileOp::Archive(a.map_paths(&f)?),
-            FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon { folder: f(folder)?, icon: match icon { Some(i) => Some(f(i)?), None => None }, index: *index },
+            FileOp::FolderIcon { folder, icon, index } => FileOp::FolderIcon {
+                folder: f(folder)?,
+                icon: match icon {
+                    Some(i) => Some(f(i)?),
+                    None => None,
+                },
+                index: *index,
+            },
             FileOp::InstallFonts(v) => FileOp::InstallFonts(all(v)?),
             FileOp::LockScreen(p) => FileOp::LockScreen(f(p)?),
             FileOp::PasteLink { dest } => FileOp::PasteLink { dest: f(dest)? },
@@ -470,12 +542,8 @@ struct PlannedConflict {
 
 impl PlannedConflict {
     fn matches(&self, conflict: &Conflict) -> bool {
-        let same_entry = |reviewed: Meta, current: Meta| {
-            reviewed == current || (reviewed.created > 0
-                && reviewed.created == current.created
-                && reviewed.attrs == current.attrs
-                && reviewed.attrs & (crate::listing::attr::DIR | crate::listing::attr::LINK) == crate::listing::attr::DIR)
-        };
+        let same_entry =
+            |reviewed: Meta, current: Meta| reviewed == current || (reviewed.created > 0 && reviewed.created == current.created && reviewed.attrs == current.attrs && reviewed.attrs & (crate::listing::attr::DIR | crate::listing::attr::LINK) == crate::listing::attr::DIR);
         same_entry(self.from, conflict.from) && same_entry(self.to, conflict.to)
     }
 }
@@ -628,8 +696,7 @@ impl OpCtl {
     }
 
     pub fn planned_conflict(&self, conflict: &Conflict) -> Option<Resolve> {
-        self.lock().planned.get(&(conflict.source.clone(), conflict.target.clone()))
-            .filter(|p| p.matches(conflict)).map(|p| p.choice)
+        self.lock().planned.get(&(conflict.source.clone(), conflict.target.clone())).filter(|p| p.matches(conflict)).map(|p| p.choice)
     }
 
     pub fn preflight(&self, conflicts: Vec<Conflict>, ask: impl FnOnce(Vec<Conflict>)) -> bool {
@@ -637,9 +704,7 @@ impl OpCtl {
             return !self.is_cancelled();
         }
         let Some(choices) = self.confirm_conflicts(conflicts.clone(), ask) else { return false };
-        self.lock().planned.extend(conflicts.into_iter().zip(choices).map(|(c, choice)| {
-            ((c.source, c.target), PlannedConflict { from: c.from, to: c.to, choice })
-        }));
+        self.lock().planned.extend(conflicts.into_iter().zip(choices).map(|(c, choice)| ((c.source, c.target), PlannedConflict { from: c.from, to: c.to, choice })));
         true
     }
 

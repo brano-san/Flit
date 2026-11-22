@@ -145,14 +145,16 @@ fn overmounted_point_keeps_the_top_mount() {
 
 #[test]
 fn network_mounts_show_as_drives_but_stay_out_of_the_index_and_are_never_ejectable() {
-    let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw
+    let table = parse(
+        b"1 0 8:1 / / rw - ext4 /dev/sda1 rw
 2 1 0:40 / /home/ann/NAS rw - cifs //server/share rw
 3 1 0:41 / /home/ann/ssh rw - fuse.sshfs ann@host:/ rw
 4 1 0:42 / /mnt/nfs rw - nfs nas:/export rw
 5 1 0:43 / /media/ann/share rw - smb3 //nas/media rw
 6 1 0:44 / /run/user/1000/gvfs rw - fuse.gvfsd-fuse gvfsd-fuse rw
 7 1 0:45 / /mnt/sys rw - sysfs sysfs rw
-");
+",
+    );
     assert_eq!(points(&disks(&table, b"ann")), ["/", "/home/ann/NAS", "/home/ann/ssh", "/media/ann/share", "/mnt/nfs"]);
     assert_eq!(points(&visible(&table, b"ann")), ["/"]);
     let by = |point: &[u8]| table.iter().find(|m| m.point == point).unwrap();

@@ -116,9 +116,8 @@ pub fn restore<P: flit_platform::ProfilePlatform>() -> io::Result<()> {
 pub fn configure<P: flit_platform::ProfilePlatform>(on: bool, startup: bool) -> io::Result<Option<bool>> {
     let path = path()?;
     let journal = crate::system_changes::journal::<P>()?;
-    let desktop_files: Vec<_> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':')
-        .filter(|name| !name.is_empty() && name.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-')))
-        .map(|name| format!("{}-portals.conf", name.to_ascii_lowercase())).collect();
+    let desktop_files: Vec<_> =
+        std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':').filter(|name| !name.is_empty() && name.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))).map(|name| format!("{}-portals.conf", name.to_ascii_lowercase())).collect();
     if on && desktop_files.iter().any(|file| path.with_file_name(file).exists()) {
         return Err(io::Error::new(ErrorKind::AlreadyExists, "a desktop-specific user portals.conf takes precedence"));
     }
@@ -126,8 +125,7 @@ pub fn configure<P: flit_platform::ProfilePlatform>(on: bool, startup: bool) -> 
         let config_dirs = std::env::var_os("XDG_CONFIG_DIRS").filter(|s| !s.is_empty()).unwrap_or_else(|| "/etc/xdg".into());
         let data_dirs = std::env::var_os("XDG_DATA_DIRS").filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
         let data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
-        let dirs = std::env::split_paths(&config_dirs).chain([PathBuf::from("/etc")]).chain(data_home)
-            .chain(std::env::split_paths(&data_dirs)).chain([PathBuf::from("/usr/share")]).filter(|p| p.is_absolute());
+        let dirs = std::env::split_paths(&config_dirs).chain([PathBuf::from("/etc")]).chain(data_home).chain(std::env::split_paths(&data_dirs)).chain([PathBuf::from("/usr/share")]).filter(|p| p.is_absolute());
         for dir in dirs {
             let dir = dir.join("xdg-desktop-portal");
             for file in desktop_files.iter().map(String::as_str).chain(std::iter::once("portals.conf")) {

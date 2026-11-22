@@ -718,7 +718,8 @@ fn right_click_on_the_address_and_crumbs_offers_copy_and_edit() {
     let at = (addr.x + 20.0, addr.y + addr.h / 2.0);
     app.on_event(&Event::MouseDown { x: at.0, y: at.1, button: MouseButton::Right, clicks: 1 }, now);
     app.on_event(&Event::MouseUp { x: at.0, y: at.1, button: MouseButton::Right }, now);
-    let labels: Vec<String> = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu.into_iter().filter_map(|i| if let crate::ui::MenuItem::Command { label, .. } = i { Some(label) } else { None }).collect()) } else { None }).expect("an address menu");
+    let labels: Vec<String> =
+        app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu.into_iter().filter_map(|i| if let crate::ui::MenuItem::Command { label, .. } = i { Some(label) } else { None }).collect()) } else { None }).expect("an address menu");
     assert_eq!(labels, ["Copy address", "Edit"]);
     app.on_event(&Event::MenuCommand(0), now);
     assert!(app.drain_effects().any(|e| matches!(e, Effect::SetClipboard(s) if s.contains(r"C:\work\sub"))), "copy puts the folder path on the clipboard");

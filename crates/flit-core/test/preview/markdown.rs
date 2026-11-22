@@ -61,14 +61,17 @@ fn closing_hashes_must_be_separated_from_the_heading() {
 #[test]
 fn list_paragraphs_and_mixed_lists_keep_both_quote_levels() {
     let d = markdown("> > 3. first\n> >\n> >    second paragraph\n> >\n> >    - nested\n> >      1. deep\n> > 4. last\n\noutside");
-    assert_eq!(paras(&d), [
-        (Block::Item { depth: 0 }, "3. first".into()),
-        (Block::Item { depth: 0 }, "second paragraph".into()),
-        (Block::Item { depth: 1 }, "• nested".into()),
-        (Block::Item { depth: 2 }, "1. deep".into()),
-        (Block::Item { depth: 0 }, "4. last".into()),
-        (Block::Body, "outside".into()),
-    ]);
+    assert_eq!(
+        paras(&d),
+        [
+            (Block::Item { depth: 0 }, "3. first".into()),
+            (Block::Item { depth: 0 }, "second paragraph".into()),
+            (Block::Item { depth: 1 }, "• nested".into()),
+            (Block::Item { depth: 2 }, "1. deep".into()),
+            (Block::Item { depth: 0 }, "4. last".into()),
+            (Block::Body, "outside".into()),
+        ]
+    );
     assert!(d.paras[..5].iter().all(|p| p.quote_depth == 2));
     assert_eq!(d.paras[5].quote_depth, 0);
 }
@@ -76,20 +79,14 @@ fn list_paragraphs_and_mixed_lists_keep_both_quote_levels() {
 #[test]
 fn indented_code_keeps_tabs_and_hard_breaks_stay_in_the_paragraph() {
     let d = markdown("    fn a() {\n    \tlet n = 1;\n    }\n\na  \nb\\\nc\nd");
-    assert_eq!(paras(&d), [
-        (Block::Code, "fn a() {".into()), (Block::Code, "    let n = 1;".into()), (Block::Code, "}".into()),
-        (Block::Body, "a\nb\nc d".into()),
-    ]);
+    assert_eq!(paras(&d), [(Block::Code, "fn a() {".into()), (Block::Code, "    let n = 1;".into()), (Block::Code, "}".into()), (Block::Body, "a\nb\nc d".into()),]);
     assert!(d.runs[..3].iter().all(|r| r.mono && r.tone == Tone::Plain));
 }
 
 #[test]
 fn footnotes_follow_the_body_in_reference_order() {
     let d = markdown("[^second]: Two\n\nFirst[^one] then[^second] and again[^one].\n\n[^one]: **One**\n\nEnd");
-    assert_eq!(paras(&d), [
-        (Block::Body, "First[1] then[2] and again[1].".into()), (Block::Body, "End".into()),
-        (Block::Rule, String::new()), (Block::Footnote, "[1] One".into()), (Block::Footnote, "[2] Two".into()),
-    ]);
+    assert_eq!(paras(&d), [(Block::Body, "First[1] then[2] and again[1].".into()), (Block::Body, "End".into()), (Block::Rule, String::new()), (Block::Footnote, "[1] One".into()), (Block::Footnote, "[2] Two".into()),]);
     assert!(d.runs.iter().any(|r| r.tone == Tone::Dim && d.run_text(r) == "[1]"));
     assert!(d.runs.iter().any(|r| r.bold && d.run_text(r) == "One"));
 }
@@ -119,9 +116,7 @@ fn table_cells_keep_their_alignment_text_and_inline_formatting() {
     let Block::Table(i) = d.paras[0].block else { panic!("expected a table") };
     let table = &d.tables[i];
     assert_eq!(table.align, [Left, Center, Right]);
-    let cells: Vec<Vec<String>> = table.rows.iter().map(|row| {
-        row.iter().map(|cell| cell.clone().map(|ri| d.run_text(&d.runs[ri as usize])).collect()).collect()
-    }).collect();
+    let cells: Vec<Vec<String>> = table.rows.iter().map(|row| row.iter().map(|cell| cell.clone().map(|ri| d.run_text(&d.runs[ri as usize])).collect()).collect()).collect();
     assert_eq!(cells, [["Name", "Status", "Score"], ["foo|bar", "ok", "10"], ["next", "", "2"]]);
     assert!(table.rows[0].iter().flat_map(Clone::clone).all(|ri| d.runs[ri as usize].bold));
     assert!(d.runs[table.rows[1][1].start as usize].bold);

@@ -305,10 +305,12 @@ fn hdr_transfer(gamma: &CStr) -> bool {
 }
 
 fn color_filter(hdr: bool) -> Option<&'static CStr> {
-    hdr.then_some(c"@flit-hdr:lavfi=[\
+    hdr.then_some(
+        c"@flit-hdr:lavfi=[\
         zscale=w='if(gte(iw,ih),min(iw,1280),-2)':h='if(gte(iw,ih),-2,min(ih,1280))':t=linear:npl=100,\
         format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=hable:desat=0,\
-        zscale=t=bt709:m=bt709:r=tv,format=rgb24]:o=[threads=2]")
+        zscale=t=bt709:m=bt709:r=tv,format=rgb24]:o=[threads=2]",
+    )
 }
 
 #[derive(Default)]

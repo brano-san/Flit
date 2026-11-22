@@ -696,9 +696,7 @@ impl App {
             return self.focus == super::Focus::List && self.nav.palette.is_none() && !self.dialogs.modal() && self.user_shortcut(key, mods);
         };
         let id = ACTIONS[i].id;
-        if self.mru_tabs && key == Key::Tab && mods.ctrl && !mods.alt
-            && matches!((id, mods.shift), ("tab.next", false) | ("tab.previous", true))
-        {
+        if self.mru_tabs && key == Key::Tab && mods.ctrl && !mods.alt && matches!((id, mods.shift), ("tab.next", false) | ("tab.previous", true)) {
             self.cycle_recent_tabs(mods.shift);
         } else {
             self.invoke_action(i, now);

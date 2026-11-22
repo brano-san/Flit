@@ -38,15 +38,7 @@ const AUTOSCROLL_RATE: f32 = 8.0;
 pub(super) const CHECK: f32 = 14.0;
 const CHECK_IN: Duration = Duration::from_millis(140);
 pub const THUMB_CACHE_MB: (u32, u32, u32) = (100, 500, 5000);
-const SIZE_GROUPS: [S; 7] = [
-    S::DetailsSizeGroupGigantic,
-    S::DetailsSizeGroupHuge,
-    S::DetailsSizeGroupLarge,
-    S::DetailsSizeGroupMedium,
-    S::DetailsSizeGroupSmall,
-    S::DetailsSizeGroupTiny,
-    S::DetailsSizeGroupEmpty,
-];
+const SIZE_GROUPS: [S; 7] = [S::DetailsSizeGroupGigantic, S::DetailsSizeGroupHuge, S::DetailsSizeGroupLarge, S::DetailsSizeGroupMedium, S::DetailsSizeGroupSmall, S::DetailsSizeGroupTiny, S::DetailsSizeGroupEmpty];
 const G_WARNING: &str = "\u{E7BA}";
 const NEVER_SHOWN_EXTENSIONS: [&[u8]; 2] = [b"lnk", b"url"];
 
@@ -162,11 +154,19 @@ impl Default for Columns {
 }
 
 fn min_width(c: Column) -> f32 {
-    if c == Column::Name { super::NAME_MIN_W } else { MIN_COL_W }
+    if c == Column::Name {
+        super::NAME_MIN_W
+    } else {
+        MIN_COL_W
+    }
 }
 
 fn max_width(c: Column) -> f32 {
-    if c == Column::Name { MAX_NAME_W } else { MAX_COL_W }
+    if c == Column::Name {
+        MAX_NAME_W
+    } else {
+        MAX_COL_W
+    }
 }
 
 fn git_slot(c: Column) -> usize {
@@ -176,7 +176,11 @@ fn git_slot(c: Column) -> usize {
 fn extra_slot(c: Column) -> Option<usize> {
     (c as u8 >= FIRST_EXTRA && !c.is_git()).then(|| {
         let slot = (c as u8 - FIRST_EXTRA) as usize;
-        if c as u8 > Column::GitHash as u8 { slot - super::GIT_COLUMNS.len() } else { slot }
+        if c as u8 > Column::GitHash as u8 {
+            slot - super::GIT_COLUMNS.len()
+        } else {
+            slot
+        }
     })
 }
 
@@ -598,7 +602,11 @@ pub(super) struct Details {
 
 impl Column {
     pub(super) fn slot(self) -> usize {
-        if self == Column::Tag { Column::Deleted as usize } else { self as usize }
+        if self == Column::Tag {
+            Column::Deleted as usize
+        } else {
+            self as usize
+        }
     }
 }
 
@@ -720,8 +728,12 @@ fn percent_label(s: &mut impl std::fmt::Write, bucket: u64) {
 impl App {
     pub(super) fn column_kinds(&self) -> &'static [Column] {
         let t = self.tab();
-        if t.view_loc.is_recycle_bin() { return &BIN_COLUMNS; }
-        if t.view_loc.path().kind() == PathKind::Computer { return &COMPUTER_COLUMNS; }
+        if t.view_loc.is_recycle_bin() {
+            return &BIN_COLUMNS;
+        }
+        if t.view_loc.path().kind() == PathKind::Computer {
+            return &COMPUTER_COLUMNS;
+        }
         let repo = t.git.as_ref().is_some_and(|g| g.root.is_some());
         let columns: &[Column] = match (self.caps.unix_paths, repo) {
             (true, true) => &REPO_COLUMNS,
@@ -729,7 +741,11 @@ impl App {
             (false, true) => &WINDOWS_REPO_COLUMNS,
             (false, false) => &WINDOWS_COLUMNS,
         };
-        if self.metadata_enabled() { columns } else { &columns[..columns.len() - super::PORTABLE_COLUMNS.len()] }
+        if self.metadata_enabled() {
+            columns
+        } else {
+            &columns[..columns.len() - super::PORTABLE_COLUMNS.len()]
+        }
     }
 
     pub fn columns(&self) -> Vec<Column> {
@@ -1263,7 +1279,9 @@ impl App {
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate | Column::GitHash => self.git_text(&mut s, l.name(i), col),
-            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::Rating | Column::Comment | Column::PortableTags => self.shell_prop_text(&mut s, l.name(i), col),
+            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::Rating | Column::Comment | Column::PortableTags => {
+                self.shell_prop_text(&mut s, l.name(i), col)
+            }
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 && (self.prefs.auto_sizes || e.attrs & attr::VOLUME != 0) {
@@ -1499,7 +1517,11 @@ impl App {
         let to = (t.scroll - along).clamp(0.0, max);
         let moved = to != t.scroll;
         (t.scroll, t.scroll_target) = (to, to);
-        if across { (moved, false) } else { (false, moved) }
+        if across {
+            (moved, false)
+        } else {
+            (false, moved)
+        }
     }
 
     pub(super) fn end_autoscroll(&mut self) {

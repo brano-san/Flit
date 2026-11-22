@@ -44,8 +44,12 @@ pub struct Value {
 pub trait System {
     fn read(&self, target: &Target) -> io::Result<Option<Value>>;
     fn write(&self, target: &Target, value: Option<&Value>) -> io::Result<()>;
-    fn registry_key_exists(&self, _key: &str) -> io::Result<bool> { Ok(true) }
-    fn remove_empty_registry_key(&self, _key: &str) -> io::Result<()> { Ok(()) }
+    fn registry_key_exists(&self, _key: &str) -> io::Result<bool> {
+        Ok(true)
+    }
+    fn remove_empty_registry_key(&self, _key: &str) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -242,8 +246,7 @@ fn read_mime(path: &Path) -> io::Result<Option<Value>> {
 fn write_mime(path: &Path, value: Option<&Value>) -> io::Result<()> {
     let current = mime_text(path)?;
     let old = current.as_deref().unwrap_or_default();
-    let app = value.filter(|v| v.kind == 0).map(|v| std::str::from_utf8(&v.bytes)).transpose()
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let app = value.filter(|v| v.kind == 0).map(|v| std::str::from_utf8(&v.bytes)).transpose().map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let next = flit_core::mimeapps::set_default_app(old, PROTOCOL_MIME, app);
     if value.is_none() && next.trim() == flit_core::mimeapps::DEFAULTS {
         return remove(path);
@@ -278,9 +281,7 @@ fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
 #[cfg(windows)]
 fn try_lock(path: &Path) -> io::Result<File> {
     use std::os::windows::fs::OpenOptionsExt;
-    OpenOptions::new().read(true).write(true).create(true).truncate(false).share_mode(0).open(path).map_err(|e| {
-        if e.raw_os_error() == Some(32) { io::Error::new(io::ErrorKind::WouldBlock, e) } else { e }
-    })
+    OpenOptions::new().read(true).write(true).create(true).truncate(false).share_mode(0).open(path).map_err(|e| if e.raw_os_error() == Some(32) { io::Error::new(io::ErrorKind::WouldBlock, e) } else { e })
 }
 
 #[cfg(unix)]
@@ -333,10 +334,7 @@ mod registry {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{ERROR_FILE_NOT_FOUND, ERROR_MORE_DATA, WIN32_ERROR};
     use windows::Win32::UI::Shell::SHDeleteEmptyKeyW;
-    use windows::Win32::System::Registry::{
-        RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegOpenKeyExW, RegQueryInfoKeyW, RegQueryValueExW, RegSetValueExW,
-        HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_VALUE_TYPE,
-    };
+    use windows::Win32::System::Registry::{RegCloseKey, RegCreateKeyExW, RegDeleteKeyValueW, RegOpenKeyExW, RegQueryInfoKeyW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_QUERY_VALUE, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_VALUE_TYPE};
 
     struct Key(HKEY);
 
@@ -351,7 +349,11 @@ mod registry {
     }
 
     fn result(code: WIN32_ERROR) -> io::Result<()> {
-        if code.is_ok() { Ok(()) } else { Err(io::Error::from_raw_os_error(code.0 as i32)) }
+        if code.is_ok() {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(code.0 as i32))
+        }
     }
 
     fn open(path: PCWSTR) -> io::Result<Option<Key>> {
@@ -422,7 +424,11 @@ mod registry {
             result(unsafe { RegSetValueExW(key.0, name, None, REG_VALUE_TYPE(value.kind), Some(&value.bytes)) })
         } else {
             let code = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, path, name) };
-            if code == ERROR_FILE_NOT_FOUND { Ok(()) } else { result(code) }
+            if code == ERROR_FILE_NOT_FOUND {
+                Ok(())
+            } else {
+                result(code)
+            }
         }
     }
 }
@@ -430,4 +436,3 @@ mod registry {
 #[cfg(test)]
 #[path = "../test/system_journal.rs"]
 mod tests;
-

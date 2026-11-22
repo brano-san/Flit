@@ -22,7 +22,11 @@ fn err(kind: io::ErrorKind, message: S) -> io::Error {
 }
 
 fn check_cancel(job: &Job) -> io::Result<()> {
-    if job.cancelled() { Err(io::Error::new(io::ErrorKind::Interrupted, crate::local::CANCELLED)) } else { Ok(()) }
+    if job.cancelled() {
+        Err(io::Error::new(io::ErrorKind::Interrupted, crate::local::CANCELLED))
+    } else {
+        Ok(())
+    }
 }
 
 fn open_regular(path: &Path) -> io::Result<File> {
@@ -102,18 +106,21 @@ fn stream(mut from: impl Read, mut to: impl Write, buffer: &mut [u8], mut crc: O
     loop {
         check_cancel(job)?;
         let count = from.read(buffer)?;
-        if count == 0 { return Ok(bytes); }
+        if count == 0 {
+            return Ok(bytes);
+        }
         let chunk = &buffer[..count];
         to.write_all(chunk)?;
-        if let Some(crc) = &mut crc { crc.update(chunk); }
+        if let Some(crc) = &mut crc {
+            crc.update(chunk);
+        }
         bytes += count as u64;
         job.update(|p| p.bytes += count as u64);
     }
 }
 
 fn split(source: &FsPath, dest: &FsPath, size: u64, job: &Job) -> io::Result<Prepared> {
-    let original = std::str::from_utf8(source.file_name()).ok().filter(|n| valid_name(n))
-        .ok_or_else(|| err(io::ErrorKind::InvalidInput, S::SegmentsInvalidSource))?;
+    let original = std::str::from_utf8(source.file_name()).ok().filter(|n| valid_name(n)).ok_or_else(|| err(io::ErrorKind::InvalidInput, S::SegmentsInvalidSource))?;
     let stem = Path::new(original).file_stem().and_then(|s| s.to_str()).unwrap_or(original);
     let mut from = open_regular(&std_path(source))?;
     let meta = from.metadata()?;
@@ -165,7 +172,9 @@ fn join(sh: &impl FileOps, source: &FsPath, dest: &FsPath, job: &Job) -> io::Res
     let mut crc = None;
     for_set(&dir, stem, job, |file, suffix| {
         if suffix.eq_ignore_ascii_case("crc") {
-            if crc.replace(dir.join(file.as_bytes())).is_some() { return Err(invalid()); }
+            if crc.replace(dir.join(file.as_bytes())).is_some() {
+                return Err(invalid());
+            }
         } else if let Some(n) = part_number(suffix) {
             parts.push((n, dir.join(file.as_bytes())));
         }
@@ -186,18 +195,14 @@ fn join(sh: &impl FileOps, source: &FsPath, dest: &FsPath, job: &Job) -> io::Res
         return Err(invalid());
     }
     let name = info.as_ref().map_or(stem, |m| m.file.as_str());
-    if !valid_name(name) { return Err(invalid()); }
+    if !valid_name(name) {
+        return Err(invalid());
+    }
     if fs::symlink_metadata(std_path(&dest.join(name.as_bytes()))).is_ok() {
         return Err(err(io::ErrorKind::AlreadyExists, S::SegmentsCollision));
     }
     let mut buffer = vec![0; BUFFER];
-    let size = if let Some(info) = &info {
-        info.len.saturating_mul(2)
-    } else {
-        parts.iter().try_fold(0u64, |total, (_, part)| {
-            Ok::<_, io::Error>(total.saturating_add(open_regular(&std_path(part))?.metadata()?.len()))
-        })?
-    };
+    let size = if let Some(info) = &info { info.len.saturating_mul(2) } else { parts.iter().try_fold(0u64, |total, (_, part)| Ok::<_, io::Error>(total.saturating_add(open_regular(&std_path(part))?.metadata()?.len())))? };
     begin(job, size, parts.len() as u64 * if info.is_some() { 2 } else { 1 });
     let assemble = |out: &mut dyn Write, buffer: &mut [u8]| -> io::Result<()> {
         let mut checksum = Hasher::new();
@@ -206,11 +211,15 @@ fn join(sh: &impl FileOps, source: &FsPath, dest: &FsPath, job: &Job) -> io::Res
             let file = open_regular(&std_path(part))?;
             let limit = info.as_ref().map_or(u64::MAX, |m| (m.len - total).saturating_add(1));
             total += stream(file.take(limit), &mut *out, buffer, info.as_ref().map(|_| &mut checksum), job)?;
-            if info.as_ref().is_some_and(|m| total > m.len) { return Err(invalid()); }
+            if info.as_ref().is_some_and(|m| total > m.len) {
+                return Err(invalid());
+            }
             job.update(|p| p.items += 1);
         }
         if let Some(info) = &info {
-            if total != info.len || checksum.finalize() != info.checksum { return Err(invalid()); }
+            if total != info.len || checksum.finalize() != info.checksum {
+                return Err(invalid());
+            }
         }
         Ok(())
     };
@@ -231,7 +240,10 @@ pub(crate) fn run(sh: &mut impl FileOps, source: &FsPath, dest: &FsPath, part_si
         Some(size) => split(source, dest, size, job),
         None => join(sh, source, dest, job),
     };
-    let prepared = match work.and_then(|p| { check_cancel(job)?; Ok(p) }) {
+    let prepared = match work.and_then(|p| {
+        check_cancel(job)?;
+        Ok(p)
+    }) {
         Ok(p) => p,
         Err(e) => return OpOutcome { items: Vec::new(), error: Some(fail(e)) },
     };
@@ -252,10 +264,7 @@ pub(crate) fn run(sh: &mut impl FileOps, source: &FsPath, dest: &FsPath, part_si
         published.push((from, to, identity));
     }
     if outcome.error.is_some() {
-        published.retain(|(from, to, identity)| {
-            identity.is_none_or(|expected| sh.file_identity(to) == Some(expected))
-                && sh.rename_local_noreplace(to, from).is_err()
-        });
+        published.retain(|(from, to, identity)| identity.is_none_or(|expected| sh.file_identity(to) == Some(expected)) && sh.rename_local_noreplace(to, from).is_err());
     } else if prepared.unverified {
         job.notice(S::SegmentsNoCrc);
     }

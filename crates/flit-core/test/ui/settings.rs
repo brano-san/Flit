@@ -156,23 +156,26 @@ fn export_carries_tags_and_import_creates_and_recolors_them() {
     assert!(exported.contains("\"files.confirm_delete\": \"always\""));
     assert!(exported.contains("\"tags\": []"));
     let mut b = app();
-    let text = format!(
-        r##"{{"files.confirm_delete": "always", "general.date_format": "application", "tags": [{{"name": "Work", "color": "#{:06X}"}}, {{"name": ".bad", "color": "#000000"}}, {{"name": "NoColor"}}]}}"##,
-        COLORS[2].1
-    );
+    let text = format!(r##"{{"files.confirm_delete": "always", "general.date_format": "application", "tags": [{{"name": "Work", "color": "#{:06X}"}}, {{"name": ".bad", "color": "#000000"}}, {{"name": "NoColor"}}]}}"##, COLORS[2].1);
     b.preview_settings_import(parse(&text));
     b.form_submit(0);
-    let plan = b.drain_effects().find_map(|e| match e {
-        Effect::Settings(crate::ui::SettingsCmd::ConfirmImport(plan)) => Some(plan),
-        _ => None,
-    }).unwrap();
+    let plan = b
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::Settings(crate::ui::SettingsCmd::ConfirmImport(plan)) => Some(plan),
+            _ => None,
+        })
+        .unwrap();
     b.apply_confirmed_settings_import(*plan, "before.json".into());
     assert_eq!(b.confirm_delete, ConfirmDelete::Always);
     assert_eq!(b.style.dates, DateFormat::Application);
-    let created = b.drain_effects().find_map(|e| match e {
-        Effect::Tags(crate::tags::TagRequest::ChangeImport { after, .. }) => Some(after),
-        _ => None,
-    }).unwrap();
+    let created = b
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::Tags(crate::tags::TagRequest::ChangeImport { after, .. }) => Some(after),
+            _ => None,
+        })
+        .unwrap();
     assert_eq!(created, [Tag { name: "Work".to_owned(), color: COLORS[2].1 }]);
     b.preview_settings_import(parse("not json"));
     assert!(b.tab().error.as_deref().is_some_and(|e| e.contains("not valid JSON")));

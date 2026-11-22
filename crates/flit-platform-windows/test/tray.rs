@@ -51,10 +51,7 @@ fn windows_reads_the_icon_rows_from_top_to_bottom() {
 
     let icon = themed_icon(false, 16, 16);
     let mut info = ICONINFO::default();
-    let mut bits = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: 16, biHeight: -16, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() },
-        ..Default::default()
-    };
+    let mut bits = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: 16, biHeight: -16, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() }, ..Default::default() };
     let mut pixels = [0u8; 16 * 16 * 4];
     let rows = unsafe {
         let read = GetIconInfo(icon, &mut info);

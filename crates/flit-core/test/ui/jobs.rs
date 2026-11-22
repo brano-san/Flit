@@ -43,7 +43,11 @@ fn symbolic_link_privilege_retry_is_explicit_and_its_translations_fit_the_first_
         assert!(rows.len() <= 2 && rows.iter().all(|line| gfx.measure(line, font) <= buttons[0].w - 16.0));
         let answered = ctl.clone();
         let (ready, waiting) = mpsc::channel();
-        let waiter = std::thread::spawn(move || answered.recover(false, || { ready.send(()).unwrap(); }));
+        let waiter = std::thread::spawn(move || {
+            answered.recover(false, || {
+                ready.send(()).unwrap();
+            })
+        });
         waiting.recv_timeout(Duration::from_secs(1)).unwrap();
         key(&mut app, Key::Home);
         key(&mut app, Key::Enter);
@@ -569,10 +573,13 @@ fn items_the_trash_refuses_can_be_deleted_permanently_instead() {
     assert_eq!(app.dialog_buttons(), ["Delete permanently", "Cancel"]);
     assert_eq!(app.dialogs.sel, 0);
     key(&mut app, Key::Enter);
-    let deletes: Vec<FileOp> = app.drain_effects().filter_map(|e| match e {
-        crate::ui::Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { op, .. } } => Some(op),
-        _ => None,
-    }).collect();
+    let deletes: Vec<FileOp> = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            crate::ui::Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Op { op, .. } } => Some(op),
+            _ => None,
+        })
+        .collect();
     assert_eq!(deletes, [FileOp::Delete(refused)], "exactly the refused items are deleted");
     assert_eq!(app.asking(), None);
 
@@ -778,7 +785,11 @@ fn one_conflict_review_applies_file_and_folder_choices_independently() {
 
     let (ready, shown) = std::sync::mpsc::channel();
     let observer = ctl.clone();
-    let worker = std::thread::spawn(move || observer.confirm_conflicts(conflicts, |_| { ready.send(()).unwrap(); }));
+    let worker = std::thread::spawn(move || {
+        observer.confirm_conflicts(conflicts, |_| {
+            ready.send(()).unwrap();
+        })
+    });
     shown.recv_timeout(Duration::from_secs(2)).unwrap();
     app.form_submit(0);
     assert_eq!(worker.join().unwrap(), Some(vec![Resolve::Skip, Resolve::Replace]));
@@ -857,11 +868,7 @@ fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
 fn symlink_privilege_text_alone_keeps_the_regular_retry_button() {
     let mut app = app_at(r"C:\x");
     let (id, _) = paste(&mut app);
-    app.on_provider_event(ProviderEvent::OpFailure {
-        tab: app.tab().id,
-        id,
-        failure: Failure { path: p(r"C:\source.txt"), error: S::ErrorsEngineSymlinkPrivilege.en().into(), fatal: false },
-    }, t0());
+    app.on_provider_event(ProviderEvent::OpFailure { tab: app.tab().id, id, failure: Failure { path: p(r"C:\source.txt"), error: S::ErrorsEngineSymlinkPrivilege.en().into(), fatal: false } }, t0());
     assert_eq!(app.dialog_buttons()[0], S::UiButtonRetry.t());
 }
 
@@ -916,11 +923,7 @@ fn a_transfer_outside_the_flit_engine_has_no_speed_limit_controls() {
 fn folder_review_defaults_to_merge_and_hides_children_when_the_folder_is_renamed() {
     let mut app = app_at(r"C:\x");
     let (id, _) = paste(&mut app);
-    let folder = Conflict {
-        source: p(r"C:\in\tree"), target: p(r"C:\out\tree"),
-        from: Meta { attrs: crate::listing::attr::DIR, ..Default::default() },
-        to: Meta { attrs: crate::listing::attr::DIR, ..Default::default() },
-    };
+    let folder = Conflict { source: p(r"C:\in\tree"), target: p(r"C:\out\tree"), from: Meta { attrs: crate::listing::attr::DIR, ..Default::default() }, to: Meta { attrs: crate::listing::attr::DIR, ..Default::default() } };
     let file = Conflict { source: folder.source.join(b"file"), target: folder.target.join(b"file"), ..sizes(1, 2) };
     app.job_conflicts(id, vec![folder, file, sizes(1, 2)]);
     let form = app.dialogs.form.as_mut().unwrap();

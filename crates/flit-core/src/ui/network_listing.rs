@@ -59,7 +59,11 @@ impl App {
         }
         self.tabs.items[k].discovered_servers = Some(raw.clone());
         let saved = &self.nav.sidebar.prefs.saved_servers;
-        if saved.is_empty() { raw } else { Arc::new(combined(&raw, saved)) }
+        if saved.is_empty() {
+            raw
+        } else {
+            Arc::new(combined(&raw, saved))
+        }
     }
 
     pub(super) fn show_saved_servers(&mut self, k: usize) {
@@ -68,9 +72,10 @@ impl App {
         if !self.caps.unix_paths || !path.is_network() || !path.is_root() || tab.gen == 0 {
             return;
         }
-        let raw = tab.discovered_servers.clone().unwrap_or_else(|| Arc::new(DirSnapshot {
-            gen: tab.gen, path: path.clone(), listing: Listing::default(), keys: SortKeys::new(self.case), order: Vec::new(), view: tab.view_spec, done: false, error: None, elapsed: Duration::ZERO,
-        }));
+        let raw = tab
+            .discovered_servers
+            .clone()
+            .unwrap_or_else(|| Arc::new(DirSnapshot { gen: tab.gen, path: path.clone(), listing: Listing::default(), keys: SortKeys::new(self.case), order: Vec::new(), view: tab.view_spec, done: false, error: None, elapsed: Duration::ZERO }));
         let selection = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen).map(|v| {
             let name = |i| v.listing().name(i).to_vec();
             (v.selected().map(name).collect::<Vec<_>>(), v.focus.map(name), v.anchor.map(name))

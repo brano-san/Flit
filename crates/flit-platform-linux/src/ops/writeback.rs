@@ -75,11 +75,7 @@ fn probe(dev: (u32, u32), mount: Option<&Mount>) -> bool {
     if block_slow(sys, dev) {
         return true;
     }
-    mount
-        .filter(|m| m.source.starts_with(b"/dev/"))
-        .and_then(|m| std::fs::metadata(Path::new(OsStr::from_bytes(&m.source))).ok())
-        .filter(|m| m.file_type().is_block_device())
-        .is_some_and(|m| block_slow(sys, (libc::major(m.rdev()), libc::minor(m.rdev()))))
+    mount.filter(|m| m.source.starts_with(b"/dev/")).and_then(|m| std::fs::metadata(Path::new(OsStr::from_bytes(&m.source))).ok()).filter(|m| m.file_type().is_block_device()).is_some_and(|m| block_slow(sys, (libc::major(m.rdev()), libc::minor(m.rdev()))))
 }
 
 impl Volumes {

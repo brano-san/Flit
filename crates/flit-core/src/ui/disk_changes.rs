@@ -19,7 +19,9 @@ pub(super) enum DiskForm {
 
 impl DiskForm {
     pub(super) fn cancel(&self) {
-        if let Self::Pending { ctl, .. } | Self::Export { ctl, .. } = self { ctl.cancel(); }
+        if let Self::Pending { ctl, .. } | Self::Export { ctl, .. } = self {
+            ctl.cancel();
+        }
     }
 }
 
@@ -30,7 +32,9 @@ fn open(kind: DiskForm, controls: Vec<Control>, buttons: Vec<&'static str>) -> F
 impl App {
     pub(super) fn disk_changes(&mut self) {
         let path = self.current_location().to_windows().filter(|p| p.kind() == PathKind::Drive && !self.caps.unix_paths);
-        let Some(path) = path else { return self.status(S::DiskChangesLocalOnly.t()); };
+        let Some(path) = path else {
+            return self.status(S::DiskChangesLocalOnly.t());
+        };
         let root = path.root_path();
         let output = path.join(b"disk-changes.csv");
         let controls = vec![
@@ -50,15 +54,13 @@ impl App {
         let ctl = OpCtl::default();
         let request = Request::Read { root: root.clone(), filter: filter.clone(), elevated, ctl: ctl.clone() };
         self.effects.push(Effect::DiskChanges { id, request });
-        self.open_form(open(
-            DiskForm::Pending { id, ctl, root, output, filter, elevated },
-            vec![Control::paragraph(S::DiskChangesReading.t().to_owned())],
-            vec![S::WidgetsCancel.t()],
-        ));
+        self.open_form(open(DiskForm::Pending { id, ctl, root, output, filter, elevated }, vec![Control::paragraph(S::DiskChangesReading.t().to_owned())], vec![S::WidgetsCancel.t()]));
     }
 
     pub(super) fn submit_disk_changes(&mut self, mut form: Form) -> Option<Form> {
-        let Kind::DiskChanges(kind) = &form.kind else { return None; };
+        let Kind::DiskChanges(kind) = &form.kind else {
+            return None;
+        };
         match kind {
             DiskForm::Options { root, output } => {
                 let hours = form.text(1).trim().parse::<i64>().ok().filter(|h| (1..=8760).contains(h));
@@ -83,11 +85,7 @@ impl App {
                 let id = self.disk_changes_id;
                 let ctl = OpCtl::default();
                 self.effects.push(Effect::DiskChanges { id, request: Request::Export { path, report: report.clone(), ctl: ctl.clone() } });
-                self.open_form(open(
-                    DiskForm::Export { id, ctl },
-                    vec![Control::paragraph(S::DiskChangesExporting.t().to_owned())],
-                    vec![S::WidgetsCancel.t()],
-                ));
+                self.open_form(open(DiskForm::Export { id, ctl }, vec![Control::paragraph(S::DiskChangesExporting.t().to_owned())], vec![S::WidgetsCancel.t()]));
             }
             _ => {}
         }
@@ -95,21 +93,21 @@ impl App {
     }
 
     pub fn on_disk_changes(&mut self, id: u64, reply: Reply) {
-        let Some(form) = self.dialogs.form.take() else { return; };
+        let Some(form) = self.dialogs.form.take() else {
+            return;
+        };
         match (&form.kind, reply) {
-            (Kind::DiskChanges(DiskForm::Pending { id: expected, root, output, filter, elevated, .. }), Reply::Read(result)) if *expected == id => {
-                match result {
-                    Err(Error::Denied) if !elevated => {
-                        let controls = vec![Control::paragraph(S::DiskChangesDenied.t().to_owned())];
-                        let buttons = vec![S::DiskChangesAdmin.t(), S::ArchiveClose.t()];
-                        let mut ask = open(DiskForm::Denied { root: root.clone(), output: output.clone(), filter: filter.clone() }, controls, buttons);
-                        ask.focus = ask.controls.len() + 1;
-                        self.open_form(ask);
-                    }
-                    Err(error) => self.disk_status(error),
-                    Ok(report) => self.disk_report(report, output),
+            (Kind::DiskChanges(DiskForm::Pending { id: expected, root, output, filter, elevated, .. }), Reply::Read(result)) if *expected == id => match result {
+                Err(Error::Denied) if !elevated => {
+                    let controls = vec![Control::paragraph(S::DiskChangesDenied.t().to_owned())];
+                    let buttons = vec![S::DiskChangesAdmin.t(), S::ArchiveClose.t()];
+                    let mut ask = open(DiskForm::Denied { root: root.clone(), output: output.clone(), filter: filter.clone() }, controls, buttons);
+                    ask.focus = ask.controls.len() + 1;
+                    self.open_form(ask);
                 }
-            }
+                Err(error) => self.disk_status(error),
+                Ok(report) => self.disk_report(report, output),
+            },
             (Kind::DiskChanges(DiskForm::Export { id: expected, .. }), Reply::Exported(result)) if *expected == id => match result {
                 Ok(path) => self.status(crate::tr!(S::DiskChangesExported, path = path.display())),
                 Err(error) => self.disk_status(error),

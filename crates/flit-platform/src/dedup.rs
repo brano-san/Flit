@@ -26,7 +26,11 @@ fn io_err(e: io::Error) -> PlatformError {
 }
 
 fn ensure_active(job: &Job) -> Result<(), PlatformError> {
-    if job.cancelled() { Err(PlatformError::cancelled(-1, crate::CANCELLED)) } else { Ok(()) }
+    if job.cancelled() {
+        Err(PlatformError::cancelled(-1, crate::CANCELLED))
+    } else {
+        Ok(())
+    }
 }
 
 fn stamp(sh: &mut impl FileOps, path: &FsPath) -> Result<Stamp, PlatformError> {
@@ -45,7 +49,9 @@ fn reparse(meta: &Metadata) -> bool {
 }
 
 #[cfg(not(windows))]
-fn reparse(_: &Metadata) -> bool { false }
+fn reparse(_: &Metadata) -> bool {
+    false
+}
 
 fn open(path: &FsPath) -> Result<File, PlatformError> {
     let mut options = OpenOptions::new();
@@ -59,7 +65,11 @@ fn open(path: &FsPath) -> Result<File, PlatformError> {
 }
 
 fn ensure(sh: &mut impl FileOps, path: &FsPath, expected: &Stamp) -> Result<(), PlatformError> {
-    if stamp(sh, path)? != *expected { Err(fail(S::DedupChanged)) } else { Ok(()) }
+    if stamp(sh, path)? != *expected {
+        Err(fail(S::DedupChanged))
+    } else {
+        Ok(())
+    }
 }
 
 fn compare(mut a: &File, mut b: &File, mut bytes: u64, job: &Job) -> Result<(), PlatformError> {
@@ -69,7 +79,9 @@ fn compare(mut a: &File, mut b: &File, mut bytes: u64, job: &Job) -> Result<(), 
         let count = bytes.min(BUFFER as u64) as usize;
         a.read_exact(&mut left[..count]).map_err(io_err)?;
         b.read_exact(&mut right[..count]).map_err(io_err)?;
-        if left[..count] != right[..count] { return Err(fail(S::DedupDifferent)); }
+        if left[..count] != right[..count] {
+            return Err(fail(S::DedupDifferent));
+        }
         bytes -= count as u64;
         job.update(|p| p.bytes += count as u64);
     }
@@ -90,7 +102,9 @@ fn replace(sh: &mut impl FileOps, keep: &FsPath, target: &FsPath, job: &Job) -> 
     if primary.id == other.id || primary.id.volume != other.id.volume {
         return Err(fail(S::DedupDistinct));
     }
-    if primary.size != other.size { return Err(fail(S::DedupDifferent)); }
+    if primary.size != other.size {
+        return Err(fail(S::DedupDifferent));
+    }
     let a = open(keep)?;
     let b = open(target)?;
     sh.verify_dedup_data(keep)?;
@@ -148,12 +162,9 @@ fn restore(sh: &mut impl FileOps, keep: &FsPath, backup: &DedupBackup, job: &Job
     sh.rename_local_replace(&restored, &backup.target)?;
     drop(archived);
 
-    let cleanup = (sh.file_identity(&backup.trash) == Some(saved.id)).then(|| {
-        sh.file_op(&FileOp::Purge(vec![(backup.trash.clone(), backup.target.clone())]), &Job::detached(Resolve::Skip)).error
-    }).flatten();
+    let cleanup = (sh.file_identity(&backup.trash) == Some(saved.id)).then(|| sh.file_op(&FileOp::Purge(vec![(backup.trash.clone(), backup.target.clone())]), &Job::detached(Resolve::Skip)).error).flatten();
     Ok(cleanup)
 }
-
 
 fn begin(job: &Job, count: usize, bytes: u64) {
     job.update(|p| {
@@ -176,7 +187,10 @@ pub fn run(sh: &mut impl FileOps, op: &FileOp, job: &Job) -> Option<OpOutcome> {
                         out.items.push((target.clone(), target.clone()));
                         backups.push(backup);
                     }
-                    Err(e) => { out.error = Some(e); break; }
+                    Err(e) => {
+                        out.error = Some(e);
+                        break;
+                    }
                 }
                 job.update(|p| p.items += 1);
             }
@@ -197,7 +211,9 @@ pub fn run(sh: &mut impl FileOps, op: &FileOp, job: &Job) -> Option<OpOutcome> {
                             out.error.get_or_insert(error);
                         }
                     }
-                    Err(e) => { out.error.get_or_insert(e); }
+                    Err(e) => {
+                        out.error.get_or_insert(e);
+                    }
                 }
                 job.update(|p| p.items += 1);
             }
@@ -206,4 +222,3 @@ pub fn run(sh: &mut impl FileOps, op: &FileOp, job: &Job) -> Option<OpOutcome> {
     }
     Some(out)
 }
-

@@ -60,9 +60,18 @@ impl Attribute {
         Some(match key {
             "ext" => Self::Ext(query_attrs::extensions(value)?),
             "kind" => Self::Kind(KIND_VALUES.iter().copied().find(|k| k.eq_ignore_ascii_case(value))?),
-            "size" => { let (lo, hi) = query_attrs::size_range(value)?; Self::Size(lo, hi) }
-            "modified" => { let (lo, hi) = query_attrs::date_range(value, clock)?; Self::Modified(lo, hi) }
-            "created" => { let (lo, hi) = query_attrs::date_range(value, clock)?; Self::Created(lo, hi) }
+            "size" => {
+                let (lo, hi) = query_attrs::size_range(value)?;
+                Self::Size(lo, hi)
+            }
+            "modified" => {
+                let (lo, hi) = query_attrs::date_range(value, clock)?;
+                Self::Modified(lo, hi)
+            }
+            "created" => {
+                let (lo, hi) = query_attrs::date_range(value, clock)?;
+                Self::Created(lo, hi)
+            }
             "hidden" => Self::Hidden(match value.to_ascii_lowercase().as_str() {
                 "true" | "yes" | "1" => true,
                 "false" | "no" | "0" => false,

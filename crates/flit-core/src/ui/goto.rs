@@ -146,7 +146,11 @@ impl App {
     pub(super) fn open_address(&mut self) {
         let path = self.current_location().path();
         let text = if self.caps.unix_paths && path.is_network() {
-            if path.is_root() { crate::path::NETWORK_URI.to_owned() } else { crate::name::display(path.file_name()).into_owned() }
+            if path.is_root() {
+                crate::path::NETWORK_URI.to_owned()
+            } else {
+                crate::name::display(path.file_name()).into_owned()
+            }
         } else if let Some(uri) = path.ftp_uri() {
             uri
         } else {

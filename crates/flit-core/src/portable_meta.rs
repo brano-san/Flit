@@ -12,21 +12,23 @@ pub struct Metadata {
 
 impl Metadata {
     pub fn valid(&self) -> bool {
-        self.rating <= 10 && self.comment.len() <= 4096 && xml_text(&self.comment)
-            && self.tags.len() <= 128
-            && self.tags.iter().all(|tag| !tag.trim().is_empty() && tag.len() <= 128 && !tag.contains(',') && xml_text(tag))
+        self.rating <= 10 && self.comment.len() <= 4096 && xml_text(&self.comment) && self.tags.len() <= 128 && self.tags.iter().all(|tag| !tag.trim().is_empty() && tag.len() <= 128 && !tag.contains(',') && xml_text(tag))
     }
 
     pub fn tags_from_text(text: &str) -> Vec<String> {
         let mut tags = Vec::new();
         for tag in text.split(',').map(str::trim).filter(|t| !t.is_empty()) {
-            if !tags.iter().any(|t| t == tag) { tags.push(tag.to_owned()); }
+            if !tags.iter().any(|t| t == tag) {
+                tags.push(tag.to_owned());
+            }
         }
         tags
     }
 
     pub fn display_rating(&self) -> String {
-        if self.rating == 0 { return String::new(); }
+        if self.rating == 0 {
+            return String::new();
+        }
         let mut text = "★".repeat(usize::from(self.rating.min(10) / 2));
         if !self.rating.is_multiple_of(2) {
             text.push('½');
@@ -41,7 +43,9 @@ fn xml_text(text: &str) -> bool {
 
 pub fn xmp_path(path: &FsPath) -> Option<FsPath> {
     let mut name = path.file_name().to_vec();
-    if name.eq_ignore_ascii_case(b"xmp") || name.to_ascii_lowercase().ends_with(b".xmp") { return None; }
+    if name.eq_ignore_ascii_case(b"xmp") || name.to_ascii_lowercase().ends_with(b".xmp") {
+        return None;
+    }
     name.extend_from_slice(b".xmp");
     Some(path.parent()?.join(&name))
 }

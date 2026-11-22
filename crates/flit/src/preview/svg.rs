@@ -15,10 +15,7 @@ const MEMORY_LIMIT: usize = 256 << 20;
 pub(super) fn load(path: &FsPath, size: u32, current: impl Fn() -> bool) -> Option<Bitmap> {
     let path = super::std_path(path);
     let size = size.clamp(1, IMAGE_PX);
-    let (status, mut bytes) = super::child::run(
-        COMMAND, &[path.as_os_str(), OsStr::new(&size.to_string())],
-        u64::from(size) * u64::from(size) * 4 + 8, Duration::from_secs(2), Some(MEMORY_LIMIT), current,
-    )?;
+    let (status, mut bytes) = super::child::run(COMMAND, &[path.as_os_str(), OsStr::new(&size.to_string())], u64::from(size) * u64::from(size) * 4 + 8, Duration::from_secs(2), Some(MEMORY_LIMIT), current)?;
     if !status.success() {
         return None;
     }
@@ -68,14 +65,7 @@ pub(super) fn render_file(path: &Path, size: u32) -> Option<Bitmap> {
         }
         bytes = expanded;
     }
-    let mut options = usvg::Options {
-        max_depth: 64,
-        image_href_resolver: usvg::ImageHrefResolver {
-            resolve_data: Box::new(|_, _, _| None),
-            resolve_string: Box::new(|_, _| None),
-        },
-        ..Default::default()
-    };
+    let mut options = usvg::Options { max_depth: 64, image_href_resolver: usvg::ImageHrefResolver { resolve_data: Box::new(|_, _, _| None), resolve_string: Box::new(|_, _| None) }, ..Default::default() };
     if bytes.windows(4).any(|b| b == b"text") {
         let family = if cfg!(windows) { "Arial" } else { "DejaVu Sans" };
         options.font_family = family.to_owned();

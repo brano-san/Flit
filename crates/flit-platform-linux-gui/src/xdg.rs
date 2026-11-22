@@ -107,12 +107,16 @@ pub fn bus_activation(on: bool) -> std::io::Result<()> {
 }
 
 pub fn desktop_text(exe: &Path) -> String {
-    let quoted: String = exe.to_string_lossy().chars().map(|c| match c {
-        '"' | '`' | '$' => format!("\\\\{c}"),
-        '\\' => "\\\\\\\\".to_owned(),
-        '%' => "%%".to_owned(),
-        _ => c.to_string(),
-    }).collect();
+    let quoted: String = exe
+        .to_string_lossy()
+        .chars()
+        .map(|c| match c {
+            '"' | '`' | '$' => format!("\\\\{c}"),
+            '\\' => "\\\\\\\\".to_owned(),
+            '%' => "%%".to_owned(),
+            _ => c.to_string(),
+        })
+        .collect();
     let line = |l: &str| match l.strip_prefix("Exec=flit") {
         Some(rest) => format!("Exec=\"{quoted}\"{rest}\n"),
         None => format!("{l}\n"),
@@ -168,10 +172,7 @@ pub(crate) fn user_dirs_file() -> Option<PathBuf> {
 
 pub fn user_dirs_from(text: &[u8], home: &Path) -> Vec<(&'static str, PathBuf)> {
     let parsed = parse_user_dirs(text, home.as_os_str().as_bytes());
-    USER_DIRS
-        .iter()
-        .map(|(_, key, fallback, _)| (*key, parsed.iter().rev().find(|(k, _)| k == key).map_or_else(|| home.join(fallback), |(_, p)| PathBuf::from(OsStr::from_bytes(p)))))
-        .collect()
+    USER_DIRS.iter().map(|(_, key, fallback, _)| (*key, parsed.iter().rev().find(|(k, _)| k == key).map_or_else(|| home.join(fallback), |(_, p)| PathBuf::from(OsStr::from_bytes(p))))).collect()
 }
 
 pub fn user_dir(shell_name: &str) -> Option<PathBuf> {

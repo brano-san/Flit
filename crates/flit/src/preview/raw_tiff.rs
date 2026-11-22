@@ -14,12 +14,18 @@ enum Order {
 impl Order {
     fn u16(self, src: &[u8]) -> u16 {
         let bytes = [src[0], src[1]];
-        match self { Self::Le => u16::from_le_bytes(bytes), Self::Be => u16::from_be_bytes(bytes) }
+        match self {
+            Self::Le => u16::from_le_bytes(bytes),
+            Self::Be => u16::from_be_bytes(bytes),
+        }
     }
 
     fn u32(self, src: &[u8]) -> u32 {
         let bytes = [src[0], src[1], src[2], src[3]];
-        match self { Self::Le => u32::from_le_bytes(bytes), Self::Be => u32::from_be_bytes(bytes) }
+        match self {
+            Self::Le => u32::from_le_bytes(bytes),
+            Self::Be => u32::from_be_bytes(bytes),
+        }
     }
 }
 

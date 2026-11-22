@@ -33,14 +33,18 @@ fn link_choices_enable_the_visible_menu_in_both_async_orders_and_never_reopen_it
         let generation = effects.iter().find_map(|e| if let Effect::LinkChoices { generation, .. } = e { Some(*generation) } else { None }).unwrap();
         let menu = effects.into_iter().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).unwrap();
         let answer = Event::LinkChoices { generation, choices: LinkChoices([true, true, false, true]) };
-        if choices_first { app.on_event(&answer, Instant::now()); }
+        if choices_first {
+            app.on_event(&answer, Instant::now());
+        }
         app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending: false }, Instant::now());
         let mut gfx = Gfx::new(Mono, 1024);
         app.frame(&mut gfx, Instant::now());
         let context = app.context_menu_mut().unwrap();
         context.insert("Hard link");
         context.key(Key::Down, Mods::default());
-        if !choices_first { app.on_event(&answer, Instant::now()); }
+        if !choices_first {
+            app.on_event(&answer, Instant::now());
+        }
         let current = &app.own_menu.as_ref().unwrap().items;
         assert_eq!(disabled_link(current, "Hard link"), Some(false), "choices_first={choices_first}");
         assert_eq!(disabled_link(current, "Junction"), Some(true));
@@ -135,10 +139,13 @@ fn trailing_commands_launch_their_programs_and_the_rest_are_flit_commands() {
         key(&mut app, k);
     }
     assert!(!app.own_menu_open());
-    let launched: Vec<Launch> = app.drain_effects().filter_map(|e| match e {
-        Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
-        _ => None,
-    }).collect();
+    let launched: Vec<Launch> = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
+            _ => None,
+        })
+        .collect();
     assert_eq!(launched, [editor]);
     shown(&mut app, Vec::new());
     key(&mut app, Key::Down);
@@ -428,10 +435,12 @@ fn clicks_and_keys_during_the_unrolling_act_on_the_items_real_places() {
     let launch = |name: &str| Launch::With { program: FsPath::parse(&format!("/usr/share/applications/{name}.desktop")).unwrap(), args: Vec::new() };
     let launches = vec![launch("one"), launch("two"), launch("three")];
     let launched = |app: &mut App| -> Vec<Launch> {
-        app.drain_effects().filter_map(|e| match e {
-            Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
-            _ => None,
-        }).collect()
+        app.drain_effects()
+            .filter_map(|e| match e {
+                Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
+                _ => None,
+            })
+            .collect()
     };
     let mut app = app();
     let mut g = Gfx::new(Mono, 1024);

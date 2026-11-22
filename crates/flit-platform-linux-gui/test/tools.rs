@@ -125,10 +125,7 @@ fn libmpv_is_found_in_the_loader_cache_or_a_library_folder() {
 fn only_missing_network_tools_are_listed_with_their_packages() {
     for (release, gvfs, avahi) in [(UBUNTU, "gvfs-backends", "avahi-utils"), (FEDORA_RELEASE, "gvfs", "avahi-tools"), (MANJARO, "gvfs", "avahi"), (TUMBLEWEED, "gvfs", "avahi-utils")] {
         let missing = missing_from(|t| !matches!(t, "gvfsd-network" | "avahi-browse"), release, false, true);
-        assert_eq!(missing.iter().map(|m| (m.tool, m.purpose, m.package)).collect::<Vec<_>>(), [
-            ("gvfsd-network", S::PathNetwork, gvfs),
-            ("avahi-browse", S::PathNetwork, avahi),
-        ]);
+        assert_eq!(missing.iter().map(|m| (m.tool, m.purpose, m.package)).collect::<Vec<_>>(), [("gvfsd-network", S::PathNetwork, gvfs), ("avahi-browse", S::PathNetwork, avahi),]);
         assert!(missing_from(|_| true, release, false, true).is_empty());
     }
 }

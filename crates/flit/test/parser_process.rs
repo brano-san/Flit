@@ -83,11 +83,7 @@ fn a_preview_reports_size_and_password_limits_distinctly_from_corruption() {
     let encrypted = dir.0.join("encrypted.7z");
     std::fs::write(&input, b"secret text").unwrap();
     let path = |p: &Path| FsPath::parse(p.to_str().unwrap()).unwrap();
-    let op = FileOp::Archive(ArchiveOp::Compress {
-        items: vec![path(&input)],
-        archive: path(&encrypted),
-        options: Compression { format: Format::SevenZ, password: Some(Secret("secret".into())), encrypt_names: true, ..Compression::default() },
-    });
+    let op = FileOp::Archive(ArchiveOp::Compress { items: vec![path(&input)], archive: path(&encrypted), options: Compression { format: Format::SevenZ, password: Some(Secret("secret".into())), encrypt_names: true, ..Compression::default() } });
     let env = flit_archive::Env { utc_offset: 0, free_space: &|_| Some(u64::MAX) };
     let result = flit_archive::file_op(&op, &flit_platform::Job::detached(Resolve::Replace), &env).unwrap();
     assert!(result.error.is_none(), "{:?}", result.error);

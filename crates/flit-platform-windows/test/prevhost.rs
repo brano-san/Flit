@@ -39,7 +39,12 @@ fn video_uses_the_available_device_and_retries_unsupported_devices_in_the_window
     let mut attempts = Vec::new();
     video_or_legacy(Ok(7), |device| {
         attempts.push(device.copied());
-        if device.is_some() { Err(unsupported.clone()) } else { Ok(()) }
-    }).unwrap();
+        if device.is_some() {
+            Err(unsupported.clone())
+        } else {
+            Ok(())
+        }
+    })
+    .unwrap();
     assert_eq!(attempts, [Some(7), None]);
 }

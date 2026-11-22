@@ -97,7 +97,11 @@ unsafe fn orientation(frame: &IWICBitmapFrameDecode) -> u16 {
 }
 
 pub(crate) fn store_flags(not_local: bool) -> GETPROPERTYSTOREFLAGS {
-    if not_local { GPS_FASTPROPERTIESONLY } else { GPS_BESTEFFORT }
+    if not_local {
+        GPS_FASTPROPERTIESONLY
+    } else {
+        GPS_BESTEFFORT
+    }
 }
 
 const SIZE_PROPS: [&str; 2] = ["System.Image.HorizontalSize", "System.Image.VerticalSize"];
@@ -228,10 +232,7 @@ pub(crate) fn handler(ext: &[u8]) -> Option<String> {
 fn quick_look() -> Option<std::path::PathBuf> {
     let local = std::env::var_os("LOCALAPPDATA").map(std::path::PathBuf::from);
     let programs = std::env::var_os("ProgramFiles").map(std::path::PathBuf::from);
-    [local.as_ref().map(|d| d.join(r"Programs\QuickLook\QuickLook.exe")), programs.map(|d| d.join(r"QuickLook\QuickLook.exe")), local.map(|d| d.join(r"Microsoft\WindowsApps\QuickLook.exe"))]
-        .into_iter()
-        .flatten()
-        .find(|p| std::fs::symlink_metadata(p).is_ok())
+    [local.as_ref().map(|d| d.join(r"Programs\QuickLook\QuickLook.exe")), programs.map(|d| d.join(r"QuickLook\QuickLook.exe")), local.map(|d| d.join(r"Microsoft\WindowsApps\QuickLook.exe"))].into_iter().flatten().find(|p| std::fs::symlink_metadata(p).is_ok())
 }
 
 const SEER_CLASS: &str = "SeerWindowClass";

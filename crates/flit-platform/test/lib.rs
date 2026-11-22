@@ -4,14 +4,22 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 struct Frame;
 
 impl WindowFrame for Frame {
-    fn id(&self) -> WindowId { 1 }
-    fn size(&self) -> (u32, u32) { (640, 480) }
-    fn scale(&self) -> f32 { 1.0 }
+    fn id(&self) -> WindowId {
+        1
+    }
+    fn size(&self) -> (u32, u32) {
+        (640, 480)
+    }
+    fn scale(&self) -> f32 {
+        1.0
+    }
     fn request_redraw(&self) {}
     fn set_title(&self, _: &str) {}
     fn set_cursor(&self, _: flit_core::input::CursorIcon) {}
     fn set_ime_area(&self, _: flit_core::render::Rect) {}
-    fn is_dark_mode(&self) -> bool { false }
+    fn is_dark_mode(&self) -> bool {
+        false
+    }
     fn set_timer(&self, _: u32) {}
 }
 

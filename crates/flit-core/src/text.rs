@@ -342,12 +342,7 @@ fn key(s: &str, style: FontStyle) -> u64 {
     hash::hash(&(s, style))
 }
 
-fn shape<'a, B: TextBackend>(
-    shapes: &'a mut Shapes,
-    text: &mut B,
-    s: &str,
-    style: FontStyle,
-) -> &'a ShapedText {
+fn shape<'a, B: TextBackend>(shapes: &'a mut Shapes, text: &mut B, s: &str, style: FontStyle) -> &'a ShapedText {
     let k = key(s, style);
     let e = shapes.entry(k).or_insert_with(|| (Box::from(""), ShapedText { glyphs: Vec::new(), width: -1.0 }));
     if e.1.width < 0.0 || &*e.0 != s {

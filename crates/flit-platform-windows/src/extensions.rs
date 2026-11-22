@@ -8,11 +8,7 @@ const FLAG: &str = "NeverShowExt";
 static HIDDEN: OnceLock<Vec<String>> = OnceLock::new();
 
 pub(crate) fn hidden_by(classes: &[(String, Option<String>)], flagged: impl Fn(&str) -> bool) -> Vec<String> {
-    let mut out: Vec<String> = classes
-        .iter()
-        .filter(|(ext, class)| ext.len() > 1 && (flagged(ext) || class.as_deref().is_some_and(|c| !c.is_empty() && flagged(c))))
-        .map(|(ext, _)| ext[1..].to_ascii_lowercase())
-        .collect();
+    let mut out: Vec<String> = classes.iter().filter(|(ext, class)| ext.len() > 1 && (flagged(ext) || class.as_deref().is_some_and(|c| !c.is_empty() && flagged(c)))).map(|(ext, _)| ext[1..].to_ascii_lowercase()).collect();
     out.sort();
     out.dedup();
     out

@@ -35,12 +35,17 @@ fn home_app() -> App {
 }
 
 fn cards(app: &App) -> Vec<String> {
-    app.nav.home.cards.iter().map(|(_, c)| match c {
-        Card::Folder { label, .. } => format!("folder {label}"),
-        Card::Drive(d) => format!("drive {d}"),
-        Card::Tag(k) => format!("tag {}", app.nav.sidebar.tags.defs[*k].name),
-        Card::Recent(r) => format!("recent {}", app.nav.sidebar.places.recent[*r].name),
-    }).collect()
+    app.nav
+        .home
+        .cards
+        .iter()
+        .map(|(_, c)| match c {
+            Card::Folder { label, .. } => format!("folder {label}"),
+            Card::Drive(d) => format!("drive {d}"),
+            Card::Tag(k) => format!("tag {}", app.nav.sidebar.tags.defs[*k].name),
+            Card::Recent(r) => format!("recent {}", app.nav.sidebar.places.recent[*r].name),
+        })
+        .collect()
 }
 
 fn click(r: Rect, app: &mut App, button: MouseButton) {

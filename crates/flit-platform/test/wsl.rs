@@ -44,17 +44,7 @@ fn agent(build: String, mut input: std::io::PipeReader, mut output: std::io::Pip
 
 impl Fake {
     fn new(handler: impl Fn(&Request) -> Option<Vec<Event>> + Send + Sync + 'static) -> Self {
-        Self {
-            build: "test-1".into(),
-            installed: Arc::new(Mutex::new(Some("test-1".into()))),
-            deliver_as: None,
-            hang: false,
-            launches: Arc::default(),
-            deliveries: Arc::default(),
-            stops: Arc::default(),
-            seen: Arc::default(),
-            handler: Arc::new(handler),
-        }
+        Self { build: "test-1".into(), installed: Arc::new(Mutex::new(Some("test-1".into()))), deliver_as: None, hang: false, launches: Arc::default(), deliveries: Arc::default(), stops: Arc::default(), seen: Arc::default(), handler: Arc::new(handler) }
     }
 
     fn seen(&self) -> Vec<Request> {
@@ -82,9 +72,13 @@ impl AgentLauncher for Fake {
             None => drop((req_r, ev_w)),
         });
         let stops = self.stops.clone();
-        Ok(AgentProcess { input: Box::new(req_w), output: Box::new(ev_r), stop: Box::new(move |_| {
+        Ok(AgentProcess {
+            input: Box::new(req_w),
+            output: Box::new(ev_r),
+            stop: Box::new(move |_| {
                 stops.fetch_add(1, Ordering::SeqCst);
-            }) })
+            }),
+        })
     }
 
     fn deliver(&self) -> io::Result<()> {
@@ -357,7 +351,9 @@ fn trash_goes_to_the_agent_and_the_rest_to_the_share() {
     let fake = Fake::new(|req| {
         Some(match req {
             Request::Op { id, .. } => vec![Event::OpDone { id: *id, error: Some("nope".into()), items: Vec::new() }],
-            Request::DirSizes { id, items, .. } => items.iter().map(|(idx, _)| Event::DirSize { id: *id, idx: *idx, stats: DirStats { size: 5, ..Default::default() } }).chain([Event::DirSize { id: *id, idx: 99, stats: DirStats { size: 1, ..Default::default() } }]).collect(),
+            Request::DirSizes { id, items, .. } => {
+                items.iter().map(|(idx, _)| Event::DirSize { id: *id, idx: *idx, stats: DirStats { size: 5, ..Default::default() } }).chain([Event::DirSize { id: *id, idx: 99, stats: DirStats { size: 1, ..Default::default() } }]).collect()
+            }
             _ => Vec::new(),
         })
     });
@@ -422,23 +418,21 @@ fn undo_for_unreplaced_operations_is_sent_back_to_the_wsl_agent() {
     let op = FileOp::Rename { item: original.clone(), name: b"b".to_vec() };
     let inverse = FileOp::Rename { item: moved.clone(), name: b"a".to_vec() };
     let stamp = flit_core::undo::Stamp { size: 4, modified: 100, device: 2, file: 3, access: None };
-    let plan = flit_core::undo::Replay {
-        steps: vec![inverse.clone()],
-        checks: vec![(moved.clone(), Some(stamp)), (original.clone(), None)],
-        recheck_tree: false, captured_ns: Some(100),
-    };
+    let plan = flit_core::undo::Replay { steps: vec![inverse.clone()], checks: vec![(moved.clone(), Some(stamp)), (original.clone(), None)], recheck_tree: false, captured_ns: Some(100) };
     let agent_plan = plan.clone();
-    let s = setup(Fake::new(move |req| Some(match req {
-        Request::Op { id, .. } => vec![
-            Event::OpUndo { id: *id, undo: Undo::Checked(agent_plan.clone()) },
-            Event::OpDone { id: *id, error: None, items: vec![(original.clone(), moved.clone())] },
-        ],
-        Request::Replay { id, plan } => {
-            assert_eq!(plan, &agent_plan);
-            vec![Event::OpDone { id: *id, error: None, items: vec![(moved.clone(), original.clone())] }]
-        }
-        _ => Vec::new(),
-    })), Timing::default());
+    let s = setup(
+        Fake::new(move |req| {
+            Some(match req {
+                Request::Op { id, .. } => vec![Event::OpUndo { id: *id, undo: Undo::Checked(agent_plan.clone()) }, Event::OpDone { id: *id, error: None, items: vec![(original.clone(), moved.clone())] }],
+                Request::Replay { id, plan } => {
+                    assert_eq!(plan, &agent_plan);
+                    vec![Event::OpDone { id: *id, error: None, items: vec![(moved.clone(), original.clone())] }]
+                }
+                _ => Vec::new(),
+            })
+        }),
+        Timing::default(),
+    );
     s.wsl.submit(ProviderRequest::Op { tab: 1, id: 1, op, ctl: OpCtl::default() });
     let report = event(&s.events, |e| match e {
         ProviderEvent::OpDone { id: 1, error: None, report, .. } => report,
@@ -456,14 +450,15 @@ fn undo_for_unreplaced_operations_is_sent_back_to_the_wsl_agent() {
 
 #[test]
 fn a_wsl_replacement_without_a_backup_reports_the_specific_refusal() {
-    let s = setup(Fake::new(|req| Some(match req {
-        Request::Op { id, .. } => vec![
-            Event::OpReplaced { id: *id, targets: vec![(unix("/dst/a"), None)] },
-            Event::OpUndo { id: *id, undo: Undo::BackupUnavailable },
-            Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] },
-        ],
-        _ => Vec::new(),
-    })), Timing::default());
+    let s = setup(
+        Fake::new(|req| {
+            Some(match req {
+                Request::Op { id, .. } => vec![Event::OpReplaced { id: *id, targets: vec![(unix("/dst/a"), None)] }, Event::OpUndo { id: *id, undo: Undo::BackupUnavailable }, Event::OpDone { id: *id, error: None, items: vec![(unix("/src/a"), unix("/dst/a"))] }],
+                _ => Vec::new(),
+            })
+        }),
+        Timing::default(),
+    );
     s.wsl.submit(ProviderRequest::Op { tab: 1, id: 1, op: copy(), ctl: OpCtl::default() });
     let report = event(&s.events, |e| match e {
         ProviderEvent::OpDone { id: 1, error: None, report, .. } => report,
@@ -505,13 +500,13 @@ fn a_replace_older_answer_reaches_the_agent_as_its_decision_and_its_policy() {
 
 #[test]
 fn the_agent_receives_one_conflict_review_answer_and_the_live_copy_limit() {
-    let make_events = |request: &Request| Some(match request {
-        Request::Op { id, .. } => vec![Event::OpConflicts { id: *id, conflicts: vec![Conflict {
-            source: unix("/src/a"), target: unix("/dst/a"), from: Meta::default(), to: Meta::default(),
-        }] }],
-        Request::ConflictAnswers { id, choices: Some(_) } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
-        _ => Vec::new(),
-    });
+    let make_events = |request: &Request| {
+        Some(match request {
+            Request::Op { id, .. } => vec![Event::OpConflicts { id: *id, conflicts: vec![Conflict { source: unix("/src/a"), target: unix("/dst/a"), from: Meta::default(), to: Meta::default() }] }],
+            Request::ConflictAnswers { id, choices: Some(_) } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
+            _ => Vec::new(),
+        })
+    };
     let s = setup(Fake::new(make_events), Timing::default());
     let ctl = OpCtl::default();
     s.wsl.submit(ProviderRequest::Op { tab: 1, id: 4, op: copy(), ctl: ctl.clone() });
@@ -792,11 +787,7 @@ fn done_ops(req: &Request) -> Option<Vec<Event>> {
 #[test]
 fn no_operation_in_an_admin_tab_runs_as_the_user() {
     let s = admin_setup(Fake::new(done_ops), Timing::default(), Clipboard { files: copied_from_windows, clear: || {} });
-    let on_agent = [
-        FileOp::NewFile { dir: unix("/etc"), name: b"n".to_vec(), template: Template::Empty },
-        FileOp::Link { items: vec![unix("/etc/a")], dest: unix("/etc/b") },
-        FileOp::Flatten(vec![unix("/etc/d")]),
-    ];
+    let on_agent = [FileOp::NewFile { dir: unix("/etc"), name: b"n".to_vec(), template: Template::Empty }, FileOp::Link { items: vec![unix("/etc/a")], dest: unix("/etc/b") }, FileOp::Flatten(vec![unix("/etc/d")])];
     let refused = [
         FileOp::LinkAs { items: vec![unix("/etc/a")], dest: unix("/etc/b"), kind: LinkKind::Symbolic },
         FileOp::PasteDropped { dest: unix("/etc"), moving: false, data: None },
@@ -833,11 +824,7 @@ fn items_written_by_root_into_a_folder_of_the_user_stay_with_root() {
         })
     });
     let s = admin_setup(fake, Timing::default(), Clipboard::default());
-    let ops = [
-        FileOp::Copy { items: vec![unix("/etc/hosts")], dest: unix("/home/u") },
-        FileOp::Move { items: vec![unix("/etc/a")], dest: unix("/home/u") },
-        FileOp::NewFolder { dir: unix("/home/u"), name: b"n".to_vec() },
-    ];
+    let ops = [FileOp::Copy { items: vec![unix("/etc/hosts")], dest: unix("/home/u") }, FileOp::Move { items: vec![unix("/etc/a")], dest: unix("/home/u") }, FileOp::NewFolder { dir: unix("/home/u"), name: b"n".to_vec() }];
     for (k, op) in ops.into_iter().enumerate() {
         s.wsl.submit(ProviderRequest::Op { tab: 1, id: 5 + k as u64, op, ctl: OpCtl::default() });
         event(&s.events, |e| if let ProviderEvent::OpDone { id, .. } = e { (id == 5 + k as u64).then_some(()) } else { None });

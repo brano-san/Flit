@@ -23,8 +23,7 @@ pub(crate) fn check_dir(root: &Path, dir: &Path, problems: &mut Vec<String>) -> 
             if relative == Path::new(THEME) {
                 continue;
             }
-            let violations = lines(&fs::read_to_string(&path)?)
-                .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
+            let violations = lines(&fs::read_to_string(&path)?).map_err(|error| io::Error::new(io::ErrorKind::InvalidData, format!("{}: {error}", path.display())))?;
             problems.extend(violations.iter().map(|line| format!("{}:{line}: put the color literal in {THEME}", relative.display())));
         }
     }

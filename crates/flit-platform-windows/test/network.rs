@@ -11,13 +11,19 @@ fn only_a_confirmed_disabled_firewall_group_requests_a_warning() {
 #[test]
 fn an_active_profile_with_the_firewall_off_suppresses_the_discovery_warning() {
     let active = NET_FW_PROFILE2_PRIVATE.0 | NET_FW_PROFILE2_PUBLIC.0;
-    let check = |private, public, group| discovery_warning(|| discovery_state(active, |profile| {
-        match profile {
-            NET_FW_PROFILE2_PRIVATE => private,
-            NET_FW_PROFILE2_PUBLIC => public,
-            _ => panic!("inactive domain profile was queried"),
-        }
-    }, || group));
+    let check = |private, public, group| {
+        discovery_warning(|| {
+            discovery_state(
+                active,
+                |profile| match profile {
+                    NET_FW_PROFILE2_PRIVATE => private,
+                    NET_FW_PROFILE2_PUBLIC => public,
+                    _ => panic!("inactive domain profile was queried"),
+                },
+                || group,
+            )
+        })
+    };
     assert_eq!(check(Some(true), Some(false), Some(false)), None);
     assert_eq!(check(Some(false), Some(true), Some(false)), None);
     assert_eq!(check(Some(true), Some(true), Some(false)), Some(flit_core::provider::NetworkWarning::WindowsDisabled));

@@ -56,35 +56,42 @@ fn idle_backend_releases_its_name_and_drains_a_queued_request() {
     use std::cell::RefCell;
     let events = RefCell::new(Vec::new());
     let mut calls = 0;
-    serve_until_idle(Duration::ZERO, || events.borrow_mut().push("release"), |timeout| {
-        calls += 1;
-        match calls {
-            1 => {
-                assert_eq!(timeout, 0);
-                events.borrow_mut().push("request");
-                Some((true, true))
+    serve_until_idle(
+        Duration::ZERO,
+        || events.borrow_mut().push("release"),
+        |timeout| {
+            calls += 1;
+            match calls {
+                1 => {
+                    assert_eq!(timeout, 0);
+                    events.borrow_mut().push("request");
+                    Some((true, true))
+                }
+                2 => {
+                    assert_eq!(timeout, 80);
+                    events.borrow_mut().push("reply");
+                    Some((false, true))
+                }
+                _ => panic!("must exit after the queued request has completed"),
             }
-            2 => {
-                assert_eq!(timeout, 80);
-                events.borrow_mut().push("reply");
-                Some((false, true))
-            }
-            _ => panic!("must exit after the queued request has completed"),
-        }
-    });
+        },
+    );
     assert_eq!(events.into_inner(), ["release", "request", "reply"]);
 }
 
 #[test]
 fn active_backend_keeps_its_name() {
     let mut timeouts = Vec::new();
-    serve_until_idle(Duration::MAX, || panic!("must retain the name"), |timeout| {
-        timeouts.push(timeout);
-        (timeouts.len() == 1).then_some((true, true))
-    });
+    serve_until_idle(
+        Duration::MAX,
+        || panic!("must retain the name"),
+        |timeout| {
+            timeouts.push(timeout);
+            (timeouts.len() == 1).then_some((true, true))
+        },
+    );
     assert_eq!(timeouts, [1000, 80]);
 }
-
 
 #[test]
 fn open_preserves_mime_rules_for_the_picker_and_the_response() {

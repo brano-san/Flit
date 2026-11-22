@@ -49,12 +49,7 @@ struct Report {
 
 pub fn install(dir: &Path) {
     let home = <crate::Windows as flit_platform::ShellPlatform>::home();
-    install_report(Report {
-        dir: dir.to_owned(),
-        user: std::env::var("USERNAME").unwrap_or_else(|_| flit_core::name::display(home.file_name()).into_owned()),
-        home: home.display().into_owned(),
-        os: crate::places::os_version(),
-    });
+    install_report(Report { dir: dir.to_owned(), user: std::env::var("USERNAME").unwrap_or_else(|_| flit_core::name::display(home.file_name()).into_owned()), home: home.display().into_owned(), os: crate::places::os_version() });
 }
 
 fn install_report(report: Report) {
@@ -204,7 +199,11 @@ impl Facts {
         }
         let mut len = 0;
         unsafe { WriteFile(self.0, Some(bytes), Some(&mut len), None) }.map_err(|_| fmt::Error)?;
-        if len as usize == bytes.len() { Ok(()) } else { Err(fmt::Error) }
+        if len as usize == bytes.len() {
+            Ok(())
+        } else {
+            Err(fmt::Error)
+        }
     }
 
     fn wide(&mut self, units: &[u16]) -> fmt::Result {

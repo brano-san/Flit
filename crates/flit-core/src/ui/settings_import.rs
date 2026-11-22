@@ -48,10 +48,13 @@ impl ImportPlan {
 
     fn controls(&self) -> Vec<Control> {
         let mut controls = Vec::new();
-        let programs: Vec<_> = self.changes().filter_map(|(i, _)| {
-            let key = SETTINGS[i].id;
-            (key == "menu.custom").then_some(key)
-        }).collect();
+        let programs: Vec<_> = self
+            .changes()
+            .filter_map(|(i, _)| {
+                let key = SETTINGS[i].id;
+                (key == "menu.custom").then_some(key)
+            })
+            .collect();
         if !programs.is_empty() {
             controls.push(Control::paragraph(crate::tr!(S::SettingsPageImportPrograms, keys = programs.join(", "))));
         }
@@ -88,13 +91,7 @@ impl App {
         if doc.newer() {
             return self.status(S::SettingsPageImportNewer.t());
         }
-        let plan = ImportPlan {
-            before: self.setting_values(),
-            values: doc.values,
-            tags_before: self.tag_defs().to_vec(),
-            tags_after: merge_tags(self.tag_defs(), &doc.tags),
-            problems: doc.problems,
-        };
+        let plan = ImportPlan { before: self.setting_values(), values: doc.values, tags_before: self.tag_defs().to_vec(), tags_after: merge_tags(self.tag_defs(), &doc.tags), problems: doc.problems };
         if plan.changes().next().is_none() && plan.tags_before == plan.tags_after {
             if plan.problems.is_empty() {
                 return self.status(S::SettingsPageImportNoChanges.t());
@@ -122,10 +119,7 @@ impl App {
         let tagged = plan.tags_after.iter().enumerate().filter(|(k, tag)| plan.tags_before.get(*k) != Some(*tag)).count();
         self.import_tag_defs(&plan.tags_before, &plan.tags_after);
         let undo = AppliedImport { before: plan.before, after: self.setting_values(), tags_before: plan.tags_before, tags_after: plan.tags_after };
-        let controls = vec![
-            Control::paragraph(self.imported(applied, tagged)),
-            Control::paragraph(crate::tr!(S::SettingsPageImportBackup, path = backup)),
-        ];
+        let controls = vec![Control::paragraph(self.imported(applied, tagged)), Control::paragraph(crate::tr!(S::SettingsPageImportBackup, path = backup))];
         let mut form = Form::new(Kind::SettingsImportDone(undo), S::SettingsPageImportPreview.t(), controls, vec![S::SettingsPageImportUndo.t(), S::ArchiveClose.t()]);
         form.focus = form.controls.len() + 1;
         self.open_form(form);

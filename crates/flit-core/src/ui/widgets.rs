@@ -37,11 +37,19 @@ pub(super) enum Edge {
 
 impl Edge {
     pub fn nearest(r: Rect, y: f32) -> Self {
-        if (y - r.y).abs() <= (r.bottom() - y).abs() { Edge::Top } else { Edge::Bottom }
+        if (y - r.y).abs() <= (r.bottom() - y).abs() {
+            Edge::Top
+        } else {
+            Edge::Bottom
+        }
     }
 
     pub fn beside(r: Rect, parent: Rect) -> Self {
-        if r.x >= parent.x { Edge::Left } else { Edge::Right }
+        if r.x >= parent.x {
+            Edge::Left
+        } else {
+            Edge::Right
+        }
     }
 }
 
@@ -230,7 +238,8 @@ pub(super) fn baseline<B: TextBackend>(g: &mut Gfx<B>, r: Rect, font: FontStyle)
     (r.y + (r.h + m.ascent - m.descent) / 2.0).round()
 }
 
-#[cfg(windows)] const G_PIN_FILLED: &str = "\u{E841}";
+#[cfg(windows)]
+const G_PIN_FILLED: &str = "\u{E841}";
 
 #[cfg(windows)]
 pub(super) fn filled(glyph: &str) -> &str {
@@ -489,7 +498,13 @@ impl<'a, B: TextBackend> Paint<'a, B> {
 
     pub fn picker(&mut self, r: Rect, value: &str, font: FontStyle, angle: f32, open: bool, hot: bool) {
         let radius = self.px(BUTTON_RADIUS);
-        let fill = if open { self.t.accent_fill } else if hot { self.t.teal } else { self.t.button_pressed };
+        let fill = if open {
+            self.t.accent_fill
+        } else if hot {
+            self.t.teal
+        } else {
+            self.t.button_pressed
+        };
         self.g.dl.round_rect(r, fill, radius);
         let ink = if open || hot { ink_on(fill) } else { self.t.text };
         let arrow = self.px(22.0);

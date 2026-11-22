@@ -14,12 +14,16 @@ impl App {
                 let i = v.focus.filter(|&f| v.is_selected(f)).or_else(|| v.selected().next())?;
                 let e = l.entries[i as usize];
                 let name = l.name(i);
-                let row_dir = if crate::library::is_library(t.view_loc.path()) { FsPath::parse_exact(crate::library::folder(l, i)) } else if e.attrs & attr::NESTED != 0 { t.view_loc.to_windows().map(|d| d.join(l.folder(i))) } else { None };
+                let row_dir = if crate::library::is_library(t.view_loc.path()) {
+                    FsPath::parse_exact(crate::library::folder(l, i))
+                } else if e.attrs & attr::NESTED != 0 {
+                    t.view_loc.to_windows().map(|d| d.join(l.folder(i)))
+                } else {
+                    None
+                };
                 let path = if in_bin { recycle::recycled(l, i) } else { row_dir.as_ref().map_or_else(|| t.entry_location(i)?.to_windows(), |d| Some(d.join(name))) };
                 let kind = if e.is_dir() { Kind::Folder } else { preview::kind_of(name) };
-                let drive = (e.attrs & attr::VOLUME != 0)
-                    .then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free)))
-                    .flatten();
+                let drive = (e.attrs & attr::VOLUME != 0).then(|| self.nav.sidebar.places.drives.iter().find(|d| d.path.as_bytes().get(..2).is_some_and(|p| p.eq_ignore_ascii_case(name)) && d.total > 0).map(|d| (d.total, d.free))).flatten();
                 let dir_key = if in_bin { recycle::origin(l, i).to_vec() } else { row_dir.map_or(base.dir_key, |d| d.as_bytes().to_vec()) };
                 Some(Subject { title: name::display(name).into_owned(), path, kind, entry: Some(e), ext: l.ext(i).to_vec(), dir_key, drive, listing_gen: None, ..base })
             }
@@ -70,8 +74,7 @@ impl App {
     }
 
     pub(super) fn pretty_available(&self) -> bool {
-        matches!(self.preview.content, Content::Doc(_))
-            && self.preview.subject.as_ref().is_some_and(|s| preview::PrettyFormat::for_ext(&s.ext).is_some())
+        matches!(self.preview.content, Content::Doc(_)) && self.preview.subject.as_ref().is_some_and(|s| preview::PrettyFormat::for_ext(&s.ext).is_some())
     }
 
     pub(super) fn toggle_pretty(&mut self) {
@@ -93,9 +96,7 @@ impl App {
             return;
         }
         p.pretty = Pretty::Loading;
-        self.effects.push(Effect::PrettyPreview(PreviewRequest {
-            gen: p.gen, cancel: p.cancel.clone(), path, kind: s.kind, size: entry.size, details: false, px: 0,
-        }));
+        self.effects.push(Effect::PrettyPreview(PreviewRequest { gen: p.gen, cancel: p.cancel.clone(), path, kind: s.kind, size: entry.size, details: false, px: 0 }));
     }
 
     pub fn on_pretty(&mut self, gen: u64, result: Result<Doc, preview::PrettyError>) {

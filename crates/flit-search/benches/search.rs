@@ -32,7 +32,13 @@ pub fn synthetic(n: usize) -> VolumeIndex {
         let r = rnd();
         let id = 100 + i as u64;
         let is_dir = i < dirs;
-        let parent = if i == 0 { 5 } else if is_dir { 100 + (r % i as u64).max(i as u64 / 2) } else { 100 + r % dirs as u64 };
+        let parent = if i == 0 {
+            5
+        } else if is_dir {
+            100 + (r % i as u64).max(i as u64 / 2)
+        } else {
+            100 + r % dirs as u64
+        };
         name.clear();
         if is_dir {
             name.push_str(dir_names[(r >> 8) as usize % dir_names.len()]);
@@ -68,10 +74,7 @@ fn bench_size(c: &mut Criterion, n: usize, label: &str) {
     let never = || false;
     let mut g = c.benchmark_group(label);
     g.sample_size(20).measurement_time(Duration::from_secs(4));
-    let queries = [
-        "r", "re", "rep", "repo", "repor", "report", "report-12", "докум", "img_00", "*.jpg", "file1*.txt", "ext:rs;h;cpp", "size:>32mb", "dm:2023", "report ext:pdf size:<1mb",
-        "path:src", "regex:^img_\\d{3}5", "",
-    ];
+    let queries = ["r", "re", "rep", "repo", "repor", "report", "report-12", "докум", "img_00", "*.jpg", "file1*.txt", "ext:rs;h;cpp", "size:>32mb", "dm:2023", "report ext:pdf size:<1mb", "path:src", "regex:^img_\\d{3}5", ""];
     for key in [SortKey::Name, SortKey::Size] {
         for q in queries {
             let query = parse(q, clock).unwrap_or_else(|error| failed(&format!("invalid query {q:?}: {error}")));

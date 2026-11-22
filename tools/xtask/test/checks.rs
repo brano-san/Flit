@@ -7,15 +7,18 @@ fn metadata(bad_dependency: bool) -> layers::Metadata {
     if bad_dependency {
         members.push("flit-unregistered");
     }
-    let packages: Vec<_> = members.iter().map(|&name| {
-        let dependency = match (name, bad_dependency) {
-            ("flit-proto", false) => Some("flit-core"),
-            ("flit-core", true) => Some("flit-proto"),
-            _ => None,
-        };
-        let deps: Vec<_> = dependency.into_iter().map(|dep| json!({"name":dep, "rename":"alias", "path":format!("/repo/{dep}")})).collect();
-        json!({"id":name, "name":name, "manifest_path":format!("/repo/{name}/Cargo.toml"), "dependencies":deps})
-    }).collect();
+    let packages: Vec<_> = members
+        .iter()
+        .map(|&name| {
+            let dependency = match (name, bad_dependency) {
+                ("flit-proto", false) => Some("flit-core"),
+                ("flit-core", true) => Some("flit-proto"),
+                _ => None,
+            };
+            let deps: Vec<_> = dependency.into_iter().map(|dep| json!({"name":dep, "rename":"alias", "path":format!("/repo/{dep}")})).collect();
+            json!({"id":name, "name":name, "manifest_path":format!("/repo/{name}/Cargo.toml"), "dependencies":deps})
+        })
+        .collect();
     serde_json::from_value(json!({"packages":packages, "workspace_members":members, "resolve":{"nodes":[]}})).unwrap()
 }
 

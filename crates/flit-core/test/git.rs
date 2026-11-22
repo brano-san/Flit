@@ -100,10 +100,17 @@ fn repository_drops_accept_only_clone_links_or_repository_pages() {
         assert_eq!(dropped_repo_url(url), Some(want));
     }
     for url in [
-        "https://github.com/a/b/tree/main", "https://github.com/a/b/issues?tab=all",
-        "https://github.com.evil/a/b", "https://github.com@evil/a/b",
-        "https://example.com/a/b", "https://github.com/a", "https://github.com/a//b",
-        "git@host:user", "git@:user/repo", "file:///tmp/repo.git", "C:\\tmp\\repo.git",
+        "https://github.com/a/b/tree/main",
+        "https://github.com/a/b/issues?tab=all",
+        "https://github.com.evil/a/b",
+        "https://github.com@evil/a/b",
+        "https://example.com/a/b",
+        "https://github.com/a",
+        "https://github.com/a//b",
+        "git@host:user",
+        "git@:user/repo",
+        "file:///tmp/repo.git",
+        "C:\\tmp\\repo.git",
         "https://github.com/a/b\nhttps://github.com/c/d",
     ] {
         assert_eq!(dropped_repo_url(url), None, "{url}");

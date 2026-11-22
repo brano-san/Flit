@@ -317,7 +317,10 @@ fn outside_click_closes_unchanged_properties_but_keeps_edits() {
     deliver(&mut app, &[("a.txt", 0, 5)]);
     select(&mut app, &["a.txt"]);
     app.properties_dialog();
-    let ctl = match &app.dialogs.form.as_ref().unwrap().kind { Kind::Properties(m) => m.ctl.clone(), _ => unreachable!() };
+    let ctl = match &app.dialogs.form.as_ref().unwrap().kind {
+        Kind::Properties(m) => m.ctl.clone(),
+        _ => unreachable!(),
+    };
     let r = app.dialogs.form.as_ref().unwrap().rect;
     app.form_down(r.x + 2.0, r.y + 2.0, crate::input::MouseButton::Left, 1, Instant::now());
     assert!(app.dialogs.form.is_some(), "inside click keeps the dialog open");
@@ -365,17 +368,31 @@ fn async_dates_update_existing_rows_without_duplicates_or_shifting_measurement_t
         Kind::Properties(m) => (m.id, (m.rows.size, m.rows.on_disk, m.rows.accessed, m.rows.file_system)),
         _ => unreachable!(),
     };
-    props_reply(&mut app, vec![PropGroup { title: S::PropertiesDates.t().into(), rows: vec![
-        (S::PropertiesCreated.t().into(), "native creation date".into()),
-        (S::PropertiesAccessed.t().into(), "native access date".into()),
-        (S::PropertiesChanged.t().into(), "old metadata date".into()),
-        (S::PropertiesChanged.t().into(), "native metadata date".into()),
-    ] }]);
+    props_reply(
+        &mut app,
+        vec![PropGroup {
+            title: S::PropertiesDates.t().into(),
+            rows: vec![
+                (S::PropertiesCreated.t().into(), "native creation date".into()),
+                (S::PropertiesAccessed.t().into(), "native access date".into()),
+                (S::PropertiesChanged.t().into(), "old metadata date".into()),
+                (S::PropertiesChanged.t().into(), "native metadata date".into()),
+            ],
+        }],
+    );
     for (label, expected) in [(S::PropertiesCreated, "native creation date"), (S::PropertiesAccessed, "native access date"), (S::PropertiesChanged, "native metadata date")] {
-        let rows: Vec<_> = app.dialogs.form.as_ref().unwrap().controls.iter().filter_map(|c| match c {
-            Control::Value { label: shown, value } if shown == label.t() => Some(value.as_str()),
-            _ => None,
-        }).collect();
+        let rows: Vec<_> = app
+            .dialogs
+            .form
+            .as_ref()
+            .unwrap()
+            .controls
+            .iter()
+            .filter_map(|c| match c {
+                Control::Value { label: shown, value } if shown == label.t() => Some(value.as_str()),
+                _ => None,
+            })
+            .collect();
         assert_eq!(rows, [expected], "each date has one updated row");
     }
     let Kind::Properties(m) = &app.dialogs.form.as_ref().unwrap().kind else { unreachable!() };

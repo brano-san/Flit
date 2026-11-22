@@ -15,9 +15,7 @@ pub(crate) fn idle(handle: HANDLE) {
 #[cfg(not(test))]
 fn apply(handle: HANDLE, hint: &AlignedHint) {
     use windows::Win32::Storage::FileSystem::{FileIoPriorityHintInfo, SetFileInformationByHandle};
-    let _ = unsafe {
-        SetFileInformationByHandle(handle, FileIoPriorityHintInfo, (&hint.0 as *const FILE_IO_PRIORITY_HINT_INFO).cast(), size_of::<FILE_IO_PRIORITY_HINT_INFO>() as u32)
-    };
+    let _ = unsafe { SetFileInformationByHandle(handle, FileIoPriorityHintInfo, (&hint.0 as *const FILE_IO_PRIORITY_HINT_INFO).cast(), size_of::<FILE_IO_PRIORITY_HINT_INFO>() as u32) };
 }
 
 #[cfg(test)]

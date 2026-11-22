@@ -37,12 +37,7 @@ fn one_review_lists_every_existing_name_and_answers_late_conflicts_separately() 
     let folder = Meta { created: 1, attrs: attr::DIR, ..Meta::default() };
     let source = Meta { size: 17, ..Meta::default() };
     let existing = Meta { size: 25, ..Meta::default() };
-    let fs = Files { items: [
-        (path("/src/tree"), folder), (path("/out/tree"), folder),
-        (path("/src/tree/a"), source), (path("/out/tree/a"), existing),
-        (path("/src/b"), source), (path("/out/b"), existing),
-        (path("/src/new"), source),
-    ].into_iter().collect() };
+    let fs = Files { items: [(path("/src/tree"), folder), (path("/out/tree"), folder), (path("/src/tree/a"), source), (path("/out/tree/a"), existing), (path("/src/b"), source), (path("/out/b"), existing), (path("/src/new"), source)].into_iter().collect() };
     let op = FileOp::Copy { items: vec![path("/src/tree"), path("/src/new"), path("/src/b")], dest: path("/out") };
     let ctl = OpCtl::default();
     let found = collect(&fs, &op, &ctl);
@@ -78,9 +73,7 @@ fn a_review_above_the_row_limit_uses_individual_questions_with_apply_to_all() {
     let source = path("/source");
     let target = path("/target");
     let items: Vec<_> = names.iter().map(|n| source.join(n.as_bytes())).collect();
-    let fs = Files { items: names.iter().flat_map(|n| [
-        (source.join(n.as_bytes()), Meta::default()), (target.join(n.as_bytes()), Meta::default()),
-    ]).collect() };
+    let fs = Files { items: names.iter().flat_map(|n| [(source.join(n.as_bytes()), Meta::default()), (target.join(n.as_bytes()), Meta::default())]).collect() };
     let op = |count| FileOp::Copy { items: items[..count].to_vec(), dest: target.clone() };
     let ctl = OpCtl::default();
     let within_limit = collect(&fs, &op(5000), &ctl);
@@ -114,13 +107,7 @@ fn properties_and_conflict_collection_use_foreground_lists() {
 
     let dir = Meta { attrs: attr::DIR, ..Meta::default() };
     let file = Meta { size: 123, ..Meta::default() };
-    let fs = Priorities {
-        files: Files { items: [
-            (path("/source/tree"), dir), (path("/target/tree"), dir),
-            (path("/source/tree/file"), file), (path("/target/tree/file"), file),
-        ].into_iter().collect() },
-        background: Default::default(),
-    };
+    let fs = Priorities { files: Files { items: [(path("/source/tree"), dir), (path("/target/tree"), dir), (path("/source/tree/file"), file), (path("/target/tree/file"), file)].into_iter().collect() }, background: Default::default() };
     let op = FileOp::Copy { items: vec![path("/source/tree")], dest: path("/target") };
     assert_eq!(collect(&fs, &op, &OpCtl::default()).len(), 2);
     let totals = fs.measure(&[(path("/source/tree"), None)], &|| true, &mut |_| {});

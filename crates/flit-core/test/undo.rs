@@ -13,10 +13,7 @@ fn report(op: FileOp, items: &[(&str, &str)]) -> OpReport {
 fn replacing_a_destination_adds_its_restore_to_the_same_step() {
     let original = p("/target/a");
     let backup = p("/trash/files/a");
-    for (op, first) in [
-        (FileOp::Copy { items: vec![p("/source/a")], dest: p("/target") }, FileOp::Trash(vec![original.clone()])),
-        (FileOp::Move { items: vec![p("/source/a")], dest: p("/target") }, FileOp::MoveTo(vec![(original.clone(), p("/source/a"))])),
-    ] {
+    for (op, first) in [(FileOp::Copy { items: vec![p("/source/a")], dest: p("/target") }, FileOp::Trash(vec![original.clone()])), (FileOp::Move { items: vec![p("/source/a")], dest: p("/target") }, FileOp::MoveTo(vec![(original.clone(), p("/source/a"))]))] {
         let mut made = report(op, &[("/source/a", "/target/a")]);
         made.undo.replaced.push((original.clone(), Some(backup.clone())));
         let Some(Step::Checked(replay)) = inverse(&made) else { panic!("replacement must be reversed as one step") };

@@ -215,7 +215,9 @@ impl App {
         match action {
             "open" if !folder => self.effects.push(Effect::Provider { provider: location.provider(), req: ProviderRequest::Open { tab: self.tab().id, path: location.path().clone() } }),
             "open" | "reveal" | "reveal_tab" => {
-                let (folder, select) = if action == "open" { (location, None) } else {
+                let (folder, select) = if action == "open" {
+                    (location, None)
+                } else {
                     let Some(parent) = location.parent() else { return };
                     (parent, Some(location.file_name().to_vec()))
                 };
@@ -443,7 +445,11 @@ impl App {
             return false;
         }
         let h = self.search_hit(x, y);
-        self.set_cursor(match h { SHit::Field => CursorIcon::Text, SHit::ColSep(_) => CursorIcon::ResizeHorizontal, _ => CursorIcon::Default });
+        self.set_cursor(match h {
+            SHit::Field => CursorIcon::Text,
+            SHit::ColSep(_) => CursorIcon::ResizeHorizontal,
+            _ => CursorIcon::Default,
+        });
         if h != self.search.hover {
             self.search.hover = h;
             self.tip_hover(self.search_tip_hit(), now);

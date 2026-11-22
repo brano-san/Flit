@@ -53,16 +53,12 @@ impl CommandUsage {
     }
 
     fn record(&mut self, id: &str) {
-        let count = self.0.iter().position(|(name, _)| name == id)
-            .map_or(0, |i| self.0.remove(i).1);
+        let count = self.0.iter().position(|(name, _)| name == id).map_or(0, |i| self.0.remove(i).1);
         self.0.insert(0, (id.to_owned(), count.saturating_add(1)));
     }
 
     fn suggestions(&self, ids: &[usize], live: &[bool]) -> Vec<usize> {
-        let mut candidates: Vec<_> = self.0.iter().filter_map(|(id, count)| {
-            ids.iter().zip(live).position(|(&i, &enabled)| enabled && ACTIONS[i].id == id)
-                .map(|i| (i, *count))
-        }).collect();
+        let mut candidates: Vec<_> = self.0.iter().filter_map(|(id, count)| ids.iter().zip(live).position(|(&i, &enabled)| enabled && ACTIONS[i].id == id).map(|i| (i, *count))).collect();
         let recent = candidates.len().min(SUGGESTED_COMMANDS);
         candidates[recent..].sort_by_key(|&(_, count)| Reverse(count));
         candidates.into_iter().take(recent + SUGGESTED_COMMANDS).map(|(i, _)| i).collect()
@@ -175,7 +171,9 @@ impl Pick {
     }
 
     fn is_input(&self) -> bool {
-        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server | Pick::Label(_) | Pick::SaveLayout | Pick::OpenWithCommand(_)) || matches!(self, Pick::Tags(t) if t.is_input()) || matches!(self, Pick::Setting(p) if p.is_input())
+        matches!(self, Pick::Shortcut(_) | Pick::Stream(_) | Pick::FolderIcon(_) | Pick::NewLibrary | Pick::LibraryAdd(_) | Pick::Server | Pick::Label(_) | Pick::SaveLayout | Pick::OpenWithCommand(_))
+            || matches!(self, Pick::Tags(t) if t.is_input())
+            || matches!(self, Pick::Setting(p) if p.is_input())
     }
 }
 
@@ -232,7 +230,11 @@ fn rank<'a>(query: &str, items: impl Iterator<Item = (&'a str, &'a str, &'a str)
 
 fn searched_description(i: usize) -> String {
     let (local, en) = (ACTIONS[i].desc.t(), ACTIONS[i].desc.en());
-    if local == en { en.to_owned() } else { format!("{local} {en}") }
+    if local == en {
+        en.to_owned()
+    } else {
+        format!("{local} {en}")
+    }
 }
 
 fn desc_marks(query: &str, desc: &str) -> Vec<Range<usize>> {
@@ -322,7 +324,11 @@ impl Palette {
     }
 
     fn unit(&self) -> f32 {
-        if self.commands.as_ref().is_some_and(|c| c.descriptions) || self.pick == Pick::Tabs { DESC_ROW_H } else { ROW_H }
+        if self.commands.as_ref().is_some_and(|c| c.descriptions) || self.pick == Pick::Tabs {
+            DESC_ROW_H
+        } else {
+            ROW_H
+        }
     }
 
     fn command_lines(&mut self) {
@@ -388,7 +394,11 @@ impl Palette {
         let suggests = self.pick.is_input() && !self.titles.is_empty();
         let ranked = if suggests {
             let found = rank(self.field.text(), self.titles.iter().map(String::as_str).zip(alts).zip(descs).map(|((t, a), d)| (t, a, d)));
-            if found.is_empty() { (0..self.titles.len()).map(|i| (i, Vec::new())).collect() } else { found }
+            if found.is_empty() {
+                (0..self.titles.len()).map(|i| (i, Vec::new())).collect()
+            } else {
+                found
+            }
         } else if self.pick.is_input() {
             Vec::new()
         } else if matches!(self.pick, Pick::Setting(SettingPick::Capture { .. })) {
@@ -451,8 +461,7 @@ impl Palette {
         let id = match line {
             Line::Header(group) => hash::hash(&("palette-group", *group as u8)),
             Line::Item(k, ..) => {
-                let suggested = index <= c.suggested.len() && matches!(c.lines.first(), Some(Line::Header(Group::CommandUsage)))
-                    && !c.collapsed.contains(&Group::CommandUsage);
+                let suggested = index <= c.suggested.len() && matches!(c.lines.first(), Some(Line::Header(Group::CommandUsage))) && !c.collapsed.contains(&Group::CommandUsage);
                 hash::hash(&("palette-command", ACTIONS[self.ids[*k]].id, suggested))
             }
             Line::Shell(command, _) => hash::hash(&("palette-shell", c.shell.as_ref()?.0, command)),
@@ -470,7 +479,6 @@ impl Palette {
             c.caps = self.ids.iter().map(|&i| keymap.shown(i)).collect();
         }
     }
-
 }
 
 impl App {
@@ -483,8 +491,7 @@ impl App {
     fn update_palette_shell(&mut self) {
         let Some(p) = self.nav.palette.as_ref().filter(|p| p.commands.is_some()) else { return };
         let text = p.field.text().trim_start();
-        let wanted = !self.caps.unix_paths && text.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("shell"))
-            && text.get(5..).is_some_and(|s| s.is_empty() || s.starts_with(char::is_whitespace));
+        let wanted = !self.caps.unix_paths && text.get(..5).is_some_and(|s| s.eq_ignore_ascii_case("shell")) && text.get(5..).is_some_and(|s| s.is_empty() || s.starts_with(char::is_whitespace));
         let running = p.commands.as_ref().is_some_and(|c| c.shell.is_some());
         if !wanted {
             if running {
@@ -815,8 +822,7 @@ impl App {
     }
 
     pub(super) fn palette_has_accessible_command(&self, row: usize, id: u64) -> bool {
-        !self.search.active && !self.dialogs.modal()
-            && self.nav.palette.as_ref().and_then(|p| p.accessible_command(row)).is_some_and(|(current, _, _)| current == id)
+        !self.search.active && !self.dialogs.modal() && self.nav.palette.as_ref().and_then(|p| p.accessible_command(row)).is_some_and(|(current, _, _)| current == id)
     }
 
     pub(super) fn palette_click(&mut self, x: f32, clicks: u8, extend: bool) {
@@ -898,11 +904,7 @@ impl App {
         p.list = list;
         let sw = s(SCROLL_W);
         let tx = list.right() - s(4.0) - sw;
-        (p.arrows, p.track) = if scrolls {
-            ([Rect::new(tx, list.y, sw, sw), Rect::new(tx, list.bottom() - sw, sw, sw)], Rect::new(tx, list.y + sw, sw, (list.h - 2.0 * sw).max(0.0)))
-        } else {
-            ([Rect::default(); 2], Rect::default())
-        };
+        (p.arrows, p.track) = if scrolls { ([Rect::new(tx, list.y, sw, sw), Rect::new(tx, list.bottom() - sw, sw, sw)], Rect::new(tx, list.y + sw, sw, (list.h - 2.0 * sw).max(0.0))) } else { ([Rect::default(); 2], Rect::default()) };
         p.hints = Rect::new(x, list.bottom(), pw, hint_h.max(s(6.0)));
         p.rect = Rect::new(x, y, pw, p.hints.bottom() - y);
     }
@@ -1123,7 +1125,17 @@ impl App {
             w.separator(hints.x + s12, hints.y, hints.w - 2.0 * s12);
             let keys = [S::WidgetsKeyUp.t(), S::WidgetsKeyDown.t()];
             if p.go.is_some() {
-                w.hints_within(hints, &[(&keys, S::WidgetsHintNavigate.t()), (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()), (&[S::WidgetsKeyTab.t()], S::WidgetsHintExpand.t()), (&[S::WidgetsKeyCtrlEnter.t()], S::WidgetsHintOpenInPanel.t()), (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t())], small);
+                w.hints_within(
+                    hints,
+                    &[
+                        (&keys, S::WidgetsHintNavigate.t()),
+                        (&[S::WidgetsKeyEnter.t()], S::WidgetsHintUse.t()),
+                        (&[S::WidgetsKeyTab.t()], S::WidgetsHintExpand.t()),
+                        (&[S::WidgetsKeyCtrlEnter.t()], S::WidgetsHintOpenInPanel.t()),
+                        (&[S::WidgetsKeyEscape.t()], S::WidgetsHintDismiss.t()),
+                    ],
+                    small,
+                );
             } else {
                 let (enter, f2, escape) = ([S::WidgetsKeyEnter.t()], [S::WidgetsKeyF2.t()], [S::WidgetsKeyEscape.t()]);
                 let base: [(&[&str], &str); 3] = [(&keys, S::WidgetsHintNavigate.t()), (&enter, S::WidgetsHintUse.t()), (&escape, S::WidgetsHintDismiss.t())];

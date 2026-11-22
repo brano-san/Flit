@@ -102,7 +102,13 @@ fn undo_history_groups_dependent_actions_from_newest_to_oldest() {
     }
     let earlier = app.ops.journal.entries(Origin::Undo)[0].id;
     assert!(app.run_action("edit.undo_history", t0()));
-    let menu = app.drain_effects().find_map(|e| match e { Effect::ShellMenu(menu) => Some(menu), _ => None }).unwrap();
+    let menu = app
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::ShellMenu(menu) => Some(menu),
+            _ => None,
+        })
+        .unwrap();
     app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending: false }, t0());
     app.frame(&mut Gfx::new(Mono, 1024), t0());
     assert!(app.own_menu_open());
@@ -127,10 +133,13 @@ fn checked_undo_keeps_the_provider_that_observed_the_file() {
     let undo = FileOp::Trash(vec![p(r"\\wsl.localhost\Ubuntu\home\copy.txt")]);
     let plan = crate::undo::Replay { steps: vec![undo.clone()], checks: Vec::new(), recheck_tree: false, captured_ns: None };
     app.start_op_with_ctl(ProviderId::Local, app.tab().id, undo.clone(), Origin::Undo, Then::Select, OpCtl::checked(plan.clone()));
-    let (provider, op, checks) = app.drain_effects().find_map(|e| match e {
-        Effect::Provider { provider, req: ProviderRequest::Op { op, ctl, .. } } => Some((provider, op, ctl.replay().cloned())),
-        _ => None,
-    }).unwrap();
+    let (provider, op, checks) = app
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::Provider { provider, req: ProviderRequest::Op { op, ctl, .. } } => Some((provider, op, ctl.replay().cloned())),
+            _ => None,
+        })
+        .unwrap();
     assert_eq!((provider, op, checks), (ProviderId::Local, undo, Some(plan)));
 }
 
@@ -458,7 +467,11 @@ fn operations_inside_one_distro_are_routed_to_its_agent() {
     let back = FileOp::Trash(vec![p(r"\\wsl.localhost\Ubuntu\tmp\a")]);
     assert_eq!(route(ubuntu(), back, false), Some((ubuntu(), FileOp::Trash(vec![p("/tmp/a")]))), "a step recorded from a share report is routed by its paths");
     assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")]), false), None, "Linux paths never go to Windows");
-    assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p("/home/u/a")], dest: p(r"C:\b") }, false), Some((local.clone(), FileOp::Copy { items: vec![p(r"\\wsl.localhost\Ubuntu\home\u\a")], dest: p(r"C:\b") })), "WSL and Windows items go together through the WSL share");
+    assert_eq!(
+        route(ubuntu(), FileOp::Copy { items: vec![p("/home/u/a")], dest: p(r"C:\b") }, false),
+        Some((local.clone(), FileOp::Copy { items: vec![p(r"\\wsl.localhost\Ubuntu\home\u\a")], dest: p(r"C:\b") })),
+        "WSL and Windows items go together through the WSL share"
+    );
     assert_eq!(route(ubuntu(), FileOp::Copy { items: vec![p(r"C:\a")], dest: p("/tmp") }, false), Some((local.clone(), FileOp::Copy { items: vec![p(r"C:\a")], dest: p(r"\\wsl.localhost\Ubuntu\tmp") })));
     assert_eq!(route(local.clone(), FileOp::Delete(vec![p("/etc")]), true), Some((local.clone(), FileOp::Delete(vec![p("/etc")]))), "a Linux build runs Linux paths locally");
     assert_eq!(route(local.clone(), FileOp::Copy { items: vec![p("/a")], dest: p(r"C:\b") }, true), None);
@@ -804,11 +817,18 @@ fn right_drop_links_use_the_existing_job_queue_select_the_created_item_and_undo_
     app.drag(&DragEvent::Enter { paths: vec![source.clone()], x: at.0, y: at.1, mods: NO, allowed, right: true }, t0());
     app.drag(&DragEvent::Drop { x: at.0, y: at.1, mods: NO, allowed }, t0());
     let effects: Vec<_> = app.drain_effects().collect();
-    let generation = effects.iter().find_map(|e| if let Effect::LinkChoices { generation, items, dest } = e {
-        assert_eq!(items.as_ref().unwrap(), std::slice::from_ref(&source));
-        assert_eq!(dest, &p(r"C:\x"));
-        Some(*generation)
-    } else { None }).unwrap();
+    let generation = effects
+        .iter()
+        .find_map(|e| {
+            if let Effect::LinkChoices { generation, items, dest } = e {
+                assert_eq!(items.as_ref().unwrap(), std::slice::from_ref(&source));
+                assert_eq!(dest, &p(r"C:\x"));
+                Some(*generation)
+            } else {
+                None
+            }
+        })
+        .unwrap();
     let menu = effects.into_iter().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).unwrap();
     app.on_event(&Event::LinkChoices { generation, choices: LinkChoices([true, true, false, true]) }, t0());
     run_menu(&mut app, &menu, "Hard link");
@@ -1782,7 +1802,6 @@ fn ctrl_alt_c_stays_free_on_windows_so_the_font_commands_can_use_ctrl_alt() {
     assert!(copied(&mut app).is_none(), "Ctrl+Alt+C is not bound on Windows");
 }
 
-
 #[test]
 fn cut_items_stay_dimmed_until_the_clipboard_changes() {
     let mut app = app_at(r"C:\x");
@@ -1930,10 +1949,7 @@ fn restore_all_from_the_sidebar_lists_the_bin_first_when_it_is_not_open() {
     let mut app = app_at(r"C:\work");
     app.drain_effects().for_each(drop);
     assert!(app.run_action("bin.restore_all", t0()));
-    let (gen, out, path) = app
-        .drain_effects()
-        .find_map(|e| if let Effect::Provider { req: ProviderRequest::List { gen, out, path, .. }, .. } = e { Some((gen, out, path)) } else { None })
-        .expect("the bin is listed");
+    let (gen, out, path) = app.drain_effects().find_map(|e| if let Effect::Provider { req: ProviderRequest::List { gen, out, path, .. }, .. } = e { Some((gen, out, path)) } else { None }).expect("the bin is listed");
     assert_eq!(path, *Location::recycle_bin().path());
     assert!(app.tab().error.is_none());
     let (listing, keys) = bin_listing(&[BIN_REPORT, BIN_OLD]);
@@ -2213,13 +2229,7 @@ fn the_rename_menu_opens_with_the_mouse_or_the_menu_key() {
     key(&mut app, Key::F(2), NO);
     app.drain_effects().for_each(drop);
     key(&mut app, Key::F(10), SHIFT);
-    let labels: Vec<String> = app
-        .drain_effects()
-        .find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None })
-        .unwrap()
-        .into_iter()
-        .filter_map(|i| if let MenuItem::Command { label, .. } = i { Some(label) } else { None })
-        .collect();
+    let labels: Vec<String> = app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).unwrap().into_iter().filter_map(|i| if let MenuItem::Command { label, .. } = i { Some(label) } else { None }).collect();
     assert_eq!(labels, ["Undo", "Cut", "Copy", "Paste", "Delete", "Select All", "Insert Incremental ID", "Insert Current Date", "Insert File Create Date", "Insert File Last Modified Date", "Uppercase", "Lowercase"]);
     assert!(app.is_renaming());
 }
@@ -2295,10 +2305,12 @@ fn run_in_terminal_launches_only_an_executable_file() {
     t.slot.publish(Arc::new(snap));
     app.poll();
     app.drain_effects().for_each(drop);
-    let launched = |app: &mut App| app.drain_effects().find_map(|e| match e {
-        Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminal { program }, .. }, .. } => Some(program),
-        _ => None,
-    });
+    let launched = |app: &mut App| {
+        app.drain_effects().find_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminal { program }, .. }, .. } => Some(program),
+            _ => None,
+        })
+    };
     select(&mut app, &["notes.txt"]);
     app.run_in_terminal();
     assert_eq!(launched(&mut app), None);
@@ -2421,10 +2433,12 @@ fn renaming_a_drive_is_offered_in_its_menu_and_shell_failures_show_in_the_status
 fn run_in_terminal_on_windows_takes_programs_and_scripts_by_extension() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("setup.exe", false), ("build.CMD", false), ("notes.txt", false), ("tools.exe", true)]);
-    let launched = |app: &mut App| app.drain_effects().find_map(|e| match e {
-        Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminal { program }, .. }, .. } => Some(program),
-        _ => None,
-    });
+    let launched = |app: &mut App| {
+        app.drain_effects().find_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminal { program }, .. }, .. } => Some(program),
+            _ => None,
+        })
+    };
     for (name, expected) in [("setup.exe", Some(p(r"C:\x\setup.exe"))), ("build.CMD", Some(p(r"C:\x\build.CMD"))), ("notes.txt", None), ("tools.exe", None)] {
         select(&mut app, &[name]);
         app.run_in_terminal();
@@ -2436,7 +2450,6 @@ fn run_in_terminal_on_windows_takes_programs_and_scripts_by_extension() {
     app.run_in_terminal();
     assert_eq!(launched(&mut app), None, "on Linux only the executable bit counts");
 }
-
 
 #[test]
 fn trashing_shows_an_undo_bar_that_untrashes_and_disappears() {
@@ -2482,7 +2495,9 @@ fn trashing_shows_an_undo_bar_that_untrashes_and_disappears() {
     done(&mut app, id, op, &[(r"C:\x\c.txt", r"C:\x\c.txt")]);
     assert!(app.tab().undo.is_none(), "a permanent delete shows no bar");
 
-    if let Some(t) = app.tabs.items.get_mut(app.tabs.cur) { t.undo = Some((1, t0() - Duration::from_secs(6))); }
+    if let Some(t) = app.tabs.items.get_mut(app.tabs.cur) {
+        t.undo = Some((1, t0() - Duration::from_secs(6)));
+    }
     app.frame(&mut Gfx::new(Mono, 1024), t0());
     assert!(app.tab().undo.is_none(), "the bar expires after five seconds");
 }

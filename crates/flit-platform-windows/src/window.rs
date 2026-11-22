@@ -20,14 +20,19 @@ use std::sync::Arc;
 use windows::core::{w, BOOL, PCWSTR};
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_CLOAK, DWMWA_USE_IMMERSIVE_DARK_MODE};
-use windows::Win32::Graphics::Gdi::{GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromRect, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO, MONITOR_DEFAULTTONEAREST};
+use windows::Win32::Graphics::Gdi::{
+    GetSysColor, SYS_COLOR_INDEX, COLOR_BTNFACE, COLOR_GRAYTEXT, COLOR_HIGHLIGHT, COLOR_HIGHLIGHTTEXT, COLOR_HOTLIGHT, COLOR_WINDOW, COLOR_WINDOWTEXT, ClientToScreen, GetMonitorInfoW, MonitorFromRect, MonitorFromWindow, ScreenToClient, ValidateRect, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST,
+};
 use windows::Win32::System::DataExchange::{AddClipboardFormatListener, CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber, IsClipboardFormatAvailable, SetClipboardData};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_BINARY, RRF_RT_REG_DWORD};
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE};
 use windows::Win32::System::Ole::CF_UNICODETEXT;
 use windows::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow, GetSystemMetricsForDpi, SetProcessDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2};
-use windows::Win32::UI::Input::Ime::{ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionWindow, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IME_COMPOSITION_STRING, ISC_SHOWUICOMPOSITIONWINDOW};
+use windows::Win32::UI::Input::Ime::{
+    ImmGetCompositionStringW, ImmGetContext, ImmReleaseContext, ImmSetCandidateWindow, ImmSetCompositionWindow, CANDIDATEFORM, CFS_EXCLUDE, CFS_POINT, COMPOSITIONFORM, GCS_COMPSTR, GCS_CURSORPOS, GCS_RESULTSTR, IME_COMPOSITION_STRING, ISC_SHOWUICOMPOSITIONWINDOW,
+};
 use windows::Win32::UI::Input::KeyboardAndMouse::*;
 use windows::Win32::UI::Input::Touch::{SetGestureConfig, GESTURECONFIG, GID_PAN};
 use windows::Win32::System::Threading::WaitForSingleObjectEx;
@@ -332,14 +337,10 @@ impl WindowControls for Win32Window {
         if h.is_invalid() || unsafe { GetForegroundWindow() } == h {
             return;
         }
-        let info = FLASHWINFO {
-            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
-            hwnd: h,
-            dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
-            uCount: 0,
-            dwTimeout: 0,
-        };
-        unsafe { let _ = FlashWindowEx(&info); }
+        let info = FLASHWINFO { cbSize: std::mem::size_of::<FLASHWINFO>() as u32, hwnd: h, dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG, uCount: 0, dwTimeout: 0 };
+        unsafe {
+            let _ = FlashWindowEx(&info);
+        }
     }
 
     fn open_window(&self, opts: WindowOptions) {
@@ -380,13 +381,7 @@ impl WindowControls for Win32Window {
             },
         }
         let r = wp.rcNormalPosition;
-        Placement {
-            x: r.left,
-            y: r.top,
-            width: r.right - r.left,
-            height: r.bottom - r.top,
-            maximized: wp.showCmd == SW_SHOWMAXIMIZED.0 as u32,
-        }
+        Placement { x: r.left, y: r.top, width: r.right - r.left, height: r.bottom - r.top, maximized: wp.showCmd == SW_SHOWMAXIMIZED.0 as u32 }
     }
 
     fn toggle_fullscreen(&self) {
@@ -596,7 +591,11 @@ fn text_scale() -> f32 {
     let mut percent = 100u32;
     let mut size = 4u32;
     let read = unsafe { RegGetValueW(HKEY_CURRENT_USER, w!(r"Software\Microsoft\Accessibility"), w!("TextScaleFactor"), RRF_RT_REG_DWORD, None, Some((&mut percent as *mut u32).cast()), Some(&mut size)) };
-    if read.is_ok() { percent as f32 / 100.0 } else { 1.0 }
+    if read.is_ok() {
+        percent as f32 / 100.0
+    } else {
+        1.0
+    }
 }
 
 fn client_area_animation() -> bool {
@@ -762,32 +761,13 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         let (ex, at) = if hidden { (WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, -32000) } else { (WS_EX_APPWINDOW, CW_USEDEFAULT) };
         let wanted = std::env::var("FLIT_CAPTURE_SIZE").ok().filter(|_| hidden).and_then(|v| v.split_once(',').and_then(|(w, h)| Some((w.trim().parse::<f32>().ok()?, h.trim().parse::<f32>().ok()?))));
         let (width, height) = wanted.unwrap_or((1100.0, 720.0));
-        let hwnd = CreateWindowExW(
-            WS_EX_NOREDIRECTIONBITMAP | ex,
-            WINDOW_CLASS,
-            PCWSTR(title.as_ptr()),
-            WS_OVERLAPPEDWINDOW,
-            at,
-            at,
-            (width * sys) as i32,
-            (height * sys) as i32,
-            None,
-            None,
-            Some(self.hinst),
-            Some(Rc::as_ptr(&node) as *const _),
-        )
-        .map_err(err)?;
+        let hwnd = CreateWindowExW(WS_EX_NOREDIRECTIONBITMAP | ex, WINDOW_CLASS, PCWSTR(title.as_ptr()), WS_OVERLAPPEDWINDOW, at, at, (width * sys) as i32, (height * sys) as i32, None, None, Some(self.hinst), Some(Rc::as_ptr(&node) as *const _)).map_err(err)?;
         OPEN.with_borrow_mut(|open| open.push((hwnd.0 as isize, id)));
         let mut maximized = false;
         if let Some(p) = opts.placement.filter(|p| !hidden && p.width > 100 && p.height > 100) {
             let saved = RECT { left: p.x, top: p.y, right: p.x + p.width, bottom: p.y + p.height };
             let room = within_monitor(saved, false);
-            let wp = WINDOWPLACEMENT {
-                length: size_of::<WINDOWPLACEMENT>() as u32,
-                showCmd: SW_HIDE.0 as u32,
-                rcNormalPosition: RECT { right: saved.left + (room.right - room.left), bottom: saved.top + (room.bottom - room.top), ..saved },
-                ..Default::default()
-            };
+            let wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, showCmd: SW_HIDE.0 as u32, rcNormalPosition: RECT { right: saved.left + (room.right - room.left), bottom: saved.top + (room.bottom - room.top), ..saved }, ..Default::default() };
             let _ = SetWindowPlacement(hwnd, &wp);
             maximized = p.maximized;
         }
@@ -1299,8 +1279,7 @@ unsafe fn handle<H: WindowHandler<Win32>>(s: &Node<H>, hwnd: HWND, msg: u32, wp:
             s.send(Event::MouseLeave);
             Some(LRESULT(0))
         }
-        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK | WM_MBUTTONDOWN | WM_MBUTTONDBLCLK | WM_XBUTTONDOWN
-        | WM_XBUTTONDBLCLK => {
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK | WM_RBUTTONDOWN | WM_RBUTTONDBLCLK | WM_MBUTTONDOWN | WM_MBUTTONDBLCLK | WM_XBUTTONDOWN | WM_XBUTTONDBLCLK => {
             let button = match msg {
                 WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => MouseButton::Left,
                 WM_RBUTTONDOWN | WM_RBUTTONDBLCLK => MouseButton::Right,

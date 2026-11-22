@@ -226,7 +226,13 @@ pub struct Palette {
 impl Palette {
     pub fn new(dark: bool, background: Tint, areas: [Tint; 5]) -> Self {
         let base = match background.color(dark) {
-            None => if dark { DARK } else { LIGHT },
+            None => {
+                if dark {
+                    DARK
+                } else {
+                    LIGHT
+                }
+            }
             Some(bg) => derive(bg),
         };
         let dark = is_dark(base.bg);
@@ -343,7 +349,11 @@ pub fn mix(a: Color, b: Color, t: f32) -> Color {
 pub fn luminance(c: Color) -> f32 {
     let lin = |v: f32| {
         let s = v / 255.0;
-        if s <= 0.040_45 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        if s <= 0.040_45 {
+            s / 12.92
+        } else {
+            ((s + 0.055) / 1.055).powf(2.4)
+        }
     };
     let [r, g, b] = channels(c).map(lin);
     0.2126 * r + 0.7152 * g + 0.0722 * b
@@ -359,7 +369,11 @@ pub fn is_dark(bg: Color) -> bool {
 }
 
 pub fn ink_on(fill: Color) -> Color {
-    if is_dark(fill) { WHITE } else { BLACK }
+    if is_dark(fill) {
+        WHITE
+    } else {
+        BLACK
+    }
 }
 
 fn readable(c: Color, bg: Color, pole: Color, min: f32) -> Color {
@@ -394,14 +408,7 @@ impl Accent {
         let dark = is_dark(t.chrome);
         let pole = if dark { WHITE } else { BLACK };
         let accent = readable(if dark { self.dark } else { self.light }, t.chrome, pole, MIN_ACCENT_CONTRAST);
-        Theme {
-            accent,
-            selection: accent.alpha(alpha(t.selection)),
-            focus_ring: accent.alpha(alpha(t.focus_ring)),
-            text_selection: accent.alpha(alpha(t.text_selection)),
-            accent_fill: self.light,
-            ..*t
-        }
+        Theme { accent, selection: accent.alpha(alpha(t.selection)), focus_ring: accent.alpha(alpha(t.focus_ring)), text_selection: accent.alpha(alpha(t.text_selection)), accent_fill: self.light, ..*t }
     }
 }
 
@@ -428,15 +435,7 @@ pub const DRAG_GHOST_FOLDER_PIXEL: u32 = 0xf0bc48;
 pub const CLEAR_PIXEL: [u8; 4] = [0; 4];
 pub const TRANSPARENT: Color = Color::rgba(0);
 
-pub const CONTRAST_PREVIEW: SystemColors = SystemColors {
-    window: BLACK,
-    window_text: WHITE,
-    highlight: Color::rgb(0x1AEBFF),
-    highlight_text: BLACK,
-    hotlight: Color::rgb(0x75E9FC),
-    gray_text: Color::rgb(0x3FF23F),
-    btn_face: BLACK,
-};
+pub const CONTRAST_PREVIEW: SystemColors = SystemColors { window: BLACK, window_text: WHITE, highlight: Color::rgb(0x1AEBFF), highlight_text: BLACK, hotlight: Color::rgb(0x75E9FC), gray_text: Color::rgb(0x3FF23F), btn_face: BLACK };
 
 pub(crate) fn preview_checker(dark: bool) -> (Color, Color) {
     if dark {

@@ -5,7 +5,9 @@ fn uri_actions_keep_the_system_opener_route() {
     let dir = FsPath::parse("/tmp").unwrap();
     for startup_notify in [false, true] {
         let entry = UserEntry { command: "https://example.com/docs".into(), startup_notify, ..UserEntry::default() };
-        let Some(Launch::Command { runs, .. }) = entry_launch(&entry, &Places { items: &[], dir: "/tmp" }, &dir) else { panic!("a URI must carry its notification preference to the opener"); };
+        let Some(Launch::Command { runs, .. }) = entry_launch(&entry, &Places { items: &[], dir: "/tmp" }, &dir) else {
+            panic!("a URI must carry its notification preference to the opener");
+        };
         assert_eq!(runs[0].0, ["https://example.com/docs"]);
         assert_eq!(runs[0].1, [("FLIT_STARTUP_NOTIFY".to_owned(), if startup_notify { "1" } else { "0" }.to_owned())]);
     }
@@ -74,10 +76,12 @@ fn labels(items: &[MenuItem]) -> Vec<String> {
 fn launched(a: &mut App, menu: &ShellMenu, label: &str) -> Launch {
     let k = labels(&menu.menu).iter().position(|l| l == label).unwrap_or_else(|| panic!("{label} missing"));
     a.on_event(&Event::MenuCommand(k), Instant::now());
-    a.drain_effects().find_map(|e| match e {
-        Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
-        _ => None,
-    }).unwrap()
+    a.drain_effects()
+        .find_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
+            _ => None,
+        })
+        .unwrap()
 }
 
 fn shown(p: &str) -> String {
@@ -204,7 +208,13 @@ fn custom_shortcut_launches_only_when_appearance_conditions_match() {
     right_click(&mut a, Some(0));
     let mods = crate::input::Mods { ctrl: true, shift: true, alt: false };
     assert!(a.user_shortcut(crate::input::Key::Char('H'), mods));
-    let launch = a.drain_effects().find_map(|e| match e { Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch), _ => None }).unwrap();
+    let launch = a
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } => Some(launch),
+            _ => None,
+        })
+        .unwrap();
     let Launch::Command { runs, .. } = launch else { panic!("custom actions use argv") };
     assert_eq!(runs[0].0, ["inspect".to_owned(), shown(r"C:\x\a b.txt")]);
     assert_eq!(runs[0].1, [("FLIT_STARTUP_NOTIFY".into(), "1".into())]);
@@ -220,7 +230,9 @@ fn editor_saves_metadata_and_rejects_invalid_shortcuts() {
     a.form_submit(0);
     assert!(a.dialogs.form.as_ref().is_some_and(|f| f.error));
     form_texts(&mut a, &[(SHORTCUT, "Ctrl+Shift+H")], &[]);
-    if let Some(Control::Check { on, .. }) = a.dialogs.form.as_mut().unwrap().controls.get_mut(NOTIFY) { *on = true; }
+    if let Some(Control::Check { on, .. }) = a.dialogs.form.as_mut().unwrap().controls.get_mut(NOTIFY) {
+        *on = true;
+    }
     a.form_submit(0);
     assert!(a.dialogs.form.is_none());
     let e = &a.settings.opts.user_menu[0];

@@ -111,7 +111,13 @@ fn query<P: IndexPlatform>(text: &str) -> Result<(), String> {
             Message::Rows { entries, dirs, .. } => {
                 for ((name, meta), dir) in entries.entries(true).map_err(|e| e.to_string())?.zip(dirs) {
                     let dir = String::from_utf8_lossy(&dir);
-                    let sep = if dir.ends_with(['\\', '/']) { "" } else if cfg!(windows) { "\\" } else { "/" };
+                    let sep = if dir.ends_with(['\\', '/']) {
+                        ""
+                    } else if cfg!(windows) {
+                        "\\"
+                    } else {
+                        "/"
+                    };
                     println!("{:>12}  {dir}{sep}{}", meta.size, String::from_utf8_lossy(name));
                 }
                 return Ok(());

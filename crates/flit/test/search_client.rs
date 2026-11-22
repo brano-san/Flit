@@ -158,22 +158,12 @@ fn unix_folders_scope_queries_with_slashes() {
 #[test]
 fn w3_review_regex_at_the_end_of_an_or_query_keeps_the_indexed_folder_scope() {
     let dir = flit_core::Location::parse(r"C:\Docs").unwrap();
-    let q = SearchRequest::Query {
-        gen: 1, text: "other OR regex:^a.*b$".into(), conditions: vec!["size:>4".into()],
-        sort: SearchSort::default(), scope: SearchScope::Indexed(dir), paths: Default::default(),
-    };
+    let q = SearchRequest::Query { gen: 1, text: "other OR regex:^a.*b$".into(), conditions: vec!["size:>4".into()], sort: SearchSort::default(), scope: SearchScope::Indexed(dir), paths: Default::default() };
     let Some(Message::Query { text, conditions, paths, .. }) = to_message(&q) else { panic!() };
     let mut q = query::parse_with_conditions(&text, &conditions, Clock::system(0)).unwrap();
     q.paths = paths;
-    for (name, path, size, matches) in [
-        ("axb", r"C:\Docs\axb", 5, true),
-        ("other", r"C:\Docs\Other", 5, true),
-        ("axb", r"C:\Docs2\axb", 5, false),
-        ("other", r"D:\Docs\Other", 5, false),
-        ("axb", r"C:\Docs\axb", 4, false),
-    ] {
-        let entry = query::Plain { name: name.as_bytes(), lower_name: name.as_bytes(), path: path.as_bytes(),
-            lower_path: &lowercase(path.as_bytes()), size, modified: 0, dir: false };
+    for (name, path, size, matches) in [("axb", r"C:\Docs\axb", 5, true), ("other", r"C:\Docs\Other", 5, true), ("axb", r"C:\Docs2\axb", 5, false), ("other", r"D:\Docs\Other", 5, false), ("axb", r"C:\Docs\axb", 4, false)] {
+        let entry = query::Plain { name: name.as_bytes(), lower_name: name.as_bytes(), path: path.as_bytes(), lower_path: &lowercase(path.as_bytes()), size, modified: 0, dir: false };
         assert_eq!(q.matches(&entry, &|_| false), matches, "{path} ({size})");
     }
     assert_eq!(query::parse_with_conditions(" é regex:(", &conditions, Clock::system(0)).unwrap_err().position, 4);

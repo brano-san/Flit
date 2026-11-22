@@ -155,7 +155,9 @@ fn ftp_actions_use_the_listed_pidl_on_another_thread() {
         assert!(Pidls::parse_for_ui(&[selected]).is_ok());
         assert!(Pidls::parse_for_ui(&[root]).is_ok());
         assert_eq!(Pidls::parse_for_ui(&[missing]).err().unwrap().code, not_found().code);
-    }).join().unwrap();
+    })
+    .join()
+    .unwrap();
 }
 
 #[test]

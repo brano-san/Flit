@@ -109,7 +109,11 @@ fn private_mb() -> f64 {
     }
     let mut c = Counters { cb: std::mem::size_of::<Counters>() as u32, ..Counters::default() };
     let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) } != 0;
-    if ok { c.private as f64 / 1_048_576.0 } else { 0.0 }
+    if ok {
+        c.private as f64 / 1_048_576.0
+    } else {
+        0.0
+    }
 }
 
 #[cfg(not(windows))]

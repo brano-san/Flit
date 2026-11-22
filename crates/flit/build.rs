@@ -79,10 +79,19 @@ fn version_res(res: &mut Vec<u8>) {
     let (major, minor, patch) = (part("CARGO_PKG_VERSION_MAJOR"), part("CARGO_PKG_VERSION_MINOR"), part("CARGO_PKG_VERSION_PATCH"));
     let version = format!("{major}.{minor}.{patch}.0");
     let fixed: Vec<u8> = [0xFEEF_04BD, 0x0001_0000, major << 16 | minor, patch << 16, major << 16 | minor, patch << 16, 0x3F, 0, 0x0004_0004, 1, 0, 0, 0].iter().flat_map(|v: &u32| v.to_le_bytes()).collect();
-    let strings: Vec<Vec<u8>> = [("CompanyName", "Flit"), ("FileDescription", "Flit file manager"), ("FileVersion", version.as_str()), ("InternalName", "flit"), ("LegalCopyright", "Copyright (c) 2026 Andrey, MIT License"), ("OriginalFilename", "flit.exe"), ("ProductName", "Flit"), ("ProductVersion", version.as_str())]
-        .iter()
-        .map(|(k, v)| version_node(k, &utf16(v), v.encode_utf16().count() as u16 + 1, true, &[]))
-        .collect();
+    let strings: Vec<Vec<u8>> = [
+        ("CompanyName", "Flit"),
+        ("FileDescription", "Flit file manager"),
+        ("FileVersion", version.as_str()),
+        ("InternalName", "flit"),
+        ("LegalCopyright", "Copyright (c) 2026 Andrey, MIT License"),
+        ("OriginalFilename", "flit.exe"),
+        ("ProductName", "Flit"),
+        ("ProductVersion", version.as_str()),
+    ]
+    .iter()
+    .map(|(k, v)| version_node(k, &utf16(v), v.encode_utf16().count() as u16 + 1, true, &[]))
+    .collect();
     let table = version_node("040904B0", &[], 0, true, &strings);
     let string_info = version_node("StringFileInfo", &[], 0, true, &[table]);
     let translation = version_node("Translation", &[0x09, 0x04, 0xB0, 0x04], 4, false, &[]);

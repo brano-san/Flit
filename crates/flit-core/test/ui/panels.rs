@@ -23,7 +23,9 @@ fn system_window_buttons_leave_tabs_and_panel_controls_accessible_on_both_sides(
         for width in [520, 1200] {
             for sidebar in [true, false] {
                 let mut app = app_at("/tmp");
-                if !sidebar { key(&mut app, Key::Char('B'), CTRL); }
+                if !sidebar {
+                    key(&mut app, Key::Char('B'), CTRL);
+                }
                 app.run_action("panel.open_right", t0());
                 ev(&mut app, Event::ScaleChanged(scale));
                 ev(&mut app, Event::Resized { width, height: 800 });
@@ -192,7 +194,11 @@ fn rect(app: &App, id: u32) -> Rect {
 }
 
 fn layout_of(app: &App, id: u32) -> &Layout {
-    if id == app.tabs.panels.here { &app.layout } else { &app.tabs.panels.list.iter().find(|p| p.id == id).unwrap().layout }
+    if id == app.tabs.panels.here {
+        &app.layout
+    } else {
+        &app.tabs.panels.list.iter().find(|p| p.id == id).unwrap().layout
+    }
 }
 
 fn row_in(l: &Layout, row: usize) -> (f32, f32) {
@@ -561,10 +567,7 @@ fn startup_folder_reuses_the_tab_in_its_restored_panel() {
     let paths: Vec<_> = ["/etc", "/var/log", "/usr/bin"].iter().map(|s| Location::parse(s).unwrap()).collect();
     let mut app = app_at("/usr/bin");
     app.restore_tabs(&paths, 2);
-    app.restore_panels(&PanelsSession {
-        root: Shape::Group { down: false, kids: vec![(Shape::Leaf { tabs: 2, cur: 1 }, 0.5), (Shape::Leaf { tabs: 1, cur: 0 }, 0.5)] },
-        active: 1,
-    });
+    app.restore_panels(&PanelsSession { root: Shape::Group { down: false, kids: vec![(Shape::Leaf { tabs: 2, cur: 1 }, 0.5), (Shape::Leaf { tabs: 1, cur: 0 }, 0.5)] }, active: 1 });
     assert!(app.focus_folder(&paths[0]));
     assert_eq!(app.current_location(), &paths[0]);
     assert!(!app.focus_folder(&Location::parse("/tmp").unwrap()));

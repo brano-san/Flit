@@ -8,11 +8,7 @@ fn language_test_child(test: &str) -> bool {
         return true;
     }
     use std::os::windows::process::CommandExt;
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .creation_flags(0x0800_0000)
-        .args(["--exact", test, "--nocapture", "--test-threads=1"])
-        .env(CHILD, test)
-        .output().unwrap();
+    let output = std::process::Command::new(std::env::current_exe().unwrap()).creation_flags(0x0800_0000).args(["--exact", test, "--nocapture", "--test-threads=1"]).env(CHILD, test).output().unwrap();
     assert!(output.status.success(), "{test}:\n{}\n{}", String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
     false
 }
@@ -23,10 +19,15 @@ fn staging_reservation_has_one_owner_and_never_removes_a_rivals_marker() {
     std::fs::create_dir_all(&root).unwrap();
     let reserved = FsPath::parse(root.join("stage").to_str().unwrap()).unwrap();
     let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
-    let actors: Vec<_> = (0..2).map(|_| {
-        let (path, start) = (reserved.clone(), barrier.clone());
-        std::thread::spawn(move || { start.wait(); LinkStage::reserve(path, LinkKind::Shortcut, false, None) })
-    }).collect();
+    let actors: Vec<_> = (0..2)
+        .map(|_| {
+            let (path, start) = (reserved.clone(), barrier.clone());
+            std::thread::spawn(move || {
+                start.wait();
+                LinkStage::reserve(path, LinkKind::Shortcut, false, None)
+            })
+        })
+        .collect();
     let mut results: Vec<_> = actors.into_iter().map(|h| h.join().unwrap()).collect();
     assert_eq!(results.iter().filter(|r| r.is_ok()).count(), 1);
     assert!(results.iter().filter_map(|r| r.as_ref().err()).all(|e| code(e) == ERROR_ALREADY_EXISTS));
@@ -138,12 +139,17 @@ impl Drop for LinkTemp {
 fn retrying_job(asked: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Job {
     let ctl = flit_core::provider::OpCtl::new(Some(Resolve::KeepBoth));
     let answer = ctl.clone();
-    Job::asking(ctl, Box::new(|_| {}), Box::new(|_| {}), Box::new(move |failure: Failure| {
-        assert_eq!(failure.error.kind, PlatformErrorKind::SymlinkPrivilege);
-        assert_eq!(failure.error.message, S::ErrorsEngineSymlinkPrivilege.en());
-        asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        answer.answer_failure(Recover::Retry, false);
-    }))
+    Job::asking(
+        ctl,
+        Box::new(|_| {}),
+        Box::new(|_| {}),
+        Box::new(move |failure: Failure| {
+            assert_eq!(failure.error.kind, PlatformErrorKind::SymlinkPrivilege);
+            assert_eq!(failure.error.message, S::ErrorsEngineSymlinkPrivilege.en());
+            asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            answer.answer_failure(Recover::Retry, false);
+        }),
+    )
 }
 
 fn unprivileged(kind: LinkKind, _: &FsPath, _: &FsPath) -> windows::core::Result<()> {
@@ -205,10 +211,19 @@ fn declining_the_retry_asks_once_and_never_launches_an_elevated_process() {
         let answer = ctl.clone();
         let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let count = asked.clone();
-        let job = Job::asking(ctl, Box::new(|_| {}), Box::new(|_| {}), Box::new(move |_| {
-            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            if cancel { answer.cancel(); } else { answer.answer_failure(Recover::Skip, false); }
-        }));
+        let job = Job::asking(
+            ctl,
+            Box::new(|_| {}),
+            Box::new(|_| {}),
+            Box::new(move |_| {
+                count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if cancel {
+                    answer.cancel();
+                } else {
+                    answer.answer_failure(Recover::Skip, false);
+                }
+            }),
+        );
         let never = |_: &[(FsPath, FsPath)]| -> windows::core::Result<()> { panic!("elevated after declining") };
         let mut engine = Engine::new(&job);
         engine.make_link = &unprivileged;
@@ -273,10 +288,7 @@ fn a_duplicate_uses_the_main_files_copy_name_for_its_companion() {
         let op = job.prepare_companions(&NtFs, op).unwrap();
         let out = run(&op, &job);
         assert!(out.error.is_none(), "{:?}", out.error);
-        assert_eq!(out.items, [
-            (owner.clone(), dir.join(b"photo - Copy.jpg")),
-            (sidecar.clone(), dir.join(b"photo - Copy.jpg.xmp")),
-        ]);
+        assert_eq!(out.items, [(owner.clone(), dir.join(b"photo - Copy.jpg")), (sidecar.clone(), dir.join(b"photo - Copy.jpg.xmp")),]);
         assert_eq!(std::fs::read(flit_platform::std_path(&dir.join(b"photo - Copy.jpg.xmp"))).unwrap(), b"metadata");
     });
 }
@@ -294,15 +306,15 @@ fn a_primary_conflict_can_skip_rename_or_replace_a_group_and_sidecar_collisions_
                 let ctl = flit_core::provider::OpCtl::new(None);
                 let answer = ctl.clone();
                 let wanted = target.clone();
-                let job = Job::new(ctl, Box::new(|_| {}), Box::new(move |conflict| {
-                    assert_eq!(conflict.target, wanted);
-                    answer.answer(choice, false);
-                }));
-                let op = if moving {
-                    FileOp::Move { items: vec![owner.clone()], dest: dest.clone() }
-                } else {
-                    FileOp::Copy { items: vec![owner.clone()], dest: dest.clone() }
-                };
+                let job = Job::new(
+                    ctl,
+                    Box::new(|_| {}),
+                    Box::new(move |conflict| {
+                        assert_eq!(conflict.target, wanted);
+                        answer.answer(choice, false);
+                    }),
+                );
+                let op = if moving { FileOp::Move { items: vec![owner.clone()], dest: dest.clone() } } else { FileOp::Copy { items: vec![owner.clone()], dest: dest.clone() } };
                 run(&job.prepare_companions(&NtFs, op).unwrap(), &job)
             };
             let skipped = perform(Resolve::Skip);
@@ -312,10 +324,7 @@ fn a_primary_conflict_can_skip_rename_or_replace_a_group_and_sidecar_collisions_
             assert!(refused.items.is_empty());
             let renamed = perform(Resolve::KeepBoth);
             assert!(renamed.error.is_none(), "{:?}", renamed.error);
-            assert_eq!(renamed.items, [
-                (owner.clone(), dest.join(b"photo (2).jpg")),
-                (sidecar.clone(), dest.join(b"photo (2).jpg.xmp")),
-            ]);
+            assert_eq!(renamed.items, [(owner.clone(), dest.join(b"photo (2).jpg")), (sidecar.clone(), dest.join(b"photo (2).jpg.xmp")),]);
             assert_eq!(std::fs::read(flit_platform::std_path(&side_target)).unwrap(), b"existing sidecar");
             assert_eq!(std::fs::read(flit_platform::std_path(&target)).unwrap(), b"existing photo");
             assert_eq!(exists(owner), !moving);

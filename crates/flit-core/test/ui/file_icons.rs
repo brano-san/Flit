@@ -18,10 +18,13 @@ fn file_emblems_cover_the_bottom_right_of_every_file_layout() {
         app.set_layout(mode);
         let mut gfx = Gfx::new(Mono, 1024);
         app.frame(&mut gfx, Instant::now());
-        let emblems: Vec<_> = app.drain_effects().filter_map(|e| match e {
-            Effect::Icon(r) if format!("{:?}", r.kind).ends_with("Emblem") => Some(r),
-            _ => None,
-        }).collect();
+        let emblems: Vec<_> = app
+            .drain_effects()
+            .filter_map(|e| match e {
+                Effect::Icon(r) if format!("{:?}", r.kind).ends_with("Emblem") => Some(r),
+                _ => None,
+            })
+            .collect();
         if cfg!(windows) {
             assert!(emblems.is_empty());
         } else {
@@ -62,9 +65,17 @@ fn ten_thousand_extensionless_files_request_only_a_bounded_visible_batch() {
     let mut gfx = Gfx::new(Mono, 1024);
     for round in 0..4 {
         app.frame(&mut gfx, Instant::now());
-        let reqs: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Icon(r) if format!("{:?}", r.kind) == "Content" => Some(r), _ => None }).collect();
+        let reqs: Vec<_> = app
+            .drain_effects()
+            .filter_map(|e| match e {
+                Effect::Icon(r) if format!("{:?}", r.kind) == "Content" => Some(r),
+                _ => None,
+            })
+            .collect();
         if cfg!(target_os = "linux") {
-            if round == 0 { assert!(!reqs.is_empty()); }
+            if round == 0 {
+                assert!(!reqs.is_empty());
+            }
             assert!(reqs.len() <= 8);
             assert!(reqs.iter().all(|r| r.row < 100));
         } else {
@@ -120,9 +131,26 @@ fn search_icons_use_real_file_stamps_and_show_emblems() {
     use crate::ui::{SearchEvent, SearchRow, SearchSource};
     let mut app = file_app(&[]);
     app.open_search();
-    let gen = app.drain_effects().filter_map(|e| match e { Effect::Search(crate::ui::SearchRequest::Query { gen, .. }) => Some(gen), _ => None }).next_back().unwrap();
+    let gen = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::Search(crate::ui::SearchRequest::Query { gen, .. }) => Some(gen),
+            _ => None,
+        })
+        .next_back()
+        .unwrap();
     app.on_search_event(SearchEvent::Found { gen, total: 2, folders: 0, done: true, source: SearchSource::Walk }, Instant::now());
-    app.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![SearchRow { name: b"image".to_vec(), dir: b"/tmp".to_vec(), meta: Meta { size: 42, modified: 7, ..Meta::default() } }, SearchRow { name: b"image-link".to_vec(), dir: b"/tmp".to_vec(), meta: Meta { size: 42, attrs: attr::LINK, ..Meta::default() } }] }, Instant::now());
+    app.on_search_event(
+        SearchEvent::Rows {
+            gen,
+            from: 0,
+            rows: vec![
+                SearchRow { name: b"image".to_vec(), dir: b"/tmp".to_vec(), meta: Meta { size: 42, modified: 7, ..Meta::default() } },
+                SearchRow { name: b"image-link".to_vec(), dir: b"/tmp".to_vec(), meta: Meta { size: 42, attrs: attr::LINK, ..Meta::default() } },
+            ],
+        },
+        Instant::now(),
+    );
     app.drain_effects().for_each(drop);
     let mut gfx = Gfx::new(Mono, 1024);
     app.frame(&mut gfx, Instant::now());
@@ -165,7 +193,13 @@ fn columns_parent_rows_and_the_preview_header_draw_loaded_emblems() {
     v.focus = Some(i);
     app.set_pane_state(crate::ui::PaneState { visible: true, ..Default::default() });
     app.frame(&mut gfx, Instant::now());
-    let gen = app.drain_effects().find_map(|e| match e { Effect::Preview(r) if !r.details => Some(r.gen), _ => None }).unwrap();
+    let gen = app
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::Preview(r) if !r.details => Some(r.gen),
+            _ => None,
+        })
+        .unwrap();
     app.on_preview(gen, crate::preview::PreviewData::Basic { poster: None, note: None });
     app.frame(&mut gfx, Instant::now());
     let requests: Vec<_> = app.drain_effects().filter_map(|e| if let Effect::Icon(r) = e { Some(r) } else { None }).collect();
@@ -188,10 +222,16 @@ fn one_content_budget_covers_both_file_panels_and_theme_changes_refresh_emblems(
     assert!(reqs.iter().filter(|r| r.kind == IconKind::Content).count() <= 8);
     let mut linked = file_app(&[("link.png", attr::LINK)]);
     linked.frame(&mut gfx, Instant::now());
-    let first = linked.drain_effects().find_map(|e| match e { Effect::Icon(r) if r.kind == IconKind::LinkEmblem => Some(r.key), _ => None });
+    let first = linked.drain_effects().find_map(|e| match e {
+        Effect::Icon(r) if r.kind == IconKind::LinkEmblem => Some(r.key),
+        _ => None,
+    });
     linked.on_event(&Event::IconTheme, Instant::now());
     linked.frame(&mut gfx, Instant::now());
-    let fresh = linked.drain_effects().find_map(|e| match e { Effect::Icon(r) if r.kind == IconKind::LinkEmblem => Some(r.key), _ => None });
+    let fresh = linked.drain_effects().find_map(|e| match e {
+        Effect::Icon(r) if r.kind == IconKind::LinkEmblem => Some(r.key),
+        _ => None,
+    });
     if cfg!(target_os = "linux") {
         assert!(first.is_some() && fresh.is_some());
         assert_ne!(first, fresh);
@@ -231,7 +271,13 @@ fn folders_waiting_for_their_own_icon_show_the_shared_folder_icon_in_every_layou
         app.set_layout(mode);
         let mut gfx = Gfx::new(Mono, 1024);
         app.frame(&mut gfx, Instant::now());
-        let reqs: Vec<IconRequest> = app.drain_effects().filter_map(|e| match e { Effect::Icon(r) => Some(r), _ => None }).collect();
+        let reqs: Vec<IconRequest> = app
+            .drain_effects()
+            .filter_map(|e| match e {
+                Effect::Icon(r) => Some(r),
+                _ => None,
+            })
+            .collect();
         let own: Vec<&IconRequest> = reqs.iter().filter(|r| r.kind == IconKind::CustomFolder).collect();
         let row_size = own.first().map_or(0, |r| r.size);
         let is_shared = |r: &IconRequest| r.kind == IconKind::Folder && r.size == row_size;
@@ -268,7 +314,13 @@ fn extensionless_files_of_one_type_share_one_atlas_image_and_late_results_after_
     app.animations = false;
     let mut gfx = Gfx::new(Mono, 1024);
     app.frame(&mut gfx, Instant::now());
-    let reqs: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Icon(r) if r.kind == IconKind::Content => Some(r), _ => None }).collect();
+    let reqs: Vec<_> = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::Icon(r) if r.kind == IconKind::Content => Some(r),
+            _ => None,
+        })
+        .collect();
     if !cfg!(target_os = "linux") {
         assert!(reqs.is_empty());
         return;
@@ -287,7 +339,13 @@ fn extensionless_files_of_one_type_share_one_atlas_image_and_late_results_after_
     app.on_event(&crate::input::Event::IconTheme, Instant::now());
     app.on_icon(&mut gfx, reqs[0].key, IconResult::Shared(77, image()));
     app.frame(&mut gfx, Instant::now());
-    let next: Vec<_> = app.drain_effects().filter_map(|e| match e { Effect::Icon(r) if r.kind == IconKind::Content => Some(r), _ => None }).collect();
+    let next: Vec<_> = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::Icon(r) if r.kind == IconKind::Content => Some(r),
+            _ => None,
+        })
+        .collect();
     assert!(!next.is_empty());
     for req in &next {
         app.on_icon(&mut gfx, req.key, IconResult::Shared(77, Bitmap { width: 5, height: 7, rgba: vec![200; 5 * 7 * 4] }));

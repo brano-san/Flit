@@ -18,8 +18,12 @@ pub fn read(path: &FsPath) -> io::Result<Metadata> {
 }
 
 fn write(path: &FsPath, before: &Metadata, value: &Metadata) -> io::Result<()> {
-    if !value.valid() { return Err(io::Error::other(S::PortableMetaInvalid.en())); }
-    if before == value { return Ok(()); }
+    if !value.valid() {
+        return Err(io::Error::other(S::PortableMetaInvalid.en()));
+    }
+    if before == value {
+        return Ok(());
+    }
     storage::write(path, before, value)
 }
 
@@ -27,7 +31,9 @@ const MAX_XMP_BYTES: u64 = 128 * 1024;
 
 fn imported(sidecar: &FsPath, before: &Metadata) -> io::Result<Metadata> {
     let path = std_path(sidecar);
-    if !fs::symlink_metadata(&path)?.is_file() { return Err(io::ErrorKind::InvalidInput.into()); }
+    if !fs::symlink_metadata(&path)?.is_file() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
     let file = File::open(path)?;
     let mut text = String::new();
     if file.take(MAX_XMP_BYTES + 1).read_to_string(&mut text)? as u64 > MAX_XMP_BYTES {
@@ -37,10 +43,14 @@ fn imported(sidecar: &FsPath, before: &Metadata) -> io::Result<Metadata> {
 }
 
 fn export(sidecar: &FsPath, value: &Metadata) -> io::Result<()> {
-    if !value.valid() { return Err(io::Error::other(S::PortableMetaInvalid.en())); }
+    if !value.valid() {
+        return Err(io::Error::other(S::PortableMetaInvalid.en()));
+    }
     let path = std_path(sidecar);
     let text = xmp::write(value);
-    if text.len() as u64 > MAX_XMP_BYTES { return Err(io::Error::other(S::PortableMetaTooLarge.en())); }
+    if text.len() as u64 > MAX_XMP_BYTES {
+        return Err(io::Error::other(S::PortableMetaTooLarge.en()));
+    }
     let mut file = File::create_new(&path)?;
     let result = file.write_all(text.as_bytes()).and_then(|()| file.sync_data());
     if result.is_err() {

@@ -190,7 +190,13 @@ fn pretty_is_requested_only_by_the_inspector_button() {
     let r = a.preview_rect(PaneHit::Pretty).expect("formatting is available");
     assert!(!a.drain_effects().any(|e| matches!(e, Effect::PrettyPreview(_))));
     mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
-    let job = a.drain_effects().find_map(|e| match e { Effect::PrettyPreview(r) => Some(r), _ => None }).unwrap();
+    let job = a
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::PrettyPreview(r) => Some(r),
+            _ => None,
+        })
+        .unwrap();
     assert_eq!(job.path, raw.path);
     select(&mut a, "a.rs");
     frame(&mut a);
@@ -266,8 +272,7 @@ fn review_preview_controls_follow_the_animated_inspector_footer() {
         select(&mut a, name);
         frame(&mut a);
         let req = requests(&mut a).pop().unwrap();
-        let data = if image { PreviewData::Image(Bitmap { width: 4, height: 4, rgba: vec![255; 64] }) }
-            else { PreviewData::Doc(preview::text_doc("root", None)) };
+        let data = if image { PreviewData::Image(Bitmap { width: 4, height: 4, rgba: vec![255; 64] }) } else { PreviewData::Doc(preview::text_doc("root", None)) };
         let hit = if image { PaneHit::SvgBackground } else { PaneHit::Pretty };
         a.on_preview(req.gen, data);
 
@@ -302,10 +307,14 @@ fn a_pdf_requests_visible_pages_and_cancels_pages_scrolled_out_of_view() {
     pages[0] = Some(preview::pdf::Size { width: 300.0, height: 500.0 });
     a.on_preview(initial.gen, PreviewData::Pdf(pages));
     frame(&mut a);
-    let get_pages = |a: &mut App| a.drain_effects().filter_map(|e| match e {
-        Effect::PreviewPdfPage { req, page } => Some((page, req)),
-        _ => None,
-    }).collect::<Vec<_>>();
+    let get_pages = |a: &mut App| {
+        a.drain_effects()
+            .filter_map(|e| match e {
+                Effect::PreviewPdfPage { req, page } => Some((page, req)),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     let first = get_pages(&mut a);
     assert_eq!(first.len(), 1);
     assert_eq!(first[0].0, 1);
@@ -362,9 +371,15 @@ fn inspector_commands_change_the_look_and_layout() {
     select(&mut a, "a.rs");
     frame(&mut a);
     let r = requests(&mut a).pop().unwrap();
-    a.on_preview(r.gen, PreviewData::Doc(preview::text_doc("one
+    a.on_preview(
+        r.gen,
+        PreviewData::Doc(preview::text_doc(
+            "one
 two  words
-three", None)));
+three",
+            None,
+        )),
+    );
     frame(&mut a);
     for id in ["inspector.wrap", "inspector.line_numbers", "inspector.whitespace", "inspector.filter", "inspector.zoom_in", "inspector.layout"] {
         assert!(a.available(id), "{id}");
@@ -679,8 +694,7 @@ fn markdown_tables_wrap_cells_inside_the_pane_and_paint_the_header() {
 fn markdown_table_headers_stay_whole_when_each_word_can_fit() {
     let d = preview::markdown_doc("Name | Progress | Score\n--- | :---: | ---:\nParser | Wrapped content with words that span multiple lines | 123");
     let lay = layout_doc(&mut Gfx::new(Mono, 1024), &d, 320.0, (1.0, 12.5), &mut FxHashMap::default(), true, "");
-    let header: Vec<_> = lay.pieces[lay.lines[0].pieces.start as usize..lay.lines[0].pieces.end as usize]
-        .iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect();
+    let header: Vec<_> = lay.pieces[lay.lines[0].pieces.start as usize..lay.lines[0].pieces.end as usize].iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect();
     assert_eq!(header, ["Name", "Progress", "Score"]);
     assert!(lay.lines.len() > 2);
 }
@@ -690,13 +704,17 @@ fn markdown_tables_keep_every_column_visible_when_only_one_glyph_fits() {
     let mut g = Gfx::new(Mono, 1024);
     let d = preview::markdown_doc("A|B|C\n---|---|---\nx|y|z");
     let lay = layout_doc(&mut g, &d, 10.0, (1.0, 12.5), &mut FxHashMap::default(), true, "");
-    let lines: Vec<_> = lay.lines.iter().map(|l| {
-        let pieces = &lay.pieces[l.pieces.start as usize..l.pieces.end as usize];
-        assert_eq!(pieces.len(), 1);
-        let piece = &pieces[0];
-        assert_eq!(piece.x, 0.0);
-        &d.text[piece.start as usize..piece.end as usize]
-    }).collect();
+    let lines: Vec<_> = lay
+        .lines
+        .iter()
+        .map(|l| {
+            let pieces = &lay.pieces[l.pieces.start as usize..l.pieces.end as usize];
+            assert_eq!(pieces.len(), 1);
+            let piece = &pieces[0];
+            assert_eq!(piece.x, 0.0);
+            &d.text[piece.start as usize..piece.end as usize]
+        })
+        .collect();
     assert_eq!(lines, ["A", "x", "B", "y", "C", "z"]);
 }
 
@@ -705,10 +723,14 @@ fn markdown_hard_breaks_start_new_visual_lines_in_the_same_paragraph() {
     let mut g = Gfx::new(Mono, 512);
     let d = preview::markdown_doc("one  \ntwo\\\n**three**");
     let lay = layout_doc(&mut g, &d, 400.0, (1.0, 12.5), &mut FxHashMap::default(), true, "");
-    let lines: Vec<String> = lay.lines.iter().map(|l| {
-        assert_eq!(l.para, 0);
-        lay.pieces[l.pieces.start as usize..l.pieces.end as usize].iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect()
-    }).collect();
+    let lines: Vec<String> = lay
+        .lines
+        .iter()
+        .map(|l| {
+            assert_eq!(l.para, 0);
+            lay.pieces[l.pieces.start as usize..l.pieces.end as usize].iter().map(|p| &d.text[p.start as usize..p.end as usize]).collect()
+        })
+        .collect();
     assert_eq!(lines, ["one", "two", "three"]);
 }
 
@@ -1308,7 +1330,9 @@ fn nested_icon_app() -> App {
     listing.push_nested(b"image", meta, 0, b"sub");
     listing.push_nested(b"image", meta, 0, b"other");
     let mut keys = SortKeys::new(CaseMode::Sensitive);
-    for i in 0..listing.len() as u32 { keys.push(listing.name(i)); }
+    for i in 0..listing.len() as u32 {
+        keys.push(listing.name(i));
+    }
     let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing, keys, order: vec![0, 1, 2], view, done: true, error: None, elapsed: Duration::ZERO };
     t.slot.publish(Arc::new(snap));
     a.poll();
@@ -1326,11 +1350,22 @@ fn nested_icon_select(a: &mut App, index: u32) {
 
 fn nested_icon_header(a: &mut App, gfx: &mut Gfx<Mono>) -> Vec<IconRequest> {
     a.frame(gfx, Instant::now());
-    let gen = a.drain_effects().find_map(|e| match e { Effect::Preview(r) if !r.details => Some(r.gen), _ => None }).unwrap();
+    let gen = a
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::Preview(r) if !r.details => Some(r.gen),
+            _ => None,
+        })
+        .unwrap();
     a.on_preview(gen, PreviewData::Basic { poster: None, note: None });
     a.frame(gfx, Instant::now());
     let px = a.s(ICON_PX) as u32;
-    a.drain_effects().filter_map(|e| match e { Effect::Icon(r) if r.kind == super::super::IconKind::Content && r.size == px => Some(r), _ => None }).collect()
+    a.drain_effects()
+        .filter_map(|e| match e {
+            Effect::Icon(r) if r.kind == super::super::IconKind::Content && r.size == px => Some(r),
+            _ => None,
+        })
+        .collect()
 }
 
 #[test]

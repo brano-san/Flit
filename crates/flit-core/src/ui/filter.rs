@@ -29,9 +29,7 @@ fn filter_completions(text: &str, caret: usize, tags: &[crate::tags::Tag]) -> (R
             _ => &[],
         };
         if key.eq_ignore_ascii_case("tag") {
-            tags.iter().filter(|tag| tag.name.to_lowercase().starts_with(&prefix)).map(|tag| {
-                format!("{sign}{key}:\"{}\"", tag.name)
-            }).take(9).collect()
+            tags.iter().filter(|tag| tag.name.to_lowercase().starts_with(&prefix)).map(|tag| format!("{sign}{key}:\"{}\"", tag.name)).take(9).collect()
         } else {
             values.iter().filter(|v| v.starts_with(&prefix)).map(|v| format!("{sign}{key}:{v}")).collect()
         }

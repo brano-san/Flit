@@ -267,18 +267,7 @@ pub enum Column {
 }
 
 pub const GIT_COLUMNS: [Column; 5] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate, Column::GitHash];
-pub const SHELL_COLUMNS: [Column; 10] = [
-    Column::ImageSize,
-    Column::Duration,
-    Column::Artist,
-    Column::Version,
-    Column::DateTaken,
-    Column::CameraModel,
-    Column::Album,
-    Column::Title,
-    Column::Authors,
-    Column::Company,
-];
+pub const SHELL_COLUMNS: [Column; 10] = [Column::ImageSize, Column::Duration, Column::Artist, Column::Version, Column::DateTaken, Column::CameraModel, Column::Album, Column::Title, Column::Authors, Column::Company];
 pub const PORTABLE_COLUMNS: [Column; 3] = [Column::Rating, Column::Comment, Column::PortableTags];
 pub const REPO_COLUMNS: [Column; 19] = [
     Column::Name,
@@ -370,7 +359,9 @@ impl Column {
             Column::Artist => SortField::Artist,
             Column::Version => SortField::Version,
             Column::GitHash => SortField::GitHash,
-            Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate | Column::Rating | Column::Comment | Column::PortableTags => return None,
+            Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate | Column::Rating | Column::Comment | Column::PortableTags => {
+                return None
+            }
         })
     }
 
@@ -1199,7 +1190,13 @@ fn row_hit(l: &Layout, x: f32, y: f32) -> Hit {
 }
 
 fn icon_glyph<B: TextBackend>(g: &mut Gfx<B>, t: &Theme, e: &crate::listing::Entry, ir: Rect) {
-    let glyph = if e.attrs & attr::VOLUME != 0 { G_DRIVE } else if e.is_dir() { G_FOLDER } else { G_FILE };
+    let glyph = if e.attrs & attr::VOLUME != 0 {
+        G_DRIVE
+    } else if e.is_dir() {
+        G_FOLDER
+    } else {
+        G_FILE
+    };
     let color = if e.is_dir() { t.accent.alpha(0xB0) } else { t.text_dim.alpha(0x90) };
     centered(g, ir, glyph, FontStyle::new(FontFamily::Icons, ir.h * 0.85, false), color);
 }

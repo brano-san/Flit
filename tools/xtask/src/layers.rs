@@ -2,16 +2,7 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-const LAYERS: &[&[&str]] = &[
-    &["flit-core", "flit-gen", "xtask"],
-    &["flit-proto", "flit-sign"],
-    &["flit-search"],
-    &["flit-platform"],
-    &["flit-archive"],
-    &["flit-platform-linux", "flit-platform-windows"],
-    &["flit-platform-linux-gui"],
-    &["flit", "flit-indexd"],
-];
+const LAYERS: &[&[&str]] = &[&["flit-core", "flit-gen", "xtask"], &["flit-proto", "flit-sign"], &["flit-search"], &["flit-platform"], &["flit-archive"], &["flit-platform-linux", "flit-platform-windows"], &["flit-platform-linux-gui"], &["flit", "flit-indexd"]];
 const PORTABLE: &[&str] = &["flit-core", "flit-proto", "flit-search", "flit-platform"];
 
 #[derive(Deserialize)]

@@ -67,9 +67,7 @@ impl System for Mock {
     fn remove_empty_registry_key(&self, key: &str) -> io::Result<()> {
         let prefix = format!(r"{key}\");
         let mut keys = self.keys.borrow_mut();
-        if !keys.iter().any(|path| path.starts_with(&prefix))
-            && !self.values.borrow().keys().any(|target| matches!(target, Target::Registry { key: path, .. } if path == key))
-        {
+        if !keys.iter().any(|path| path.starts_with(&prefix)) && !self.values.borrow().keys().any(|target| matches!(target, Target::Registry { key: path, .. } if path == key)) {
             keys.remove(key);
         }
         Ok(())
@@ -151,7 +149,6 @@ fn system_journal_lock_blocks_another_handle_until_drop() {
     worker.join().unwrap();
 }
 
-
 #[test]
 fn system_journal_restores_the_linux_uri_handler_without_reverting_other_preferences() {
     let dir = Temp::new();
@@ -200,12 +197,7 @@ fn system_journal_removes_only_its_own_empty_registry_keys_on_undo() {
     let external = reg(seven_zip_open_with, "Other.Archiver");
     sys.keys.borrow_mut().extend(["Software".into(), r"Software\Classes".into(), zip.into()]);
     journal.apply(&sys, Group::Protocol, &[(reg(protocol, ""), value(1)), (reg(command, ""), value(2))], false).unwrap();
-    journal.apply(&sys, Group::Archive, &[
-        (reg(archive, ""), value(3)),
-        (reg(zip_open_with, "Flit.Archive"), value(4)),
-        (reg(seven_zip_open_with, "Flit.Archive"), value(5)),
-        (reg(rar_open_with, "Flit.Archive"), value(6)),
-    ], false).unwrap();
+    journal.apply(&sys, Group::Archive, &[(reg(archive, ""), value(3)), (reg(zip_open_with, "Flit.Archive"), value(4)), (reg(seven_zip_open_with, "Flit.Archive"), value(5)), (reg(rar_open_with, "Flit.Archive"), value(6))], false).unwrap();
     sys.values.borrow_mut().insert(external.clone(), value(8));
     let journal = Journal::new(&dir.0);
     journal.undo(&sys, None).unwrap();

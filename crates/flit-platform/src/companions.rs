@@ -10,12 +10,16 @@ fn listing(fs: &dyn Fs, dir: &FsPath, job: &Job) -> Result<Listing, String> {
     let mut batch = |_: &ListingBuilder<'_>| !job.cancelled();
     let mut b = ListingBuilder::new(if dir.case_sensitive() { CaseMode::Sensitive } else { CaseMode::Insensitive }, &mut batch);
     fs.read_dir(dir, &mut b).map_err(|e| e.to_string())?;
-    if job.cancelled() { return Err(crate::CANCELLED.into()); }
+    if job.cancelled() {
+        return Err(crate::CANCELLED.into());
+    }
     Ok(b.listing)
 }
 
 fn key(p: &FsPath) -> Vec<u8> {
-    if p.case_sensitive() { return p.as_bytes().to_vec(); }
+    if p.case_sensitive() {
+        return p.as_bytes().to_vec();
+    }
     std::str::from_utf8(p.as_bytes()).map_or_else(|_| p.as_bytes().to_ascii_lowercase(), |u| u.to_lowercase().into_bytes())
 }
 
@@ -36,7 +40,8 @@ impl Rename {
             Self::AppleDouble => Kind::AppleDouble,
             Self::Full(ext) => Kind::Full(ext),
             Self::Stem(ext) => Kind::Stem(ext),
-        }.beside(name)
+        }
+        .beside(name)
     }
 }
 
@@ -45,11 +50,15 @@ fn read(fs: &dyn Fs, sources: &[&FsPath], job: &Job) -> Result<FxHashMap<Vec<u8>
     let mut sides = FxHashMap::<_, Vec<_>>::default();
     let wanted: FxHashSet<_> = sources.iter().map(|p| key(p)).collect();
     for dir in sources.iter().filter_map(|p| p.parent()) {
-        if !directories.insert(key(&dir)) { continue; }
+        if !directories.insert(key(&dir)) {
+            continue;
+        }
         let l = listing(fs, &dir, job)?;
         for c in companions::associated(&l, dir.case_sensitive()) {
             let owner = key(&dir.join(l.name(c.owner)));
-            if !wanted.contains(&owner) { continue; }
+            if !wanted.contains(&owner) {
+                continue;
+            }
             let path = dir.join(l.name(c.sidecar));
             let rename = match c.kind {
                 Kind::AppleDouble => Rename::AppleDouble,
@@ -73,7 +82,9 @@ impl Job {
             _ => return Ok(op),
         };
         let groups = read(fs, &sources, self)?;
-        if groups.is_empty() { return Ok(op); }
+        if groups.is_empty() {
+            return Ok(op);
+        }
         let attached: FxHashSet<_> = groups.values().flatten().map(|side| key(&side.path)).collect();
         match &mut op {
             FileOp::Copy { items, .. } | FileOp::Move { items, .. } => items.retain(|path| !attached.contains(&key(path))),
@@ -98,23 +109,31 @@ impl Job {
     }
 
     pub fn companion_targets(&self, source: &FsPath, target: &FsPath) -> Vec<(FsPath, FsPath)> {
-        let Some(sides) = self.0.companions.get().and_then(|groups: &Groups| groups.get(&key(source))) else { return Vec::new(); };
-        let Some(folder) = target.parent() else { return Vec::new(); };
-        sides.iter().filter_map(|side| {
-            let to = folder.join(&side.rename.beside(target.file_name()));
-            (side.path != to).then(|| (side.path.clone(), to))
-        }).collect()
+        let Some(sides) = self.0.companions.get().and_then(|groups: &Groups| groups.get(&key(source))) else {
+            return Vec::new();
+        };
+        let Some(folder) = target.parent() else {
+            return Vec::new();
+        };
+        sides
+            .iter()
+            .filter_map(|side| {
+                let to = folder.join(&side.rename.beside(target.file_name()));
+                (side.path != to).then(|| (side.path.clone(), to))
+            })
+            .collect()
     }
 
     pub fn companion_collision(&self, source: &FsPath, target: &FsPath) -> Option<String> {
         let targets = self.companion_targets(source, target);
-        if targets.is_empty() { return None; }
+        if targets.is_empty() {
+            return None;
+        }
         let mut planned = FxHashSet::default();
         let primary = key(target);
         for (from, to) in targets {
             let name = key(&to);
-            if name == primary || name != key(&from) && std::fs::symlink_metadata(crate::std_path(&to)).is_ok()
-                || !planned.insert(name) {
+            if name == primary || name != key(&from) && std::fs::symlink_metadata(crate::std_path(&to)).is_ok() || !planned.insert(name) {
                 return Some(companion_collision(&to));
             }
         }

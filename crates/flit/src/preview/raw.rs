@@ -49,9 +49,7 @@ pub(super) fn load(path: &Path, px: u32, source: Source, current: impl Fn() -> b
     }
     match source {
         Source::Inspector => candidates.sort_unstable_by_key(|&(_, len, side, pixels)| (Reverse(pixels), Reverse(side), len)),
-        Source::Thumbnail => candidates.sort_unstable_by_key(|&(_, len, side, pixels)| {
-            if side >= px { (false, side, pixels, len) } else { (true, u32::MAX - side, u32::MAX - pixels, len) }
-        }),
+        Source::Thumbnail => candidates.sort_unstable_by_key(|&(_, len, side, pixels)| if side >= px { (false, side, pixels, len) } else { (true, u32::MAX - side, u32::MAX - pixels, len) }),
     }
     let mut budget = MAX_JPEG_BYTES * 2;
     for (offset, len, _, _) in candidates {
@@ -72,7 +70,11 @@ pub(super) fn load(path: &Path, px: u32, source: Source, current: impl Fn() -> b
 
 fn fit(w: u32, h: u32, max: u32) -> (u32, u32) {
     let side = w.max(h);
-    if side <= max { (w, h) } else { ((w * max / side).max(1), (h * max / side).max(1)) }
+    if side <= max {
+        (w, h)
+    } else {
+        ((w * max / side).max(1), (h * max / side).max(1))
+    }
 }
 
 fn read_info(decoder: &mut Decoder<impl Read>) -> Option<ImageInfo> {

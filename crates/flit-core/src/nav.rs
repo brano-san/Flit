@@ -101,7 +101,11 @@ impl History {
         let mut first = keep;
         for step in 0..n.unsigned_abs() {
             let hop = if step == 0 { first.take() } else { None };
-            if n < 0 { self.back(hop); } else { self.forward(hop); };
+            if n < 0 {
+                self.back(hop);
+            } else {
+                self.forward(hop);
+            };
         }
         true
     }

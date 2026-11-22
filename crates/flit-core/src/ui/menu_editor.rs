@@ -98,13 +98,19 @@ impl App {
             if self.supports(id) {
                 if let Some(parent) = parent {
                     let parent = parent.t().to_owned();
-                    if !paths.contains(&parent) { paths.push(parent.clone()); }
+                    if !paths.contains(&parent) {
+                        paths.push(parent.clone());
+                    }
                     paths.push(format!("{parent}{PATH_SEP}{}", label.t()));
-                } else { paths.push(label.t().to_owned()); }
+                } else {
+                    paths.push(label.t().to_owned());
+                }
             }
         };
         if kind == 2 {
-            for (id, label) in [("nav.refresh", S::MenuRefresh), ("file.paste", S::MenuPaste), ("app.terminal", S::MenuOpenInTerminal), ("folder.file_manager", S::ActionsFolderFileManager), ("folder.bookmark", S::MenuPinToSidebar)] { add(id, label, None); }
+            for (id, label) in [("nav.refresh", S::MenuRefresh), ("file.paste", S::MenuPaste), ("app.terminal", S::MenuOpenInTerminal), ("folder.file_manager", S::ActionsFolderFileManager), ("folder.bookmark", S::MenuPinToSidebar)] {
+                add(id, label, None);
+            }
             add("file.new_folder", S::MenuFolder, Some(S::MenuNew));
             add("file.shortcut", S::MenuShortcut, Some(S::MenuNew));
         } else {
@@ -113,13 +119,29 @@ impl App {
                 add("item.open_tab", S::MenuOpenInNewTab, Some(S::MenuOpenIn));
                 add("item.open_window", S::MenuOpenInNewWindow, Some(S::MenuOpenIn));
             }
-            for (id, label) in [("file.cut", S::MenuCut), ("file.copy", S::MenuCopy), ("file.shortcut", S::MenuCreateShortcut), ("file.rename", S::MenuRename), ("file.batch_rename", S::MenuBatchRename), ("item.trash", S::MenuDelete), ("file.new_folder_with_selection", S::MenuNewFolderWithSelection)] { add(id, label, None); }
+            for (id, label) in [
+                ("file.cut", S::MenuCut),
+                ("file.copy", S::MenuCopy),
+                ("file.shortcut", S::MenuCreateShortcut),
+                ("file.rename", S::MenuRename),
+                ("file.batch_rename", S::MenuBatchRename),
+                ("item.trash", S::MenuDelete),
+                ("file.new_folder_with_selection", S::MenuNewFolderWithSelection),
+            ] {
+                add(id, label, None);
+            }
             if kind == 1 {
-                for (id, label) in [("file.paste_into", S::MenuPaste), ("item.pin", S::MenuPinToSidebar), ("app.terminal", S::MenuOpenInTerminal), ("file.folder_icon", S::MenuChangeIcon), ("file.folder_icon_reset", S::MenuRestoreDefaultIcon), ("file.flatten", S::MenuFlattenFolder)] { add(id, label, None); }
+                for (id, label) in
+                    [("file.paste_into", S::MenuPaste), ("item.pin", S::MenuPinToSidebar), ("app.terminal", S::MenuOpenInTerminal), ("file.folder_icon", S::MenuChangeIcon), ("file.folder_icon_reset", S::MenuRestoreDefaultIcon), ("file.flatten", S::MenuFlattenFolder)]
+                {
+                    add(id, label, None);
+                }
             } else {
                 add("file.hashes", S::MenuHashes, None);
                 add("file.run_in_terminal", S::MenuRunInTerminal, None);
-                for (id, label) in [("archive.extract", S::MenuExtractFiles), ("archive.extract_here", S::MenuExtractHere), ("archive.smart", S::MenuSmartExtract), ("archive.open", S::MenuOpenAsFolder)] { add(id, label, Some(S::MenuExtract)); }
+                for (id, label) in [("archive.extract", S::MenuExtractFiles), ("archive.extract_here", S::MenuExtractHere), ("archive.smart", S::MenuSmartExtract), ("archive.open", S::MenuOpenAsFolder)] {
+                    add(id, label, Some(S::MenuExtract));
+                }
             }
             add("archive.compress", S::MenuAddToArchive, Some(S::MenuCompress));
             add("tags.new", S::MenuNewTag, Some(S::MenuEditTags));

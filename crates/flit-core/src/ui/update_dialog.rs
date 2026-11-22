@@ -57,11 +57,8 @@ impl Form {
         let s = |v: f32| (v * sc).round();
         let fw = s(760.0).min((w - s(24.0)).max(1.0));
         let room = (fw - s(40.0)).max(1.0);
-        let widths: Vec<f32> = if self.document.button_widths.len() == self.buttons.len() {
-            self.document.button_widths.clone()
-        } else {
-            self.buttons.iter().map(|b| s(b.chars().map(|c| if c >= '\u{2E80}' { 13.0 } else { 7.5 }).sum::<f32>() + 32.0).max(s(112.0))).collect()
-        };
+        let widths: Vec<f32> =
+            if self.document.button_widths.len() == self.buttons.len() { self.document.button_widths.clone() } else { self.buttons.iter().map(|b| s(b.chars().map(|c| if c >= '\u{2E80}' { 13.0 } else { 7.5 }).sum::<f32>() + 32.0).max(s(112.0))).collect() };
         let stacked = widths.iter().sum::<f32>() + s(8.0) * widths.len().saturating_sub(1) as f32 > room;
         let button_rows = if stacked && widths.len() > 1 { 2.0 } else { 1.0 };
         let fh = s(640.0).min((h - s(24.0)).max(1.0));
@@ -296,7 +293,21 @@ impl App {
             let hit = Hit::Form(f.controls.len() + b);
             let hot = self.hover == hit || self.pressed == hit;
             let primary = b == 0 && update.stage != super::update::Stage::Busy;
-            g.dl.round_rect(*rect, if primary { if hot { t.accent.alpha(0xD0) } else { t.accent } } else if hot { t.button_pressed } else { t.button_hover }, s(4.0));
+            g.dl.round_rect(
+                *rect,
+                if primary {
+                    if hot {
+                        t.accent.alpha(0xD0)
+                    } else {
+                        t.accent
+                    }
+                } else if hot {
+                    t.button_pressed
+                } else {
+                    t.button_hover
+                },
+                s(4.0),
+            );
             if !primary || f.focus == f.controls.len() + b {
                 g.dl.outline(*rect, if f.focus == f.controls.len() + b { t.text_dim } else { t.input_border }, s(4.0), sc.max(1.0));
             }

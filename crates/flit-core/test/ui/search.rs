@@ -126,10 +126,14 @@ fn w3_search_result_menu_excludes_a_path_and_reruns_the_query() {
     a.on_search_event(SearchEvent::Done { gen, total: 1, version: 0 }, t0());
     a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row("document.txt", r"C:\x\cache", false)] }, t0());
     a.search.focus = Some(0);
-    let labels = |menu: Vec<super::super::MenuItem>| menu.into_iter().filter_map(|m| match m {
-        super::super::MenuItem::Command { label, .. } => Some(label),
-        _ => None,
-    }).collect::<Vec<_>>();
+    let labels = |menu: Vec<super::super::MenuItem>| {
+        menu.into_iter()
+            .filter_map(|m| match m {
+                super::super::MenuItem::Command { label, .. } => Some(label),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
     assert!(!labels(a.build_search_menu(false)).iter().any(|s| s == "Exclude from search"));
     let items = labels(a.build_search_menu(true));
     let i = items.iter().position(|s| s == "Exclude from search").unwrap();
@@ -206,16 +210,10 @@ fn w3_facets_are_requested_only_while_open_and_the_histogram_refines_a_range() {
     assert!(requests(&mut a).is_empty());
     a.toggle_facets();
     assert_eq!(requests(&mut a), [SearchRequest::Facets { gen, open: true }]);
-    a.on_search_event(SearchEvent::Facets {
-        gen,
-        counts: crate::query_attrs::Facets {
-            dates: vec![
-                crate::query_attrs::DateBucket { from: 20_000, to: 20_000, count: 1 },
-                crate::query_attrs::DateBucket { from: 20_001, to: 20_001, count: 2 },
-            ],
-            ..Default::default()
-        }
-    }, t0());
+    a.on_search_event(
+        SearchEvent::Facets { gen, counts: crate::query_attrs::Facets { dates: vec![crate::query_attrs::DateBucket { from: 20_000, to: 20_000, count: 1 }, crate::query_attrs::DateBucket { from: 20_001, to: 20_001, count: 2 }], ..Default::default() } },
+        t0(),
+    );
     let r = a.search_layout().timeline;
     let y = r.y + r.h / 2.0;
     a.on_event(&Event::MouseDown { x: r.x + r.w / 4.0, y, button: MouseButton::Left, clicks: 1 }, t0());
@@ -293,7 +291,9 @@ fn resizing_search_columns_changes_only_one_width_and_supports_overflow() {
     a.on_event(&Event::MouseUp { x: x + 180.0, y, button: MouseButton::Left }, t0());
     let after = a.search_layout();
     assert_eq!(after.cols[1].w, before[1].w + 180.0);
-    for i in [0, 2, 3] { assert_eq!(after.cols[i].w, before[i].w); }
+    for i in [0, 2, 3] {
+        assert_eq!(after.cols[i].w, before[i].w);
+    }
     assert!(after.hthumb.w > 0.0 && after.max_x > 0.0);
     a.on_event(&Event::Wheel { dx: 10.0, dy: 0.0 }, t0());
     assert_eq!(a.search.scroll_x, a.search_layout().max_x);
@@ -322,7 +322,9 @@ fn double_clicking_a_column_edge_fits_the_column_to_the_visible_results() {
     frame(&mut a);
     let after = a.search_layout().cols;
     assert_eq!(after[1].w, 20.0 + 10.0 * dir.len() as f32, "the folder column fits its longest visible folder");
-    for i in [0, 2, 3] { assert_eq!(after[i].w, before[i].w); }
+    for i in [0, 2, 3] {
+        assert_eq!(after[i].w, before[i].w);
+    }
     let (x, y) = edge(&a, 0);
     a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 2 }, t0());
     a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t0());

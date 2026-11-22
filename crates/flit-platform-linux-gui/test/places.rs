@@ -72,13 +72,7 @@ PATH=\"/dev/nvme0n1p3\" LABEL=\"\" MOUNTPOINT=\"\" HOTPLUG=\"0\" FSTYPE=\"crypto
 PATH=\"/dev/mapper/root\" LABEL=\"\" MOUNTPOINT=\"/\" HOTPLUG=\"0\" FSTYPE=\"btrfs\" TYPE=\"crypt\" PARTTYPE=\"\" KNAME=\"dm-1\" PKNAME=\"nvme0n1p3\"
 ";
     let got: Vec<(String, String, String, bool)> = unmounted_from(lsblk).into_iter().map(|d| (String::from_utf8_lossy(d.path.as_bytes()).into_owned(), d.title(), d.file_system, d.kind.is_some())).collect();
-    assert_eq!(
-        got,
-        [
-            ("/dev/sdb1".to_owned(), "Encrypted volume (sdb1)".to_owned(), "crypto_LUKS".to_owned(), true),
-            ("/dev/mapper/luks-1".to_owned(), "Inside".to_owned(), "ext4".to_owned(), false),
-        ]
-    );
+    assert_eq!(got, [("/dev/sdb1".to_owned(), "Encrypted volume (sdb1)".to_owned(), "crypto_LUKS".to_owned(), true), ("/dev/mapper/luks-1".to_owned(), "Inside".to_owned(), "ext4".to_owned(), false),]);
 }
 
 #[test]
@@ -139,11 +133,7 @@ fn volumes_take_labels_and_sizes() {
     std::fs::create_dir(&by).unwrap();
     std::os::unix::fs::symlink(devs.join("sdb1"), by.join(r"Photo\x20Disk")).unwrap();
     std::os::unix::fs::symlink(devs.join("sda1"), by.join("rootfs")).unwrap();
-    let table = format!(
-        "1 0 8:1 / / rw - ext4 {root} rw\n2 1 8:17 / /media/ann/disk rw - ext4 {disk} rw\n3 1 0:70 / /mnt/c rw - 9p C:\\134 rw\n",
-        root = devs.join("sda1").display(),
-        disk = devs.join("sdb1").display()
-    );
+    let table = format!("1 0 8:1 / / rw - ext4 {root} rw\n2 1 8:17 / /media/ann/disk rw - ext4 {disk} rw\n3 1 0:70 / /mnt/c rw - 9p C:\\134 rw\n", root = devs.join("sda1").display(), disk = devs.join("sdb1").display());
     let v = volumes_from(&parse(table.as_bytes()), b"ann", &by);
     let got: Vec<(&[u8], &str, bool)> = v.iter().map(|v| (v.mount.point.as_slice(), v.label.as_str(), v.mount.removable())).collect();
     assert_eq!(got, [(&b"/"[..], "File System", false), (b"/media/ann/disk", "Photo Disk", true), (b"/mnt/c", "c", false)]);
@@ -160,16 +150,30 @@ fn the_root_drive_is_named_in_the_interface_language() {
 
 #[test]
 fn this_computer_lists_mounted_unmounted_and_network_volumes_under_their_labels() {
-    let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw
+    let table = parse(
+        b"1 0 8:1 / / rw - ext4 /dev/sda1 rw
 2 1 8:17 / /media/ann/STICK rw - vfat /dev/sdb1 rw
-");
+",
+    );
     let mut volumes: Vec<Volume> = table.into_iter().map(|mount| Volume { label: name_of(&mount, flit_core::i18n::Lang::En), mount, total: 0, free: 0 }).collect();
     volumes[0].total = 1000;
     volumes[0].free = 400;
     volumes[1].label = "STICK".into();
-    let unmounted = unmounted_from("PATH=\"/dev/sdc1\" LABEL=\"Backup\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"ext4\" TYPE=\"part\" PARTTYPE=\"0x83\"
-");
-    let share = Drive { path: FsPath::parse("/run/user/1000/gvfs/smb-share:server=nas,share=photos").unwrap(), label: gvfs_label("smb-share:server=nas,share=photos"), total: 0, free: 0, file_system: String::new(), removable: false, unmounted: false, kind: None, remote: Some("smb-share:server=nas,share=photos".into()) };
+    let unmounted = unmounted_from(
+        "PATH=\"/dev/sdc1\" LABEL=\"Backup\" MOUNTPOINT=\"\" HOTPLUG=\"1\" FSTYPE=\"ext4\" TYPE=\"part\" PARTTYPE=\"0x83\"
+",
+    );
+    let share = Drive {
+        path: FsPath::parse("/run/user/1000/gvfs/smb-share:server=nas,share=photos").unwrap(),
+        label: gvfs_label("smb-share:server=nas,share=photos"),
+        total: 0,
+        free: 0,
+        file_system: String::new(),
+        removable: false,
+        unmounted: false,
+        kind: None,
+        remote: Some("smb-share:server=nas,share=photos".into()),
+    };
     let others: Vec<Drive> = unmounted.into_iter().chain([share]).collect();
     let l = listing(|b| computer_from(b, &volumes, &others));
     let rows: Vec<(String, String, bool)> = (0..l.len() as u32).map(|i| (String::from_utf8_lossy(l.name(i)).into_owned(), String::from_utf8_lossy(l.label(i)).into_owned(), l.entries[i as usize].attrs & attr::SIZE_KNOWN != 0)).collect();
@@ -382,7 +386,8 @@ fn a_server_that_does_not_answer_is_given_up_on_and_a_login_prompt_is_recognised
     quick.args(["-c", "echo mounted"]);
     let out = run_within(quick, Duration::from_secs(10)).unwrap();
     assert!(out.status.success() && out.stdout == b"mounted\n" && !needs_login(&out));
-    let asked = std::process::Output { status: std::process::ExitStatus::from_raw(2 << 8), stdout: b"Authentication Required\nEnter user and password for share photos on nas:\nUser [ann]: ".to_vec(), stderr: b"gio: smb://nas/photos/: Password dialog cancelled\n".to_vec() };
+    let asked =
+        std::process::Output { status: std::process::ExitStatus::from_raw(2 << 8), stdout: b"Authentication Required\nEnter user and password for share photos on nas:\nUser [ann]: ".to_vec(), stderr: b"gio: smb://nas/photos/: Password dialog cancelled\n".to_vec() };
     assert!(needs_login(&asked));
     let refused = std::process::Output { stderr: b"gio: smb://nas/photos/: Failed to mount Windows share: Connection refused\n".to_vec(), stdout: Vec::new(), ..asked };
     assert!(!needs_login(&refused));
@@ -431,13 +436,7 @@ Mount(1): photos on nas -> smb://nas/photos/
 fn phones_and_cameras_that_are_plugged_in_but_not_opened_show_as_drives_to_mount() {
     let root = Path::new("/run/user/1000/gvfs");
     let got: Vec<(String, String, bool)> = phones_from(GIO_MOUNT_LI, root).into_iter().map(|d| (String::from_utf8_lossy(d.path.as_bytes()).into_owned(), d.label.clone(), d.mountable())).collect();
-    assert_eq!(
-        got,
-        [
-            ("/run/user/1000/gvfs/mtp:host=Google_Pixel_7_1A2B3C".to_owned(), "Pixel 7".to_owned(), true),
-            ("/run/user/1000/gvfs/gphoto2:host=Canon_Inc._Canon_Digital_Camera".to_owned(), "Canon EOS 2000D".to_owned(), true),
-        ]
-    );
+    assert_eq!(got, [("/run/user/1000/gvfs/mtp:host=Google_Pixel_7_1A2B3C".to_owned(), "Pixel 7".to_owned(), true), ("/run/user/1000/gvfs/gphoto2:host=Canon_Inc._Canon_Digital_Camera".to_owned(), "Canon EOS 2000D".to_owned(), true),]);
     assert!(phones_from("", root).is_empty());
     assert_eq!(device_uri(Path::new("/run/user/1000/gvfs/mtp:host=Google_Pixel_7_1A2B3C"), root).as_deref(), Some("mtp://Google_Pixel_7_1A2B3C/"));
     assert_eq!(device_uri(Path::new("/run/user/1000/gvfs/smb-share:server=nas,share=photos"), root), None);
@@ -605,12 +604,7 @@ fn bookmark_sync_creates_no_files_and_keeps_system_places_and_damaged_lists() {
     assert_eq!(kde_places_edit(KDE_PLACES, &[b"/home/u/Old".to_vec()], &[], 1), None, "a place KDE already has is not added again");
     assert_eq!(gtk_bookmarks_edit("file:///home/u/Work/ Work\n", &some, &[b"/home/u/Other".to_vec()]), None);
 
-    let damaged = [
-        "<xbel>\n <bookmark href=\"file:///home/u/Work\">\n</xbel>\n",
-        "<xbel>\n <bookmark href=\"file:///home/u/Work\"/>\n",
-        "<xbel>\n <bookmark href=\"file:///home/u/Work\"\n <title>x</title></bookmark>\n</xbel>\n",
-        "<xbel>\n </bookmark>\n</xbel>\n",
-    ];
+    let damaged = ["<xbel>\n <bookmark href=\"file:///home/u/Work\">\n</xbel>\n", "<xbel>\n <bookmark href=\"file:///home/u/Work\"/>\n", "<xbel>\n <bookmark href=\"file:///home/u/Work\"\n <title>x</title></bookmark>\n</xbel>\n", "<xbel>\n </bookmark>\n</xbel>\n"];
     for text in damaged {
         std::fs::write(&kde, text).unwrap();
         let (_, kde_written) = sync_bookmarks_in(&gtk, &kde, &[b"/srv/new".to_vec()], &some, 1).unwrap();
@@ -656,9 +650,6 @@ fn gio_mount_always_uses_the_locale_expected_by_error_matching() {
     crate::temp::with_tools(&["gio"], || {
         let cmd = gio_command(&["mount", "smb://nas/"]).unwrap();
         assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["mount", "smb://nas/"]);
-        assert_eq!(cmd.get_envs().collect::<Vec<_>>(), [
-            (std::ffi::OsStr::new("LANGUAGE"), Some(std::ffi::OsStr::new(""))),
-            (std::ffi::OsStr::new("LC_ALL"), Some(std::ffi::OsStr::new("C"))),
-        ]);
+        assert_eq!(cmd.get_envs().collect::<Vec<_>>(), [(std::ffi::OsStr::new("LANGUAGE"), Some(std::ffi::OsStr::new(""))), (std::ffi::OsStr::new("LC_ALL"), Some(std::ffi::OsStr::new("C"))),]);
     });
 }

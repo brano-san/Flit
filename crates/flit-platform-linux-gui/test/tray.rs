@@ -35,12 +35,7 @@ fn tray_responds_with_the_wire_signatures_for_layout_and_properties() {
         assert_eq!(actual.as_c_str(), expected);
     };
     check(layout, c"u(ia{sv}av)");
-    for (path, iface, key, signature) in [
-        (ITEM_PATH, ITEM, c"ToolTip", c"(sa(iiay)ss)"),
-        (ITEM_PATH, ITEM, c"Menu", c"o"),
-        (MENU_PATH, MENU, c"Version", c"u"),
-        (MENU_PATH, MENU, c"IconThemePath", c"as"),
-    ] {
+    for (path, iface, key, signature) in [(ITEM_PATH, ITEM, c"ToolTip", c"(sa(iiay)ss)"), (ITEM_PATH, ITEM, c"Menu", c"o"), (MENU_PATH, MENU, c"Version", c"u"), (MENU_PATH, MENU, c"IconThemePath", c"as")] {
         let get = export.reply(path, props, c"Get", &[args(iface), args(key)], |_| unreachable!()).unwrap();
         let [V::Var(value)] = get.as_slice() else { panic!("Get must return a variant") };
         check(vec![(**value).clone()], signature);
@@ -137,4 +132,3 @@ fn tray_worker_starts_on_enable_wakes_on_change_and_stops_on_disable() {
     drop(listener);
     assert!(!next.running());
 }
-

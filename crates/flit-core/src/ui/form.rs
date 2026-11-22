@@ -139,7 +139,9 @@ pub(super) struct Form {
 
 impl Form {
     fn visible_row(&self, row: Rect) -> Rect {
-        if matches!(self.kind, Kind::Update(_)) { return row; }
+        if matches!(self.kind, Kind::Update(_)) {
+            return row;
+        }
         let v = self.document.viewport;
         let y = row.y - self.document.scroll.pos;
         let top = y.max(v.y);
@@ -228,7 +230,9 @@ impl Form {
 impl App {
     fn reveal_form_focus(&mut self) {
         let Some(f) = &mut self.dialogs.form else { return };
-        if matches!(f.kind, Kind::Update(_)) { return; }
+        if matches!(f.kind, Kind::Update(_)) {
+            return;
+        }
         let Some(row) = f.rows.get(f.focus) else { return };
         let v = f.document.viewport;
         let top = row.y - v.y;
@@ -501,7 +505,9 @@ impl App {
         if matches!(f.kind, Kind::Properties(_)) && f.buttons.len() > 1 {
             let k = n + f.buttons.len();
             let node = put(t, targets, d, Hit::Form(k), Role::Button, crate::i18n::S::ArchiveClose.t(), f.close_rect);
-            if f.focus == k { focus = node; }
+            if f.focus == k {
+                focus = node;
+            }
         }
         Some(focus)
     }
@@ -546,7 +552,10 @@ impl App {
         if let Some(b) = f.button_rects.iter().position(|r| r.contains(x, y)) {
             return Some(Hit::Form(f.controls.len() + b));
         }
-        if let Some(k) = f.rows.iter().take(if matches!(f.kind, Kind::Update(_)) { 2 } else { f.rows.len() }).position(|r| { let r = f.visible_row(*r); r.h > 0.0 && r.contains(x, y) }) {
+        if let Some(k) = f.rows.iter().take(if matches!(f.kind, Kind::Update(_)) { 2 } else { f.rows.len() }).position(|r| {
+            let r = f.visible_row(*r);
+            r.h > 0.0 && r.contains(x, y)
+        }) {
             return Some(Hit::Form(k));
         }
         if self.in_title(y) {
@@ -634,11 +643,16 @@ impl App {
             for c in &mut f.controls {
                 if let Control::Paragraph { text, lines } = c {
                     let next = super::update_dialog::wrapped(g, text, small, width);
-                    if *lines != next { *lines = next; reflow = true; }
+                    if *lines != next {
+                        *lines = next;
+                        reflow = true;
+                    }
                 }
             }
         }
-        if reflow { self.layout_form(); }
+        if reflow {
+            self.layout_form();
+        }
         let Some(f) = &mut self.dialogs.form else { return };
         let d = f.rect;
         g.dl.round_rect(d, t.bg, s8);
@@ -742,7 +756,9 @@ impl App {
             g.text(d.x + s20, base, &f.note, small, if f.error { t.error } else { t.text_dim }, d.w - 2.0 * s20);
         }
         for (b, (r, label)) in f.button_rects.iter().zip(&f.buttons).enumerate() {
-            if properties && f.buttons.len() == 1 { continue; }
+            if properties && f.buttons.len() == 1 {
+                continue;
+            }
             let primary = f.focus == n + b || (f.focus < n && b == 0);
             let hot = hover == Hit::Form(n + b) || pressed == Hit::Form(n + b);
             if primary {
@@ -759,7 +775,9 @@ impl App {
             if hover == Hit::Form(k) || pressed == Hit::Form(k) || f.focus == k {
                 g.dl.round_rect(f.close_rect, t.button_hover, s4);
             }
-            if f.focus == k { g.dl.outline(f.close_rect, t.accent, s4, sc.max(1.0)); }
+            if f.focus == k {
+                g.dl.outline(f.close_rect, t.accent, s4, sc.max(1.0));
+            }
             centered(g, f.close_rect, super::G_CLOSE, icons, t.text);
         }
     }

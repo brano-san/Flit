@@ -184,7 +184,11 @@ fn system_accent() -> Option<flit_core::theme::Accent> {
 }
 
 fn server_frames(wayland: bool, offered: Option<bool>, x11: Option<bool>) -> Option<bool> {
-    if wayland { Some(offered.unwrap_or(false)) } else { x11 }
+    if wayland {
+        Some(offered.unwrap_or(false))
+    } else {
+        x11
+    }
 }
 
 fn initial_decorations(wayland: bool, wanted: bool, x11: Option<bool>) -> bool {
@@ -205,7 +209,11 @@ fn x11_window(raw: &dyn winit::window::Window) -> Option<u32> {
 }
 
 pub(crate) fn text_scale(wayland: bool, milli: u32) -> f32 {
-    if wayland { milli as f32 / 1000.0 } else { 1.0 }
+    if wayland {
+        milli as f32 / 1000.0
+    } else {
+        1.0
+    }
 }
 
 fn apply_look(change: crate::atspi::LookChange) {
@@ -786,11 +794,7 @@ impl WindowControls for LinuxWindow {
     }
 
     fn placement(&self) -> Placement {
-        let (x, y) = if self.is_wayland() {
-            self.raw.outer_position().unwrap_or_default().into()
-        } else {
-            self.to_screen(0.0, 0.0)
-        };
+        let (x, y) = if self.is_wayland() { self.raw.outer_position().unwrap_or_default().into() } else { self.to_screen(0.0, 0.0) };
         let (width, height) = self.compact_from.get().unwrap_or(self.normal_size.get());
         Placement { x, y, width: width as i32, height: height as i32, maximized: self.raw.is_maximized() }
     }
@@ -978,10 +982,7 @@ impl WindowSystem for LinuxWindows {
             return Err(PlatformError::new(-1, "Flit on X11 needs libxkbcommon-x11.so.0 (package libxkbcommon-x11-0 on Debian and Ubuntu)"));
         }
         let mut builder = EventLoop::builder();
-        if std::env::var_os("DISPLAY").is_some()
-            && std::env::var(crate::file_chooser::PARENT_ENV).ok().as_deref().and_then(chooser_parent_x11).is_some()
-            && library_loads(X11_KEYBOARD_LIBRARY)
-        {
+        if std::env::var_os("DISPLAY").is_some() && std::env::var(crate::file_chooser::PARENT_ENV).ok().as_deref().and_then(chooser_parent_x11).is_some() && library_loads(X11_KEYBOARD_LIBRARY) {
             builder.with_x11();
         }
         let event_loop = builder.build().map_err(|e| PlatformError::new(-1, format!("cannot connect to the display server: {e}")))?;
@@ -989,24 +990,29 @@ impl WindowSystem for LinuxWindows {
         let _ = PROXY.set(event_loop.create_proxy());
         watch_desktop();
         let preferences = if crate::preferences::Desktop::current() == crate::preferences::Desktop::Kde {
-            crate::xdg::config_home().and_then(|config| crate::preferences::Watch::start(config, Duration::from_millis(250), |change| match change {
-                crate::preferences::Change::Buttons(buttons) => set_window_buttons(buttons),
-                crate::preferences::Change::IconTheme(name) => apply_look(crate::atspi::LookChange::IconTheme(name)),
-                crate::preferences::Change::Globals(text) => {
-                    if let Some(dark) = crate::shell::kde_dark(&text) {
-                        PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
-                        THEME_CHANGED.store(true, Ordering::Release);
+            crate::xdg::config_home().and_then(|config| {
+                crate::preferences::Watch::start(config, Duration::from_millis(250), |change| match change {
+                    crate::preferences::Change::Buttons(buttons) => set_window_buttons(buttons),
+                    crate::preferences::Change::IconTheme(name) => apply_look(crate::atspi::LookChange::IconTheme(name)),
+                    crate::preferences::Change::Globals(text) => {
+                        if let Some(dark) = crate::shell::kde_dark(&text) {
+                            PREFERRED_DARK.store(if dark { DARK_YES } else { DARK_NO }, Ordering::Release);
+                            THEME_CHANGED.store(true, Ordering::Release);
+                        }
+                        if let Some(accent) = kde_accent_change(&text, system_accent()) {
+                            apply_look(crate::atspi::LookChange::Accent(accent));
+                        }
+                        if crate::fonts::set_desktop_prefs(crate::fonts::kde_prefs(&text)) {
+                            LOOK_DIRTY.store(true, Ordering::Release);
+                            wake_loop();
+                        }
                     }
-                    if let Some(accent) = kde_accent_change(&text, system_accent()) {
-                        apply_look(crate::atspi::LookChange::Accent(accent));
-                    }
-                    if crate::fonts::set_desktop_prefs(crate::fonts::kde_prefs(&text)) {
-                        LOOK_DIRTY.store(true, Ordering::Release);
-                        wake_loop();
-                    }
-                }
-            }).ok())
-        } else { None };
+                })
+                .ok()
+            })
+        } else {
+            None
+        };
         Ok(Self { event_loop, pending: Arc::default(), _preferences: preferences })
     }
 
@@ -1017,7 +1023,29 @@ impl WindowSystem for LinuxWindows {
     fn run<H: WindowHandler<Self>>(mut self, first: Option<WindowOptions>, tray: Option<flit_platform::tray::Tray>, handler: H) -> Result<(), PlatformError> {
         let _tray = tray.map(crate::dbus::tray::start);
         let commands: Commands = Rc::new(RefCell::new(first.into_iter().map(Command::Open).collect()));
-        let mut app = Loop { handler, nodes: Vec::new(), commands, targets: Rc::new(RefCell::new(TabWindows::new())), pending: self.pending.clone(), next_id: 1, mods: ModifiersState::empty(), started: false, error: None, incoming: None, wl: None, verify: None, reading: None, pastes: HashMap::new(), clip_text: None, wayland_selection: None, watching: false, outgoing: None, xds_wait: None, x11: None, x11_frames: None };
+        let mut app = Loop {
+            handler,
+            nodes: Vec::new(),
+            commands,
+            targets: Rc::new(RefCell::new(TabWindows::new())),
+            pending: self.pending.clone(),
+            next_id: 1,
+            mods: ModifiersState::empty(),
+            started: false,
+            error: None,
+            incoming: None,
+            wl: None,
+            verify: None,
+            reading: None,
+            pastes: HashMap::new(),
+            clip_text: None,
+            wayland_selection: None,
+            watching: false,
+            outgoing: None,
+            xds_wait: None,
+            x11: None,
+            x11_frames: None,
+        };
         LOOP_RUNNING.store(true, Ordering::Release);
         let ran = self.event_loop.run_app_on_demand(&mut app);
         LOOP_RUNNING.store(false, Ordering::Release);
@@ -1276,10 +1304,7 @@ const OFFERED_TO_FLIT: u32 = drop_effect::COPY | drop_effect::MOVE | drop_effect
 fn winit_copy_files(el: &dyn ActiveEventLoop, paths: Vec<FsPath>, cut: bool) {
     let lossy = |b: Vec<u8>| String::from_utf8_lossy(&b).into_owned();
     let texts = (lossy(crate::clipboard::uri_list(&paths)), lossy(crate::clipboard::plain(&paths)));
-    let data = DataTransferSendBuilder::new(texts)
-        .with_type(TypeHint::UriList, |t: &(String, String), _| Some(t.0.clone()))
-        .with_type(TypeHint::Plaintext, |t: &(String, String), _| Some(t.1.clone()))
-        .build();
+    let data = DataTransferSendBuilder::new(texts).with_type(TypeHint::UriList, |t: &(String, String), _| Some(t.0.clone())).with_type(TypeHint::Plaintext, |t: &(String, String), _| Some(t.1.clone())).build();
     if let Err(e) = el.set_clipboard(data) {
         tracing::debug!("winit cannot set the file clipboard ({e}), asking a helper program");
         background("flit-copy", move || {
@@ -2110,8 +2135,7 @@ impl<H: WindowHandler<LinuxWindows>> ApplicationHandler for Loop<H> {
             if let Ok(id) = el.clipboard() {
                 if self.clip_text.is_none() || self.wayland_selection != id {
                     self.wayland_selection = id;
-                    let text = id.and_then(|id| el.data_transfer(id).ok()).is_some_and(|data|
-                        data.available_types().into_iter().any(|ty| type_name(ty).is_some_and(|name| crate::clipboard::is_text(&name))));
+                    let text = id.and_then(|id| el.data_transfer(id).ok()).is_some_and(|data| data.available_types().into_iter().any(|ty| type_name(ty).is_some_and(|name| crate::clipboard::is_text(&name))));
                     self.clipboard_text(Some(text));
                 }
             }

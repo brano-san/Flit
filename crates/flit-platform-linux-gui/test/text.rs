@@ -4,11 +4,15 @@ use super::*;
 fn built_in_menu_action_icons_are_present_in_the_bundled_font() {
     let face = Face::open(fonts::ICONS, 0, false).unwrap();
     let source = include_str!("../../flit-core/src/ui/menu.rs");
-    let missing: Vec<_> = source.split("\\u{").skip(1).filter_map(|tail| {
-        let code = u32::from_str_radix(tail.split('}').next()?, 16).ok()?;
-        let ch = char::from_u32(code)?;
-        (!face.covers(ch)).then_some(format!("U+{code:04X}"))
-    }).collect();
+    let missing: Vec<_> = source
+        .split("\\u{")
+        .skip(1)
+        .filter_map(|tail| {
+            let code = u32::from_str_radix(tail.split('}').next()?, 16).ok()?;
+            let ch = char::from_u32(code)?;
+            (!face.covers(ch)).then_some(format!("U+{code:04X}"))
+        })
+        .collect();
     assert!(missing.is_empty(), "menu icons missing from FlitIcons.ttf: {missing:?}");
 }
 use flit_core::render::Color;
@@ -296,13 +300,25 @@ fn bench_text() {
     keys.sort_by_key(|k| (k.font, k.id, k.subpx));
     keys.dedup();
     let mut bm = GlyphBitmap::default();
-    let (_, raster) = time(|| keys.iter().for_each(|&k| { t.rasterize(k, &mut bm); }));
+    let (_, raster) = time(|| {
+        keys.iter().for_each(|&k| {
+            t.rasterize(k, &mut bm);
+        })
+    });
     println!("rasterize {} distinct glyphs: {:?} per glyph", keys.len(), raster / keys.len() as u32);
     let mut g = Gfx::new(LinuxText::new(), 2048);
     g.begin(Color::default());
-    let (_, frame) = time(|| names.iter().enumerate().for_each(|(i, n)| { g.text(0.0, i as f32 * 20.0, n, style, Color::default(), 260.0); }));
+    let (_, frame) = time(|| {
+        names.iter().enumerate().for_each(|(i, n)| {
+            g.text(0.0, i as f32 * 20.0, n, style, Color::default(), 260.0);
+        })
+    });
     g.begin(Color::default());
-    let (_, again) = time(|| names.iter().enumerate().for_each(|(i, n)| { g.text(0.0, i as f32 * 20.0, n, style, Color::default(), 260.0); }));
+    let (_, again) = time(|| {
+        names.iter().enumerate().for_each(|(i, n)| {
+            g.text(0.0, i as f32 * 20.0, n, style, Color::default(), 260.0);
+        })
+    });
     println!("Gfx::text 200 names, cold atlas {frame:?} ({} uploads), warm {again:?}", g.uploads.rects.len());
     let (families, list) = time(|| t.families());
     println!("families(): {} in {list:?}", families.len());

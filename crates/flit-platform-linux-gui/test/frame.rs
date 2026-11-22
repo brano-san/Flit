@@ -62,7 +62,6 @@ fn a_frame_of_the_app_shows_the_tab_strip_and_the_listing() {
     assert!(tab_strip > 40 && list > 400, "tab strip {tab_strip} and list {list} dark pixels");
 }
 
-
 #[test]
 fn a_glyph_rasterises_the_same_after_another_glyph() {
     use flit_core::text::{FontFamily, FontStyle, GlyphBitmap, GlyphKey, ShapedText, TextBackend};

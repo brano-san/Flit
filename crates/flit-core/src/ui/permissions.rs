@@ -123,10 +123,7 @@ impl Editing {
         let mode = ModeEdit::between(self.shown, bits(controls, self.at));
         let owner = account(text(controls, self.owner_at()), &self.owner, &self.accounts.users, S::PermissionsNoUser)?;
         let group = account(text(controls, self.group_at()), &self.group, &self.accounts.groups, S::PermissionsNoGroup)?;
-        let enclosed = self.enclosed_files_at().map(|files_at| Enclosed {
-            files: ModeEdit::between(self.shown & READ_WRITE, bits(controls, files_at)),
-            folders: ModeEdit::between(self.shown, bits(controls, self.enclosed_folders_at().unwrap_or_default())),
-        });
+        let enclosed = self.enclosed_files_at().map(|files_at| Enclosed { files: ModeEdit::between(self.shown & READ_WRITE, bits(controls, files_at)), folders: ModeEdit::between(self.shown, bits(controls, self.enclosed_folders_at().unwrap_or_default())) });
         let edit = AccessEdit { mode, owner, group, enclosed };
         Ok((!edit.is_empty()).then_some(edit))
     }

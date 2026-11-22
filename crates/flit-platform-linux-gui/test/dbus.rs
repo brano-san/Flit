@@ -66,10 +66,7 @@ fn a_private_session_bus_delivers_show_items_to_the_open_sink() {
 }
 
 fn names_owner(address: &str) -> String {
-    let out = Command::new("dbus-send")
-        .args([&format!("--bus={address}"), "--print-reply=literal", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.GetNameOwner", "string:org.freedesktop.FileManager1"])
-        .output()
-        .unwrap();
+    let out = Command::new("dbus-send").args([&format!("--bus={address}"), "--print-reply=literal", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.GetNameOwner", "string:org.freedesktop.FileManager1"]).output().unwrap();
     String::from_utf8_lossy(&out.stdout).trim().to_owned()
 }
 
@@ -93,10 +90,7 @@ fn a_name_held_by_another_file_manager_is_left_alone() {
     let owner = names_owner(&address);
     let (_rx, ok) = serving(&address);
     let still = names_owner(&address);
-    let queued = Command::new("dbus-send")
-        .args([&format!("--bus={address}"), "--print-reply=literal", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.ListQueuedOwners", "string:org.freedesktop.FileManager1"])
-        .output()
-        .unwrap();
+    let queued = Command::new("dbus-send").args([&format!("--bus={address}"), "--print-reply=literal", "--dest=org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus.ListQueuedOwners", "string:org.freedesktop.FileManager1"]).output().unwrap();
     unsafe {
         (api.close)(other);
         (api.release)(other);
@@ -115,14 +109,7 @@ fn a_call_queued_by_bus_activation_is_answered() {
     std::fs::create_dir_all(&services).unwrap();
     std::fs::write(services.join("org.freedesktop.FileManager1.service"), "[D-BUS Service]\nName=org.freedesktop.FileManager1\nExec=/bin/sleep 30\n").unwrap();
     let config = dir.path().join("bus.conf");
-    std::fs::write(
-        &config,
-        format!(
-            "<busconfig><include>/usr/share/dbus-1/session.conf</include><servicedir>{}</servicedir></busconfig>",
-            services.display()
-        ),
-    )
-    .unwrap();
+    std::fs::write(&config, format!("<busconfig><include>/usr/share/dbus-1/session.conf</include><servicedir>{}</servicedir></busconfig>", services.display())).unwrap();
     let Ok(mut daemon) = Command::new("dbus-daemon").arg(format!("--config-file={}", config.display())).args(["--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else { return };
     let mut address = String::new();
     BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
@@ -162,7 +149,15 @@ fn launcher_worker_sends_only_the_latest_queued_progress() {
     drop(tx);
     let mut sent = Vec::new();
     std::thread::scope(|scope| {
-        scope.spawn(|| launcher_updates(rx, |value| { sent.push(value); true })).join().unwrap();
+        scope
+            .spawn(|| {
+                launcher_updates(rx, |value| {
+                    sent.push(value);
+                    true
+                })
+            })
+            .join()
+            .unwrap();
     });
     assert_eq!(sent, [(0.49, true)]);
 }
@@ -176,7 +171,10 @@ fn launcher_worker_does_not_redisplay_progress_after_a_queued_hide() {
     tx.send(None).unwrap();
     drop(tx);
     let mut sent = Vec::new();
-    launcher_updates(rx, |value| { sent.push(value); true });
+    launcher_updates(rx, |value| {
+        sent.push(value);
+        true
+    });
     assert_eq!(sent, [(0.0, false)]);
 }
 

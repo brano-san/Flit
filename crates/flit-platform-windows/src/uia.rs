@@ -295,7 +295,11 @@ impl ISelectionItemProvider_Impl for Element_Impl {
 }
 
 fn toggle_state(on: bool) -> ToggleState {
-    if on { ToggleState_On } else { ToggleState_Off }
+    if on {
+        ToggleState_On
+    } else {
+        ToggleState_Off
+    }
 }
 
 impl IToggleProvider_Impl for Element_Impl {

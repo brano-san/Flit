@@ -109,25 +109,26 @@ impl Query {
             Pattern::Glob(g) => glob(g, lower),
             Pattern::Regex(re) => re.is_match(original),
         };
-        !self.paths.rejects(e.path) && self.terms.iter().all(|t| {
-            let ok = match &t.filter {
-                Filter::Match(Scope::Name, p) => text(p, e.lower_name, e.name),
-                Filter::Match(Scope::Path, p) => text(p, e.lower_path, e.path),
-                Filter::Ext(list) => !e.dir && list.iter().any(|x| x.as_slice() == plain_ext(e.lower_name)),
-                Filter::Size(lo, hi) => !e.dir && (*lo..*hi).contains(&e.size),
-                Filter::Modified(lo, hi) => (*lo..*hi).contains(&e.modified),
-                Filter::Tag(name) => has_tag(name),
-                Filter::Any(queries) => queries.iter().any(|q| q.matches_with(e, facts, has_tag, has_metadata)),
-                Filter::Directory(dir) => e.dir == *dir,
-                Filter::Created(lo, hi) => facts.created > 0 && (*lo..*hi).contains(&facts.created),
-                Filter::Accessed(lo, hi) => facts.accessed > 0 && (*lo..*hi).contains(&facts.accessed),
-                Filter::Attributes(mask) => facts.attrs & mask == *mask,
-                Filter::Children(lo, hi) => e.dir && facts.children.is_some_and(|n| (*lo..*hi).contains(&u64::from(n))),
-                Filter::Depth(lo, hi) => facts.depth.is_some_and(|n| (*lo..*hi).contains(&u64::from(n))),
-                filter @ (Filter::Rating(..) | Filter::Comment(_) | Filter::PortableTag(_)) => has_metadata(filter),
-            };
-            ok != t.negate
-        })
+        !self.paths.rejects(e.path)
+            && self.terms.iter().all(|t| {
+                let ok = match &t.filter {
+                    Filter::Match(Scope::Name, p) => text(p, e.lower_name, e.name),
+                    Filter::Match(Scope::Path, p) => text(p, e.lower_path, e.path),
+                    Filter::Ext(list) => !e.dir && list.iter().any(|x| x.as_slice() == plain_ext(e.lower_name)),
+                    Filter::Size(lo, hi) => !e.dir && (*lo..*hi).contains(&e.size),
+                    Filter::Modified(lo, hi) => (*lo..*hi).contains(&e.modified),
+                    Filter::Tag(name) => has_tag(name),
+                    Filter::Any(queries) => queries.iter().any(|q| q.matches_with(e, facts, has_tag, has_metadata)),
+                    Filter::Directory(dir) => e.dir == *dir,
+                    Filter::Created(lo, hi) => facts.created > 0 && (*lo..*hi).contains(&facts.created),
+                    Filter::Accessed(lo, hi) => facts.accessed > 0 && (*lo..*hi).contains(&facts.accessed),
+                    Filter::Attributes(mask) => facts.attrs & mask == *mask,
+                    Filter::Children(lo, hi) => e.dir && facts.children.is_some_and(|n| (*lo..*hi).contains(&u64::from(n))),
+                    Filter::Depth(lo, hi) => facts.depth.is_some_and(|n| (*lo..*hi).contains(&u64::from(n))),
+                    filter @ (Filter::Rating(..) | Filter::Comment(_) | Filter::PortableTag(_)) => has_metadata(filter),
+                };
+                ok != t.negate
+            })
     }
 }
 
@@ -452,8 +453,7 @@ pub fn parse_with_position(text: &str, clock: Clock) -> Result<Query, ParseError
 fn parse_part(text: &str, clock: Clock, budget: &mut ParseBudget) -> Result<Query, ParseError> {
     let err = |at, detail| ParseError { position: text[..at].chars().count() + 1, detail };
     let tokens = lex(text).map_err(|at| err(at, "unterminated quote".into()))?;
-    Parser { tokens: tokens.into_iter().peekable(), clock, end: text.len(), budget }
-        .finish().map_err(|(at, message)| err(at, message))
+    Parser { tokens: tokens.into_iter().peekable(), clock, end: text.len(), budget }.finish().map_err(|(at, message)| err(at, message))
 }
 
 pub fn parse(text: &str, clock: Clock) -> Result<Query, String> {
@@ -529,10 +529,7 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
                     Some(filter)
                 } else {
                     let pattern = if rest.contains(['*', '?']) { Pattern::Glob(lowercase(rest.as_bytes())) } else { Pattern::Text(lowercase(rest.as_bytes())) };
-                    Some(Filter::Any(vec![Query { terms: vec![
-                        Term { negate: false, filter },
-                        Term { negate: false, filter: Filter::Match(Scope::Name, pattern) },
-                    ], ..Query::default() }]))
+                    Some(Filter::Any(vec![Query { terms: vec![Term { negate: false, filter }, Term { negate: false, filter: Filter::Match(Scope::Name, pattern) }], ..Query::default() }]))
                 }
             } else {
                 strip_ci(s, "tag:").map(|v| Filter::Tag(v.trim().to_owned()))
@@ -577,7 +574,9 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
 
 fn rating_value(s: &str) -> Option<(i128, i128)> {
     let n = s.trim().parse::<f64>().ok()? * 2.0;
-    if !(0.0..=10.0).contains(&n) || n.fract() != 0.0 { return None; }
+    if !(0.0..=10.0).contains(&n) || n.fract() != 0.0 {
+        return None;
+    }
     Some((n as i128, n as i128 + 1))
 }
 

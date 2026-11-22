@@ -199,7 +199,15 @@ impl App {
             let baseline = (r.y + (r.h + m.ascent - m.descent) / 2.0).round();
             let label = self.tabs.items[i].title();
             let torn = active && matches!(self.drag, Drag::Tab { torn: true, .. });
-            let color = if accented { theme::ink_on(t.accent) } else if torn { t.text_dim.alpha(0x60) } else if active { t.text } else { t.text_dim };
+            let color = if accented {
+                theme::ink_on(t.accent)
+            } else if torn {
+                t.text_dim.alpha(0x60)
+            } else if active {
+                t.text
+            } else {
+                t.text_dim
+            };
             let icon = Rect::new(r.x + self.s(10.0), r.y + (r.h - self.s(16.0)) / 2.0, self.s(16.0), self.s(16.0));
             let loc = self.tabs.items[i].location();
             if loc.is_admin() {
@@ -654,7 +662,13 @@ impl App {
 
                 let name = listing.name(i);
                 let faded = e.attrs & attr::HIDDEN != 0 || name.starts_with(b".") || cut.is_some_and(|c| c.contains(name));
-                let row_dir = if in_library { FsPath::parse_exact(crate::library::folder(listing, i)) } else if e.attrs & attr::NESTED != 0 { shell_dir.as_ref().map(|d| d.join(listing.folder(i))) } else { None };
+                let row_dir = if in_library {
+                    FsPath::parse_exact(crate::library::folder(listing, i))
+                } else if e.attrs & attr::NESTED != 0 {
+                    shell_dir.as_ref().map(|d| d.join(listing.folder(i)))
+                } else {
+                    None
+                };
                 let dir = row_dir.as_ref().or(shell_dir.as_ref());
                 let dir_key = if in_bin { recycle::origin(listing, i) } else { dir.map_or(&b""[..], |d| d.as_bytes()) };
                 let (key, kind) = icon_key(name, listing.ext(i), &e, icon_px as u32, dir_key, self.icon_epoch);

@@ -159,7 +159,7 @@ fn only_shortcut_files_are_collected_and_nested_folders_are_searched() {
 
 const ARGS: &str = r#"--new-window "D:\Some Folder""#;
 
-fn text(read:impl FnOnce(&mut [u16]) -> windows::core::Result<()>) -> String {
+fn text(read: impl FnOnce(&mut [u16]) -> windows::core::Result<()>) -> String {
     let mut buf = vec![0u16; 1024];
     read(&mut buf).unwrap();
     let n = buf.iter().position(|&c| c == 0).unwrap_or(buf.len());

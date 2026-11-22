@@ -40,11 +40,7 @@ pub(crate) fn corrupt(message: &str) -> PlatformError {
 
 pub(crate) fn password_error(had_password: bool) -> PlatformError {
     use flit_core::i18n::S;
-    let (kind, message) = if had_password {
-        (PlatformErrorKind::WrongPassword, S::ErrorsArchiveWrongPassword)
-    } else {
-        (PlatformErrorKind::PasswordNeeded, S::ErrorsArchivePasswordNeeded)
-    };
+    let (kind, message) = if had_password { (PlatformErrorKind::WrongPassword, S::ErrorsArchiveWrongPassword) } else { (PlatformErrorKind::PasswordNeeded, S::ErrorsArchivePasswordNeeded) };
     PlatformError::new(PASSWORD_CODE, message.en()).with_kind(kind)
 }
 
@@ -172,9 +168,7 @@ pub fn preview_paths(path: &FsPath) -> Result<String, PreviewError> {
     if meta.len() > MAX_PREVIEW_ARCHIVE {
         return Err(PreviewError::TooLarge);
     }
-    let index = index::open(path, 0).map_err(|error| {
-        if archive::needs_password(error.kind) { PreviewError::PasswordRequired } else { PreviewError::Failed }
-    })?;
+    let index = index::open(path, 0).map_err(|error| if archive::needs_password(error.kind) { PreviewError::PasswordRequired } else { PreviewError::Failed })?;
     let mut out = String::new();
     for item in &index.items {
         let bytes = item.path.len() + 2;

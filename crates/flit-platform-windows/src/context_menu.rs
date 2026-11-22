@@ -83,14 +83,43 @@ pub(crate) enum ShellUi {
 pub(crate) const SHARE_VERB: &CStr = c"Windows.ModernShare";
 
 enum Job {
-    Menu { owner: isize, gen: u64, menu: ShellMenu, pt: POINT },
-    Adopt { owner: isize, prep: u64, menu: ShellMenu, pt: POINT },
-    Palette { owner: isize, gen: u64, ticket: u64, menu: ShellMenu, pt: POINT },
-    PalettePick { owner: isize, ticket: u64, cmd: Option<u32> },
-    Pick { owner: isize, cmd: Option<u32>, shift: bool, ctrl: bool },
+    Menu {
+        owner: isize,
+        gen: u64,
+        menu: ShellMenu,
+        pt: POINT,
+    },
+    Adopt {
+        owner: isize,
+        prep: u64,
+        menu: ShellMenu,
+        pt: POINT,
+    },
+    Palette {
+        owner: isize,
+        gen: u64,
+        ticket: u64,
+        menu: ShellMenu,
+        pt: POINT,
+    },
+    PalettePick {
+        owner: isize,
+        ticket: u64,
+        cmd: Option<u32>,
+    },
+    Pick {
+        owner: isize,
+        cmd: Option<u32>,
+        shift: bool,
+        ctrl: bool,
+    },
     Warm(Vec<ShellMenu>),
     #[cfg(test)]
-    Hang { owner: isize, gen: u64, until: std::sync::mpsc::Receiver<()> },
+    Hang {
+        owner: isize,
+        gen: u64,
+        until: std::sync::mpsc::Receiver<()>,
+    },
 }
 
 struct Prepared {
@@ -585,8 +614,7 @@ impl Pidls {
             let parent: IShellFolder = SHBindToParent(self.first(), None).map_err(err)?;
             let parent_id = ILClone(self.first());
             let _ = ILRemoveLastID(Some(parent_id));
-            let children: Vec<*const ITEMIDLIST> =
-                self.abs.iter().filter(|&&p| ILIsParent(parent_id, p, true).as_bool()).map(|&p| ILFindLastID(p) as *const ITEMIDLIST).collect();
+            let children: Vec<*const ITEMIDLIST> = self.abs.iter().filter(|&&p| ILIsParent(parent_id, p, true).as_bool()).map(|&p| ILFindLastID(p) as *const ITEMIDLIST).collect();
             ILFree(Some(parent_id));
             parent.GetUIObjectOf(hwnd, &children, None).map_err(err)
         }
@@ -602,7 +630,6 @@ impl Pidls {
         }
     }
 }
-
 
 fn forward(menu: &IContextMenu, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
     if !matches!(msg, WM_INITMENUPOPUP | WM_DRAWITEM | WM_MEASUREITEM | WM_MENUCHAR) {
@@ -733,13 +760,7 @@ unsafe fn move_item(from: HMENU, i: i32, to: HMENU) -> windows::core::Result<()>
     let text = kind.fType.0 & (MFT_OWNERDRAW.0 | MFT_BITMAP.0) == 0;
     let mut buf = [0u16; 512];
     let common = MIIM_STATE | MIIM_ID | MIIM_SUBMENU | MIIM_CHECKMARKS | MIIM_DATA;
-    let mut info = MENUITEMINFOW {
-        cbSize: size_of::<MENUITEMINFOW>() as u32,
-        fMask: common | if text { MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP } else { MIIM_TYPE },
-        dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()),
-        cch: buf.len() as u32 - 1,
-        ..Default::default()
-    };
+    let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: common | if text { MIIM_FTYPE | MIIM_STRING | MIIM_BITMAP } else { MIIM_TYPE }, dwTypeData: windows::core::PWSTR(buf.as_mut_ptr()), cch: buf.len() as u32 - 1, ..Default::default() };
     GetMenuItemInfoW(from, i as u32, true, &mut info)?;
     RemoveMenu(from, i as u32, MF_BYPOSITION)?;
     InsertMenuItemW(to, GetMenuItemCount(Some(to)).max(0) as u32, true, &info)
@@ -1107,9 +1128,7 @@ pub(crate) fn run(hwnd: HWND, req: ShellUi, send: &dyn Fn(Event)) {
         ShellUi::PalettePick(ticket, cmd) => {
             let owner = hwnd.0 as isize;
             let mut active = locked(&PALETTE);
-            if active.is_some_and(|(window, running, gen)| {
-                window == owner && running == ticket && CURRENT.compare_exchange(gen, gen + 1, Ordering::SeqCst, Ordering::SeqCst).is_ok()
-            }) {
+            if active.is_some_and(|(window, running, gen)| window == owner && running == ticket && CURRENT.compare_exchange(gen, gen + 1, Ordering::SeqCst, Ordering::SeqCst).is_ok()) {
                 *active = None;
                 drop(active);
                 send_job(Job::PalettePick { owner, ticket, cmd });

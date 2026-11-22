@@ -123,7 +123,11 @@ impl Fingers {
         let scale = spread / self.base;
         let delta = scale - self.scale;
         self.scale = scale;
-        if delta.is_finite() && delta != 0.0 { Touch::Pinch(delta as f32) } else { Touch::Skip }
+        if delta.is_finite() && delta != 0.0 {
+            Touch::Pinch(delta as f32)
+        } else {
+            Touch::Skip
+        }
     }
 }
 

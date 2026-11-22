@@ -109,10 +109,12 @@ impl Session {
                 if latest.load(Ordering::Acquire) != gen {
                     return;
                 }
-                let query = query::parse_with_conditions(&text, &conditions, Clock::system(self.utc_offset_min)).map(|mut q| {
-                    q.paths = paths;
-                    q
-                }).map_err(|error| error.to_string());
+                let query = query::parse_with_conditions(&text, &conditions, Clock::system(self.utc_offset_min))
+                    .map(|mut q| {
+                        q.paths = paths;
+                        q
+                    })
+                    .map_err(|error| error.to_string());
                 if let Err(message) = &query {
                     out(Message::Error { message: message.clone() });
                 }

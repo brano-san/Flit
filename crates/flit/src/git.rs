@@ -46,10 +46,7 @@ impl GitWorker {
         let (tx, events) = unbounded();
         let transfers = Arc::new(Mutex::new(Transfers::default()));
         let active = transfers.clone();
-        std::thread::Builder::new()
-            .name("flit-git".into())
-            .spawn(move || run(rx, tx, wake, &active))
-            .map_err(|e| PlatformError::new(-1, format!("cannot start flit-git: {e}")))?;
+        std::thread::Builder::new().name("flit-git".into()).spawn(move || run(rx, tx, wake, &active)).map_err(|e| PlatformError::new(-1, format!("cannot start flit-git: {e}")))?;
         Ok(Self { jobs, events, transfers })
     }
 
@@ -106,7 +103,11 @@ fn output_error(stderr: &str) -> String {
 }
 
 fn spawn_error(e: &std::io::Error) -> String {
-    if e.kind() == std::io::ErrorKind::NotFound { S::GitErrorMissing.en().to_owned() } else { e.to_string() }
+    if e.kind() == std::io::ErrorKind::NotFound {
+        S::GitErrorMissing.en().to_owned()
+    } else {
+        e.to_string()
+    }
 }
 
 pub fn discover(dir: &Path) -> Option<(PathBuf, PathBuf)> {
@@ -222,10 +223,15 @@ impl Cache {
 }
 
 fn sequence(gitdir: &Path) -> Option<git::Sequence> {
-    if gitdir.join("rebase-merge").is_dir() || gitdir.join("rebase-apply").is_dir() { Some(git::Sequence::Rebase) }
-    else if gitdir.join("MERGE_HEAD").is_file() { Some(git::Sequence::Merge) }
-    else if gitdir.join("CHERRY_PICK_HEAD").is_file() { Some(git::Sequence::CherryPick) }
-    else { None }
+    if gitdir.join("rebase-merge").is_dir() || gitdir.join("rebase-apply").is_dir() {
+        Some(git::Sequence::Rebase)
+    } else if gitdir.join("MERGE_HEAD").is_file() {
+        Some(git::Sequence::Merge)
+    } else if gitdir.join("CHERRY_PICK_HEAD").is_file() {
+        Some(git::Sequence::CherryPick)
+    } else {
+        None
+    }
 }
 
 pub fn status(dir: &Path, commits: bool, cache: &mut Cache) -> Option<GitInfo> {
@@ -234,8 +240,7 @@ pub fn status(dir: &Path, commits: bool, cache: &mut Cache) -> Option<GitInfo> {
     let args = ["status", "--porcelain=v1", "--branch", "--ahead-behind", "-z", "--", "."];
     let porcelain = output(&root, &args).map(|o| o.stdout).unwrap_or_default();
     let prefix = prefix(&root, dir);
-    let scoped = (!prefix.is_empty() && git::status_entries(&porcelain).any(|(x, _, path)| x == b'?' && path.ends_with(b"/") && prefix.starts_with(path)))
-        .then(|| output(dir, &args).map(|o| o.stdout).unwrap_or_default());
+    let scoped = (!prefix.is_empty() && git::status_entries(&porcelain).any(|(x, _, path)| x == b'?' && path.ends_with(b"/") && prefix.starts_with(path))).then(|| output(dir, &args).map(|o| o.stdout).unwrap_or_default());
     let status = git::parse_status(scoped.as_deref().unwrap_or(&porcelain), &prefix);
     let commits = if commits { cache.commits(dir, &gitdir) } else { Commits::default() };
     let (upstream, ahead, behind) = git::parse_tracking(&porcelain);
@@ -245,11 +250,11 @@ pub fn status(dir: &Path, commits: bool, cache: &mut Cache) -> Option<GitInfo> {
             args.extend(["HEAD", "--"]);
         }
         output(&root, &args).map(|o| git::parse_shortstat(&o.stdout)).unwrap_or_default()
-    } else { (0, 0) };
+    } else {
+        (0, 0)
+    };
     let sequence = sequence(&gitdir);
-    let conflicts = if sequence.is_some() {
-        output(&root, &["diff", "--name-only", "--diff-filter=U", "-z"]).map(|o| o.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()).count()).unwrap_or(0)
-    } else { 0 };
+    let conflicts = if sequence.is_some() { output(&root, &["diff", "--name-only", "--diff-filter=U", "-z"]).map(|o| o.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()).count()).unwrap_or(0) } else { 0 };
     let stashes = cache.stashes(&root, &gitdir);
     Some(GitInfo { root: FsPath::parse(&root.to_string_lossy()), branch, upstream, ahead, behind, insertions, deletions, status, commits, sequence, conflicts, stashes })
 }
@@ -261,10 +266,13 @@ fn stashes(dir: &Path) -> Vec<(Stash, String)> {
 fn read_stashes(dir: &Path) -> Result<Vec<(Stash, String)>, String> {
     let out = output(dir, &["stash", "list", "-z", "--format=%H%x00%gd%x00%gs"])?;
     let fields: Vec<_> = out.stdout.split(|b| *b == 0).collect();
-    Ok(fields.chunks_exact(3).map(|f| {
-        let text = |k: usize| String::from_utf8_lossy(f[k]).into_owned();
-        (Stash { oid: text(0), message: text(2) }, text(1))
-    }).collect())
+    Ok(fields
+        .chunks_exact(3)
+        .map(|f| {
+            let text = |k: usize| String::from_utf8_lossy(f[k]).into_owned();
+            (Stash { oid: text(0), message: text(2) }, text(1))
+        })
+        .collect())
 }
 
 fn stash_selector(dir: &Path, oid: &str) -> Result<String, String> {
@@ -277,15 +285,12 @@ struct SwitchError {
 }
 
 fn switch_once(dir: &Path, branch: &str, option: Option<&str>) -> Result<(), SwitchError> {
-    let out = command(dir).arg("switch").args(option).args(["--", branch]).output()
-        .map_err(|e| SwitchError { message: spawn_error(&e), blocked: false })?;
+    let out = command(dir).arg("switch").args(option).args(["--", branch]).output().map_err(|e| SwitchError { message: spawn_error(&e), blocked: false })?;
     if out.status.success() {
         return Ok(());
     }
     let stderr = String::from_utf8_lossy(&out.stderr);
-    let blocked = out.status.code() == Some(1)
-        && stderr.lines().any(|line| line.contains("Your local changes to the following files would be overwritten"))
-        && !stderr.contains("untracked working tree files would be overwritten");
+    let blocked = out.status.code() == Some(1) && stderr.lines().any(|line| line.contains("Your local changes to the following files would be overwritten")) && !stderr.contains("untracked working tree files would be overwritten");
     Err(SwitchError { message: output_error(&stderr), blocked })
 }
 
@@ -325,11 +330,7 @@ fn retry_switch(dir: &Path, from: &str, branch: &str, choice: SwitchChoice) -> R
     } else {
         false
     };
-    switch_once(dir, branch, option).map_err(|e| if saved {
-        flit_core::tr!(S::GitStashSwitchFailed, error = e.message)
-    } else {
-        e.message
-    })?;
+    switch_once(dir, branch, option).map_err(|e| if saved { flit_core::tr!(S::GitStashSwitchFailed, error = e.message) } else { e.message })?;
     Ok(saved)
 }
 
@@ -356,31 +357,37 @@ fn auth_error_host(error: &str) -> Option<&str> {
     if let Some((address, _)) = error.split_once(": Permission denied") {
         return address.rsplit('@').next().filter(|host| !host.starts_with("remote: "));
     }
-    if !error.starts_with("fatal:") { return None; }
+    if !error.starts_with("fatal:") {
+        return None;
+    }
     error.split('\'').nth(1).filter(|address| address.contains("://")).and_then(git::remote_host)
 }
 
 fn auth_remote(dir: &Path, op: &GitOp, args: &[&str], error: &str) -> Option<String> {
-    if let GitOp::Clone { url } = op { return Some(url.clone()); }
+    if let GitOp::Clone { url } = op {
+        return Some(url.clone());
+    }
     let config = |key: &str| output(dir, &["config", "--get", key]).ok().map(|o| String::from_utf8_lossy(o.stdout.trim_ascii()).into_owned()).filter(|s| !s.is_empty());
     let branch = current_branch(dir);
     let pushed = args.first() == Some(&"push");
     let name = if pushed && args.get(1) == Some(&"--set-upstream") {
         "origin".into()
     } else {
-        let pushed = pushed.then(|| {
-            branch.as_ref().and_then(|b| config(&format!("branch.{b}.pushRemote"))).or_else(|| config("remote.pushDefault"))
-        }).flatten();
+        let pushed = pushed.then(|| branch.as_ref().and_then(|b| config(&format!("branch.{b}.pushRemote"))).or_else(|| config("remote.pushDefault"))).flatten();
         pushed.or_else(|| branch.as_ref().and_then(|b| config(&format!("branch.{b}.remote")))).unwrap_or_else(|| default_remote(dir))
     };
     let mut args = vec!["remote", "get-url"];
-    if pushed { args.extend(["--push", "--all"]); }
+    if pushed {
+        args.extend(["--push", "--all"]);
+    }
     args.extend(["--", &name]);
     let out = output(dir, &args).ok()?;
     let urls = String::from_utf8_lossy(out.stdout.trim_ascii());
     let mut lines = urls.lines();
     let first = lines.next()?;
-    if lines.next().is_none() { return Some(first.to_owned()); }
+    if lines.next().is_none() {
+        return Some(first.to_owned());
+    }
     let host = auth_error_host(error)?;
     let matching = urls.lines().find(|url| git::remote_host(url).is_some_and(|h| h.eq_ignore_ascii_case(host)))?;
     Some(matching.to_owned())
@@ -405,16 +412,16 @@ fn executable_on_path(program: &str, path: Option<&OsStr>) -> Option<PathBuf> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if meta.permissions().mode() & 0o111 == 0 { return false; }
+            if meta.permissions().mode() & 0o111 == 0 {
+                return false;
+            }
         }
         meta.is_file()
     })
 }
 
 fn select_github_login(path: Option<&OsStr>, gcm: impl FnOnce(&Path) -> bool, package: &'static str) -> GithubLogin {
-    let command = |program: PathBuf, args: &[&str]| GithubLogin::Command(
-        std::iter::once(program.to_string_lossy().into_owned()).chain(args.iter().map(|s| (*s).into())).collect()
-    );
+    let command = |program: PathBuf, args: &[&str]| GithubLogin::Command(std::iter::once(program.to_string_lossy().into_owned()).chain(args.iter().map(|s| (*s).into())).collect());
     if let Some(git) = executable_on_path("git", path).filter(|p| gcm(p)) {
         command(git, &["credential-manager", "github", "login"])
     } else if let Some(gh) = executable_on_path("gh", path) {
@@ -429,20 +436,26 @@ fn github_login(dir: &Path) -> GithubLogin {
     let package = "GitHub CLI";
     #[cfg(unix)]
     let package = flit_platform_linux_gui::shell::github_cli_package();
-    select_github_login(std::env::var_os("PATH").as_deref(), |program| {
-        let mut cmd = Command::new(program);
-        cmd.current_dir(dir).args(["credential-manager", "--version"]).stdin(Stdio::null());
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x0800_0000);
-        }
-        cmd.output().is_ok_and(|out| out.status.success())
-    }, package)
+    select_github_login(
+        std::env::var_os("PATH").as_deref(),
+        |program| {
+            let mut cmd = Command::new(program);
+            cmd.current_dir(dir).args(["credential-manager", "--version"]).stdin(Stdio::null());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x0800_0000);
+            }
+            cmd.output().is_ok_and(|out| out.status.success())
+        },
+        package,
+    )
 }
 
 fn auth_event(tab: flit_core::provider::TabId, dir: &FsPath, op: &GitOp, args: &[&str], error: &str) -> Option<GitEvent> {
-    if git::failure(error) != git::Failure::Auth || git::op_command(op).is_none() { return None; }
+    if git::failure(error) != git::Failure::Auth || git::op_command(op).is_none() {
+        return None;
+    }
     let path = std_path(dir);
     let github = auth_remote(&path, op, args, error).filter(|r| git::github_remote(r)).map(|_| github_login(&path));
     let dir = if matches!(op, GitOp::Clone { .. }) { None } else { discover(&path).and_then(|(root, _)| FsPath::parse(&root.to_string_lossy())) }.unwrap_or_else(|| dir.clone());
@@ -476,7 +489,11 @@ fn run_op_with(dir: &Path, op: &GitOp, network: &mut impl FnMut(&[&str]) -> Resu
         GitOp::CreateBranch { name, base, switch } => {
             output(dir, &["check-ref-format", "--branch", name])?;
             let base = if base == "HEAD" { base.clone() } else { format!("refs/heads/{base}") };
-            if *switch { output(dir, &["switch", "-c", name, &base]).map(drop) } else { output(dir, &["branch", "--", name, &base]).map(drop) }
+            if *switch {
+                output(dir, &["switch", "-c", name, &base]).map(drop)
+            } else {
+                output(dir, &["branch", "--", name, &base]).map(drop)
+            }
         }
         GitOp::DeleteBranch { name, force } => output(dir, &["branch", if *force { "-D" } else { "-d" }, "--", name]).map(drop),
         GitOp::Abort(kind) => {
@@ -513,10 +530,10 @@ fn execute(tab: flit_core::provider::TabId, dir: FsPath, mut op: GitOp) -> GitEv
         }
         GitOp::RetrySwitch { from, branch, choice } => {
             let _guard = BRANCH_OP.lock().unwrap_or_else(|e| e.into_inner());
-            retry_switch(&path, from, branch, *choice).map(|saved| {
-                (!saved && *choice == SwitchChoice::Stash).then(|| GitOp::Switch(branch.clone()))
-            }).map(|replacement| {
-                if let Some(replacement) = replacement { op = replacement; }
+            retry_switch(&path, from, branch, *choice).map(|saved| (!saved && *choice == SwitchChoice::Stash).then(|| GitOp::Switch(branch.clone()))).map(|replacement| {
+                if let Some(replacement) = replacement {
+                    op = replacement;
+                }
                 None
             })
         }
@@ -530,7 +547,9 @@ fn execute(tab: flit_core::provider::TabId, dir: FsPath, mut op: GitOp) -> GitEv
             result
         }),
     };
-    if let Some(auth) = auth { return auth; }
+    if let Some(auth) = auth {
+        return auth;
+    }
     let (error, url) = match result {
         Ok(url) => (None, url),
         Err(e) => (Some(e), None),
@@ -581,21 +600,33 @@ impl CloneDestination {
         let id = match fs::canonicalize(&path).and_then(|resolved| fs::metadata(&resolved).and_then(|meta| file_id(&resolved, &meta))) {
             Ok(id) => id,
             Err(e) => {
-                if owned { let _ = fs::remove_dir(&path); }
+                if owned {
+                    let _ = fs::remove_dir(&path);
+                }
                 return Err(io_error(e));
             }
         };
-        if active.contains(&id) { return Err(flit_core::tr!(S::GitCloneInProgress, path = path.display())); }
+        if active.contains(&id) {
+            return Err(flit_core::tr!(S::GitCloneInProgress, path = path.display()));
+        }
         active.push(id);
         Ok(Self { path, id, owned })
     }
 
     fn clean(&self, cancelled: bool) -> io::Result<()> {
-        if !self.owned { return Ok(()) }
+        if !self.owned {
+            return Ok(());
+        }
         let result = (|| {
             let meta = fs::symlink_metadata(&self.path)?;
-            if !meta.is_dir() || file_id(&self.path, &meta)? != self.id { return Ok(()) }
-            if cancelled { fs::remove_dir_all(&self.path) } else { fs::remove_dir(&self.path) }
+            if !meta.is_dir() || file_id(&self.path, &meta)? != self.id {
+                return Ok(());
+            }
+            if cancelled {
+                fs::remove_dir_all(&self.path)
+            } else {
+                fs::remove_dir(&self.path)
+            }
         })();
         result.or_else(|e| if e.kind() == io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
     }
@@ -628,7 +659,9 @@ fn execute_tracked(tab: TabId, dir: FsPath, op: GitOp, job: GitJob, tx: &Sender<
     let mut auth = None;
     let mut cancelled = false;
     let mut stale_lock = None;
-    let lock_path = matches!(op, GitOp::Pull | GitOp::Sync).then(|| discover(&path)).flatten()
+    let lock_path = matches!(op, GitOp::Pull | GitOp::Sync)
+        .then(|| discover(&path))
+        .flatten()
         .and_then(|(_, gitdir)| fs::canonicalize(gitdir).ok())
         .map(|gitdir| gitdir.join("index.lock"))
         .filter(|lock| matches!(fs::symlink_metadata(lock), Err(e) if e.kind() == io::ErrorKind::NotFound));
@@ -638,19 +671,23 @@ fn execute_tracked(tab: TabId, dir: FsPath, op: GitOp, job: GitJob, tx: &Sender<
             cancelled = true;
             return Err(S::GitOpCancelled.t().to_owned());
         }
-        let clone = if let GitOp::Clone { url } = &op {
-            Some(CloneDestination::prepare(&path, url)?)
-        } else { None };
+        let clone = if let GitOp::Clone { url } = &op { Some(CloneDestination::prepare(&path, url)?) } else { None };
         let mut cmd = command(&path);
         cmd.arg(args[0]).arg("--progress").args(&args[1..]);
-        if let Some(clone) = &clone { cmd.arg(&clone.path); }
+        if let Some(clone) = &clone {
+            cmd.arg(&clone.path);
+        }
         let result = process::run(cmd, &job.ctl, |progress| {
-            if tx.send(GitEvent::Progress { tab, id: job.id, progress }).is_ok() { wake(); }
+            if tx.send(GitEvent::Progress { tab, id: job.id, progress }).is_ok() {
+                wake();
+            }
         });
         let result = result.map_err(|error| match error {
             process::RunError::Cancelled { forced } => {
                 cancelled = true;
-                if forced { stale_lock = lock_path.as_deref().and_then(|path| new_index_lock(path, started)); }
+                if forced {
+                    stale_lock = lock_path.as_deref().and_then(|path| new_index_lock(path, started));
+                }
                 if let Some(clone) = &clone {
                     if let Err(error) = clone.clean(true) {
                         cancelled = false;
@@ -660,7 +697,9 @@ fn execute_tracked(tab: TabId, dir: FsPath, op: GitOp, job: GitJob, tx: &Sender<
                 S::GitOpCancelled.t().to_owned()
             }
             process::RunError::Failed(error) => {
-                if let Some(clone) = &clone { let _ = clone.clean(false); }
+                if let Some(clone) = &clone {
+                    let _ = clone.clean(false);
+                }
                 error
             }
         });
@@ -736,7 +775,9 @@ fn run(rx: Receiver<Job>, tx: Sender<Reply>, wake: Wake, transfers: &Mutex<Trans
 
 fn start_operation(tab: TabId, dir: FsPath, op: GitOp, job: Option<GitJob>, tx: &Sender<Reply>, wake: &Wake, transfers: &Mutex<Transfers>) {
     let mut transfers = transfers.lock().unwrap_or_else(|e| e.into_inner());
-    if transfers.closed { return; }
+    if transfers.closed {
+        return;
+    }
     let (tx, wake) = (tx.clone(), wake.clone());
     let (worker_tx, worker_wake) = (tx.clone(), wake.clone());
     let _ = tx.send(GitEvent::Started { tab, op: op.clone() });
@@ -748,7 +789,9 @@ fn start_operation(tab: TabId, dir: FsPath, op: GitOp, job: Option<GitJob>, tx: 
             Some(job) => execute_tracked(tab, dir, op, job, &worker_tx, &worker_wake),
             None => execute(tab, dir, op),
         };
-        if worker_tx.send(reply).is_ok() { worker_wake(); }
+        if worker_tx.send(reply).is_ok() {
+            worker_wake();
+        }
     });
     if let Err(e) = spawned {
         let error = e.to_string();
@@ -756,7 +799,9 @@ fn start_operation(tab: TabId, dir: FsPath, op: GitOp, job: Option<GitJob>, tx: 
             Some(id) => GitEvent::TrackedDone { tab, id, op: failed_op, result: GitResult::Failed { error, auth: None } },
             None => GitEvent::Done { tab, op: failed_op, error: Some(error), url: None },
         };
-        if tx.send(reply).is_ok() { wake(); }
+        if tx.send(reply).is_ok() {
+            wake();
+        }
     } else if let (Ok(worker), Some(ctl)) = (spawned, ctl) {
         transfers.active.retain(|(_, task)| !task.is_finished());
         transfers.active.push((ctl, worker));

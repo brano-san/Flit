@@ -44,13 +44,7 @@ fn load() -> Option<Api> {
         if list.is_null() || n <= 0 {
             return None;
         }
-        Some(Api {
-            init: cast(sym(c"tjInitDecompress")?),
-            header: cast(sym(c"tjDecompressHeader3")?),
-            decompress: cast(sym(c"tjDecompress2")?),
-            destroy: cast(sym(c"tjDestroy")?),
-            factors: std::slice::from_raw_parts(list, n as usize).to_vec(),
-        })
+        Some(Api { init: cast(sym(c"tjInitDecompress")?), header: cast(sym(c"tjDecompressHeader3")?), decompress: cast(sym(c"tjDecompress2")?), destroy: cast(sym(c"tjDestroy")?), factors: std::slice::from_raw_parts(list, n as usize).to_vec() })
     }
 }
 

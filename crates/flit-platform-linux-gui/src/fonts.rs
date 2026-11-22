@@ -289,11 +289,7 @@ impl Fontconfig {
     }
 
     fn patterns(&self, set: *mut FcFontSet) -> impl Iterator<Item = *mut c_void> + '_ {
-        let fonts: &[*mut c_void] = if set.is_null() {
-            &[]
-        } else {
-            unsafe { std::slice::from_raw_parts((*set).fonts, (*set).nfont.max(0) as usize) }
-        };
+        let fonts: &[*mut c_void] = if set.is_null() { &[] } else { unsafe { std::slice::from_raw_parts((*set).fonts, (*set).nfont.max(0) as usize) } };
         fonts.iter().copied()
     }
 
@@ -342,12 +338,7 @@ impl Fontconfig {
     }
 
     pub fn resolve(&self, family: Option<&str>, desktop_ui: Option<&str>) -> Resolved {
-        Resolved {
-            ui: desktop_ui.and_then(|d| self.family(d)).or_else(|| self.generic("sans-serif")),
-            mono: self.generic("monospace"),
-            fallback: self.fallback(),
-            family: family.and_then(|name| Some((name.to_owned(), self.family(name)?))),
-        }
+        Resolved { ui: desktop_ui.and_then(|d| self.family(d)).or_else(|| self.generic("sans-serif")), mono: self.generic("monospace"), fallback: self.fallback(), family: family.and_then(|name| Some((name.to_owned(), self.family(name)?))) }
     }
 }
 

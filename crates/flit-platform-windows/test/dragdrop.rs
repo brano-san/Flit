@@ -236,15 +236,8 @@ fn drag_from_seven_zip(temp_files: bool) -> (std::path::PathBuf, DROPEFFECT) {
     let (folder, dest) = (root.join("7zE1234"), root.join("dest"));
     std::fs::create_dir_all(&folder).unwrap();
     std::fs::create_dir_all(&dest).unwrap();
-    let source = windows_core::ComObject::new(SevenZipDrag {
-        folder: folder.clone(),
-        temp_files,
-        names_are_parent: Cell::new(temp_files),
-        need_call_copy: Cell::new(false),
-        copied: Cell::new(false),
-        do_not_process_in_target: Cell::new(false),
-        target_folder: RefCell::new(None),
-    });
+    let source =
+        windows_core::ComObject::new(SevenZipDrag { folder: folder.clone(), temp_files, names_are_parent: Cell::new(temp_files), need_call_copy: Cell::new(false), copied: Cell::new(false), do_not_process_in_target: Cell::new(false), target_folder: RefCell::new(None) });
     if !temp_files {
         source.extract_into(&folder);
     }

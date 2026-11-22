@@ -139,7 +139,13 @@ impl MenuView {
         Measure { g, font: font(scale), scale, next_id: 0 }.flatten(items, &mut lists);
         let (w, h) = (lists[0].width, lists[0].height.min(bounds.h));
         let below = y + h <= bounds.bottom();
-        let top = if below { y } else if y - h >= bounds.y { y - h } else { bounds.bottom() - h };
+        let top = if below {
+            y
+        } else if y - h >= bounds.y {
+            y - h
+        } else {
+            bounds.bottom() - h
+        };
         let mut view = Self { lists, panels: Vec::new(), bounds, scale, start: (x, y), armed: false, glow: Default::default(), glow_at: None, unfold_at: None };
         let rect = view.fit(w, h, x, x, top);
         view.panels.push(Panel { list: 0, rect, hot: None, scroll: 0.0, born: None });
@@ -181,7 +187,13 @@ impl MenuView {
         let Some((_, row)) = p.hot.and_then(|h| self.rows(&p).nth(h)) else { return };
         let s = self.scale;
         let (top, bottom) = (p.rect.y + PAD * s, p.rect.bottom() - PAD * s);
-        let shift = if row.y < top { row.y - top } else if row.bottom() > bottom { row.bottom() - bottom } else { 0.0 };
+        let shift = if row.y < top {
+            row.y - top
+        } else if row.bottom() > bottom {
+            row.bottom() - bottom
+        } else {
+            0.0
+        };
         self.panels[k].scroll = (p.scroll + shift).clamp(0.0, self.max_scroll(&p));
     }
 
@@ -207,7 +219,11 @@ impl MenuView {
 
     pub fn mouse_down(&mut self, x: f32, y: f32) -> MenuOutcome {
         self.armed = true;
-        if self.contains(x, y) { MenuOutcome::Open } else { MenuOutcome::Closed }
+        if self.contains(x, y) {
+            MenuOutcome::Open
+        } else {
+            MenuOutcome::Closed
+        }
     }
 
     pub fn mouse_up(&mut self, x: f32, y: f32) -> MenuOutcome {

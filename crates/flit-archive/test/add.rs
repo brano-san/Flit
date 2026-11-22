@@ -294,11 +294,7 @@ fn tar_extended_sparse_members_keep_their_data_when_last_or_before_a_replaced_me
             t.write("new.txt", b"new");
             let out = add(&t, &archive, &["new.txt"], Resolve::Replace);
             assert!(out.error.is_none(), "{ext}: {:?}", out.error);
-            let reader: Box<dyn Read> = if format == Format::TarGz {
-                Box::new(flate2::read::MultiGzDecoder::new(fs::File::open(std_path(&archive)).unwrap()))
-            } else {
-                Box::new(fs::File::open(std_path(&archive)).unwrap())
-            };
+            let reader: Box<dyn Read> = if format == Format::TarGz { Box::new(flate2::read::MultiGzDecoder::new(fs::File::open(std_path(&archive)).unwrap())) } else { Box::new(fs::File::open(std_path(&archive)).unwrap()) };
             let mut archive = tar::Archive::new(reader);
             let mut found = Vec::new();
             for entry in archive.entries().unwrap() {
@@ -677,12 +673,16 @@ fn tar_entries_with_legacy_encoded_names_are_replaced_instead_of_duplicated() {
         } else {
             raw = fs::read(std_path(&archive)).unwrap();
         }
-        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = tar::Archive::new(raw.as_slice()).entries().unwrap().map(|e| {
-            let mut e = e.unwrap();
-            let mut body = Vec::new();
-            e.read_to_end(&mut body).unwrap();
-            (e.path_bytes().into_owned(), body)
-        }).collect();
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = tar::Archive::new(raw.as_slice())
+            .entries()
+            .unwrap()
+            .map(|e| {
+                let mut e = e.unwrap();
+                let mut body = Vec::new();
+                e.read_to_end(&mut body).unwrap();
+                (e.path_bytes().into_owned(), body)
+            })
+            .collect();
         entries.sort();
         let mut expected = vec![(dos("Фото за лето.txt"), b"keep".to_vec()), ("Отчёт за квартал.txt".as_bytes().to_vec(), b"new".to_vec())];
         expected.sort();
@@ -706,10 +706,14 @@ fn tar_symbolic_link_entries_take_part_in_name_conflicts() {
         t.write("note.txt", b"new");
         let out = add(&t, &archive, &["note.txt"], policy);
         assert!(out.error.is_none(), "{policy:?}: {:?}", out.error);
-        let mut entries: Vec<(String, bool)> = tar::Archive::new(fs::File::open(std_path(&archive)).unwrap()).entries().unwrap().map(|e| {
-            let e = e.unwrap();
-            (String::from_utf8_lossy(&e.path_bytes()).into_owned(), e.header().entry_type().is_symlink())
-        }).collect();
+        let mut entries: Vec<(String, bool)> = tar::Archive::new(fs::File::open(std_path(&archive)).unwrap())
+            .entries()
+            .unwrap()
+            .map(|e| {
+                let e = e.unwrap();
+                (String::from_utf8_lossy(&e.path_bytes()).into_owned(), e.header().entry_type().is_symlink())
+            })
+            .collect();
         entries.sort();
         let expected: Vec<(String, bool)> = match policy {
             Resolve::Replace => vec![("note.txt".into(), false)],

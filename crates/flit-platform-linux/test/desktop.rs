@@ -7,7 +7,9 @@ fn desktop_names_follow_locale_country_modifier_and_encoding_fallbacks() {
     let entries = "[Desktop Entry]\nType=Application\nName=Default\nName[sr_RS@latin]=Full\nName[sr_RS]=Country\nName[sr@latin]=Modifier\nName[sr]=Language\nName[ru]=Файрфокс\nName[zh_CN]=浏览器\n";
     assert_eq!(name(entries, "ru", "sr_RS@latin"), Some("Файрфокс".into()));
     assert_eq!(name(entries, "zh-CN", "ru"), Some("浏览器".into()));
-    for (removed, expected) in [(Vec::new(), "Full"), (vec!["Name[sr_RS@latin]=Full\n"], "Country"), (vec!["Name[sr_RS@latin]=Full\n", "Name[sr_RS]=Country\n"], "Modifier"), (vec!["Name[sr_RS@latin]=Full\n", "Name[sr_RS]=Country\n", "Name[sr@latin]=Modifier\n"], "Language")] {
+    for (removed, expected) in
+        [(Vec::new(), "Full"), (vec!["Name[sr_RS@latin]=Full\n"], "Country"), (vec!["Name[sr_RS@latin]=Full\n", "Name[sr_RS]=Country\n"], "Modifier"), (vec!["Name[sr_RS@latin]=Full\n", "Name[sr_RS]=Country\n", "Name[sr@latin]=Modifier\n"], "Language")]
+    {
         let text = removed.into_iter().fold(entries.to_owned(), |text, entry| text.replace(entry, ""));
         assert_eq!(name(&text, "sr_RS.UTF-8@latin", "ru"), Some(expected.into()));
     }
@@ -22,7 +24,15 @@ fn desktop_names_follow_locale_country_modifier_and_encoding_fallbacks() {
 fn desktop_names_only_use_the_main_group_and_valid_display_values() {
     let text = "[Desktop Entry]\nType=Link\nName=File\\sManager\\\\Tools\nURL=file:///tmp\n[Desktop Action Other]\nName=Wrong\nName[ru]=Wrong\n";
     assert_eq!(name(text, "ru", ""), Some("File Manager\\Tools".into()));
-    for text in ["", "[Other]\nType=Application\nName=Wrong\n", "[Desktop Entry]\nName=Missing type\n", "[Desktop Entry]\nType=Directory\nName=Directory\n", "[Desktop Entry]\nType=Application\nName=\n", "[Desktop Entry]\nType=Application\nName=Invalid\\q\n", "[Desktop Entry]\nType=Application\nName[ru]=Missing default\n"] {
+    for text in [
+        "",
+        "[Other]\nType=Application\nName=Wrong\n",
+        "[Desktop Entry]\nName=Missing type\n",
+        "[Desktop Entry]\nType=Directory\nName=Directory\n",
+        "[Desktop Entry]\nType=Application\nName=\n",
+        "[Desktop Entry]\nType=Application\nName=Invalid\\q\n",
+        "[Desktop Entry]\nType=Application\nName[ru]=Missing default\n",
+    ] {
         assert_eq!(name(text, "ru", ""), None, "{text}");
     }
 }

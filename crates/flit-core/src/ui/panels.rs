@@ -107,7 +107,26 @@ fn grown(root: &Node, id: u32, k: f32) -> Node {
 
 impl Default for Panels {
     fn default() -> Self {
-        Self { list: vec![Panel::default()], root: Node::Leaf(0), here: 0, active: 0, next: 1, seps: Vec::new(), caption: Default::default(), buttons: Default::default(), menu: Rect::default(), quick: Rect::default(), left: 0.0, right: 0.0, inset: 0.0, hover: None, growing: None, closing: None, status: Vec::new(), cycle_from: None }
+        Self {
+            list: vec![Panel::default()],
+            root: Node::Leaf(0),
+            here: 0,
+            active: 0,
+            next: 1,
+            seps: Vec::new(),
+            caption: Default::default(),
+            buttons: Default::default(),
+            menu: Rect::default(),
+            quick: Rect::default(),
+            left: 0.0,
+            right: 0.0,
+            inset: 0.0,
+            hover: None,
+            growing: None,
+            closing: None,
+            status: Vec::new(),
+            cycle_from: None,
+        }
     }
 }
 
@@ -336,7 +355,20 @@ fn sizes(s: &Shape, out: &mut Vec<(usize, usize)>) {
 fn event_tab(ev: &ProviderEvent) -> Option<TabId> {
     match ev {
         ProviderEvent::NetworkDiscovery { tab, .. } => Some(*tab),
-        ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } | ProviderEvent::OpDone { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::OpNotice { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::Denied { tab, .. } => Some(*tab),
+        ProviderEvent::Changes { tab, .. }
+        | ProviderEvent::Rescan { tab, .. }
+        | ProviderEvent::DirSize { tab, .. }
+        | ProviderEvent::SizesSkipped { tab, .. }
+        | ProviderEvent::OpDone { tab, .. }
+        | ProviderEvent::MountAsk { tab, .. }
+        | ProviderEvent::Navigate { tab, .. }
+        | ProviderEvent::SavedServerConnected { tab, .. }
+        | ProviderEvent::NetworkConnected { tab, .. }
+        | ProviderEvent::Reveal { tab, .. }
+        | ProviderEvent::Status { tab, .. }
+        | ProviderEvent::OpNotice { tab, .. }
+        | ProviderEvent::Unwatched { tab, .. }
+        | ProviderEvent::Denied { tab, .. } => Some(*tab),
         _ => None,
     }
 }
@@ -607,7 +639,11 @@ impl App {
     }
 
     pub(super) fn sep_cursor(&self, k: usize) -> CursorIcon {
-        if self.tabs.panels.seps.get(k).is_some_and(|s| s.down) { CursorIcon::ResizeVertical } else { CursorIcon::ResizeHorizontal }
+        if self.tabs.panels.seps.get(k).is_some_and(|s| s.down) {
+            CursorIcon::ResizeVertical
+        } else {
+            CursorIcon::ResizeHorizontal
+        }
     }
 
     pub(super) fn parked_row_hit(&self, x: f32, y: f32) -> Option<(u32, Hit)> {
@@ -882,7 +918,8 @@ impl App {
         let me = self.panel_rect();
         let span = |a: f32, b: f32, c: f32, d: f32| b.min(d) - a.max(c);
         let best = self
-            .tabs.panels
+            .tabs
+            .panels
             .list
             .iter()
             .filter(|p| p.id != self.tabs.panels.active && p.rect.w > 0.0)
@@ -956,9 +993,7 @@ impl App {
             return true;
         }
         let pane = self.tabs.panels.here;
-        let found = std::iter::once(pane).chain(self.parked_ids()).find_map(|id| {
-            self.panel_tabs(id).0.iter().position(|t| t.location() == folder).map(|tab| (id, tab))
-        });
+        let found = std::iter::once(pane).chain(self.parked_ids()).find_map(|id| self.panel_tabs(id).0.iter().position(|t| t.location() == folder).map(|tab| (id, tab)));
         if let Some((id, tab)) = found {
             self.activate_panel(id);
             self.select_tab(tab);

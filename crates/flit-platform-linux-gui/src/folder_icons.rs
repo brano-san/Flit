@@ -217,15 +217,7 @@ fn gio() -> Option<PathBuf> {
 }
 
 pub fn run_gio(program: &Path, dirs: &[PathBuf]) -> Option<Vec<u8>> {
-    let mut child = Command::new(program)
-        .args(["info", "-a", "metadata::custom-icon", "--"])
-        .args(dirs)
-        .env("LC_ALL", "C")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .ok()?;
+    let mut child = Command::new(program).args(["info", "-a", "metadata::custom-icon", "--"]).args(dirs).env("LC_ALL", "C").stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
     let stdout = child.stdout.take()?;
     let reader = std::thread::spawn(move || {
         let mut out = Vec::new();

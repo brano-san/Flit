@@ -97,7 +97,11 @@ pub fn lineage(mime: &str, parents: impl Fn(&str) -> Vec<String>) -> Vec<String>
 
 pub fn sniff(head: &[u8]) -> &'static str {
     let text = !head.contains(&0) && std::str::from_utf8(head).map_or_else(|e| e.error_len().is_none(), |_| true);
-    if text { "text/plain" } else { OCTET_STREAM }
+    if text {
+        "text/plain"
+    } else {
+        OCTET_STREAM
+    }
 }
 
 pub fn mime_of_file(path: &std::path::Path) -> String {
@@ -136,11 +140,7 @@ pub fn type_name(ext: &[u8]) -> Option<String> {
     let ext = std::str::from_utf8(ext).ok()?.to_lowercase();
     let mime = &globs().get(&ext)?.1;
     let mut names = NAMES.lock().unwrap_or_else(|e| e.into_inner());
-    names
-        .get_or_insert_with(HashMap::new)
-        .entry(mime.clone())
-        .or_insert_with(|| mime_dirs().iter().find_map(|d| parse_comment(&std::fs::read_to_string(d.join(format!("{mime}.xml"))).ok()?)))
-        .clone()
+    names.get_or_insert_with(HashMap::new).entry(mime.clone()).or_insert_with(|| mime_dirs().iter().find_map(|d| parse_comment(&std::fs::read_to_string(d.join(format!("{mime}.xml"))).ok()?))).clone()
 }
 
 const CONTENT_HEAD: usize = 16 * 1024;
@@ -158,9 +158,14 @@ fn content_api() -> Option<&'static ContentApi> {
     static API: OnceLock<Option<ContentApi>> = OnceLock::new();
     API.get_or_init(|| unsafe {
         let gio = libc::dlopen(c"libgio-2.0.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-        if gio.is_null() { return None; }
+        if gio.is_null() {
+            return None;
+        }
         let glib = libc::dlopen(c"libglib-2.0.so.0".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
-        if glib.is_null() { libc::dlclose(gio); return None; }
+        if glib.is_null() {
+            libc::dlclose(gio);
+            return None;
+        }
         let guess = libc::dlsym(gio, c"g_content_type_guess".as_ptr());
         let mime = libc::dlsym(gio, c"g_content_type_get_mime_type".as_ptr());
         let free = libc::dlsym(glib, c"g_free".as_ptr());
@@ -169,8 +174,15 @@ fn content_api() -> Option<&'static ContentApi> {
             libc::dlclose(gio);
             return None;
         }
-        Some(ContentApi { guess: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char, *const u8, usize, *mut libc::c_int) -> *mut libc::c_char>(guess), mime: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_char>(mime), free: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*mut libc::c_void)>(free), _gio: gio as usize, _glib: glib as usize })
-    }).as_ref()
+        Some(ContentApi {
+            guess: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char, *const u8, usize, *mut libc::c_int) -> *mut libc::c_char>(guess),
+            mime: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*const libc::c_char) -> *mut libc::c_char>(mime),
+            free: std::mem::transmute::<*mut libc::c_void, unsafe extern "C" fn(*mut libc::c_void)>(free),
+            _gio: gio as usize,
+            _glib: glib as usize,
+        })
+    })
+    .as_ref()
 }
 
 fn content_mime(data: &[u8]) -> Option<String> {
@@ -188,7 +200,9 @@ fn guess_mime(name: Option<&std::ffi::CStr>, data: Option<&[u8]>, api: Option<&C
     let (data, len) = data.map_or((std::ptr::null(), 0), |bytes| (bytes.as_ptr(), bytes.len()));
     unsafe {
         let content = (api.guess)(name, data, len, &mut uncertain);
-        if content.is_null() { return None; }
+        if content.is_null() {
+            return None;
+        }
         let mime = (api.mime)(content);
         let out = (!mime.is_null()).then(|| std::ffi::CStr::from_ptr(mime).to_str().ok().map(str::to_owned)).flatten();
         (api.free)(mime.cast());
@@ -223,7 +237,9 @@ impl ContentCache {
 
     fn insert(&mut self, key: ContentKey, mime: String) {
         self.entries.retain(|(k, _)| k.path != key.path);
-        if self.entries.len() >= CONTENT_CACHE_LIMIT { self.entries.pop_front(); }
+        if self.entries.len() >= CONTENT_CACHE_LIMIT {
+            self.entries.pop_front();
+        }
         self.entries.push_back((key, mime));
     }
 }
@@ -283,9 +299,7 @@ struct PickerTypes {
 impl PickerTypes {
     fn resolve(&self, mime: String) -> Option<String> {
         let (media, subtype) = mime.split_once('/')?;
-        let valid = |part: &str| {
-            !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$&-^_.+".contains(&b))
-        };
+        let valid = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_alphanumeric() || b"!#$&-^_.+".contains(&b));
         if !valid(media) || (subtype != "*" && !valid(subtype)) {
             return None;
         }
@@ -298,33 +312,33 @@ impl PickerTypes {
 
 pub(crate) fn picker_filter_type(mime: String) -> Option<String> {
     static TYPES: OnceLock<PickerTypes> = OnceLock::new();
-    TYPES.get_or_init(|| {
-        let mut types = PickerTypes::default();
-        for dir in mime_dirs().iter().rev() {
-            if let Ok(text) = std::fs::read_to_string(dir.join("types")) {
-                types.registered.extend(text.lines().map(str::to_owned));
+    TYPES
+        .get_or_init(|| {
+            let mut types = PickerTypes::default();
+            for dir in mime_dirs().iter().rev() {
+                if let Ok(text) = std::fs::read_to_string(dir.join("types")) {
+                    types.registered.extend(text.lines().map(str::to_owned));
+                }
+                if let Ok(text) = std::fs::read_to_string(dir.join("aliases")) {
+                    types.aliases.extend(text.lines().filter_map(|line| line.split_once(' ')).map(|(alias, mime)| (alias.to_owned(), mime.to_owned())));
+                }
             }
-            if let Ok(text) = std::fs::read_to_string(dir.join("aliases")) {
-                types.aliases.extend(text.lines().filter_map(|line| line.split_once(' ')).map(|(alias, mime)| (alias.to_owned(), mime.to_owned())));
-            }
-        }
-        types
-    }).resolve(mime)
+            types
+        })
+        .resolve(mime)
 }
 
 pub(crate) fn picker_mime(path: &std::path::Path) -> Option<std::sync::Arc<[String]>> {
     let name = std::ffi::CString::new(path.file_name()?.as_encoded_bytes()).ok()?;
     let api = content_api();
     let certain = |data: Option<&[u8]>| guess_mime(Some(&name), data, api).and_then(|(mime, certain)| certain.then_some(mime));
-    let mime = certain(None)
-        .or_else(|| path.extension().and_then(|ext| mime_of(ext.as_encoded_bytes())))
-        .or_else(|| {
-            if !content_readable(path, &current_mounts()) || !std::fs::symlink_metadata(path).ok()?.is_file() {
-                return None;
-            }
-            let (_, data) = content_head(path)?;
-            certain(Some(&data)).or_else(|| (sniff(&data) == "text/plain").then(|| "text/plain".to_owned()))
-        })?;
+    let mime = certain(None).or_else(|| path.extension().and_then(|ext| mime_of(ext.as_encoded_bytes()))).or_else(|| {
+        if !content_readable(path, &current_mounts()) || !std::fs::symlink_metadata(path).ok()?.is_file() {
+            return None;
+        }
+        let (_, data) = content_head(path)?;
+        certain(Some(&data)).or_else(|| (sniff(&data) == "text/plain").then(|| "text/plain".to_owned()))
+    })?;
     let mut types = lineage(&mime, parents);
     if mime != OCTET_STREAM && !mime.starts_with("inode/") {
         types.push(OCTET_STREAM.into());

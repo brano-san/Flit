@@ -382,9 +382,7 @@ impl LinuxText {
         let mut prev: Option<u16> = None;
         for (i, c) in text.char_indices() {
             let level = levels.as_ref().map_or(Level::ltr(), |l| l[i]);
-            let joins = |p: u16, faces: &[Face]| {
-                matches!(bidi_class(c), BidiClass::BN) || ('\u{FE00}'..='\u{FE0F}').contains(&c) || (matches!(bidi_class(c), BidiClass::NSM) && faces[p as usize].covers(c))
-            };
+            let joins = |p: u16, faces: &[Face]| matches!(bidi_class(c), BidiClass::BN) || ('\u{FE00}'..='\u{FE0F}').contains(&c) || (matches!(bidi_class(c), BidiClass::NSM) && faces[p as usize].covers(c));
             let face = match prev {
                 Some(p) if joins(p, &self.faces) => p,
                 _ => self.face_for(primary, c, bold),
@@ -427,13 +425,7 @@ impl LinuxText {
             for (info, pos) in buffer.glyph_infos().iter().zip(buffer.glyph_positions()) {
                 let advance = pos.x_advance as f32 * k;
                 run.width += advance;
-                self.placed.push(Placed {
-                    id: u16::try_from(info.glyph_id).unwrap_or(0),
-                    cluster: run.start as u32 + info.cluster,
-                    advance,
-                    dx: pos.x_offset as f32 * k,
-                    dy: -pos.y_offset as f32 * k,
-                });
+                self.placed.push(Placed { id: u16::try_from(info.glyph_id).unwrap_or(0), cluster: run.start as u32 + info.cluster, advance, dx: pos.x_offset as f32 * k, dy: -pos.y_offset as f32 * k });
             }
         }
         buffer.clear();

@@ -315,7 +315,11 @@ pub fn validate_name(text: &str, windows: bool) -> Result<String, &'static str> 
 }
 
 pub fn bad_name_char(c: char, windows: bool) -> bool {
-    if windows { c.is_control() || BAD_CHARS.contains(c) } else { c == '/' || c == '\0' }
+    if windows {
+        c.is_control() || BAD_CHARS.contains(c)
+    } else {
+        c == '/' || c == '\0'
+    }
 }
 
 pub fn windows_names(dir: &FsPath, drives: &[super::Drive]) -> bool {
@@ -327,7 +331,11 @@ pub fn windows_names(dir: &FsPath, drives: &[super::Drive]) -> bool {
 }
 
 fn bad_chars_hint(windows: bool) -> &'static str {
-    if windows { S::UiOpsNameBadChars.t() } else { S::UiOpsNameSlash.t() }
+    if windows {
+        S::UiOpsNameBadChars.t()
+    } else {
+        S::UiOpsNameSlash.t()
+    }
 }
 
 fn same_name(a: &[u8], b: &[u8], folded: Option<&str>) -> bool {
@@ -471,7 +479,11 @@ pub fn route(provider: ProviderId, op: FileOp, unix_local: bool) -> Option<(Prov
 
 fn same_location(a: &Location, b: &Location) -> bool {
     let (x, y) = (a.to_bytes(), b.to_bytes());
-    if a.path().case_sensitive() { x == y } else { x.eq_ignore_ascii_case(&y) }
+    if a.path().case_sensitive() {
+        x == y
+    } else {
+        x.eq_ignore_ascii_case(&y)
+    }
 }
 
 fn removal_count(op: &FileOp) -> usize {
@@ -625,22 +637,22 @@ impl App {
         let routed = if ctl.replay().is_some() { Some((provider, op)) } else { route(self.admin_route(provider, tab), op, self.caps.unix_paths) };
         let Some((provider, op)) = routed else { return self.status(MIXED_PATHS.t()) };
         let id = self.allocate_op_id();
-        if self.settings.hide_companions && provider == ProviderId::Local && origin == Origin::Fresh
+        if self.settings.hide_companions
+            && provider == ProviderId::Local
+            && origin == Origin::Fresh
             && matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Paste { .. })
             && op.all_paths(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unix))
         {
             ctl.attach_companions();
         }
         self.track_job(id, &provider, &op, &ctl);
-        let optimistic_removal = ctl.replay().is_none() && provider == ProviderId::Local
+        let optimistic_removal = ctl.replay().is_none()
+            && provider == ProviderId::Local
             && match &op {
                 FileOp::Trash(items) | FileOp::Delete(items) => self.tabs.items.iter().find(|t| t.id == tab).is_some_and(|t| {
                     let (Some(view), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return false };
                     let listing = view.listing();
-                    items.iter().any(|path| {
-                        path.parent().is_some_and(|parent| parent.same(&dir))
-                            && (0..listing.len() as u32).find(|&i| listing.name(i).eq_ignore_ascii_case(path.file_name())).is_some_and(|i| listing.entries[i as usize].is_dir())
-                    })
+                    items.iter().any(|path| path.parent().is_some_and(|parent| parent.same(&dir)) && (0..listing.len() as u32).find(|&i| listing.name(i).eq_ignore_ascii_case(path.file_name())).is_some_and(|i| listing.entries[i as usize].is_dir()))
                 }),
                 _ => false,
             };
@@ -717,8 +729,7 @@ impl App {
         }
         let t = self.tab();
         let paths = match &t.view_loc {
-            Location::Wsl { .. } | Location::Admin(_) => items.iter().map(|&i| t.entry_location(i).map(|item| item.path().clone()))
-                .collect::<Option<Vec<_>>>().map(|paths| (t.view_loc.provider(), paths)).ok_or(S::UiOpsNamesNotShell.t()),
+            Location::Wsl { .. } | Location::Admin(_) => items.iter().map(|&i| t.entry_location(i).map(|item| item.path().clone())).collect::<Option<Vec<_>>>().map(|paths| (t.view_loc.provider(), paths)).ok_or(S::UiOpsNamesNotShell.t()),
             _ => self.item_paths(&items).map(|p| (ProviderId::Local, p)),
         };
         let permanent = permanent || t.view_loc.is_admin();
@@ -933,7 +944,9 @@ impl App {
         for (id, command) in self.menu.clone().iter().enumerate() {
             let allowed = match command {
                 Cmd::PasteAs(kind) => Some(self.paste_link_allowed(*kind)),
-                Cmd::DropAs(kind) => Some(self.ops.asked.as_ref().is_some_and(|a| self.ops.link_probe.as_ref().is_some_and(|p| p.tab == self.tab().id && p.location == *self.current_location() && p.dest == a.dest && p.items.as_ref() == Some(&a.paths) && p.choices.allows(*kind)))),
+                Cmd::DropAs(kind) => {
+                    Some(self.ops.asked.as_ref().is_some_and(|a| self.ops.link_probe.as_ref().is_some_and(|p| p.tab == self.tab().id && p.location == *self.current_location() && p.dest == a.dest && p.items.as_ref() == Some(&a.paths) && p.choices.allows(*kind))))
+                }
                 _ => None,
             };
             if let Some(allowed) = allowed {
@@ -1144,7 +1157,7 @@ impl App {
             Pick::Label(drive) => self.relabel_drive(drive, text),
             Pick::SaveLayout => self.save_layout(text),
             Pick::OpenWithCommand(c) => self.chooser_command(*c, text),
-            Pick::OpenWith(_) | Pick::Tabs | Pick::SavedFilters | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) |Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
+            Pick::OpenWith(_) | Pick::Tabs | Pick::SavedFilters | Pick::LoadLayout | Pick::Commands | Pick::NewItem | Pick::Library(_) | Pick::Encoding(_) | Pick::GoTo | Pick::Crumb(_) | Pick::Keys(_) => {}
         }
     }
 
@@ -1482,13 +1495,7 @@ impl App {
         let dir = self.tabs.items[k].view_loc.clone();
         let names: Vec<Vec<u8>> = match &p.then {
             Then::Reveal(name) => vec![name.clone()],
-            _ => report
-                .items
-                .iter()
-                .map(|(_, to)| Location::on(&p.provider, to.clone()))
-                .filter(|to| to.parent().is_some_and(|p| same_location(&p, &dir)))
-                .map(|to| to.file_name().to_vec())
-                .collect(),
+            _ => report.items.iter().map(|(_, to)| Location::on(&p.provider, to.clone())).filter(|to| to.parent().is_some_and(|p| same_location(&p, &dir))).map(|to| to.file_name().to_vec()).collect(),
         };
         if !names.is_empty() {
             self.ops.reveal.retain(|r| r.tab != tab);

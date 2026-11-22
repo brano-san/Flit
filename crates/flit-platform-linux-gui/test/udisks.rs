@@ -146,14 +146,22 @@ fn a_busy_volume_stops_the_eject_and_a_drive_that_will_not_power_off_does_not() 
     let mut done = Vec::new();
     let busy = run(&steps, &mut |s| {
         done.push(s.clone());
-        if matches!(s, Step::Unmount(o) if o.ends_with("dm_2d0")) { Err(failure("org.freedesktop.UDisks2.Error.DeviceBusy", "Error unmounting /dev/dm-0: target is busy")) } else { Ok(()) }
+        if matches!(s, Step::Unmount(o) if o.ends_with("dm_2d0")) {
+            Err(failure("org.freedesktop.UDisks2.Error.DeviceBusy", "Error unmounting /dev/dm-0: target is busy"))
+        } else {
+            Ok(())
+        }
     });
     assert_eq!(busy.unwrap_err().reason(), S::ErrorsFsDriveBusy.en());
     assert_eq!(done.len(), 2, "nothing is locked or powered off after a busy volume: {done:?}");
     let mut done = Vec::new();
     let stays = run(&steps, &mut |s| {
         done.push(s.clone());
-        if s.of_drive() { Err(failure("org.freedesktop.UDisks2.Error.Failed", "cannot power off")) } else { Ok(()) }
+        if s.of_drive() {
+            Err(failure("org.freedesktop.UDisks2.Error.Failed", "cannot power off"))
+        } else {
+            Ok(())
+        }
     });
     assert!(stays.is_ok() && done.len() == 4);
     let cancelled = run(&steps, &mut |_| Err(failure("org.freedesktop.UDisks2.Error.NotAuthorizedDismissed", "Not authorized")));

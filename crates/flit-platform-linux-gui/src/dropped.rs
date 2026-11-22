@@ -19,13 +19,7 @@ pub enum Content {
 }
 
 pub fn web_urls(uri_list: &[u8]) -> Vec<String> {
-    String::from_utf8_lossy(uri_list)
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.starts_with('#'))
-        .filter(|l| WEB_SCHEMES.iter().any(|s| l.len() > s.len() && l.get(..s.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(s))))
-        .map(str::to_owned)
-        .collect()
+    String::from_utf8_lossy(uri_list).lines().map(str::trim).filter(|l| !l.starts_with('#')).filter(|l| WEB_SCHEMES.iter().any(|s| l.len() > s.len() && l.get(..s.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(s)))).map(str::to_owned).collect()
 }
 
 fn clean(name: &str) -> String {
@@ -143,11 +137,7 @@ pub fn private_dir(root: &Path, prefix: &str, id: u64, stop: impl Fn() -> bool) 
 }
 
 pub fn failed(e: &std::io::Error) -> OpOutcome {
-    let error = if e.raw_os_error() == Some(libc::ECANCELED) {
-        PlatformError::cancelled(i64::from(libc::ECANCELED), flit_platform::CANCELLED)
-    } else {
-        PlatformError::from_io(e, flit_core::fmt::io_reason(e))
-    };
+    let error = if e.raw_os_error() == Some(libc::ECANCELED) { PlatformError::cancelled(i64::from(libc::ECANCELED), flit_platform::CANCELLED) } else { PlatformError::from_io(e, flit_core::fmt::io_reason(e)) };
     OpOutcome { items: Vec::new(), error: Some(error) }
 }
 
@@ -201,9 +191,7 @@ pub fn interpret(kind: Option<TypeHint>, bytes: &[u8]) -> Option<Dragged> {
             if !paths.is_empty() {
                 return Some(Dragged::Files(paths));
             }
-            let content = web_urls(bytes).into_iter().next().map(Content::Url).or_else(|| {
-                String::from_utf8_lossy(bytes).lines().find_map(flit_core::git::dropped_repo_url).map(|url| Content::Repository(url.to_owned()))
-            })?;
+            let content = web_urls(bytes).into_iter().next().map(Content::Url).or_else(|| String::from_utf8_lossy(bytes).lines().find_map(flit_core::git::dropped_repo_url).map(|url| Content::Repository(url.to_owned())))?;
             Some(Dragged::Content(content))
         }
         TypeHint::Plaintext => {

@@ -12,15 +12,21 @@ impl App {
             return self.status(S::PortableMetaDisabled.t());
         }
         let tab = self.tab();
-        let Some(view) = &tab.view else { return self.status(S::PortableMetaSelect.t()); };
-        let Ok([i]): Result<[u32; 1], _> = self.selected_items().try_into() else { return self.status(S::PortableMetaSelect.t()); };
+        let Some(view) = &tab.view else {
+            return self.status(S::PortableMetaSelect.t());
+        };
+        let Ok([i]): Result<[u32; 1], _> = self.selected_items().try_into() else {
+            return self.status(S::PortableMetaSelect.t());
+        };
         if view.listing().entries[i as usize].is_dir() || tab.view_loc.provider() != ProviderId::Local || tab.view_loc.is_recycle_bin() || self.archive_view().is_some() {
             return self.status(S::PortableMetaSelect.t());
         }
         let Some(path) = tab.entry_location(i).and_then(|item| item.to_windows()).filter(|p| matches!(p.kind(), PathKind::Drive | PathKind::Unix)) else {
             return self.status(S::PortableMetaSelect.t());
         };
-        let Some(sidecar) = xmp_path(&path) else { return self.status(S::PortableMetaSelect.t()); };
+        let Some(sidecar) = xmp_path(&path) else {
+            return self.status(S::PortableMetaSelect.t());
+        };
         self.queue_metadata(Request::Read(path), sidecar);
     }
 
@@ -33,16 +39,13 @@ impl App {
         };
         let path = req.path().clone();
         self.effects.push(Effect::PortableMetadata { id, req });
-        self.open_form(Form::new(
-            Kind::PortableMetaWait { id, path, sidecar },
-            S::PortableMetaTitle.t(),
-            vec![Control::paragraph(wait_for.t().to_owned())],
-            vec![S::ArchiveClose.t()],
-        ));
+        self.open_form(Form::new(Kind::PortableMetaWait { id, path, sidecar }, S::PortableMetaTitle.t(), vec![Control::paragraph(wait_for.t().to_owned())], vec![S::ArchiveClose.t()]));
     }
 
     pub fn on_portable_metadata(&mut self, id: u64, result: Result<Metadata, String>) {
-        let Some(f) = self.dialogs.form.take() else { return; };
+        let Some(f) = self.dialogs.form.take() else {
+            return;
+        };
         let Kind::PortableMetaWait { id: expected, path, sidecar } = f.kind else {
             self.dialogs.form = Some(f);
             return;
@@ -65,9 +68,7 @@ impl App {
                 tab.props.forget(path.file_name(), None);
             }
         }
-        let rating = (0..=10).map(|r| {
-            if r == 0 { S::PortableMetaUnrated.t().to_owned() } else { Metadata { rating: r, ..Metadata::default() }.display_rating() }
-        }).collect();
+        let rating = (0..=10).map(|r| if r == 0 { S::PortableMetaUnrated.t().to_owned() } else { Metadata { rating: r, ..Metadata::default() }.display_rating() }).collect();
         let controls = vec![
             Control::line(&path.display()),
             Control::choice(S::PortableMetaRating.t(), rating, usize::from(value.rating)),
@@ -75,16 +76,13 @@ impl App {
             Control::text(S::PortableMetaTags.t(), &value.tags.join(", "), S::PortableMetaTagHint.t()),
             Control::text(S::PortableMetaXmpPath.t(), &sidecar.display(), S::ArchiveExtractToHint.t()),
         ];
-        self.open_form(Form::new(
-            Kind::PortableMeta { path, sidecar, value },
-            S::PortableMetaTitle.t(),
-            controls,
-            vec![S::PortableMetaSave.t(), S::PortableMetaImport.t(), S::PortableMetaExport.t(), S::ArchiveClose.t()],
-        ));
+        self.open_form(Form::new(Kind::PortableMeta { path, sidecar, value }, S::PortableMetaTitle.t(), controls, vec![S::PortableMetaSave.t(), S::PortableMetaImport.t(), S::PortableMetaExport.t(), S::ArchiveClose.t()]));
     }
 
     pub(super) fn submit_portable_metadata(&mut self, mut form: Form, button: usize) -> Option<Form> {
-        let Kind::PortableMeta { path, sidecar: original_sidecar, value } = &form.kind else { return None; };
+        let Kind::PortableMeta { path, sidecar: original_sidecar, value } = &form.kind else {
+            return None;
+        };
         if !self.metadata_enabled() {
             self.status(S::PortableMetaDisabled.t());
             return None;
@@ -94,11 +92,8 @@ impl App {
             form.say(S::PortableMetaInvalid.t(), true);
             return Some(form);
         }
-        let sidecar = if button == 0 || form.text(4) == original_sidecar.display().as_ref() {
-            Some(original_sidecar.clone())
-        } else {
-            self.caps.native_path(form.text(4).trim()).filter(|side| side.file_name().to_ascii_lowercase().ends_with(b".xmp") && !side.same(path))
-        };
+        let sidecar =
+            if button == 0 || form.text(4) == original_sidecar.display().as_ref() { Some(original_sidecar.clone()) } else { self.caps.native_path(form.text(4).trim()).filter(|side| side.file_name().to_ascii_lowercase().ends_with(b".xmp") && !side.same(path)) };
         let Some(sidecar) = sidecar else {
             form.say(S::PortableMetaInvalidXmp.t(), true);
             return Some(form);
@@ -119,7 +114,9 @@ impl App {
 
 impl App {
     pub(super) fn set_metadata_ads(&mut self, on: bool) {
-        if self.settings.metadata_ads == on { return; }
+        if self.settings.metadata_ads == on {
+            return;
+        }
         self.settings.metadata_ads = on;
         for tab in &mut self.tabs.items {
             tab.props.invalidate();

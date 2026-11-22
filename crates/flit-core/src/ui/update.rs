@@ -6,7 +6,6 @@ use crate::i18n::{P, S};
 use crate::provider::Launch;
 use crate::update::{percent, ManagedInstallation, Release, UpdateEvent, UpdateRequest, CURRENT, RELEASES_URL};
 
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UpdatePrefs {
     pub on_start: bool,

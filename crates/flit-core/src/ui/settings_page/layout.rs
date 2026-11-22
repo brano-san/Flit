@@ -156,7 +156,11 @@ impl App {
                 Kind::Toggle(..) if switch_rect(r, s).contains(x, y) => h(SHit::Control(k)),
                 Kind::Number { .. } if slider(*i) => {
                     let grip = slider_track(r, s).inset(-s(8.0), -s(10.0));
-                    if grip.contains(x, y) { h(SHit::Slide(k)) } else { h(SHit::Line(k)) }
+                    if grip.contains(x, y) {
+                        h(SHit::Slide(k))
+                    } else {
+                        h(SHit::Line(k))
+                    }
                 }
                 Kind::Number { .. } => {
                     let (minus, plus) = step_rects(r, s);

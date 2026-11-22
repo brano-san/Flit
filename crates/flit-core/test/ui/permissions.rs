@@ -45,7 +45,17 @@ fn toggling_group_write_and_execution_emits_one_access_change() {
     let mut app = app_with(&["tool"]);
     app.tab_mut().view.as_mut().unwrap().set_selected(0, true);
     app.properties_dialog();
-    let id = app.drain_effects().find_map(|e| if let Effect::Provider { req: ProviderRequest::Access { id, items, .. }, .. } = e { assert_eq!(items, vec![p("/home/u/tool")]); Some(id) } else { None }).expect("the dialog asks for the current access");
+    let id = app
+        .drain_effects()
+        .find_map(|e| {
+            if let Effect::Provider { req: ProviderRequest::Access { id, items, .. }, .. } = e {
+                assert_eq!(items, vec![p("/home/u/tool")]);
+                Some(id)
+            } else {
+                None
+            }
+        })
+        .expect("the dialog asks for the current access");
     let accounts = Accounts { users: vec![(1000, "u".into()), (0, "root".into())], groups: vec![(1000, "u".into()), (27, "sudo".into())] };
     let tab = app.tab().id;
     app.on_provider_event(ProviderEvent::Access { tab, id, items: vec![Some(Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 })], accounts }, Instant::now());
@@ -131,12 +141,7 @@ fn folders_in_the_selection_get_separate_masks_for_enclosed_files_and_folders() 
         items[1].1 = true;
     }
     key(&mut app, Key::Enter);
-    let edit = AccessEdit {
-        mode: ModeEdit::between(0o750, 0o750),
-        owner: None,
-        group: None,
-        enclosed: Some(Enclosed { files: ModeEdit::between(0o600, 0o700), folders: ModeEdit::between(0o750, 0o770) }),
-    };
+    let edit = AccessEdit { mode: ModeEdit::between(0o750, 0o750), owner: None, group: None, enclosed: Some(Enclosed { files: ModeEdit::between(0o600, 0o700), folders: ModeEdit::between(0o750, 0o770) }) };
     assert_eq!(ops(&mut app).into_iter().map(|(_, op)| op).collect::<Vec<_>>(), vec![FileOp::SetAccess { items: vec![p("/home/u/dir")], edit }], "each mask is edited independently");
 }
 

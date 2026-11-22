@@ -79,27 +79,37 @@ fn cancelled_delete_restores_names_and_restart_leaves_them_in_place() {
     let state = t.path().join("state");
     let directory = t.path().join("selected");
     std::fs::create_dir(&directory).unwrap();
-    let paths: Vec<_> = (0..10).map(|index| {
-        let path = directory.join(format!("item-{index}"));
-        std::fs::create_dir(&path).unwrap();
-        fp(&path)
-    }).collect();
+    let paths: Vec<_> = (0..10)
+        .map(|index| {
+            let path = directory.join(format!("item-{index}"));
+            std::fs::create_dir(&path).unwrap();
+            fp(&path)
+        })
+        .collect();
     let stage = directory.join(".flit-stage-1.flit-partial");
     std::fs::create_dir(&stage).unwrap();
     let ctl = OpCtl::default();
     let cancel = ctl.clone();
     let listed = directory.clone();
-    let job = Job::new(ctl, Box::new(move |progress| {
-        if progress.stage == Stage::Running && progress.items == 0 {
-            let mut names = Vec::new();
-            crate::fs::scan(&listed, |name, _| { names.push(name.to_vec()); true }).unwrap();
-            assert!(names.is_empty());
-            assert_eq!(std::fs::read_dir(&listed).unwrap().count(), 11);
-            std::thread::sleep(Duration::from_millis(40));
-        } else if progress.items == 1 {
-            cancel.cancel();
-        }
-    }), Box::new(|_| {}));
+    let job = Job::new(
+        ctl,
+        Box::new(move |progress| {
+            if progress.stage == Stage::Running && progress.items == 0 {
+                let mut names = Vec::new();
+                crate::fs::scan(&listed, |name, _| {
+                    names.push(name.to_vec());
+                    true
+                })
+                .unwrap();
+                assert!(names.is_empty());
+                assert_eq!(std::fs::read_dir(&listed).unwrap().count(), 11);
+                std::thread::sleep(Duration::from_millis(40));
+            } else if progress.items == 1 {
+                cancel.cancel();
+            }
+        }),
+        Box::new(|_| {}),
+    );
     let mut engine = Engine::new(&job);
     engine.delete(&paths, Some(&state));
     assert_eq!(engine.done, vec![(paths[0].clone(), paths[0].clone())]);
@@ -120,12 +130,16 @@ fn a_cancelled_delete_left_under_its_staged_name_is_visible_and_can_be_recovered
     let occupied = original.clone();
     let ctl = OpCtl::default();
     let cancel = ctl.clone();
-    let job = Job::new(ctl, Box::new(move |progress| {
-        if progress.stage == Stage::Running {
-            write(&occupied, "occupant");
-            cancel.cancel();
-        }
-    }), Box::new(|_| {}));
+    let job = Job::new(
+        ctl,
+        Box::new(move |progress| {
+            if progress.stage == Stage::Running {
+                write(&occupied, "occupant");
+                cancel.cancel();
+            }
+        }),
+        Box::new(|_| {}),
+    );
     let mut engine = Engine::new(&job);
     engine.delete(&[fp(&original)], Some(&state));
     let mut staged = None;
@@ -135,7 +149,8 @@ fn a_cancelled_delete_left_under_its_staged_name_is_visible_and_can_be_recovered
             staged = Some(directory.join(OsStr::from_bytes(name)));
         }
         true
-    }).unwrap();
+    })
+    .unwrap();
     let staged = staged.unwrap();
     assert!(engine.done.is_empty() && engine.error().unwrap().message.contains(staged.to_str().unwrap()));
     recover_pending(&state, |_| false);

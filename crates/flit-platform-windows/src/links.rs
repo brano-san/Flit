@@ -104,11 +104,15 @@ fn junction(target: &FsPath, path: &FsPath) -> windows::core::Result<()> {
         let handle = unsafe { CreateFileW(PCWSTR(wide.as_ptr()), GENERIC_WRITE.0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, None, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT | FILE_FLAG_BACKUP_SEMANTICS, None) }?;
         let mut returned = 0;
         let result = unsafe { DeviceIoControl(handle, FSCTL_SET_REPARSE_POINT, Some(data.as_ptr() as _), data.len() as u32, None, 0, Some(&mut returned), None) };
-        unsafe { let _ = CloseHandle(handle); }
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
         result
     })();
     if created.is_err() {
-        unsafe { let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr())); }
+        unsafe {
+            let _ = RemoveDirectoryW(PCWSTR(wide.as_ptr()));
+        }
     }
     created
 }
@@ -123,7 +127,11 @@ pub(crate) fn create(kind: LinkKind, target: &FsPath, path: &FsPath) -> windows:
         LinkKind::Symbolic => {
             let flags = SYMBOLIC_LINK_FLAG_ALLOW_UNPRIVILEGED_CREATE | if std_path(target).is_dir() { SYMBOLIC_LINK_FLAG_DIRECTORY } else { SYMBOLIC_LINK_FLAGS(0) };
             let from: Vec<u16> = plain_target(target).into_iter().chain([0]).collect();
-            if unsafe { CreateSymbolicLinkW(PCWSTR(to.as_ptr()), PCWSTR(from.as_ptr()), flags) } { Ok(()) } else { Err(windows::core::Error::from_thread()) }
+            if unsafe { CreateSymbolicLinkW(PCWSTR(to.as_ptr()), PCWSTR(from.as_ptr()), flags) } {
+                Ok(())
+            } else {
+                Err(windows::core::Error::from_thread())
+            }
         }
         LinkKind::Junction => junction(target, path),
         LinkKind::Hard => unsafe { CreateHardLinkW(PCWSTR(to.as_ptr()), PCWSTR(target.to_wide(true).as_ptr()), None) },
@@ -150,7 +158,9 @@ struct Folder(HANDLE);
 
 impl Drop for Folder {
     fn drop(&mut self) {
-        unsafe { let _ = CloseHandle(self.0); }
+        unsafe {
+            let _ = CloseHandle(self.0);
+        }
     }
 }
 

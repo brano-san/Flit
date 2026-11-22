@@ -174,7 +174,10 @@ impl App {
                     }
                 }
                 Control::Check { label, .. } | Control::Value { label, .. } => moved(label),
-                Control::Paragraph { text, lines } if matches!(f.kind, Kind::GitAbort { .. }) => { moved(text); lines.clear(); }
+                Control::Paragraph { text, lines } if matches!(f.kind, Kind::GitAbort { .. }) => {
+                    moved(text);
+                    lines.clear();
+                }
                 Control::Line(_) | Control::Paragraph { .. } => {}
                 Control::Flags { label, items, .. } => {
                     moved(label);
@@ -206,7 +209,11 @@ fn levels(f: Format) -> Vec<String> {
 }
 
 fn ext_for(f: Format, single_file: bool) -> &'static str {
-    if f == Format::Gz && !single_file { Format::TarGz.ext() } else { f.ext() }
+    if f == Format::Gz && !single_file {
+        Format::TarGz.ext()
+    } else {
+        f.ext()
+    }
 }
 
 fn format_note(f: Format) -> &'static str {

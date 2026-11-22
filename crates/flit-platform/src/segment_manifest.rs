@@ -17,7 +17,9 @@ impl Manifest {
                 "size" if len.is_none() => len = Some(value.trim().parse().ok()?),
                 "crc32" if checksum.is_none() => {
                     let value = value.trim().trim_start_matches('$');
-                    if value.len() != 8 { return None; }
+                    if value.len() != 8 {
+                        return None;
+                    }
                     checksum = Some(u32::from_str_radix(value, 16).ok()?);
                 }
                 "filename" | "filenameutf8" | "size" | "crc32" => return None,
@@ -25,7 +27,9 @@ impl Manifest {
             }
         }
         let file = wide_file.or(file)?;
-        if !valid_name(file) { return None; }
+        if !valid_name(file) {
+            return None;
+        }
         Some(Self { file: file.to_owned(), len: len?, checksum: checksum? })
     }
 
@@ -36,20 +40,22 @@ impl Manifest {
 }
 
 pub(crate) fn valid_name(name: &str) -> bool {
-    !name.chars().any(char::is_control) && !name.contains(['\\', ':'])
-        && flit_core::ui::validate_name(name, cfg!(windows)).is_ok_and(|safe| safe == name)
+    !name.chars().any(char::is_control) && !name.contains(['\\', ':']) && flit_core::ui::validate_name(name, cfg!(windows)).is_ok_and(|safe| safe == name)
 }
 
 pub(crate) fn decode_manifest<'a>(raw: &'a [u8], decode_ansi: impl FnOnce(&[u8]) -> Option<String>) -> std::borrow::Cow<'a, str> {
-    const CP1252: [char; 32] = [
-        '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}',
-        '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
-    ];
+    const CP1252: [char; 32] = ['€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š', '›', 'œ', '\u{9d}', 'ž', 'Ÿ'];
     match std::str::from_utf8(raw) {
         Ok(text) => text.into(),
-        Err(_) => decode_ansi(raw).unwrap_or_else(|| raw.iter().map(|&b| match b {
-            0x80..=0x9f => CP1252[usize::from(b - 0x80)],
-            _ => char::from(b),
-        }).collect()).into(),
+        Err(_) => decode_ansi(raw)
+            .unwrap_or_else(|| {
+                raw.iter()
+                    .map(|&b| match b {
+                        0x80..=0x9f => CP1252[usize::from(b - 0x80)],
+                        _ => char::from(b),
+                    })
+                    .collect()
+            })
+            .into(),
     }
 }

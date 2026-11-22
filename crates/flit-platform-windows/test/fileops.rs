@@ -723,13 +723,17 @@ fn cancelling_a_replacement_after_copy_starts_keeps_the_old_file_and_removes_the
         }
         let ctl = OpCtl::new(Some(Resolve::Replace));
         let cancel = ctl.clone();
-        let job = Job::new(ctl, Box::new(move |progress| {
-            if progress.bytes > 0 {
-                cancel.cancel();
-            } else if progress.stage == Stage::Running {
-                std::thread::sleep(std::time::Duration::from_millis(40));
-            }
-        }), Box::new(|_| {}));
+        let job = Job::new(
+            ctl,
+            Box::new(move |progress| {
+                if progress.bytes > 0 {
+                    cancel.cancel();
+                } else if progress.stage == Stage::Running {
+                    std::thread::sleep(std::time::Duration::from_millis(40));
+                }
+            }),
+            Box::new(|_| {}),
+        );
         let out = run_native(&FileOp::Copy { items: vec![source.clone()], dest: t.path("out") }, &job);
         assert_eq!(out.error.map(|e| e.message), Some(CANCELLED.into()));
         assert!(job.progress().bytes > 0 && out.items.is_empty());

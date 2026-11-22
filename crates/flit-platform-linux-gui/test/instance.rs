@@ -56,9 +56,12 @@ fn second_process_forwards_its_open_to_the_first() {
     let sink: OpenSink = Arc::new(Mutex::new(Some(tx)));
     let woken = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let w = woken.clone();
-    primary.listen(sink, Arc::new(move || {
-        w.fetch_add(1, Ordering::Relaxed);
-    }));
+    primary.listen(
+        sink,
+        Arc::new(move || {
+            w.fetch_add(1, Ordering::Relaxed);
+        }),
+    );
     let _serial = crate::window::STARTUP_TOKEN_USERS.lock().unwrap_or_else(|e| e.into_inner());
     let out = child("instance::tests::forward_child").env("FLIT_TEST_RUNTIME", t.path()).env("XDG_ACTIVATION_TOKEN", "launcher_TIME9").env("DESKTOP_STARTUP_ID", "launcher_TIME9").output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));

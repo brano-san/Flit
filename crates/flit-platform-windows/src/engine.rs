@@ -104,13 +104,7 @@ pub(crate) fn undo_stamp(path: &FsPath) -> std::io::Result<(flit_core::undo::Sta
     if file == 0 {
         return Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
     }
-    let stamp = flit_core::undo::Stamp {
-        size: u64::from(info.nFileSizeHigh) << 32 | u64::from(info.nFileSizeLow),
-        modified: (i128::from(ticks(info.ftLastWriteTime)) - 116_444_736_000_000_000) * 100,
-        device: u64::from(info.dwVolumeSerialNumber),
-        file,
-        access: None,
-    };
+    let stamp = flit_core::undo::Stamp { size: u64::from(info.nFileSizeHigh) << 32 | u64::from(info.nFileSizeLow), modified: (i128::from(ticks(info.ftLastWriteTime)) - 116_444_736_000_000_000) * 100, device: u64::from(info.dwVolumeSerialNumber), file, access: None };
     let directory = info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY.0 | FILE_ATTRIBUTE_REPARSE_POINT.0) == FILE_ATTRIBUTE_DIRECTORY.0;
     Ok((stamp, directory))
 }
@@ -121,12 +115,14 @@ fn io_error(error: windows::core::Error) -> std::io::Error {
 
 pub(crate) fn undo_children(dir: &FsPath) -> std::io::Result<Vec<FsPath>> {
     use std::os::windows::ffi::OsStrExt;
-    std::fs::read_dir(crate::fileops::std_path(dir))?.map(|entry| {
-        let name = entry?.file_name();
-        let mut bytes = Vec::new();
-        flit_core::name::push_utf16(&mut bytes, &name.encode_wide().collect::<Vec<_>>());
-        Ok(dir.join(&bytes))
-    }).collect()
+    std::fs::read_dir(crate::fileops::std_path(dir))?
+        .map(|entry| {
+            let name = entry?.file_name();
+            let mut bytes = Vec::new();
+            flit_core::name::push_utf16(&mut bytes, &name.encode_wide().collect::<Vec<_>>());
+            Ok(dir.join(&bytes))
+        })
+        .collect()
 }
 
 pub(crate) fn link_stat(p: &FsPath) -> Option<Meta> {
@@ -251,7 +247,11 @@ struct Waiting {
 impl Drop for LinkStage {
     fn drop(&mut self) {
         if self.made {
-            if self.directory { let _ = remove_dir(&self.path); } else { let _ = delete_file(&self.path); }
+            if self.directory {
+                let _ = remove_dir(&self.path);
+            } else {
+                let _ = delete_file(&self.path);
+            }
         }
         if let (Ok(()), Some(pending)) = (remove_dir(&self.dir), self.pending.take()) {
             pending.finish();
@@ -349,13 +349,7 @@ unsafe extern "system" fn on_chunk(msg: *const COPYFILE2_MESSAGE, ctx: *const c_
 }
 
 fn copy_file(from: &FsPath, to: &FsPath, size: u64, chunk: &Chunk<'_>) -> windows::core::Result<()> {
-    let params = COPYFILE2_EXTENDED_PARAMETERS {
-        dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32,
-        dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS,
-        pProgressRoutine: Some(on_chunk),
-        pvCallbackContext: chunk as *const Chunk as *mut c_void,
-        ..Default::default()
-    };
+    let params = COPYFILE2_EXTENDED_PARAMETERS { dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32, dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS, pProgressRoutine: Some(on_chunk), pvCallbackContext: chunk as *const Chunk as *mut c_void, ..Default::default() };
     let result = unsafe { CopyFile2(PCWSTR(wide(from).as_ptr()), PCWSTR(wide(to).as_ptr()), Some(&params)) };
     #[cfg(test)]
     if let Some(error) = chunk.failure.get() {
@@ -432,7 +426,24 @@ pub(crate) struct Engine<'a> {
 
 impl<'a> Engine<'a> {
     pub(crate) fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, first_code: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None, make_link: &crate::links::create, elevate_links: &crate::links::elevated, recycle: &SystemRecycle, pending_state: pending_state(), replacement_stage: None, #[cfg(test)] fail_after_chunk: None }
+        Self {
+            job,
+            done: Vec::new(),
+            failed: 0,
+            first: None,
+            first_code: None,
+            fatal: false,
+            elevate: false,
+            dirs: Vec::new(),
+            limit: None,
+            make_link: &crate::links::create,
+            elevate_links: &crate::links::elevated,
+            recycle: &SystemRecycle,
+            pending_state: pending_state(),
+            replacement_stage: None,
+            #[cfg(test)]
+            fail_after_chunk: None,
+        }
     }
 
     fn stopped(&self) -> bool {
@@ -631,11 +642,7 @@ impl<'a> Engine<'a> {
                 move_file(&old, dst, MOVE_FILE_FLAGS(0)).is_ok()
             }
         };
-        let placed = if mode == Mode::Move {
-            move_file(src, dst, MOVE_FILE_FLAGS(0))
-        } else {
-            stage.place(dst, false)
-        };
+        let placed = if mode == Mode::Move { move_file(src, dst, MOVE_FILE_FLAGS(0)) } else { stage.place(dst, false) };
         if let Err(error) = placed {
             if !restore_old() {
                 self.left_staged(dst, saved, &error);
@@ -646,8 +653,7 @@ impl<'a> Engine<'a> {
         }
         if mode == Mode::Across {
             if let Err(error) = delete_file(src) {
-                let displaced = placed_stamp.is_some_and(|stamp| undo_stamp(dst).is_ok_and(|current| current == stamp))
-                    && move_file(dst, &stage.path, MOVE_FILE_FLAGS(0)).is_ok();
+                let displaced = placed_stamp.is_some_and(|stamp| undo_stamp(dst).is_ok_and(|current| current == stamp)) && move_file(dst, &stage.path, MOVE_FILE_FLAGS(0)).is_ok();
                 stage.made = displaced;
                 if !displaced || !restore_old() {
                     self.left_staged(dst, saved, &error);
@@ -952,7 +958,10 @@ impl<'a> Engine<'a> {
                     Some(Resolve::KeepBoth) => dst = free_name(&dst, dir),
                     Some(Resolve::Replace) if !dir && stat(&dst).is_some_and(|m| !is_dir(&m)) => replace = true,
                     Some(Resolve::Replace) => dst = free_name(&dst, dir),
-                    Some(_) => { self.job.update(|p| p.items += 1); continue; }
+                    Some(_) => {
+                        self.job.update(|p| p.items += 1);
+                        continue;
+                    }
                     None => break,
                 }
             }
@@ -990,8 +999,14 @@ impl<'a> Engine<'a> {
                     let code = code(&error);
                     if matches!(code, ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) && !replace {
                         match self.ask(item, output_meta, &dst) {
-                            Some(Resolve::KeepBoth) => { dst = free_name(&dst, dir); continue; }
-                            Some(Resolve::Replace) if !dir && stat(&dst).is_some_and(|m| !is_dir(&m)) => { replace = true; continue; }
+                            Some(Resolve::KeepBoth) => {
+                                dst = free_name(&dst, dir);
+                                continue;
+                            }
+                            Some(Resolve::Replace) if !dir && stat(&dst).is_some_and(|m| !is_dir(&m)) => {
+                                replace = true;
+                                continue;
+                            }
                             _ => break,
                         }
                     }
@@ -1017,7 +1032,9 @@ impl<'a> Engine<'a> {
             _ => Vec::new(),
         };
         self.keep(source, result);
-        if companions.is_empty() { return; }
+        if companions.is_empty() {
+            return;
+        }
         let job = Job::detached(Resolve::Skip);
         let mut engine = Engine::new(&job);
         for (from, to) in companions {
@@ -1058,12 +1075,7 @@ impl<'a> Engine<'a> {
         self.running(total);
         self.touch(Some(dest.clone()));
         let mut shell = Vec::new();
-        let small: Vec<usize> = if self.job.has_companion_groups() {
-            Vec::new()
-        } else {
-            (0..items.len()).filter(|&k| native[k] && metas[k].is_some_and(|m| !is_dir(&m) && m.size <= QUICK_MAX)
-                && !items[k].parent().is_some_and(|p| same(&p, dest))).collect()
-        };
+        let small: Vec<usize> = if self.job.has_companion_groups() { Vec::new() } else { (0..items.len()).filter(|&k| native[k] && metas[k].is_some_and(|m| !is_dir(&m) && m.size <= QUICK_MAX) && !items[k].parent().is_some_and(|p| same(&p, dest))).collect() };
         let files: Vec<(FsPath, FsPath, u64)> = small.iter().map(|&k| (items[k].clone(), dest.join(items[k].file_name()), metas[k].map_or(0, |m| m.size))).collect();
         let mut copied = vec![false; items.len()];
         for (&k, ok) in small.iter().zip(quick(self.job, &files, false)) {
@@ -1198,22 +1210,24 @@ impl<'a> Engine<'a> {
     fn delete(&mut self, items: &[FsPath], state: Option<&std::path::Path>) -> Option<FileOp> {
         self.job.update(|p| p.stage = Stage::Preparing);
         let metas = self.stat_all(items);
-        let stages: Vec<_> = items.iter().zip(&metas).map(|(item, meta)| {
-            let state = state?;
-            let _ = meta.as_ref().filter(|_| !self.stopped())?;
-            let (stamp, _) = undo_stamp(item).ok()?;
-            let attributes = unsafe { GetFileAttributesW(PCWSTR(wide(item).as_ptr())) };
-            if attributes == INVALID_FILE_ATTRIBUTES {
-                return None;
-            }
-            let hidden = attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0;
-            let (path, record) = flit_platform::pending::stage_delete(state, item, stamp, hidden, |from, to| {
-                move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)
-            }).ok()?;
-            let _ = set_hidden(&path, true);
-            self.touch(item.parent());
-            Some((path, record, hidden))
-        }).collect();
+        let stages: Vec<_> = items
+            .iter()
+            .zip(&metas)
+            .map(|(item, meta)| {
+                let state = state?;
+                let _ = meta.as_ref().filter(|_| !self.stopped())?;
+                let (stamp, _) = undo_stamp(item).ok()?;
+                let attributes = unsafe { GetFileAttributesW(PCWSTR(wide(item).as_ptr())) };
+                if attributes == INVALID_FILE_ATTRIBUTES {
+                    return None;
+                }
+                let hidden = attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0;
+                let (path, record) = flit_platform::pending::stage_delete(state, item, stamp, hidden, |from, to| move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)).ok()?;
+                let _ = set_hidden(&path, true);
+                self.touch(item.parent());
+                Some((path, record, hidden))
+            })
+            .collect();
         let mut total = Tally::default();
         for ((p, m), stage) in items.iter().zip(&metas).zip(&stages) {
             if let Some(m) = m {
@@ -1229,11 +1243,7 @@ impl<'a> Engine<'a> {
             if let Some((path, record, hidden)) = stage {
                 let matches = || undo_stamp(&path).is_ok_and(|(stamp, _)| record.matches(stamp));
                 if matches() && !self.stopped() {
-                    let prepared = if is_dir(&m) && !is_dir_link(&m) {
-                        record.inventory(&path, undo_fs(), || self.stopped())
-                    } else {
-                        Ok(())
-                    };
+                    let prepared = if is_dir(&m) && !is_dir_link(&m) { record.inventory(&path, undo_fs(), || self.stopped()) } else { Ok(()) };
                     match prepared.and_then(|()| record.begin_delete()) {
                         Ok(()) => deleted = self.delete_tree(&path, &m, true),
                         Err(error) if !self.stopped() => {
@@ -1247,8 +1257,7 @@ impl<'a> Engine<'a> {
                     record.finish();
                 } else {
                     record.keep();
-                    let restored = if matches() { move_file(&path, item, MOVE_FILE_FLAGS(0)) }
-                        else { Err(ERROR_INVALID_DATA.to_hresult().into()) };
+                    let restored = if matches() { move_file(&path, item, MOVE_FILE_FLAGS(0)) } else { Err(ERROR_INVALID_DATA.to_hresult().into()) };
                     match restored {
                         Ok(()) => {
                             record.finish();
@@ -1358,13 +1367,20 @@ fn process_is_live(pid: u32) -> bool {
 }
 
 fn recover_pending(state: &std::path::Path, live: impl Fn(u32) -> bool) {
-    flit_platform::pending::recover(state, live, undo_fs(), delete_pending, |staged, original, hidden| {
-        move_file(staged, original, MOVE_FILE_FLAGS(0)).map_err(io_error)?;
-        if let Err(error) = set_hidden(original, hidden) {
-            tracing::warn!(?error, path = %original.display(), "Flit could not restore the hidden attribute");
-        }
-        Ok(())
-    }, |staged| set_hidden(staged, false).map_err(io_error));
+    flit_platform::pending::recover(
+        state,
+        live,
+        undo_fs(),
+        delete_pending,
+        |staged, original, hidden| {
+            move_file(staged, original, MOVE_FILE_FLAGS(0)).map_err(io_error)?;
+            if let Err(error) = set_hidden(original, hidden) {
+                tracing::warn!(?error, path = %original.display(), "Flit could not restore the hidden attribute");
+            }
+            Ok(())
+        },
+        |staged| set_hidden(staged, false).map_err(io_error),
+    );
 }
 
 fn delete_pending(path: &FsPath) -> std::io::Result<()> {

@@ -13,10 +13,7 @@ mod tests;
 fn main() -> Result<(), Box<dyn Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).ok_or("workspace root not found")?;
     let cargo = std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo"));
-    let output = Command::new(cargo)
-        .current_dir(root)
-        .args(["metadata", "--format-version", "1", "--all-features", "--locked"])
-        .output()?;
+    let output = Command::new(cargo).current_dir(root).args(["metadata", "--format-version", "1", "--all-features", "--locked"]).output()?;
     if !output.status.success() {
         return Err(format!("cargo metadata failed: {}", String::from_utf8_lossy(&output.stderr)).into());
     }

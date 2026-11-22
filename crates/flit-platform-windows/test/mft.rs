@@ -114,14 +114,7 @@ fn coalescing_keeps_the_final_state_of_each_file() {
         c.push(&r, &mut hidden);
     }
     let got: Vec<Change> = c.finish().collect();
-    assert_eq!(
-        got,
-        [
-            Change::Upsert { frn: 100, parent: ROOT, name: b"a.txt".to_vec(), attrs: 0, time: 1234 },
-            Change::Upsert { frn: 101, parent: 0x50, name: b"new".to_vec(), attrs: 0, time: 1234 },
-            Change::Remove(103),
-        ]
-    );
+    assert_eq!(got, [Change::Upsert { frn: 100, parent: ROOT, name: b"a.txt".to_vec(), attrs: 0, time: 1234 }, Change::Upsert { frn: 101, parent: 0x50, name: b"new".to_vec(), attrs: 0, time: 1234 }, Change::Remove(103),]);
 }
 
 const CHECK: [u8; 2] = [0x07, 0x00];

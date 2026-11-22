@@ -45,10 +45,13 @@ fn row_for(app: &App, name: &[u8]) -> (f32, f32) {
 }
 
 fn menu_labels(items: &[MenuItem]) -> Vec<&str> {
-    items.iter().map(|item| match item {
-        MenuItem::Command { label, .. } | MenuItem::Submenu { label, .. } | MenuItem::Header(label) => label.as_str(),
-        MenuItem::Separator => "-",
-    }).collect()
+    items
+        .iter()
+        .map(|item| match item {
+            MenuItem::Command { label, .. } | MenuItem::Submenu { label, .. } | MenuItem::Header(label) => label.as_str(),
+            MenuItem::Separator => "-",
+        })
+        .collect()
 }
 
 fn show_context(app: &mut App, menu: ShellMenu, shell: Vec<MenuItem>) -> Vec<String> {
@@ -69,11 +72,7 @@ fn opening_and_editing_share_the_first_block_for_files_and_folders() {
             let mut app = file_list(unix_paths);
             let at = row_for(&app, name);
             let menu = right_click(&mut app, at);
-            let shell = if unix_paths {
-                Vec::new()
-            } else {
-                vec![MenuItem::Submenu { label: S::MenuOpenWith.t().to_owned(), items: vec![cmd("Editor")] }, cmd("Shell extension")]
-            };
+            let shell = if unix_paths { Vec::new() } else { vec![MenuItem::Submenu { label: S::MenuOpenWith.t().to_owned(), items: vec![cmd("Editor")] }, cmd("Shell extension")] };
             let folder = menu.kind == MenuKind::Folder;
             let labels = show_context(&mut app, menu, shell);
             let mut expected = vec![S::MenuOpen.t().to_owned()];
@@ -136,10 +135,14 @@ fn right_clicks_on_a_file_folder_and_background_request_distinct_menus() {
         assert!(folder.shell);
         assert_eq!(folder.kind, MenuKind::Folder);
         assert_eq!(folder.items, [folder.dir.join(b"folder")]);
-        let open_in = folder.menu.iter().find_map(|item| match item {
-            MenuItem::Submenu { label, items } if label == S::MenuOpenIn.t() => Some(items),
-            _ => None,
-        }).unwrap();
+        let open_in = folder
+            .menu
+            .iter()
+            .find_map(|item| match item {
+                MenuItem::Submenu { label, items } if label == S::MenuOpenIn.t() => Some(items),
+                _ => None,
+            })
+            .unwrap();
         assert!(menu_labels(open_in).contains(&S::MenuOpenInNewTab.t()));
 
         let background = right_click(&mut app, empty_at);
@@ -164,8 +167,16 @@ fn cmd(label: &str) -> MenuItem {
 
 #[test]
 fn opening_actions_are_together_and_properties_follow_platform_extensions() {
-    let items = vec![cmd(S::MenuOpen.t()), MenuItem::Submenu { label: S::MenuOpenIn.t().into(), items: vec![cmd("New tab")] }, MenuItem::Separator, cmd("Copy"), cmd(S::MenuProperties.t()), MenuItem::Separator,
-        MenuItem::Submenu { label: S::MenuOpenWith.t().into(), items: vec![cmd("Editor")] }, MenuItem::Submenu { label: "Scripts".into(), items: vec![cmd("Script")] }];
+    let items = vec![
+        cmd(S::MenuOpen.t()),
+        MenuItem::Submenu { label: S::MenuOpenIn.t().into(), items: vec![cmd("New tab")] },
+        MenuItem::Separator,
+        cmd("Copy"),
+        cmd(S::MenuProperties.t()),
+        MenuItem::Separator,
+        MenuItem::Submenu { label: S::MenuOpenWith.t().into(), items: vec![cmd("Editor")] },
+        MenuItem::Submenu { label: "Scripts".into(), items: vec![cmd("Script")] },
+    ];
     let mut c = ContextMenu::new(&items, MenuKind::File, vec![], (0.0, 0.0), Rect::new(0.0, 0.0, 600.0, 400.0), 1.0);
     c.set_roles(roles(&[Cmd::Action("item.open"), Cmd::Action("item.open_tab"), Cmd::Action("file.copy"), Cmd::Action("item.properties")]));
     c.lift_shell(6, false);
@@ -201,11 +212,17 @@ fn menu_geometry_remains_valid_in_small_scaled_viewports() {
 fn translated_link_submenus_fit_a_narrow_window_and_keep_keyboard_focus_when_choices_arrive() {
     for lang in crate::i18n::Lang::ALL {
         let labels = [S::MenuShortcut, S::MenuLinksSymbolicLink, S::MenuLinksJunction, S::MenuLinksHardLink];
-        let entries = labels.into_iter().enumerate().map(|(n, key)| {
-            let mut item = cmd(key.in_lang(lang));
-            if let MenuItem::Command { disabled, .. } = &mut item { *disabled = n > 0; }
-            item
-        }).collect();
+        let entries = labels
+            .into_iter()
+            .enumerate()
+            .map(|(n, key)| {
+                let mut item = cmd(key.in_lang(lang));
+                if let MenuItem::Command { disabled, .. } = &mut item {
+                    *disabled = n > 0;
+                }
+                item
+            })
+            .collect();
         let items = [MenuItem::Submenu { label: S::MenuLinksPasteAs.in_lang(lang).to_owned(), items: entries }];
         let mut c = ContextMenu::new(&items, MenuKind::Background, vec![], (250.0, 120.0), Rect::new(0.0, 0.0, 320.0, 280.0), 1.0);
         let mut gfx = crate::text::Gfx::new(crate::text::tests::Mono, 1024);

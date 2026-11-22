@@ -22,12 +22,7 @@ fn unix(p: &[u8]) -> FsPath {
 #[test]
 fn roundtrip_every_message() {
     let target = unix(b"/tmp/target");
-    let replay = Replay {
-        steps: vec![FileOp::Trash(vec![target.clone()])],
-        checks: vec![(target, Some(flit_core::undo::Stamp { size: 1, modified: -10, device: 2, file: 3, access: None }))],
-        recheck_tree: false,
-        captured_ns: Some(1_234_567_890_123_456_789),
-    };
+    let replay = Replay { steps: vec![FileOp::Trash(vec![target.clone()])], checks: vec![(target, Some(flit_core::undo::Stamp { size: 1, modified: -10, device: 2, file: 3, access: None }))], recheck_tree: false, captured_ns: Some(1_234_567_890_123_456_789) };
     assert!(check_replay(&replay).is_ok());
     assert!(check_replay(&Replay { checks: Vec::new(), ..replay.clone() }).is_err());
     assert!(check_replay(&Replay { steps: vec![FileOp::Delete(vec![unix(b"/tmp/target")])], ..replay.clone() }).is_err());

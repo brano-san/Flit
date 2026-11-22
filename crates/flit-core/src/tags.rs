@@ -75,7 +75,11 @@ pub fn validate_name(tags: &[Tag], name: &str, except: Option<usize>) -> Result<
 }
 
 pub fn not_taggable(unix: bool) -> S {
-    if unix { S::ErrorsTagsNotTaggableLinux } else { S::ErrorsTagsNotTaggable }
+    if unix {
+        S::ErrorsTagsNotTaggableLinux
+    } else {
+        S::ErrorsTagsNotTaggable
+    }
 }
 
 pub fn color_name(color: u32) -> &'static str {
@@ -83,7 +87,11 @@ pub fn color_name(color: u32) -> &'static str {
 }
 
 pub fn query_for(name: &str) -> String {
-    if name.contains(char::is_whitespace) { format!("tag:\"{name}\"") } else { format!("tag:{name}") }
+    if name.contains(char::is_whitespace) {
+        format!("tag:\"{name}\"")
+    } else {
+        format!("tag:{name}")
+    }
 }
 
 pub fn has_tag_term(text: &str) -> bool {

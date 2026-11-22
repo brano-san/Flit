@@ -162,12 +162,8 @@ pub(super) enum TypeCmd {
     All(bool),
 }
 
-const FOLDERS: [(Folders, &str, S); 4] = [
-    (Folders::First, "view.sort.folders_first", S::MenuSortFoldersFirst),
-    (Folders::Last, "view.sort.files_first", S::MenuSortFilesFirst),
-    (Folders::Mixed, "view.sort.mixed", S::MenuSortMixed),
-    (Folders::HiddenLast, "view.sort.hidden_last", S::MenuSortHiddenLast),
-];
+const FOLDERS: [(Folders, &str, S); 4] =
+    [(Folders::First, "view.sort.folders_first", S::MenuSortFoldersFirst), (Folders::Last, "view.sort.files_first", S::MenuSortFilesFirst), (Folders::Mixed, "view.sort.mixed", S::MenuSortMixed), (Folders::HiddenLast, "view.sort.hidden_last", S::MenuSortHiddenLast)];
 
 const GROUPS: [(GroupField, &str, S); 11] = [
     (GroupField::None, "view.group.none", S::MenuGroupNone),
@@ -208,17 +204,9 @@ const BIN_GROUPS: [(GroupField, &str, S); 5] = [
     (GroupField::Size, "view.group.size", S::MenuSortSize),
 ];
 
-const ZOOM_CHOICES: [(u8, &str); 6] = [
-    (ZOOM_DETAILS, "view.layout.details"),
-    (ZOOM_TREE, "view.layout.tree"),
-    (ZOOM_LIST, "view.layout.list"),
-    (ZOOM_ICONS, "view.layout.icons_m"),
-    (ZOOM_LARGE, "view.layout.icons_l"),
-    (ZOOM_XL, "view.layout.icons_xl"),
-];
+const ZOOM_CHOICES: [(u8, &str); 6] = [(ZOOM_DETAILS, "view.layout.details"), (ZOOM_TREE, "view.layout.tree"), (ZOOM_LIST, "view.layout.list"), (ZOOM_ICONS, "view.layout.icons_m"), (ZOOM_LARGE, "view.layout.icons_l"), (ZOOM_XL, "view.layout.icons_xl")];
 
 const FLIT_LAYOUTS: [(LayoutMode, &str); 3] = [(LayoutMode::Cards, "view.layout.cards"), (LayoutMode::Columns, "view.layout.columns"), (LayoutMode::Adaptive, "view.layout.adaptive")];
-
 
 fn trimmed(mut items: Vec<MenuItem>) -> Vec<MenuItem> {
     if items.last() == Some(&MenuItem::Separator) {
@@ -556,7 +544,16 @@ impl App {
         let t = self.tab();
         let group = t.view_spec.group;
         let computer = t.view_loc.path().kind() == PathKind::Computer;
-        m.choices(if t.view_loc.is_recycle_bin() { &BIN_GROUPS[..] } else if computer { &COMPUTER_GROUPS[..] } else { &GROUPS[..] }, group.field);
+        m.choices(
+            if t.view_loc.is_recycle_bin() {
+                &BIN_GROUPS[..]
+            } else if computer {
+                &COMPUTER_GROUPS[..]
+            } else {
+                &GROUPS[..]
+            },
+            group.field,
+        );
         if self.column_kinds().contains(&Column::ImageSize) && self.props_dir().is_some() {
             m.choices(&SHELL_GROUPS, group.field);
         }
@@ -701,8 +698,7 @@ impl App {
                 m.action("search.similar", S::SearchExploreSimilar.t());
                 m.action("file.hashes", S::MenuHashes.t());
                 self.segments_menu(m);
-                if self.metadata_enabled() && self.tab().view_loc.provider() == crate::location::ProviderId::Local
-                    && !self.tab().view_loc.is_recycle_bin() && self.archive_view().is_none() {
+                if self.metadata_enabled() && self.tab().view_loc.provider() == crate::location::ProviderId::Local && !self.tab().view_loc.is_recycle_bin() && self.archive_view().is_none() {
                     m.action("file.metadata", S::PortableMetaTitle.t());
                 }
             }

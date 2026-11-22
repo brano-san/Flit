@@ -112,7 +112,11 @@ impl TestLibrary {
     fn edit(&self, call: Edit) -> ComResult<()> {
         let mut edits = self.0.borrow_mut();
         edits.calls.push(call);
-        if edits.deny_edit { Err(E_ACCESSDENIED.into()) } else { Ok(()) }
+        if edits.deny_edit {
+            Err(E_ACCESSDENIED.into())
+        } else {
+            Ok(())
+        }
     }
 }
 
@@ -132,29 +136,61 @@ impl IShellLibrary_Impl for TestLibrary_Impl {
     fn Commit(&self) -> ComResult<()> {
         let mut edits = self.0.borrow_mut();
         edits.calls.push(Edit::Commit);
-        if edits.deny_commit { Err(E_FAIL.into()) } else { Ok(()) }
+        if edits.deny_commit {
+            Err(E_FAIL.into())
+        } else {
+            Ok(())
+        }
     }
 
-    fn LoadLibraryFromItem(&self, _: Ref<IShellItem>, _: u32) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn LoadLibraryFromKnownFolder(&self, _: *const GUID, _: u32) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn GetFolders(&self, _: LIBRARYFOLDERFILTER, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn ResolveFolder(&self, _: Ref<IShellItem>, _: u32, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn GetDefaultSaveFolder(&self, _: DEFAULTSAVEFOLDERTYPE, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn GetOptions(&self) -> ComResult<LIBRARYOPTIONFLAGS> { Err(E_NOTIMPL.into()) }
-    fn SetOptions(&self, _: LIBRARYOPTIONFLAGS, _: LIBRARYOPTIONFLAGS) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn GetFolderType(&self) -> ComResult<GUID> { Err(E_NOTIMPL.into()) }
-    fn SetFolderType(&self, _: *const GUID) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn GetIcon(&self) -> ComResult<PWSTR> { Err(E_NOTIMPL.into()) }
-    fn SetIcon(&self, _: &PCWSTR) -> ComResult<()> { Err(E_NOTIMPL.into()) }
-    fn Save(&self, _: Ref<IShellItem>, _: &PCWSTR, _: LIBRARYSAVEFLAGS) -> ComResult<IShellItem> { Err(E_NOTIMPL.into()) }
-    fn SaveInKnownFolder(&self, _: *const GUID, _: &PCWSTR, _: LIBRARYSAVEFLAGS) -> ComResult<IShellItem> { Err(E_NOTIMPL.into()) }
+    fn LoadLibraryFromItem(&self, _: Ref<IShellItem>, _: u32) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn LoadLibraryFromKnownFolder(&self, _: *const GUID, _: u32) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn GetFolders(&self, _: LIBRARYFOLDERFILTER, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn ResolveFolder(&self, _: Ref<IShellItem>, _: u32, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn GetDefaultSaveFolder(&self, _: DEFAULTSAVEFOLDERTYPE, _: *const GUID, _: *mut *mut core::ffi::c_void) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn GetOptions(&self) -> ComResult<LIBRARYOPTIONFLAGS> {
+        Err(E_NOTIMPL.into())
+    }
+    fn SetOptions(&self, _: LIBRARYOPTIONFLAGS, _: LIBRARYOPTIONFLAGS) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn GetFolderType(&self) -> ComResult<GUID> {
+        Err(E_NOTIMPL.into())
+    }
+    fn SetFolderType(&self, _: *const GUID) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn GetIcon(&self) -> ComResult<PWSTR> {
+        Err(E_NOTIMPL.into())
+    }
+    fn SetIcon(&self, _: &PCWSTR) -> ComResult<()> {
+        Err(E_NOTIMPL.into())
+    }
+    fn Save(&self, _: Ref<IShellItem>, _: &PCWSTR, _: LIBRARYSAVEFLAGS) -> ComResult<IShellItem> {
+        Err(E_NOTIMPL.into())
+    }
+    fn SaveInKnownFolder(&self, _: *const GUID, _: &PCWSTR, _: LIBRARYSAVEFLAGS) -> ComResult<IShellItem> {
+        Err(E_NOTIMPL.into())
+    }
 }
 
 #[test]
 fn library_edits_commit_the_selected_folders_without_the_system_index() {
     within_shell_timeout(|| {
         let temp = Temp::new("edits");
-        for dir in ["one", "two"] { std::fs::create_dir(temp.0.join(dir)).unwrap(); }
+        for dir in ["one", "two"] {
+            std::fs::create_dir(temp.0.join(dir)).unwrap();
+        }
         let library = temp.at("Test.library-ms");
         let edits = Rc::new(RefCell::new(Edits::default()));
         let fake: IShellLibrary = TestLibrary(edits.clone()).into();
@@ -212,7 +248,9 @@ fn library_edits_report_open_edit_and_commit_failures_and_refuse_missing_folders
 fn fixture_libraries_read_and_list_real_folders_without_indexing_them() {
     within_shell_timeout(|| {
         let temp = Temp::new("fixture");
-        for dir in ["one & папка", "two"] { std::fs::create_dir(temp.0.join(dir)).unwrap(); }
+        for dir in ["one & папка", "two"] {
+            std::fs::create_dir(temp.0.join(dir)).unwrap();
+        }
         std::fs::write(temp.0.join("one & папка/a.txt"), "a").unwrap();
         std::fs::create_dir(temp.0.join("two/sub")).unwrap();
         let empty = temp_library(&temp.0, "Empty");
@@ -220,11 +258,15 @@ fn fixture_libraries_read_and_list_real_folders_without_indexing_them() {
         assert!(empty.folders.is_empty());
         assert!(empty.save.is_none());
         let (one, two) = (temp.at("one & папка"), temp.at("two"));
-        let connectors: String = [&one, &two].into_iter().enumerate().map(|(i, folder)| {
-            let url = unsafe { take_pwstr(item(folder).unwrap().GetDisplayName(SIGDN_URL).unwrap()).unwrap() };
-            let url = String::from_utf16_lossy(&url).replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-            format!("<searchConnectorDescription><isDefaultSaveLocation>{}</isDefaultSaveLocation><simpleLocation><url>{url}</url></simpleLocation></searchConnectorDescription>", i == 1)
-        }).collect();
+        let connectors: String = [&one, &two]
+            .into_iter()
+            .enumerate()
+            .map(|(i, folder)| {
+                let url = unsafe { take_pwstr(item(folder).unwrap().GetDisplayName(SIGDN_URL).unwrap()).unwrap() };
+                let url = String::from_utf16_lossy(&url).replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+                format!("<searchConnectorDescription><isDefaultSaveLocation>{}</isDefaultSaveLocation><simpleLocation><url>{url}</url></simpleLocation></searchConnectorDescription>", i == 1)
+            })
+            .collect();
         let xml = format!("<?xml version=\"1.0\" encoding=\"UTF-8\"?><libraryDescription xmlns=\"http://schemas.microsoft.com/windows/2009/library\"><name>Test</name><version>6</version><searchConnectorDescriptionList>{connectors}</searchConnectorDescriptionList></libraryDescription>");
         std::fs::write(temp.0.join("Test.library-ms"), xml).unwrap();
         let lib = temp.at("Test.library-ms");

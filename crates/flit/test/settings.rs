@@ -178,7 +178,11 @@ static CALLS: Mutex<Vec<bool>> = Mutex::new(Vec::new());
 
 fn fake(on: bool) -> Result<(), PlatformError> {
     CALLS.lock().unwrap().push(on);
-    if on { Err(PlatformError::new(5, "access denied")) } else { Ok(()) }
+    if on {
+        Err(PlatformError::new(5, "access denied"))
+    } else {
+        Ok(())
+    }
 }
 
 #[test]

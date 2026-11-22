@@ -271,9 +271,7 @@ impl SortKeys {
 
     #[inline]
     fn cmp(&self, a: u32, b: u32) -> Ordering {
-        self.prefix[a as usize]
-            .cmp(&self.prefix[b as usize])
-            .then_with(|| self.key(a).cmp(self.key(b)))
+        self.prefix[a as usize].cmp(&self.prefix[b as usize]).then_with(|| self.key(a).cmp(self.key(b)))
     }
 }
 
@@ -323,20 +321,8 @@ pub fn encode_key(name: &[u8], case: CaseMode, out: &mut Vec<u8>) {
 }
 
 const LATIN1_BASE: &[u8] = b"aaaaaa*ceeeeiiiidnooooo-ouuuuy-y";
-const LATIN_A_BASE: &[u8] = concat!(
-    "aaaaaaccccccccdd",
-    "ddeeeeeeeeeegggg",
-    "gggghhhhiiiiiiii",
-    "ii**jjkkklllllll",
-    "lllnnnnnnnnnoooo",
-    "oo**rrrrrrssssss",
-    "ssttttttuuuuuuuu",
-    "uuuuwwyyyzzzzzzs",
-)
-.as_bytes();
-const CYRILLIC: [char; 46] = [
-    'а', 'б', 'в', 'г', 'ґ', 'д', 'ђ', 'ѓ', 'е', 'є', 'ж', 'з', 'ѕ', 'и', 'і', 'ї', 'й', 'ј', 'к', 'л', 'љ', 'м', 'н', 'њ', 'о', 'п', 'р', 'с', 'т', 'ћ', 'ќ', 'у', 'ў', 'ф', 'х', 'ц', 'ч', 'џ', 'ш', 'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я',
-];
+const LATIN_A_BASE: &[u8] = concat!("aaaaaaccccccccdd", "ddeeeeeeeeeegggg", "gggghhhhiiiiiiii", "ii**jjkkklllllll", "lllnnnnnnnnnoooo", "oo**rrrrrrssssss", "ssttttttuuuuuuuu", "uuuuwwyyyzzzzzzs",).as_bytes();
+const CYRILLIC: [char; 46] = ['а', 'б', 'в', 'г', 'ґ', 'д', 'ђ', 'ѓ', 'е', 'є', 'ж', 'з', 'ѕ', 'и', 'і', 'ї', 'й', 'ј', 'к', 'л', 'љ', 'м', 'н', 'њ', 'о', 'п', 'р', 'с', 'т', 'ћ', 'ќ', 'у', 'ў', 'ф', 'х', 'ц', 'ч', 'џ', 'ш', 'щ', 'ъ', 'ы', 'ь', 'э', 'ю', 'я'];
 const GREEK: [char; 24] = ['α', 'β', 'γ', 'δ', 'ε', 'ζ', 'η', 'θ', 'ι', 'κ', 'λ', 'μ', 'ν', 'ξ', 'ο', 'π', 'ρ', 'σ', 'τ', 'υ', 'φ', 'χ', 'ψ', 'ω'];
 const GREEK_LEAD: u8 = 0xCE;
 const CYRILLIC_LEAD: u8 = 0xD0;
@@ -517,7 +503,11 @@ pub fn file_system(l: &Listing, i: u32) -> &[u8] {
 }
 
 pub fn first_tag(mask: u32) -> u64 {
-    if mask == 0 { 32 } else { mask.trailing_zeros() as u64 }
+    if mask == 0 {
+        32
+    } else {
+        mask.trailing_zeros() as u64
+    }
 }
 
 #[inline]
@@ -531,7 +521,11 @@ const DURATION_LIMITS: [u64; 2] = [5 * MINUTE, 30 * MINUTE];
 
 #[inline]
 fn prop(l: &Listing, i: u32) -> Option<&PropKey> {
-    if l.props.is_empty() { None } else { l.props.get(&i) }
+    if l.props.is_empty() {
+        None
+    } else {
+        l.props.get(&i)
+    }
 }
 
 pub fn pixels(l: &Listing, i: u32) -> Option<(u64, u32)> {
@@ -766,20 +760,20 @@ pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
     let spec = view.sort;
     let inv = |x: u64| if spec.descending { !x } else { x };
     let item = |i: u32| {
-            let e = &l.entries[i as usize];
-            let primary = primary(l, spec.field, i);
-            let exact = match spec.field {
-                SortField::Type => l.ext(i).len() <= 8,
-                SortField::Origin => recycle::origin(l, i).len() <= 8,
-                SortField::FileSystem => file_system(l, i).len() <= 8,
-                SortField::Dimensions => false,
-                SortField::Artist => artist_key(l, i).len() <= 8,
-                _ => true,
-            };
-            let group = folder_rank(spec.folders, e) << 1 | u16::from(absent(l, spec.field, i));
-            let (gkey, gexact) = group_key(l, i, &view);
-            let name2 = inv(key_word(k.key(i), 8));
-            Item { gkey, primary: inv(primary), name: inv(k.prefix[i as usize]), name2, idx: i, group, exact, gexact }
+        let e = &l.entries[i as usize];
+        let primary = primary(l, spec.field, i);
+        let exact = match spec.field {
+            SortField::Type => l.ext(i).len() <= 8,
+            SortField::Origin => recycle::origin(l, i).len() <= 8,
+            SortField::FileSystem => file_system(l, i).len() <= 8,
+            SortField::Dimensions => false,
+            SortField::Artist => artist_key(l, i).len() <= 8,
+            _ => true,
+        };
+        let group = folder_rank(spec.folders, e) << 1 | u16::from(absent(l, spec.field, i));
+        let (gkey, gexact) = group_key(l, i, &view);
+        let name2 = inv(key_word(k.key(i), 8));
+        Item { gkey, primary: inv(primary), name: inv(k.prefix[i as usize]), name2, idx: i, group, exact, gexact }
     };
     let cmp = |a: &Item, b: &Item| {
         a.gkey

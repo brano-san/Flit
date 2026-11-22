@@ -140,7 +140,11 @@ struct Entry {
 
 impl Entry {
     fn version(&self) -> u16 {
-        if self.zip64 || self.offset >= FULL { 45 } else { 20 }
+        if self.zip64 || self.offset >= FULL {
+            45
+        } else {
+            20
+        }
     }
 
     fn fixed(&self, out: &mut Vec<u8>) {

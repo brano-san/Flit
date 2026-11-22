@@ -39,7 +39,9 @@ impl App {
             list.h = (list.h - htrack.h).max(0.0);
             let width = (htrack.w * htrack.w / content_w).max(self.s(24.0)).min(htrack.w);
             Rect::new(htrack.x + (htrack.w - width) * self.search.scroll_x.clamp(0.0, max_x) / max_x, htrack.y + self.s(4.0), width, self.s(6.0))
-        } else { Rect::default() };
+        } else {
+            Rect::default()
+        };
         for (c, w) in cols.iter_mut().zip(widths) {
             *c = Rect::new(x, header.y, w, header.h);
             x += w;
@@ -339,11 +341,7 @@ impl App {
                 g.dl.rect(Rect::new(x, timeline.bottom() - h, (w - self.s(2.0)).max(1.0), h), t.accent.alpha(0xB0));
             }
         }
-        let range = if let SHit::Date(i) = self.search.hover {
-            dates.get(i).map(|b| (b.from, b.to))
-        } else {
-            self.search.date_filter
-        };
+        let range = if let SHit::Date(i) = self.search.hover { dates.get(i).map(|b| (b.from, b.to)) } else { self.search.date_filter };
         if let Some((a, z)) = range {
             let text = if a == z { day_query(a) } else { format!("{} – {}", day_query(a), day_query(z)) };
             let w = g.measure(&text, font) + 2.0 * pad;
@@ -443,11 +441,7 @@ impl App {
             let (key, kind) = icon_key(&r.name, ext, &entry, icon_px as u32, &r.dir, self.icon_epoch);
             self.file_icons.see(key, kind);
             let indent = if headers { self.s(16.0) } else { 0.0 };
-            let ir = if sl.grid {
-                Rect::new((cell.x + (cell.w - icon_px) / 2.0).round(), y + self.s(14.0), icon_px, icon_px)
-            } else {
-                Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px)
-            };
+            let ir = if sl.grid { Rect::new((cell.x + (cell.w - icon_px) / 2.0).round(), y + self.s(14.0), icon_px, icon_px) } else { Rect::new(sl.cols[0].x + pad + indent, y + ((rh - icon_px) / 2.0).round(), icon_px, icon_px) };
             if !g.image(key, ir) {
                 if !self.folder_stand_in(g, kind, icon_px as u32, ir, 255, &mut requests) {
                     let (glyph, color) = if is_dir { (G_FOLDER, t.accent.alpha(0xB0)) } else { (G_FILE, t.text_dim.alpha(0x90)) };
@@ -629,17 +623,20 @@ impl App {
         g.text(status.x + pad, baseline, &left, font, color, status.w / 2.0 - pad);
         let mut right = bumpalo::collections::String::new_in(arena);
         let tagged = crate::tags::has_tag_term(&s.edit.text);
-        right.push_str(match (s.source, s.backend) {
-            (Some(SearchSource::Walk), _) => S::SearchSourceWalk,
-            (Some(SearchSource::Shell), _) if self.caps.unix_paths => S::SearchSourceContent,
-            (Some(SearchSource::Shell), _) => S::SearchSourceShell,
-            _ if tagged => S::SearchSourceTagged,
-            (None, SearchBackend::Connecting) => S::SearchSourceConnecting,
-            (None, SearchBackend::Service) => S::SearchSourceService,
-            (None, SearchBackend::Fallback) if self.caps.unix_paths => S::SearchSourceLocal,
-            (None, SearchBackend::Fallback) => S::SearchSourceFallback,
-            (None, SearchBackend::Off) => S::SearchSourceOff,
-        }.t());
+        right.push_str(
+            match (s.source, s.backend) {
+                (Some(SearchSource::Walk), _) => S::SearchSourceWalk,
+                (Some(SearchSource::Shell), _) if self.caps.unix_paths => S::SearchSourceContent,
+                (Some(SearchSource::Shell), _) => S::SearchSourceShell,
+                _ if tagged => S::SearchSourceTagged,
+                (None, SearchBackend::Connecting) => S::SearchSourceConnecting,
+                (None, SearchBackend::Service) => S::SearchSourceService,
+                (None, SearchBackend::Fallback) if self.caps.unix_paths => S::SearchSourceLocal,
+                (None, SearchBackend::Fallback) => S::SearchSourceFallback,
+                (None, SearchBackend::Off) => S::SearchSourceOff,
+            }
+            .t(),
+        );
         for v in s.volumes.iter().filter(|_| !tagged && s.source.is_none()) {
             let label = if v.id.is_empty() { S::SearchIndexDefault.t() } else { &v.id };
             right.push_str(" · ");
@@ -695,7 +692,21 @@ impl App {
         let preedit = Some(&self.preedit).filter(|p| !p.is_empty());
         if s.edit.text.is_empty() && preedit.is_none() {
             s.edit_scroll = 0.0;
-            g.text(inner.x, baseline, if s.within_results.is_some() { S::SearchExploreWithin } else if self.caps.unix_paths { S::SearchPlaceholderUnix } else { S::SearchPlaceholder }.t(), font, t.text_dim.alpha(0xA0), inner.w);
+            g.text(
+                inner.x,
+                baseline,
+                if s.within_results.is_some() {
+                    S::SearchExploreWithin
+                } else if self.caps.unix_paths {
+                    S::SearchPlaceholderUnix
+                } else {
+                    S::SearchPlaceholder
+                }
+                .t(),
+                font,
+                t.text_dim.alpha(0xA0),
+                inner.w,
+            );
             g.dl.rect(Rect::new(inner.x, look.line_y, look.stroke, caret_h), t.text);
         } else {
             let line = crate::ui::field::EditLine { text: &s.edit.text, caret: s.edit.caret, selection: s.edit.selection() };

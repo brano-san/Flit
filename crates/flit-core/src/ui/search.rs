@@ -181,7 +181,11 @@ enum SDrag {
     Thumb(f32),
     HThumb(f32),
     Select(Grab),
-    ColSep { col: usize, x: f32, width: f32 },
+    ColSep {
+        col: usize,
+        x: f32,
+        width: f32,
+    },
 }
 
 #[derive(Default)]
@@ -693,28 +697,37 @@ impl App {
         use super::menu::Cmd;
         let s = &self.search;
         let entries: Vec<(String, String, u64)> = match category {
-            0 => s.facets.extensions.iter().map(|(ext, n)| {
-                let (title, expression) = match ext.as_str() {
-                    "/" => (S::SearchExploreFolders.t().into(), "folder:".to_owned()),
-                    "" => (S::SearchExploreNoExtension.t().into(), "ext:".to_owned()),
-                    ext => (ext.to_owned(), format!("ext:\"{ext}\"")),
-                };
-                (title, expression, *n)
-            }).collect(),
+            0 => s
+                .facets
+                .extensions
+                .iter()
+                .map(|(ext, n)| {
+                    let (title, expression) = match ext.as_str() {
+                        "/" => (S::SearchExploreFolders.t().into(), "folder:".to_owned()),
+                        "" => (S::SearchExploreNoExtension.t().into(), "ext:".to_owned()),
+                        ext => (ext.to_owned(), format!("ext:\"{ext}\"")),
+                    };
+                    (title, expression, *n)
+                })
+                .collect(),
             1 => s.facets.years.iter().map(|(y, n)| (y.to_string(), format!("dm:{y:04}"), *n)).collect(),
-            2 => crate::query_attrs::SIZE_STARTS.iter().enumerate().map(|(i, start)| {
-                let end = crate::query_attrs::SIZE_STARTS.get(i + 1).copied();
-                let mut title = String::new();
-                format::size_in(&mut title, *start, self.style.decimal);
-                if let Some(end) = end {
-                    title.push_str(" – ");
-                    format::size_in(&mut title, end, self.style.decimal);
-                } else {
-                    title.push('+');
-                }
-                let expr = end.map_or_else(|| format!("size:>={start}"), |end| format!("size:{start}..{}", end - 1));
-                (title, expr, s.facets.sizes[i])
-            }).collect(),
+            2 => crate::query_attrs::SIZE_STARTS
+                .iter()
+                .enumerate()
+                .map(|(i, start)| {
+                    let end = crate::query_attrs::SIZE_STARTS.get(i + 1).copied();
+                    let mut title = String::new();
+                    format::size_in(&mut title, *start, self.style.decimal);
+                    if let Some(end) = end {
+                        title.push_str(" – ");
+                        format::size_in(&mut title, end, self.style.decimal);
+                    } else {
+                        title.push('+');
+                    }
+                    let expr = end.map_or_else(|| format!("size:>={start}"), |end| format!("size:{start}..{}", end - 1));
+                    (title, expr, s.facets.sizes[i])
+                })
+                .collect(),
             3 => s.facet_tags.iter().filter(|(tag, _)| !tag.contains('"')).map(|(tag, n)| (tag.clone(), format!("tag:\"{tag}\""), *n)).collect(),
             _ => return,
         };
@@ -761,8 +774,7 @@ impl App {
             self.search.edit.set(&base);
             self.search.within_native = false;
         } else if !self.search.edit.text.trim().is_empty() && !(self.caps.unix_paths && self.search.source == Some(SearchSource::Shell)) {
-            self.search.within_native = !self.caps.unix_paths && !matches!(self.search.within, Some(Within::Library { .. }))
-                && (self.search.source == Some(SearchSource::Shell) || self.search.edit.text.trim_start().starts_with('$'));
+            self.search.within_native = !self.caps.unix_paths && !matches!(self.search.within, Some(Within::Library { .. })) && (self.search.source == Some(SearchSource::Shell) || self.search.edit.text.trim_start().starts_with('$'));
             self.search.within_results = Some(self.search.edit.text.clone());
             self.search.edit.set("");
         } else {
@@ -838,11 +850,7 @@ impl App {
                 conditions.push(format!("dm:{}..{}", day_query(a), day_query(b)));
             }
         }
-        let paths = crate::query_attrs::SearchPaths {
-            exclude: s.exclusions.iter().filter_map(Location::to_windows).collect(),
-            parent: s.result_folder.clone(),
-            under: None,
-        };
+        let paths = crate::query_attrs::SearchPaths { exclude: s.exclusions.iter().filter_map(Location::to_windows).collect(), parent: s.result_folder.clone(), under: None };
         self.effects.push(Effect::Search(SearchRequest::Query { gen: s.gen, text, conditions, sort: s.sort, scope, paths }));
         self.dirty = true;
     }
@@ -864,9 +872,7 @@ impl App {
         let mut unique: Vec<Location> = Vec::new();
         for location in paths.into_iter().take(256) {
             let Some(path) = location.to_windows() else { continue };
-            if matches!(path.kind(), PathKind::Drive | PathKind::Unix | PathKind::Unc | PathKind::Verbatim)
-                && !unique.iter().filter_map(Location::to_windows).any(|p| p.same(&path))
-            {
+            if matches!(path.kind(), PathKind::Drive | PathKind::Unix | PathKind::Unc | PathKind::Verbatim) && !unique.iter().filter_map(Location::to_windows).any(|p| p.same(&path)) {
                 unique.push(location);
             }
         }

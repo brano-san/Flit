@@ -466,7 +466,11 @@ impl<'h> View<'h> {
 
     fn content(&self) -> &'h str {
         let n = self.node();
-        if n.role == Role::Edit { &n.value } else { &n.name }
+        if n.role == Role::Edit {
+            &n.value
+        } else {
+            &n.name
+        }
     }
 
     fn grid(&self) -> (Option<usize>, Vec<usize>) {

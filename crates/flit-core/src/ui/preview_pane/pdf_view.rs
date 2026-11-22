@@ -22,9 +22,7 @@ impl PdfView {
     }
 
     pub(super) fn retained_bytes(&self) -> usize {
-        self.pages.capacity() * size_of::<Option<Size>>() + self.tops.capacity() * size_of::<f32>()
-            + self.pending.capacity() * size_of::<(usize, u64, GenToken)>()
-            + self.failed.capacity() * size_of::<usize>()
+        self.pages.capacity() * size_of::<Option<Size>>() + self.tops.capacity() * size_of::<f32>() + self.pending.capacity() * size_of::<(usize, u64, GenToken)>() + self.failed.capacity() * size_of::<usize>()
     }
 
     fn arrange(&mut self, width: f32, gap: f32, scroll: f32, height: f32) -> Range<usize> {
@@ -38,10 +36,7 @@ impl PdfView {
             }
             self.tops.push(y);
         }
-        let (first, last) = (
-            self.tops.partition_point(|&y| y <= scroll).saturating_sub(1),
-            self.tops.partition_point(|&y| y < scroll + height).min(self.pages.len()),
-        );
+        let (first, last) = (self.tops.partition_point(|&y| y <= scroll).saturating_sub(1), self.tops.partition_point(|&y| y < scroll + height).min(self.pages.len()));
         first..last
     }
 
@@ -111,7 +106,12 @@ impl App {
         let Content::Pdf(pdf) = &mut p.content else { return 0.0 };
         let visible = pdf.arrange(width, gap, p.scroll, body.h);
         pdf.pending.retain(|i, (_, token)| {
-            if visible.contains(i) { true } else { token.set(0); false }
+            if visible.contains(i) {
+                true
+            } else {
+                token.set(0);
+                false
+            }
         });
         let mut requests = Vec::new();
         for i in visible {

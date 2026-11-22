@@ -59,10 +59,7 @@ impl Watcher for DirWatcher {
         let port = Arc::new(Handle(unsafe { CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1) }.map_err(crate::err)?));
         let state = Arc::new(Mutex::new(State::default()));
         let (thread_port, thread_state) = (port.clone(), state.clone());
-        std::thread::Builder::new()
-            .name("flit-watcher".into())
-            .spawn(move || run(&thread_port, &thread_state, events, wake))
-            .map_err(|e| PlatformError::new(-1, format!("cannot start watcher: {e}")))?;
+        std::thread::Builder::new().name("flit-watcher".into()).spawn(move || run(&thread_port, &thread_state, events, wake)).map_err(|e| PlatformError::new(-1, format!("cannot start watcher: {e}")))?;
         Ok(Self { port, state })
     }
 
@@ -145,12 +142,7 @@ impl Watch {
     }
 
     fn read(&mut self, class: READ_DIRECTORY_NOTIFY_INFORMATION_CLASS) -> bool {
-        let filter = FILE_NOTIFY_CHANGE_FILE_NAME
-            | FILE_NOTIFY_CHANGE_DIR_NAME
-            | FILE_NOTIFY_CHANGE_ATTRIBUTES
-            | FILE_NOTIFY_CHANGE_SIZE
-            | FILE_NOTIFY_CHANGE_LAST_WRITE
-            | FILE_NOTIFY_CHANGE_CREATION;
+        let filter = FILE_NOTIFY_CHANGE_FILE_NAME | FILE_NOTIFY_CHANGE_DIR_NAME | FILE_NOTIFY_CHANGE_ATTRIBUTES | FILE_NOTIFY_CHANGE_SIZE | FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_CREATION;
         *self.ov = OVERLAPPED::default();
         unsafe { ReadDirectoryChangesExW(self.dir.0, self.buf.as_mut_ptr() as _, BUFFER as u32, false, filter, None, Some(&mut *self.ov), None, class).is_ok() }
     }
@@ -186,12 +178,7 @@ fn notice_at(buf: &[u8], off: usize) -> Option<(Option<Notice>, u32)> {
     let name_at = off + offset_of!(Record, FileName);
     let name = buf.get(name_at..name_at + name_len)?;
     let attrs = map_attrs(u32_at(buf, off + offset_of!(Record, FileAttributes))?, u32_at(buf, off + offset_of!(Record, Anonymous))?);
-    let meta = Meta {
-        size: i64_at(buf, off + offset_of!(Record, FileSize))? as u64,
-        modified: i64_at(buf, off + offset_of!(Record, LastModificationTime))?,
-        created: i64_at(buf, off + offset_of!(Record, CreationTime))?,
-        attrs,
-    };
+    let meta = Meta { size: i64_at(buf, off + offset_of!(Record, FileSize))? as u64, modified: i64_at(buf, off + offset_of!(Record, LastModificationTime))?, created: i64_at(buf, off + offset_of!(Record, CreationTime))?, attrs };
     let kind = change_kind(u32_at(buf, off + offset_of!(Record, Action))?);
     Some((kind.map(|kind| Notice { kind, name: wide_name(name), meta }), u32_at(buf, off + offset_of!(Record, NextEntryOffset))?))
 }

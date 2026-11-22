@@ -118,18 +118,7 @@ pub struct Listing {
     pub archived: bool,
 }
 
-pub const SHELL_PROPS: [&str; 10] = [
-    "System.Image.Dimensions",
-    "System.Media.Duration",
-    "System.Music.Artist",
-    "System.FileVersion",
-    "System.Photo.DateTaken",
-    "System.Photo.CameraModel",
-    "System.Music.AlbumTitle",
-    "System.Title",
-    "System.Author",
-    "System.Company",
-];
+pub const SHELL_PROPS: [&str; 10] = ["System.Image.Dimensions", "System.Media.Duration", "System.Music.Artist", "System.FileVersion", "System.Photo.DateTaken", "System.Photo.CameraModel", "System.Music.AlbumTitle", "System.Title", "System.Author", "System.Company"];
 const ARTIST_AT: usize = 2;
 const VERSION_AT: usize = 3;
 
@@ -229,7 +218,11 @@ impl Listing {
     }
     #[inline]
     pub fn folder(&self, i: u32) -> &[u8] {
-        if self.entries[i as usize].attrs & attr::NESTED != 0 { self.tail(i) } else { &[] }
+        if self.entries[i as usize].attrs & attr::NESTED != 0 {
+            self.tail(i)
+        } else {
+            &[]
+        }
     }
 
     pub fn stats(&self, i: u32) -> Option<DirStats> {
@@ -288,17 +281,7 @@ impl Listing {
         if meta.attrs & attr::NESTED == 0 {
             self.total += meta.size;
         }
-        self.entries.push(Entry {
-            size: meta.size,
-            modified: meta.modified,
-            created: meta.created,
-            accessed: 0,
-            name_off: off as u32,
-            attrs: meta.attrs,
-            name_len: len as u16,
-            ext_len: ext_len as u16,
-            tags: 0,
-        });
+        self.entries.push(Entry { size: meta.size, modified: meta.modified, created: meta.created, accessed: 0, name_off: off as u32, attrs: meta.attrs, name_len: len as u16, ext_len: ext_len as u16, tags: 0 });
         (self.entries.len() - 1) as u32
     }
 

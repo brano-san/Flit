@@ -10,10 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Wdk::Foundation::OBJECT_ATTRIBUTES;
-use windows::Wdk::Storage::FileSystem::{
-    FileFullDirectoryInformation, FileIdBothDirectoryInformation, NtOpenFile, NtQueryDirectoryFile, FILE_DIRECTORY_FILE, FILE_FULL_DIR_INFORMATION, FILE_ID_BOTH_DIR_INFORMATION, FILE_OPEN_FOR_BACKUP_INTENT,
-    FILE_SYNCHRONOUS_IO_NONALERT,
-};
+use windows::Wdk::Storage::FileSystem::{FileFullDirectoryInformation, FileIdBothDirectoryInformation, NtOpenFile, NtQueryDirectoryFile, FILE_DIRECTORY_FILE, FILE_FULL_DIR_INFORMATION, FILE_ID_BOTH_DIR_INFORMATION, FILE_OPEN_FOR_BACKUP_INTENT, FILE_SYNCHRONOUS_IO_NONALERT};
 use windows::Win32::Foundation::*;
 use windows::Win32::Storage::FileSystem::*;
 use windows::Win32::System::Ioctl::{PropertyStandardQuery, StorageDeviceSeekPenaltyProperty, DEVICE_SEEK_PENALTY_DESCRIPTOR, IOCTL_STORAGE_QUERY_PROPERTY, STORAGE_PROPERTY_QUERY};
@@ -46,10 +43,7 @@ fn nt_error(st: NTSTATUS) -> FsError {
 pub(crate) fn open_dir(dir: &FsPath, access: u32, overlapped: bool) -> Result<HANDLE, FsError> {
     let wide = dir.to_wide(true);
     let flags = if overlapped { FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED } else { FILE_FLAG_BACKUP_SEMANTICS };
-    unsafe {
-        CreateFileW(PCWSTR(wide.as_ptr()), access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, None, OPEN_EXISTING, flags, None)
-            .map_err(|e| fs_error(WIN32_ERROR::from_error(&e).unwrap_or(ERROR_GEN_FAILURE)))
-    }
+    unsafe { CreateFileW(PCWSTR(wide.as_ptr()), access, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, None, OPEN_EXISTING, flags, None).map_err(|e| fs_error(WIN32_ERROR::from_error(&e).unwrap_or(ERROR_GEN_FAILURE))) }
 }
 
 const REPARSE_TAG_NAME_SURROGATE: u32 = 0x2000_0000;
@@ -548,16 +542,7 @@ impl Fs for NtFs {
             let query = STORAGE_PROPERTY_QUERY { PropertyId: StorageDeviceSeekPenaltyProperty, QueryType: PropertyStandardQuery, ..Default::default() };
             let mut desc = DEVICE_SEEK_PENALTY_DESCRIPTOR::default();
             let mut n = 0u32;
-            let r = DeviceIoControl(
-                h,
-                IOCTL_STORAGE_QUERY_PROPERTY,
-                Some(&query as *const _ as _),
-                size_of::<STORAGE_PROPERTY_QUERY>() as u32,
-                Some(&mut desc as *mut _ as _),
-                size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() as u32,
-                Some(&mut n),
-                None,
-            );
+            let r = DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, Some(&query as *const _ as _), size_of::<STORAGE_PROPERTY_QUERY>() as u32, Some(&mut desc as *mut _ as _), size_of::<DEVICE_SEEK_PENALTY_DESCRIPTOR>() as u32, Some(&mut n), None);
             let _ = CloseHandle(h);
             r.ok().map(|()| desc.IncursSeekPenalty)
         }
@@ -566,7 +551,11 @@ impl Fs for NtFs {
     fn volume_size(&self, path: &FsPath) -> u64 {
         let mut total = 0u64;
         let ok = unsafe { GetDiskFreeSpaceExW(PCWSTR(path.to_wide(true).as_ptr()), None, Some(&mut total), None) }.is_ok();
-        if ok { total } else { 0 }
+        if ok {
+            total
+        } else {
+            0
+        }
     }
 
     fn file_system(&self, path: &FsPath) -> Option<String> {
@@ -586,10 +575,7 @@ impl Fs for NtFs {
     }
 
     fn dir_sizes(&self, dir: &FsPath, items: &[(u32, Vec<u8>)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
-        let trees: Vec<Tree> = items
-            .iter()
-            .map(|&(idx, _)| Tree { idx, bytes: AtomicU64::new(0), files: AtomicU64::new(0), folders: AtomicU64::new(0), partial: AtomicBool::new(false), open: AtomicUsize::new(1), keep_going, report })
-            .collect();
+        let trees: Vec<Tree> = items.iter().map(|&(idx, _)| Tree { idx, bytes: AtomicU64::new(0), files: AtomicU64::new(0), folders: AtomicU64::new(0), partial: AtomicBool::new(false), open: AtomicUsize::new(1), keep_going, report }).collect();
         let walk = || {
             rayon::scope(|s| {
                 for (tree, (_, name)) in trees.iter().zip(items).rev() {

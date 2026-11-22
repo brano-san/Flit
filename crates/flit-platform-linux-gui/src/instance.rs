@@ -126,7 +126,11 @@ pub fn try_file_lock(path: &Path) -> io::Result<Option<File>> {
         return Ok(Some(file));
     }
     let e = io::Error::last_os_error();
-    if e.raw_os_error() == Some(libc::EWOULDBLOCK) { Ok(None) } else { Err(e) }
+    if e.raw_os_error() == Some(libc::EWOULDBLOCK) {
+        Ok(None)
+    } else {
+        Err(e)
+    }
 }
 
 impl SocketInstance {

@@ -182,10 +182,7 @@ fn the_panic_hook_keeps_the_previous_hook_and_masks_its_own_log() {
     }
     let d = temp("hook-chain");
     std::fs::create_dir_all(&d.0).unwrap();
-    let child = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "logs::tests::the_panic_hook_keeps_the_previous_hook_and_masks_its_own_log"])
-        .env(CHILD, &d.0)
-        .output().unwrap();
+    let child = std::process::Command::new(std::env::current_exe().unwrap()).args(["--exact", "logs::tests::the_panic_hook_keeps_the_previous_hook_and_masks_its_own_log"]).env(CHILD, &d.0).output().unwrap();
     assert!(child.status.success(), "{}", String::from_utf8_lossy(&child.stderr));
     let log = read(&d.0, FILE);
     assert!(log.contains("ftp://demo:***@host/") && !log.contains("private-test-secret"));

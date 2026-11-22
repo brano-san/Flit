@@ -71,8 +71,10 @@ const G_SEARCH: &str = "\u{E721}";
 const G_SHIFT_UP: &str = "\u{E70E}";
 const G_RESTORE_ORDER: &str = "\u{E777}";
 const G_PATHS: &str = "\u{E8FD}";
-#[cfg(windows)] const G_CLOUD: &str = "\u{E753}";
-#[cfg(not(windows))] const G_CLOUD: &str = G_FOLDER;
+#[cfg(windows)]
+const G_CLOUD: &str = "\u{E753}";
+#[cfg(not(windows))]
+const G_CLOUD: &str = G_FOLDER;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 pub enum KnownFolder {
@@ -435,7 +437,11 @@ pub(super) struct Fold {
 impl Fold {
     pub fn shown(&self, now: Instant) -> f32 {
         let e = eased(self.since, now, FOLD);
-        if self.opening { e } else { 1.0 - e }
+        if self.opening {
+            e
+        } else {
+            1.0 - e
+        }
     }
 }
 
@@ -546,11 +552,7 @@ impl Sidebar {
                     if k == KnownFolder::OneDrive {
                         for (name, loc) in &p.business_onedrive {
                             let brand = S::SidebarFolderOneDrive.en();
-                            let label = if name.get(..brand.len()).is_some_and(|s| s.eq_ignore_ascii_case(brand)) {
-                                name.clone()
-                            } else {
-                                crate::tr!(S::WindowsOneDriveBusiness, name = name)
-                            };
+                            let label = if name.get(..brand.len()).is_some_and(|s| s.eq_ignore_ascii_case(brand)) { name.clone() } else { crate::tr!(S::WindowsOneDriveBusiness, name = name) };
                             out.push(item(label, G_CLOUD, loc.clone(), None));
                         }
                     }
@@ -1242,7 +1244,11 @@ fn item_parts(r: Rect, scale: f32) -> (Rect, f32) {
 
 fn item_icon(r: Rect, scale: f32, drive: bool) -> Rect {
     let icon = item_parts(r, scale).0;
-    if drive { Rect::new(icon.x, r.y, icon.w, r.h) } else { icon }
+    if drive {
+        Rect::new(icon.x, r.y, icon.w, r.h)
+    } else {
+        icon
+    }
 }
 
 pub(super) fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<SystemIcon> {
@@ -1287,11 +1293,7 @@ pub(super) fn recent_icon(r: &Recent, places: &Places, px: u32) -> Option<System
 
 pub(super) fn folder_icon(loc: &Location, sb: &Sidebar, px: u32) -> Option<SystemIcon> {
     let path = loc.path();
-    let special = loc.is_root()
-        || matches!(path.kind(), PathKind::Computer | PathKind::RecycleBin | PathKind::Home | PathKind::Shell)
-        || library::is_library(path)
-        || sb.is_pinned(loc)
-        || sb.places.folders.iter().any(|(_, l)| l == loc);
+    let special = loc.is_root() || matches!(path.kind(), PathKind::Computer | PathKind::RecycleBin | PathKind::Home | PathKind::Shell) || library::is_library(path) || sb.is_pinned(loc) || sb.places.folders.iter().any(|(_, l)| l == loc);
     if special {
         return location_icon(loc, &sb.places, px);
     }

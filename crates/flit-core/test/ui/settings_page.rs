@@ -57,12 +57,20 @@ fn a_cut_description_shows_its_full_text_on_hover_and_hides_on_key_wheel_and_lea
     let (x, y) = (r.x + r.w / 2.0, r.y + r.h / 2.0);
     a.on_event(&Event::MouseMove { x, y }, t0);
     assert_eq!(a.settings.screen.as_ref().unwrap().tip, Some((k, (x, y))));
-    let plain = { let mut g = Gfx::new(Mono, 1024); a.frame(&mut g, t0); g.dl.instances.len() };
+    let plain = {
+        let mut g = Gfx::new(Mono, 1024);
+        a.frame(&mut g, t0);
+        g.dl.instances.len()
+    };
     a.on_event(&Event::MouseMove { x: x + 1.0, y }, t0);
     assert_eq!(a.settings.screen.as_ref().unwrap().tip, Some((k, (x, y))), "the tip stays put while the pointer stays on the same text");
     key(&mut a, Key::Down, NO);
     assert_eq!(a.settings.screen.as_ref().unwrap().tip, None);
-    let hidden = { let mut g = Gfx::new(Mono, 1024); a.frame(&mut g, t0); g.dl.instances.len() };
+    let hidden = {
+        let mut g = Gfx::new(Mono, 1024);
+        a.frame(&mut g, t0);
+        g.dl.instances.len()
+    };
     assert!(plain > hidden, "the tip draws a box and its text");
     a.on_event(&Event::MouseMove { x, y: y + 0.5 }, t0);
     assert!(a.settings.screen.as_ref().unwrap().tip.is_some());
@@ -411,7 +419,7 @@ fn about_page_shows_versions_and_no_libraries() {
     assert!(!lines.iter().any(|l| l.starts_with("serde_json")), "{lines:?}");
     assert_eq!(lines[3], S::SettingsPageSystemRegisterAgain.t());
     assert_eq!(lines[4..7], ["Updates", crate::ui::settings::CHECK_UPDATES, "Check for updates"]);
-    assert_eq!(lines[7..11], ["Help","Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
+    assert_eq!(lines[7..11], ["Help", "Documentation | Report a bug | Request a feature", "GitHub repository | Privacy statement", NO_TELEMETRY.t()]);
     let k = ui(&a).lines.iter().position(|l| l.buttons().contains(&Btn::ReportBug)).unwrap();
     reveal(&mut a, k);
     let r = button_rects(&ui(&a).lines[k].clone(), rect(&a, k), &ui(&a).fit, s)[1];
@@ -652,7 +660,6 @@ fn inactive_archive_settings_are_dimmed_skipped_by_the_keyboard_and_ignore_click
     assert!(NEEDS_BUILTIN_ARCHIVES.iter().all(|id| SETTINGS[index(id).unwrap()].enabled(&a)));
 }
 
-
 #[test]
 fn options_have_no_shortcuts_group() {
     let mut a = app();
@@ -792,7 +799,6 @@ fn options_open_where_the_command_palette_does_and_stay_inside_the_window() {
         }
     }
 }
-
 
 #[test]
 fn a_switch_slides_its_knob_and_blends_its_track() {

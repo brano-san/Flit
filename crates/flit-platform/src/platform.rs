@@ -188,8 +188,4 @@ pub trait NetworkPlatform {
     }
 }
 
-pub trait Platform:
-    WindowPlatform + FilePlatform + ShellPlatform + DevicePlatform
-    + ProfilePlatform + SystemPlatform + SearchPlatform + NetworkPlatform + 'static
-{
-}
+pub trait Platform: WindowPlatform + FilePlatform + ShellPlatform + DevicePlatform + ProfilePlatform + SystemPlatform + SearchPlatform + NetworkPlatform + 'static {}

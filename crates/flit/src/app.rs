@@ -253,17 +253,20 @@ fn start_workers<P: ShellPlatform + 'static>(wake: Wake, cache: Cache, refresh: 
                     }
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
                     PreviewJob::ColumnProps { window, tab, gen, ask, dir, names, system, portable } => {
-                        let rows = names.into_iter().map(|n| {
-                            let item = dir.join(&n);
-                            let mut values = if system { shell.column_props(&item) } else { flit_core::listing::ColumnValues::default() };
-                            if portable {
-                                values.text.resize(flit_core::listing::SHELL_PROPS.len(), String::new());
-                                if let Ok(meta) = crate::portable_meta::read(&item) {
-                                    values.text.extend([meta.display_rating(), meta.comment, meta.tags.join(", ")]);
+                        let rows = names
+                            .into_iter()
+                            .map(|n| {
+                                let item = dir.join(&n);
+                                let mut values = if system { shell.column_props(&item) } else { flit_core::listing::ColumnValues::default() };
+                                if portable {
+                                    values.text.resize(flit_core::listing::SHELL_PROPS.len(), String::new());
+                                    if let Ok(meta) = crate::portable_meta::read(&item) {
+                                        values.text.extend([meta.display_rating(), meta.comment, meta.tags.join(", ")]);
+                                    }
                                 }
-                            }
-                            (n, values)
-                        }).collect();
+                                (n, values)
+                            })
+                            .collect();
                         Done::ColumnProps { window, tab, gen, ask, rows }
                     }
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
@@ -299,11 +302,7 @@ fn start_workers<P: ShellPlatform + 'static>(wake: Wake, cache: Cache, refresh: 
             for job in rx {
                 let done = match job {
                     ShellJob::Icon { window, req, visible } => {
-                        let result = if !visible.wants(&req) {
-                            IconResult::Skipped
-                        } else {
-                            icon_result(&mut shell, &req)
-                        };
+                        let result = if !visible.wants(&req) { IconResult::Skipped } else { icon_result(&mut shell, &req) };
                         vec![Done::Icon { window, req, result }]
                     }
                     ShellJob::Icons { window, reqs, visible } => batch_icons(&mut shell, window, reqs, &visible),
@@ -367,14 +366,7 @@ struct WinState<P: Platform> {
     progress: Option<(u32, bool)>,
 }
 
-fn apply_bookmark_effect<'a>(
-    effect: Effect,
-    nav: &mut NavState,
-    windows: impl Iterator<Item = &'a mut App>,
-    pending: &'a mut VecDeque<App>,
-    quick_pinned: impl FnOnce(&[Location], &[Location]),
-    bookmarks_changed: impl FnOnce(&[Location], &[Location]),
-) {
+fn apply_bookmark_effect<'a>(effect: Effect, nav: &mut NavState, windows: impl Iterator<Item = &'a mut App>, pending: &'a mut VecDeque<App>, quick_pinned: impl FnOnce(&[Location], &[Location]), bookmarks_changed: impl FnOnce(&[Location], &[Location])) {
     let apps = windows.chain(pending.iter_mut());
     let pinned = match effect {
         Effect::Pinned(pinned) => {
@@ -483,14 +475,22 @@ impl<P: Platform> Handler<P> {
         let requested = self.background_requested();
         #[cfg(target_os = "linux")]
         let disabled = !requested && tray.menu().is_some();
-        tray.set_menu(requested.then(|| flit_platform::tray::Menu {
-            new_window: S::MenuNewWindow.t().into(),
-            bookmarks: S::SidebarSectionBookmarks.t().into(),
-            pinned: self.saved.nav.pinned.iter().map(|loc| {
-                let label = flit_core::name::display(loc.file_name());
-                (loc.clone(), if label.is_empty() { loc.display().into_owned() } else { label.into_owned() })
-            }).collect(),
-            quit: S::ActionsAppQuit.t().into(),
+        tray.set_menu(requested.then(|| {
+            flit_platform::tray::Menu {
+                new_window: S::MenuNewWindow.t().into(),
+                bookmarks: S::SidebarSectionBookmarks.t().into(),
+                pinned: self
+                    .saved
+                    .nav
+                    .pinned
+                    .iter()
+                    .map(|loc| {
+                        let label = flit_core::name::display(loc.file_name());
+                        (loc.clone(), if label.is_empty() { loc.display().into_owned() } else { label.into_owned() })
+                    })
+                    .collect(),
+                quit: S::ActionsAppQuit.t().into(),
+            }
         }));
         #[cfg(target_os = "linux")]
         if disabled {
@@ -920,7 +920,11 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::Window(WindowCmd::Close) => {
                     if let Some(w) = self.writer.as_ref().filter(|_| cfg!(not(windows)) && self.quit_session.is_none()) {
-                        if self.windows.len() <= 1 { w.flush(self.session()) } else { w.send(self.session()) }
+                        if self.windows.len() <= 1 {
+                            w.flush(self.session())
+                        } else {
+                            w.send(self.session())
+                        }
                     }
                     if let Some(st) = self.windows.get(&id) {
                         self.saved = Saved::new(st.app.persisted(), Some(window.placement())).with_nav(st.app.nav_state()).with_pane(st.app.pane_state()).with_side(st.app.nav_prefs()).with_tools(tools(&st.app));
@@ -1326,10 +1330,13 @@ impl<P: Platform> Handler<P> {
     }
 
     fn clear_system_settings(&mut self, keys: &[&str]) {
-        let changes: Vec<_> = keys.iter().filter_map(|key| {
-            let k = flit_core::ui::settings::index(key)?;
-            (self.settings.values.get(k) == Some(&Value::Bool(true))).then_some((k, Value::Bool(false)))
-        }).collect();
+        let changes: Vec<_> = keys
+            .iter()
+            .filter_map(|key| {
+                let k = flit_core::ui::settings::index(key)?;
+                (self.settings.values.get(k) == Some(&Value::Bool(true))).then_some((k, Value::Bool(false)))
+            })
+            .collect();
         if changes.is_empty() {
             return;
         }
@@ -1391,7 +1398,25 @@ impl<P: Platform> Handler<P> {
                 ProviderEvent::NetworkDiscovery { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } | ProviderEvent::Denied { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::WrongPassphrase { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpConflicts { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::OpNotice { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. }
+                | ProviderEvent::SavedServerConnected { tab, .. }
+                | ProviderEvent::WrongPassphrase { tab, .. }
+                | ProviderEvent::NetworkConnected { tab, .. }
+                | ProviderEvent::Reveal { tab, .. }
+                | ProviderEvent::OpProgress { tab, .. }
+                | ProviderEvent::OpConflict { tab, .. }
+                | ProviderEvent::OpConflicts { tab, .. }
+                | ProviderEvent::OpFailure { tab, .. }
+                | ProviderEvent::Hashed { tab, .. }
+                | ProviderEvent::Measured { tab, .. }
+                | ProviderEvent::Status { tab, .. }
+                | ProviderEvent::OpNotice { tab, .. }
+                | ProviderEvent::Access { tab, .. }
+                | ProviderEvent::NotExecutable { tab, .. }
+                | ProviderEvent::OpenAsk { tab, .. }
+                | ProviderEvent::Unwatched { tab, .. }
+                | ProviderEvent::MountAsk { tab, .. }
+                | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);
@@ -1606,8 +1631,7 @@ impl<P: Platform> Handler<P> {
         ids.sort_unstable();
         let now = Instant::now();
         for route in routes.into_iter().take(flit_core::ui::MAX_ROUTES) {
-            let found = std::iter::once(target).chain(ids.iter().copied().filter(|&id| id != target))
-                .find(|id| self.windows.get_mut(id).is_some_and(|w| w.app.focus_folder(&route.folder)));
+            let found = std::iter::once(target).chain(ids.iter().copied().filter(|&id| id != target)).find(|id| self.windows.get_mut(id).is_some_and(|w| w.app.focus_folder(&route.folder)));
             if let Some(id) = found {
                 target = id;
                 if route.select.is_none() {
@@ -1931,9 +1955,7 @@ impl<P: Platform> WindowHandler<Ws<P>> for Handler<P> {
             Idle::Wait => flit_platform::Idle::Wait,
             Idle::Open | Idle::Exit => {
                 let mut open = self.queued_opens.remove(0);
-                let last_window = self.closed_session.as_ref()
-                    .filter(|_| open.target == OpenTarget::Default && open.is_empty() && matches!(self.saved.persisted.startup, Startup::Continue))
-                    .and_then(|s| s.windows().next());
+                let last_window = self.closed_session.as_ref().filter(|_| open.target == OpenTarget::Default && open.is_empty() && matches!(self.saved.persisted.startup, Startup::Continue)).and_then(|s| s.windows().next());
                 let (app, placement) = if let Some(restore) = self.background_startup.take() {
                     if let Some(files) = &self.files {
                         files.mark();
@@ -2062,11 +2084,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     });
     let local = LocalProvider::new::<_, P::Watcher, P::Shell>(P::fs(), FS_THREADS, events_tx.clone(), wake.clone())?;
     #[cfg(target_os = "linux")]
-    let local = if picker.as_ref().is_some_and(|(request, _)| !request.directories() && request.filters.iter().any(|filter| !filter.mime_types.is_empty())) {
-        local.with_picker_mime(flit_platform_linux_gui::file_chooser::picker_mime)
-    } else {
-        local
-    };
+    let local = if picker.as_ref().is_some_and(|(request, _)| !request.directories() && request.filters.iter().any(|filter| !filter.mime_types.is_empty())) { local.with_picker_mime(flit_platform_linux_gui::file_chooser::picker_mime) } else { local };
     let local = Arc::new(local);
     let (sink, opens) = open_inbox(instance, wake.clone());
     let thumb_cache: Cache = P::cache_dir().filter(|_| !picking).map(|d| Arc::new(Mutex::new(ThumbCache::new(d.join("thumbs"), saved.persisted.prefs.thumb_cache_mb))));
@@ -2079,13 +2097,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let headless = picking || metrics.is_some() || pseudo || flit_platform::isolated_gui_test();
     let capture = std::env::var_os("FLIT_HIDDEN_CAPTURE").is_some();
     let integrate = !headless && !capture;
-    let about = About {
-        file: settings_file.clone().and_then(fs_path),
-        logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path),
-        store_managed: update::store_managed(),
-        system_integration_unavailable: !integrate,
-        ..Default::default()
-    };
+    let about = About { file: settings_file.clone().and_then(fs_path), logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path), store_managed: update::store_managed(), system_integration_unavailable: !integrate, ..Default::default() };
     let settings = Settings::start::<P>(settings_file.filter(|_| !picking && metrics.is_none() && !pseudo), settings_text, thumb_cache.clone(), integrate, wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let open = if activated { opens.recv_timeout(ACTIVATION_WAIT).unwrap_or(open) } else { open };

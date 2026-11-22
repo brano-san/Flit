@@ -14,9 +14,10 @@ use windows::Win32::System::Variant::{InitVariantFromBuffer, VariantGetElementCo
 use windows::Win32::UI::Controls::{LPFNSVADDPROPSHEETPAGE, TBBUTTON};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
-    Folder, FolderItem, FolderItems, FolderItems_Impl, IShellDispatch, IShellFolderViewDual, IShellFolderViewDual_Impl, Shell, ILClone, ILCombine, ILCreateFromPathW, ILFindLastID, ILFree, ILGetSize, IFolderView, IFolderView_Impl, IShellBrowser, IShellBrowser_Impl, IShellItem, IShellItemArray, IShellView, IShellView_Impl, IShellWindows, IWebBrowser2, IWebBrowser2_Impl, IWebBrowserApp_Impl,
-    IWebBrowser_Impl, SHCreateItemFromIDList, SHCreateShellItemArrayFromIDLists, SHGetNameFromIDList, ShellWindows, BHID_DataObject, BHID_SFObject, FOLDERSETTINGS, FVM_DETAILS, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SIGDN_URL, SVGIO_ALLVIEW, SVGIO_SELECTION,
-    SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, IPersistFolder2, SID_STopLevelBrowser, _SVGIO, ILRemoveLastID, SHGetFolderLocation, SIGDN_DESKTOPABSOLUTEPARSING, SBSP_NAVIGATEBACK, SBSP_NAVIGATEFORWARD, SBSP_NEWBROWSER, SBSP_PARENT, SBSP_RELATIVE, navOpenInBackgroundTab, navOpenInNewTab, navOpenInNewWindow,
+    Folder, FolderItem, FolderItems, FolderItems_Impl, IShellDispatch, IShellFolderViewDual, IShellFolderViewDual_Impl, Shell, ILClone, ILCombine, ILCreateFromPathW, ILFindLastID, ILFree, ILGetSize, IFolderView, IFolderView_Impl, IShellBrowser, IShellBrowser_Impl,
+    IShellItem, IShellItemArray, IShellView, IShellView_Impl, IShellWindows, IWebBrowser2, IWebBrowser2_Impl, IWebBrowserApp_Impl, IWebBrowser_Impl, SHCreateItemFromIDList, SHCreateShellItemArrayFromIDLists, SHGetNameFromIDList, ShellWindows, BHID_DataObject,
+    BHID_SFObject, FOLDERSETTINGS, FVM_DETAILS, SIGDN, SIGDN_FILESYSPATH, SIGDN_NORMALDISPLAY, SIGDN_URL, SVGIO_ALLVIEW, SVGIO_SELECTION, SVGIO_TYPE_MASK, SVSI_SELECT, SWC_BROWSER, IPersistFolder2, SID_STopLevelBrowser, _SVGIO, ILRemoveLastID, SHGetFolderLocation,
+    SIGDN_DESKTOPABSOLUTEPARSING, SBSP_NAVIGATEBACK, SBSP_NAVIGATEFORWARD, SBSP_NEWBROWSER, SBSP_PARENT, SBSP_RELATIVE, navOpenInBackgroundTab, navOpenInNewTab, navOpenInNewWindow,
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, GetWindowThreadProcessId, IsIconic, PostMessageW, SetForegroundWindow, ShowWindow, HMENU, MSG, SW_RESTORE, WM_APP};
 use windows_core::{implement, ComObject, IUnknown, IUnknownImpl, Interface, Ref};
@@ -769,12 +770,20 @@ impl IEnumVARIANT_Impl for Walk_Impl {
         if let Some(f) = unsafe { fetched.as_mut() } {
             *f = taken.len() as u32;
         }
-        if taken.len() == count as usize { S_OK } else { S_FALSE }
+        if taken.len() == count as usize {
+            S_OK
+        } else {
+            S_FALSE
+        }
     }
     fn Skip(&self, count: u32) -> HRESULT {
         let mut at = lock(&self.at);
         *at += count as usize;
-        if *at <= self.list.len() { S_OK } else { S_FALSE }
+        if *at <= self.list.len() {
+            S_OK
+        } else {
+            S_FALSE
+        }
     }
     fn Reset(&self) -> windows::core::Result<()> {
         *lock(&self.at) = 0;
@@ -784,7 +793,6 @@ impl IEnumVARIANT_Impl for Walk_Impl {
         Ok(ComObject::new(Walk { list: self.list.clone(), at: Mutex::new(*lock(&self.at)) }).to_interface())
     }
 }
-
 
 impl IWebBrowser_Impl for Browser_Impl {
     fn GoBack(&self) -> windows::core::Result<()> {

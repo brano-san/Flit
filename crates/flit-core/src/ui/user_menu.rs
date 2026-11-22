@@ -86,7 +86,22 @@ pub struct UserEntry {
 
 impl Default for UserEntry {
     fn default() -> Self {
-        Self { name: String::new(), icon: String::new(), command: String::new(), files: true, folders: true, background: false, ext: String::new(), submenu: None, description: String::new(), shortcut: String::new(), startup_notify: false, patterns: String::new(), selection: 0, categories: Vec::new() }
+        Self {
+            name: String::new(),
+            icon: String::new(),
+            command: String::new(),
+            files: true,
+            folders: true,
+            background: false,
+            ext: String::new(),
+            submenu: None,
+            description: String::new(),
+            shortcut: String::new(),
+            startup_notify: false,
+            patterns: String::new(),
+            selection: 0,
+            categories: Vec::new(),
+        }
     }
 }
 
@@ -107,12 +122,19 @@ fn ext_of(name: &[u8]) -> String {
 const CATEGORY_IDS: [&str; 6] = ["folder", "audio", "video", "image", "text", "other"];
 
 fn category(dir: bool, ext: &str) -> &'static str {
-    if dir { "folder" }
-    else if ["mp3", "wav", "flac", "ogg", "m4a", "aac", "opus", "wma"].contains(&ext) { "audio" }
-    else if ["mp4", "mkv", "webm", "avi", "mov", "mpeg", "mpg", "wmv"].contains(&ext) { "video" }
-    else if crate::preview::IMAGES.contains(&ext) { "image" }
-    else if ["txt", "md", "markdown", "csv", "json", "xml", "html", "css", "js", "ts", "rs", "py", "toml", "yaml", "yml", "log", "ini", "conf"].contains(&ext) { "text" }
-    else { "other" }
+    if dir {
+        "folder"
+    } else if ["mp3", "wav", "flac", "ogg", "m4a", "aac", "opus", "wma"].contains(&ext) {
+        "audio"
+    } else if ["mp4", "mkv", "webm", "avi", "mov", "mpeg", "mpg", "wmv"].contains(&ext) {
+        "video"
+    } else if crate::preview::IMAGES.contains(&ext) {
+        "image"
+    } else if ["txt", "md", "markdown", "csv", "json", "xml", "html", "css", "js", "ts", "rs", "py", "toml", "yaml", "yml", "log", "ini", "conf"].contains(&ext) {
+        "text"
+    } else {
+        "other"
+    }
 }
 
 fn pattern_matches(pattern: &str, name: &[u8]) -> bool {
@@ -121,11 +143,25 @@ fn pattern_matches(pattern: &str, name: &[u8]) -> bool {
     let (mut pi, mut ni, mut star) = (0, 0, None);
     while ni < n.len() {
         match p.get(pi) {
-            Some('*') => { star = Some((pi, ni)); pi += 1; }
-            Some('?') => { pi += 1; ni += 1; }
-            Some(c) if *c == n[ni] => { pi += 1; ni += 1; }
+            Some('*') => {
+                star = Some((pi, ni));
+                pi += 1;
+            }
+            Some('?') => {
+                pi += 1;
+                ni += 1;
+            }
+            Some(c) if *c == n[ni] => {
+                pi += 1;
+                ni += 1;
+            }
             _ => match star {
-                Some((sp, sn)) => { let next = sn + 1; star = Some((sp, next)); pi = sp + 1; ni = next; }
+                Some((sp, sn)) => {
+                    let next = sn + 1;
+                    star = Some((sp, next));
+                    pi = sp + 1;
+                    ni = next;
+                }
                 None => return false,
             },
         }
@@ -140,16 +176,17 @@ impl UserEntry {
 
     pub fn wants(&self, items: Option<&[(bool, &[u8])]>) -> bool {
         let Some(items) = items else { return self.background };
-        if (self.selection == 1 && items.len() != 1) || (self.selection == 2 && items.len() < 2) { return false; }
+        if (self.selection == 1 && items.len() != 1) || (self.selection == 2 && items.len() < 2) {
+            return false;
+        }
         let exts = self.exts();
         let patterns: Vec<_> = self.patterns.split(';').map(str::trim).filter(|s| !s.is_empty()).collect();
-        !items.is_empty() && items.iter().all(|&(dir, name)| {
-            let ext = ext_of(name);
-            let category = category(dir, &ext);
-            (if dir { self.folders } else { self.files && (exts.is_empty() || exts.contains(&ext)) })
-                && (self.categories.is_empty() || self.categories.iter().any(|c| c == category))
-                && (patterns.is_empty() || patterns.iter().any(|p| pattern_matches(p, name)))
-        })
+        !items.is_empty()
+            && items.iter().all(|&(dir, name)| {
+                let ext = ext_of(name);
+                let category = category(dir, &ext);
+                (if dir { self.folders } else { self.files && (exts.is_empty() || exts.contains(&ext)) }) && (self.categories.is_empty() || self.categories.iter().any(|c| c == category)) && (patterns.is_empty() || patterns.iter().any(|p| pattern_matches(p, name)))
+            })
     }
 
     fn image(&self) -> Option<MenuImage> {
@@ -178,11 +215,19 @@ impl UserEntry {
             m.insert("extensions".into(), Json::String(self.ext.clone()));
         }
         for (key, value) in [("description", &self.description), ("shortcut", &self.shortcut), ("patterns", &self.patterns)] {
-            if !value.is_empty() { m.insert(key.into(), Json::String(value.clone())); }
+            if !value.is_empty() {
+                m.insert(key.into(), Json::String(value.clone()));
+            }
         }
-        if self.startup_notify { m.insert("startup_notify".into(), Json::Bool(true)); }
-        if self.selection != 0 { m.insert("selection".into(), Json::from(self.selection)); }
-        if !self.categories.is_empty() { m.insert("categories".into(), Json::Array(self.categories.iter().cloned().map(Json::String).collect())); }
+        if self.startup_notify {
+            m.insert("startup_notify".into(), Json::Bool(true));
+        }
+        if self.selection != 0 {
+            m.insert("selection".into(), Json::from(self.selection));
+        }
+        if !self.categories.is_empty() {
+            m.insert("categories".into(), Json::Array(self.categories.iter().cloned().map(Json::String).collect()));
+        }
         Json::Object(m)
     }
 
@@ -219,7 +264,9 @@ impl UserEntry {
             selection: o.get("selection").and_then(Json::as_u64).filter(|&s| s <= 2).map_or(0, |s| s as usize),
             categories: o.get("categories").and_then(Json::as_array).map(|a| a.iter().filter_map(|c| c.as_str().filter(|c| !c.is_empty() && c.len() <= MAX_TEXT)).map(str::to_owned).collect()).unwrap_or_default(),
         };
-        if action_chord(&e.shortcut).is_none() { e.shortcut.clear(); }
+        if action_chord(&e.shortcut).is_none() {
+            e.shortcut.clear();
+        }
         (!e.name.trim().is_empty() && (e.submenu.is_some() || !e.command.trim().is_empty())).then_some(e)
     }
 }
@@ -259,7 +306,9 @@ impl App {
     pub(super) fn user_shortcut(&mut self, key: crate::input::Key, mods: crate::input::Mods) -> bool {
         let pressed = super::actions::Chord { key, mods };
         let matching: Vec<_> = self.user_actions().filter(|(_, _, e)| !e.shortcut.is_empty() && action_chord(&e.shortcut) == Some(pressed)).map(|(_, parent, e)| (parent, e)).collect();
-        if matching.is_empty() || self.archive_view().is_some() { return false; }
+        if matching.is_empty() || self.archive_view().is_some() {
+            return false;
+        }
         let t = self.tab();
         let (Some(v), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return false };
         let ids: Vec<_> = v.selected().collect();
@@ -454,7 +503,8 @@ impl App {
     }
 
     pub(super) fn submit_user_entry(&mut self, mut f: Form) -> Option<Form> {
-        let Kind::UserMenu { at, submenu } = f.kind else { return None };        let name = f.text(NAME).trim().to_owned();
+        let Kind::UserMenu { at, submenu } = f.kind else { return None };
+        let name = f.text(NAME).trim().to_owned();
         if name.is_empty() {
             f.say(S::UserMenuNoName.t(), true);
             return Some(f);
@@ -501,8 +551,13 @@ impl App {
             e.patterns = f.text(PATTERNS).trim().to_owned();
             e.selection = f.choice(SELECTION);
             let categories = f.flags(CATEGORIES);
-            if !categories.iter().any(|on| *on) { f.say(S::UserMenuNoCategories.t(), true); return Some(f); }
-            if !categories.iter().all(|on| *on) { e.categories = CATEGORY_IDS.iter().zip(categories).filter(|(_, on)| *on).map(|(id, _)| (*id).to_owned()).collect(); }
+            if !categories.iter().any(|on| *on) {
+                f.say(S::UserMenuNoCategories.t(), true);
+                return Some(f);
+            }
+            if !categories.iter().all(|on| *on) {
+                e.categories = CATEGORY_IDS.iter().zip(categories).filter(|(_, on)| *on).map(|(id, _)| (*id).to_owned()).collect();
+            }
         }
         let same_parent = at.is_some_and(|a| a.child.map(|_| a.top) == parent);
         let destination_len = parent.and_then(|p| self.settings.opts.user_menu.get(p)).and_then(|p| p.submenu.as_ref()).map_or(self.settings.opts.user_menu.len(), Vec::len);

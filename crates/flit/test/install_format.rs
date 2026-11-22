@@ -33,13 +33,7 @@ fn appimage_is_detected_before_package_probes_and_bad_owners_leave_portable_upda
 fn inherited_appimage_variables_do_not_disable_portable_updates() {
     let image = Some(OsStr::new("/home/user/Terminal.AppImage"));
     let dir = Some(OsStr::new("/tmp/.mount_Terminal"));
-    for (exe, appdir) in [
-        ("/opt/flit/bin/flit", dir),
-        ("/tmp/.mount_Terminal-copy/flit", dir),
-        ("/tmp/.mount_Terminal/bin/flit", None),
-        ("/opt/flit/bin/flit", Some(OsStr::new("/"))),
-        ("/tmp/.mount_Terminal/bin/flit", Some(OsStr::new("/tmp/../tmp/.mount_Terminal"))),
-    ] {
+    for (exe, appdir) in [("/opt/flit/bin/flit", dir), ("/tmp/.mount_Terminal-copy/flit", dir), ("/tmp/.mount_Terminal/bin/flit", None), ("/opt/flit/bin/flit", Some(OsStr::new("/"))), ("/tmp/.mount_Terminal/bin/flit", Some(OsStr::new("/tmp/../tmp/.mount_Terminal")))] {
         assert_eq!(detect(Path::new(exe), image, appdir, |_, _| None), None, "{exe}");
     }
 }

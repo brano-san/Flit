@@ -982,7 +982,9 @@ fn primary_reply_keeps_the_filter_when_a_file_menu_opens_and_skips_a_replaced_fi
     assert_eq!(app.tab().filter.as_ref().unwrap().text(), "alXpha");
     assert_eq!(app.context_menu_open().unwrap().query.text(), "menu");
     key(&mut app, Key::Escape, NO);
-    if app.own_menu_open() { key(&mut app, Key::Escape, NO); }
+    if app.own_menu_open() {
+        key(&mut app, Key::Escape, NO);
+    }
     app.on_event(&Event::MouseDown { x: start.0, y: start.1, button: MouseButton::Middle, clicks: 1 }, t0());
     let stale = middle_at(&mut app, start.0 + 20.0, start.1);
     app.close_filter();

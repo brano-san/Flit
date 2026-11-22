@@ -8,12 +8,7 @@ fn cmd(label: &str) -> MenuItem {
 }
 
 fn sample() -> Vec<MenuItem> {
-    vec![
-        cmd("Open"),
-        MenuItem::Submenu { label: "Sort by".into(), items: vec![cmd("Name"), MenuItem::Separator, cmd("Size")] },
-        MenuItem::Separator,
-        MenuItem::command("Paste", "Ctrl+V").checked(true),
-    ]
+    vec![cmd("Open"), MenuItem::Submenu { label: "Sort by".into(), items: vec![cmd("Name"), MenuItem::Separator, cmd("Size")] }, MenuItem::Separator, MenuItem::command("Paste", "Ctrl+V").checked(true)]
 }
 
 fn view(x: f32, y: f32, bounds: Rect) -> MenuView {

@@ -55,22 +55,28 @@ fn list(value: Option<&Arg>) -> &[Arg] {
 fn bytes(value: &Arg) -> Option<Vec<u8>> {
     let Arg::L(values) = value else { return None };
     let (Arg::I(0), bytes) = values.split_last()? else { return None };
-    bytes.iter().map(|v| match v {
-        Arg::I(i) if *i > 0 => u8::try_from(*i).ok(),
-        _ => None,
-    }).collect()
+    bytes
+        .iter()
+        .map(|v| match v {
+            Arg::I(i) if *i > 0 => u8::try_from(*i).ok(),
+            _ => None,
+        })
+        .collect()
 }
 
 fn filter(value: &Arg) -> Option<FilterRules> {
     let Arg::L(entry) = value else { return None };
     let [Arg::S(label), Arg::L(raw)] = entry.as_slice() else { return None };
-    let rules: Vec<_> = raw.iter().filter_map(|value| {
-        let Arg::L(rule) = value else { return None };
-        match rule.as_slice() {
-            [Arg::I(kind @ (0 | 1)), Arg::S(text)] if !text.is_empty() => Some((*kind as u32, text.clone())),
-            _ => None,
-        }
-    }).collect();
+    let rules: Vec<_> = raw
+        .iter()
+        .filter_map(|value| {
+            let Arg::L(rule) = value else { return None };
+            match rule.as_slice() {
+                [Arg::I(kind @ (0 | 1)), Arg::S(text)] if !text.is_empty() => Some((*kind as u32, text.clone())),
+                _ => None,
+            }
+        })
+        .collect();
     (!rules.is_empty()).then(|| (label.clone(), rules))
 }
 
@@ -80,13 +86,16 @@ fn choice(value: &Arg) -> Option<Choice> {
     let values = if items.is_empty() {
         vec![("false".to_owned(), String::new()), ("true".to_owned(), String::new())]
     } else {
-        items.iter().filter_map(|item| {
-            let Arg::L(fields) = item else { return None };
-            match fields.as_slice() {
-                [Arg::S(value), Arg::S(label)] => Some((value.clone(), title_label(label))),
-                _ => None,
-            }
-        }).collect()
+        items
+            .iter()
+            .filter_map(|item| {
+                let Arg::L(fields) = item else { return None };
+                match fields.as_slice() {
+                    [Arg::S(value), Arg::S(label)] => Some((value.clone(), title_label(label))),
+                    _ => None,
+                }
+            })
+            .collect()
     };
     if !values.is_empty() {
         let index = values.iter().position(|(value, _)| value == selected).unwrap_or(0);
@@ -139,27 +148,30 @@ fn parse(method: &str, title: &str, options: &[Arg], resolve_mime: impl Fn(Strin
         filters.extend(current.iter().cloned());
     }
     let filter = current.and_then(|c| filters.iter().position(|f| *f == c)).unwrap_or(0);
-    let entries = filters.iter().map(|(label, rules)| {
-        let (mut patterns, mut mime_types) = (Vec::new(), Vec::new());
-        for (kind, value) in rules {
-            let value = value.to_lowercase();
-            match kind {
-                0 => patterns.push(value),
-                1 if value == "*/*" => patterns.push("*".into()),
-                1 => mime_types.extend(resolve_mime(value)),
-                _ => {}
+    let entries = filters
+        .iter()
+        .map(|(label, rules)| {
+            let (mut patterns, mut mime_types) = (Vec::new(), Vec::new());
+            for (kind, value) in rules {
+                let value = value.to_lowercase();
+                match kind {
+                    0 => patterns.push(value),
+                    1 if value == "*/*" => patterns.push("*".into()),
+                    1 => mime_types.extend(resolve_mime(value)),
+                    _ => {}
+                }
             }
-        }
-        patterns.sort_unstable();
-        patterns.dedup();
-        if patterns.iter().any(|pattern| pattern == "*") {
-            mime_types.clear();
-        } else {
-            mime_types.sort_unstable();
-            mime_types.dedup();
-        }
-        Filter { label: label.clone(), patterns, mime_types }
-    }).collect();
+            patterns.sort_unstable();
+            patterns.dedup();
+            if patterns.iter().any(|pattern| pattern == "*") {
+                mime_types.clear();
+            } else {
+                mime_types.sort_unstable();
+                mime_types.dedup();
+            }
+            Filter { label: label.clone(), patterns, mime_types }
+        })
+        .collect();
     let title = (!title.is_empty()).then(|| title.to_owned());
     let accept = string(option(options, "accept_label")).filter(|s| !s.is_empty()).map(title_label);
     let choices = list(option(options, "choices")).iter().filter_map(choice).collect();
@@ -179,7 +191,9 @@ fn choose_names(dir: &FsPath, names: &[Vec<u8>], mut exists: impl FnMut(&FsPath)
         let (stem, ext) = name.split_at(split);
         let mut available = None;
         for i in 0..10000 {
-            let path = if i == 0 { dir.join(name) } else {
+            let path = if i == 0 {
+                dir.join(name)
+            } else {
                 let mut replacement = stem.to_vec();
                 replacement.extend_from_slice(format!(" ({i})").as_bytes());
                 replacement.extend_from_slice(ext);
@@ -241,9 +255,7 @@ impl Pending {
         if input.len() >= 1 << 20 {
             return Err(io::Error::new(io::ErrorKind::InvalidInput, "file chooser options exceed the limit"));
         }
-        let mut child = Command::new(std::env::current_exe()?).arg("--file-chooser-request")
-            .env(PARENT_ENV, parent).env(MODAL_ENV, if call.modal { "1" } else { "0" })
-            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
+        let mut child = Command::new(std::env::current_exe()?).arg("--file-chooser-request").env(PARENT_ENV, parent).env(MODAL_ENV, if call.modal { "1" } else { "0" }).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn()?;
         let (Some(mut stdin), Some(stdout)) = (child.stdin.take(), child.stdout.take()) else {
             let _ = child.kill();
             let _ = child.wait();
@@ -306,9 +318,7 @@ fn frontend(bus: &Bus) -> Option<String> {
 }
 
 fn valid_handle(path: &str) -> bool {
-    path.strip_prefix("/org/freedesktop/portal/desktop/request/").is_some_and(|tail| {
-        tail.split('/').all(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_'))
-    })
+    path.strip_prefix("/org/freedesktop/portal/desktop/request/").is_some_and(|tail| tail.split('/').all(|s| !s.is_empty() && s.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_')))
 }
 
 unsafe fn error(bus: &Bus, msg: *mut c_void, name: &std::ffi::CStr, description: &std::ffi::CStr) {
@@ -427,7 +437,9 @@ pub fn run() -> i32 {
             let mut activity = false;
             loop {
                 let msg = (api.pop)(bus.conn);
-                if msg.is_null() { break; }
+                if msg.is_null() {
+                    break;
+                }
                 match (api.msg_type)(msg) {
                     1 => {
                         activity = true;

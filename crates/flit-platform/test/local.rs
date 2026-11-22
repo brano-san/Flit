@@ -33,13 +33,24 @@ struct NoWatch;
 
 #[test]
 fn size_policy_distinguishes_ssd_hdd_and_mounted_network_paths() {
-    struct MediaFs { spinning: bool, network: bool }
+    struct MediaFs {
+        spinning: bool,
+        network: bool,
+    }
     impl Fs for MediaFs {
-        fn read_dir(&self, _: &FsPath, _: &mut ListingBuilder<'_>) -> Result<(), FsError> { panic!("unexpected directory walk") }
-        fn seek_penalty(&self, _: &FsPath) -> Option<bool> { Some(self.spinning) }
-        fn remote(&self, _: &FsPath) -> bool { self.network }
+        fn read_dir(&self, _: &FsPath, _: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+            panic!("unexpected directory walk")
+        }
+        fn seek_penalty(&self, _: &FsPath) -> Option<bool> {
+            Some(self.spinning)
+        }
+        fn remote(&self, _: &FsPath) -> bool {
+            self.network
+        }
         fn dir_sizes(&self, _: &FsPath, items: &[(u32, Vec<u8>)], _: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
-            for (i, _) in items { report(*i, DirStats::default()); }
+            for (i, _) in items {
+                report(*i, DirStats::default());
+            }
         }
     }
     for (spinning, network, kind) in [(false, false, 0), (true, false, 1), (false, true, 2), (true, true, 2)] {
@@ -264,10 +275,7 @@ impl FileOps for OverlappingShell {
 
 #[test]
 fn quick_renames_and_restores_wait_for_overlapping_operations_only() {
-    for slow in [
-        FileOp::Delete(vec![p(r"C:\project\tree")]),
-        FileOp::Move { items: vec![p(r"C:\project\tree")], dest: p(r"C:\elsewhere") },
-    ] {
+    for slow in [FileOp::Delete(vec![p(r"C:\project\tree")]), FileOp::Move { items: vec![p(r"C:\project\tree")], dest: p(r"C:\elsewhere") }] {
         let (tx, rx) = unbounded();
         let local = LocalProvider::new::<_, NoWatch, OverlappingShell>(fs(), 1, tx, Arc::new(|| {})).unwrap();
         let submit = |id, op, ctl| local.submit(ProviderRequest::Op { tab: 1, id, op, ctl });
@@ -753,7 +761,11 @@ impl Fs for MountFs {
         None
     }
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
-        if path.as_bytes().starts_with(b"/media/usb") { b"usb".to_vec() } else { b"root".to_vec() }
+        if path.as_bytes().starts_with(b"/media/usb") {
+            b"usb".to_vec()
+        } else {
+            b"root".to_vec()
+        }
     }
 }
 
@@ -868,7 +880,15 @@ fn slow_network_discovery_publishes_to_the_ui_while_local_folders_stay_available
     let (release, gate) = bounded(0);
     let (events, _) = unbounded();
     let (wake, woke) = unbounded();
-    let provider = LocalProvider::new::<_, NoWatch, NoShell>(SlowDiscovery(gate), 1, events, Arc::new(move || { let _ = wake.send(()); })).unwrap();
+    let provider = LocalProvider::new::<_, NoWatch, NoShell>(
+        SlowDiscovery(gate),
+        1,
+        events,
+        Arc::new(move || {
+            let _ = wake.send(());
+        }),
+    )
+    .unwrap();
     let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (1000, 700), Instant::now());
     app.set_caps(flit_core::caps::Caps { unix_paths: true });
     app.drain_effects().for_each(drop);

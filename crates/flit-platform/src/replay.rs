@@ -107,24 +107,23 @@ fn execute(sh: &mut impl FileOps, replay: &Replay, fs: Option<FileSystem>, job: 
         return (OpOutcome { error: Some(PlatformError::new(-1, S::ErrorsOpsUndoUnavailable.en())), ..Default::default() }, None);
     };
     let mut changed = Vec::new();
-    let restored: HashSet<_> = replay.steps.iter().filter_map(|step| match step {
-        FileOp::Restore(pairs) => Some(pairs.iter().map(|(source, _)| source)),
-        _ => None,
-    }).flatten().collect();
+    let restored: HashSet<_> = replay
+        .steps
+        .iter()
+        .filter_map(|step| match step {
+            FileOp::Restore(pairs) => Some(pairs.iter().map(|(source, _)| source)),
+            _ => None,
+        })
+        .flatten()
+        .collect();
     for (path, expected) in &replay.checks {
         if job.cancelled() {
             return (OpOutcome { error: Some(PlatformError::new(-1, CANCELLED)), ..Default::default() }, None);
         }
         let matches = match ((fs.stamp)(path), expected) {
             (Ok((current, true)), Some(expected)) => {
-                let unchanged = if replay.recheck_tree {
-                    (current.device, current.file, current.access) == (expected.device, expected.file, expected.access)
-                } else {
-                    current == *expected
-                };
-                unchanged && (restored.contains(path) || replay.captured_ns.is_none_or(|cutoff| {
-                    newer_descendants(fs, path, cutoff, current.device, job, &mut changed).is_ok()
-                }))
+                let unchanged = if replay.recheck_tree { (current.device, current.file, current.access) == (expected.device, expected.file, expected.access) } else { current == *expected };
+                unchanged && (restored.contains(path) || replay.captured_ns.is_none_or(|cutoff| newer_descendants(fs, path, cutoff, current.device, job, &mut changed).is_ok()))
             }
             (Ok((current, _)), Some(expected)) => current == *expected,
             (Err(e), None) => e.kind() == io::ErrorKind::NotFound,

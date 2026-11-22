@@ -135,15 +135,7 @@ pub fn run_elevated(args: &[String]) -> Result<u32, PlatformError> {
     let exe = std::env::current_exe().map_err(|e| PlatformError::new(-1, e.to_string()))?;
     let file: Vec<u16> = exe.to_string_lossy().encode_utf16().chain([0]).collect();
     let params: Vec<u16> = command_line(args).encode_utf16().chain([0]).collect();
-    let mut info = SHELLEXECUTEINFOW {
-        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,
-        lpVerb: w!("runas"),
-        lpFile: PCWSTR(file.as_ptr()),
-        lpParameters: PCWSTR(params.as_ptr()),
-        nShow: SW_HIDE.0,
-        ..Default::default()
-    };
+    let mut info = SHELLEXECUTEINFOW { cbSize: size_of::<SHELLEXECUTEINFOW>() as u32, fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC, lpVerb: w!("runas"), lpFile: PCWSTR(file.as_ptr()), lpParameters: PCWSTR(params.as_ptr()), nShow: SW_HIDE.0, ..Default::default() };
     if let Err(e) = unsafe { ShellExecuteExW(&mut info) } {
         return Err(match WIN32_ERROR::from_error(&e) {
             Some(ERROR_CANCELLED) => PlatformError::cancelled(i64::from(ERROR_CANCELLED.0), "cancelled"),

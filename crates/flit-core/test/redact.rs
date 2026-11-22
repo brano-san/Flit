@@ -24,9 +24,12 @@ fn crash_text_removes_local_identity_and_credentials_from_diagnostics() {
 user Alice, mail alice+bug@example.org, share \\private-nas\docs
 ftp://remote:secret@ftp.example.test password="another secret""#;
     let out = crash_text(raw, r"C:\Users\Alice", "alice", true);
-    assert_eq!(out, r#"at ~\src\main.rs and "~\\flit.exe"
+    assert_eq!(
+        out,
+        r#"at ~\src\main.rs and "~\\flit.exe"
 user Alice, mail , share \\<host>\docs
-ftp://remote:***@ftp.example.test password=***"#);
+ftp://remote:***@ftp.example.test password=***"#
+    );
 }
 
 #[test]
@@ -34,10 +37,7 @@ fn crash_text_preserves_stack_and_unrelated_names() {
     let raw = "0: flit::app::start at /opt/flit/src/app.rs:60\nalice-helper && malice\n";
     assert_eq!(crash_text(raw, "/", "", false), raw);
     assert_eq!(crash_text("malice failed in /home/alice/src/main.rs:2", "/home/alice", "alice", false), "malice failed in ~/src/main.rs:2");
-    assert_eq!(
-        crash_text(r#"//private-a/share UNC:\\private-b\share at "C:\\work\\file.rs" https://public.example/"#, r"C:\Users\Alice", "alice", true),
-        r#"//<host>/share UNC:\\<host>\share at "C:\\work\\file.rs" https://public.example/"#,
-    );
+    assert_eq!(crash_text(r#"//private-a/share UNC:\\private-b\share at "C:\\work\\file.rs" https://public.example/"#, r"C:\Users\Alice", "alice", true), r#"//<host>/share UNC:\\<host>\share at "C:\\work\\file.rs" https://public.example/"#,);
 }
 
 #[test]

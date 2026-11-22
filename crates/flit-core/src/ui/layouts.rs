@@ -36,9 +36,7 @@ const CARD_LINE: f32 = 18.0;
 const MEDIA_SHARE: (usize, usize) = (3, 5);
 const ADAPTIVE_CAP: usize = 4096;
 
-const IMAGES: [&[u8]; 21] = [
-    b"jpg", b"jpeg", b"jpe", b"jfif", b"png", b"gif", b"bmp", b"webp", b"heic", b"heif", b"avif", b"jxl", b"tif", b"tiff", b"ico", b"dng", b"cr2", b"cr3", b"nef", b"arw", b"svg",
-];
+const IMAGES: [&[u8]; 21] = [b"jpg", b"jpeg", b"jpe", b"jfif", b"png", b"gif", b"bmp", b"webp", b"heic", b"heif", b"avif", b"jxl", b"tif", b"tiff", b"ico", b"dng", b"cr2", b"cr3", b"nef", b"arw", b"svg"];
 const VIDEOS: [&[u8]; 14] = [b"mp4", b"m4v", b"mkv", b"avi", b"mov", b"wmv", b"webm", b"mpg", b"mpeg", b"3gp", b"flv", b"ts", b"m2ts", b"mts"];
 const DOCUMENTS: [&[u8]; 5] = [b"pdf", b"docx", b"xlsx", b"pptx", b"psd"];
 
@@ -196,7 +194,11 @@ pub fn adaptive_layout(kind: FolderKind, v: &DirView) -> LayoutMode {
     }
     let (l, rows) = (v.listing(), v.base_rows());
     let media = rows.iter().filter(|&&i| !l.entries[i as usize].is_dir() && is_media(l.ext(i))).count();
-    if !rows.is_empty() && media * MEDIA_SHARE.1 > rows.len() * MEDIA_SHARE.0 { LayoutMode::Grid } else { LayoutMode::Details }
+    if !rows.is_empty() && media * MEDIA_SHARE.1 > rows.len() * MEDIA_SHARE.0 {
+        LayoutMode::Grid
+    } else {
+        LayoutMode::Details
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -291,11 +293,19 @@ impl App {
     }
 
     pub(super) fn view_len(&self) -> f32 {
-        if self.layout.flow.across { self.layout.list.w } else { self.layout.list.h }
+        if self.layout.flow.across {
+            self.layout.list.w
+        } else {
+            self.layout.list.h
+        }
     }
 
     pub(super) fn along_of(&self, x: f32, y: f32) -> f32 {
-        if self.layout.flow.across { x } else { y }
+        if self.layout.flow.across {
+            x
+        } else {
+            y
+        }
     }
 
     pub(super) fn max_scroll_of(&self, f: &Flow) -> f32 {
@@ -337,21 +347,37 @@ impl App {
     pub(super) fn line_at(&self, f: &Flow, x: f32, y: f32) -> Option<usize> {
         let (l, s) = (self.layout.list, self.tab().scroll);
         let (lx, ly) = (x - l.x, y - l.y);
-        if self.layout.flow.across { f.line_at(lx + s, ly) } else { f.line_at(ly + s, lx) }
+        if self.layout.flow.across {
+            f.line_at(lx + s, ly)
+        } else {
+            f.line_at(ly + s, lx)
+        }
     }
 
     pub(super) fn nearest_line(&self, f: &Flow, cx: f32, cy: f32) -> Option<usize> {
-        if self.layout.flow.across { f.nearest(cx, cy) } else { f.nearest(cy, cx) }
+        if self.layout.flow.across {
+            f.nearest(cx, cy)
+        } else {
+            f.nearest(cy, cx)
+        }
     }
 
     pub(super) fn to_content(&self, x: f32, y: f32) -> (f32, f32) {
         let (l, s) = (self.layout.list, self.tab().scroll);
-        if self.layout.flow.across { (x - l.x + s, y - l.y) } else { (x - l.x, y - l.y + s) }
+        if self.layout.flow.across {
+            (x - l.x + s, y - l.y)
+        } else {
+            (x - l.x, y - l.y + s)
+        }
     }
 
     pub(super) fn to_screen(&self, cx: f32, cy: f32) -> (f32, f32) {
         let (l, s) = (self.layout.list, self.tab().scroll);
-        if self.layout.flow.across { (cx + l.x - s, cy + l.y) } else { (cx + l.x, cy + l.y - s) }
+        if self.layout.flow.across {
+            (cx + l.x - s, cy + l.y)
+        } else {
+            (cx + l.x, cy + l.y - s)
+        }
     }
 
     pub(super) fn list_hit(&self, x: f32, y: f32) -> Hit {

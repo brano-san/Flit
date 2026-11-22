@@ -160,7 +160,11 @@ impl App {
     pub(super) fn filter_placeholder(&self) -> String {
         let n = self.tab().view.as_ref().map_or(0, |v| {
             let c = v.all_counts();
-            if self.tab().subfolders { c.dirs + c.files } else { v.snap().order.len() }
+            if self.tab().subfolders {
+                c.dirs + c.files
+            } else {
+                v.snap().order.len()
+            }
         });
         crate::tr!(S::FilterFiles, n = n)
     }
@@ -299,7 +303,13 @@ impl App {
         let encoding = self.encoding_label();
         let encoding = [encoding.as_str()];
         let bin = BIN_BUTTONS.map(S::t);
-        let labels: &[&str] = if in_bin { &bin } else if encoding[0].is_empty() { &[] } else { &encoding };
+        let labels: &[&str] = if in_bin {
+            &bin
+        } else if encoding[0].is_empty() {
+            &[]
+        } else {
+            &encoding
+        };
         let mut buttons = [Rect::default(); 3];
         for (k, label) in labels.iter().enumerate().rev() {
             let w = g.measure(label, font) + self.s(16.0);
@@ -328,7 +338,11 @@ impl App {
             } else {
                 let name = arena.alloc_str(&format!("{G_BRANCH} {}", self.git_branch().unwrap_or_default()));
                 let width = g.measure(name, font) + self.s(16.0);
-                if width <= right - branch_edge { (&*name, width) } else { (G_BRANCH, branch_min) }
+                if width <= right - branch_edge {
+                    (&*name, width)
+                } else {
+                    (G_BRANCH, branch_min)
+                }
             };
             right -= w;
             let b = Rect::new(right, r.y + self.s(2.0), w, r.h - self.s(4.0));

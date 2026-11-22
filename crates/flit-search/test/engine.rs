@@ -81,9 +81,7 @@ fn w3_review_exclusions_keep_the_permutation_and_filter_by_ancestor_and_exact_fi
     let e = sample();
     let sort = Sort { key: SortKey::Name, descending: true };
     let mut q = parse("", clock()).unwrap();
-    q.paths.exclude = [
-        r"c:\PROJECTS", r"D:\backup\report.bak", r"D:\backup\not-found", r"Q:\",
-    ].map(|p| FsPath::parse(p).unwrap()).to_vec();
+    q.paths.exclude = [r"c:\PROJECTS", r"D:\backup\report.bak", r"D:\backup\not-found", r"Q:\"].map(|p| FsPath::parse(p).unwrap()).to_vec();
     let mut set = e.search(&q, sort, &|| false).unwrap();
     assert!(set.streams.iter().all(|s| matches!(s.kind, Kind::Perm(Some(_)))));
     let (batch, _) = e.rows(&mut set, 0, 10);
@@ -359,7 +357,8 @@ fn path_text_terms_agree_with_matching_the_whole_path() {
     v.commit();
     let e = ready(Engine { volumes: vec![v], version: 1 });
     let v = &e.volumes[0];
-    for text in ["path:src", "path:c:\\src", "path:\\ab\\", "path:b\\s", "path:rcab\\x", "!path:src", "path:документ\\a", "path:a b\\b", "path:\\", "path:c:\\", "path:src path:\\x", "path:zzz", "path:ab\\b\\src", "path:\\b", "path:c:\\ab\\", "!path:b\\", "path:src\\"] {
+    for text in ["path:src", "path:c:\\src", "path:\\ab\\", "path:b\\s", "path:rcab\\x", "!path:src", "path:документ\\a", "path:a b\\b", "path:\\", "path:c:\\", "path:src path:\\x", "path:zzz", "path:ab\\b\\src", "path:\\b", "path:c:\\ab\\", "!path:b\\", "path:src\\"]
+    {
         let q = parse(text, clock()).unwrap();
         let expected: Vec<u32> = (0..v.len() as u32)
             .filter(|&i| v.listed(i))

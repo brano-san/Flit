@@ -45,11 +45,7 @@ impl Tab {
         let loc = self.location();
         self.git = self.git.as_ref().and_then(|g| {
             let root = g.root.as_ref().filter(|r| loc.path().is_inside(r) || loc.path().same(r))?;
-            Some(Arc::new(GitInfo {
-                root: Some(root.clone()), branch: g.branch.clone(), upstream: g.upstream.clone(),
-                ahead: g.ahead, behind: g.behind, insertions: g.insertions, deletions: g.deletions,
-                stashes: g.stashes.clone(), ..Default::default()
-            }))
+            Some(Arc::new(GitInfo { root: Some(root.clone()), branch: g.branch.clone(), upstream: g.upstream.clone(), ahead: g.ahead, behind: g.behind, insertions: g.insertions, deletions: g.deletions, stashes: g.stashes.clone(), ..Default::default() }))
         });
     }
 
@@ -71,7 +67,9 @@ impl App {
 
     pub(super) fn layout_git_bar(&mut self) {
         self.layout.git_bar = [Rect::default(); 4];
-        if self.git_sequence().is_none() { return; }
+        if self.git_sequence().is_none() {
+            return;
+        }
         let h = self.cs(28.0);
         let pad = self.cs(4.0);
         let r = self.layout.header;
@@ -101,14 +99,21 @@ impl App {
     }
 
     pub(super) fn show_git_conflicts(&mut self) {
-        if self.git_sequence().is_none() { return; }
+        if self.git_sequence().is_none() {
+            return;
+        }
         self.close_filter();
         let t = self.tab_mut();
         if let (Some(g), Some(v)) = (&t.git, &mut t.view) {
             let conflicts: Vec<_> = v.rows().iter().copied().filter(|i| g.status.get(v.listing().name(*i)) == Some(&GitStatus::Conflict)).collect();
             v.clear_selection();
-            for &i in &conflicts { v.set_selected(i, true); }
-            if let Some(&i) = conflicts.first() { v.focus = Some(i); v.anchor = Some(i); }
+            for &i in &conflicts {
+                v.set_selected(i, true);
+            }
+            if let Some(&i) = conflicts.first() {
+                v.focus = Some(i);
+                v.anchor = Some(i);
+            }
         }
         self.focus = super::Focus::List;
         self.reveal_focus(true);
@@ -116,7 +121,9 @@ impl App {
     }
 
     pub(super) fn ask_git_abort(&mut self) {
-        if self.dialogs.form.is_some() { return; }
+        if self.dialogs.form.is_some() {
+            return;
+        }
         let Some(sequence) = self.git_sequence() else { return };
         let Some((tab, dir)) = self.git_target(true) else { return };
         let label = sequence_labels(sequence)[1].t();
@@ -147,14 +154,18 @@ impl App {
             if a.tabs.items[k].view_spec.sort.field == crate::sort::SortField::GitHash {
                 a.resort(k);
             }
-            if on { a.git_refresh(k, false); }
+            if on {
+                a.git_refresh(k, false);
+            }
         });
         self.layout();
         self.dirty = true;
     }
 
     pub(super) fn git_refresh(&mut self, k: usize, changed: bool) {
-        if !self.prefs.git_integration { return; }
+        if !self.prefs.git_integration {
+            return;
+        }
         let t = &self.tabs.items[k];
         if changed && t.git.as_ref().is_none_or(|g| g.root.is_none()) {
             return;
@@ -260,7 +271,9 @@ impl App {
             GitEvent::Progress { id, progress, .. } => self.git_job_progress(id, progress),
             GitEvent::IndexLockRemoved { id, error, .. } => {
                 self.git_index_lock_removed(id, error.as_deref());
-                if error.is_none() { self.each_pane(|a, k| a.git_refresh(k, true)); }
+                if error.is_none() {
+                    self.each_pane(|a, k| a.git_refresh(k, true));
+                }
             }
             GitEvent::TrackedDone { tab, id, op, result } => {
                 let now = Instant::now();
@@ -268,15 +281,22 @@ impl App {
                     GitResult::Failed { error, auth } => GitResult::Failed { error: crate::redact::passwords(&error).into_owned(), auth },
                     result => result,
                 };
-                let error = match &result { GitResult::Failed { error, .. } => Some(error.as_str()), _ => None };
+                let error = match &result {
+                    GitResult::Failed { error, .. } => Some(error.as_str()),
+                    _ => None,
+                };
                 self.job_done(id, error, matches!(result, GitResult::Cancelled | GitResult::CancelledWithLock(_)), now);
                 match result {
                     GitResult::Success => self.on_git(GitEvent::Done { tab, op, error: None, url: None }),
                     GitResult::Failed { error, auth: Some((dir, github)) } => self.on_git(GitEvent::AuthFailed { tab, dir, op, error, github }),
                     GitResult::Failed { error, auth: None } => self.on_git(GitEvent::Done { tab, op, error: Some(error), url: None }),
                     result @ (GitResult::Cancelled | GitResult::CancelledWithLock(_)) => {
-                        if let GitResult::CancelledWithLock(lock) = result { self.git_job_lock(id, lock); }
-                        if self.tab().id == tab { self.status(S::GitOpCancelled.t()); }
+                        if let GitResult::CancelledWithLock(lock) = result {
+                            self.git_job_lock(id, lock);
+                        }
+                        if self.tab().id == tab {
+                            self.status(S::GitOpCancelled.t());
+                        }
                         self.each_pane(|a, k| a.git_refresh(k, true));
                     }
                 }
@@ -300,7 +320,9 @@ impl App {
     }
 
     fn git_status_arrived(&mut self, tab: TabId, gen: u64, info: Option<Arc<GitInfo>>) {
-        if !self.prefs.git_integration { return; }
+        if !self.prefs.git_integration {
+            return;
+        }
         let info = info.filter(|g| g.root.is_some());
         if let Some(k) = self.tabs.items.iter().position(|t| t.id == tab && t.gen == gen) {
             self.tabs.items[k].git = info;
@@ -374,10 +396,7 @@ impl App {
     }
 
     fn ask_git_switch(&mut self, tab: TabId, dir: FsPath, from: String, branch: String) {
-        let controls = vec![
-            Control::paragraph(crate::tr!(S::GitBranchSwitchBlocked, branch = branch)),
-            Control::choice(S::GitBranchSwitchChoice.t(), [S::GitBranchSwitchMerge, S::GitBranchSwitchStash, S::GitBranchSwitchDiscard].map(|s| s.t().to_owned()).to_vec(), 0),
-        ];
+        let controls = vec![Control::paragraph(crate::tr!(S::GitBranchSwitchBlocked, branch = branch)), Control::choice(S::GitBranchSwitchChoice.t(), [S::GitBranchSwitchMerge, S::GitBranchSwitchStash, S::GitBranchSwitchDiscard].map(|s| s.t().to_owned()).to_vec(), 0)];
         let kind = Kind::GitSwitch { tab, dir, from, branch, confirm_discard: false };
         self.open_form(Form::new(kind, S::GitBranchSwitchTitle.t(), controls, vec![S::GitBranchSwitchContinue.t(), S::WidgetsCancel.t()]));
     }
@@ -412,7 +431,9 @@ impl App {
     }
 
     pub(super) fn ask_git_drop_stash(&mut self, stash: crate::git::Stash) {
-        if self.dialogs.form.is_some() { return; }
+        if self.dialogs.form.is_some() {
+            return;
+        }
         let Some((tab, dir)) = self.git_target(true) else { return };
         let kind = Kind::GitStashDrop { tab, dir, oid: stash.oid };
         let controls = vec![Control::paragraph(crate::tr!(S::GitStashDropConfirm, stash = stash.message))];
@@ -429,7 +450,9 @@ impl App {
     }
 
     pub(super) fn ask_git_branch(&mut self) {
-        if self.dialogs.form.is_some() { return; }
+        if self.dialogs.form.is_some() {
+            return;
+        }
         if let Some((tab, dir)) = self.git_target(true) {
             self.effects.push(Effect::Git(GitRequest::Branches { tab, gen: self.tab().gen, dir, create: true }));
         }
@@ -464,7 +487,9 @@ impl App {
     }
 
     pub(super) fn ask_git_delete(&mut self, k: usize) {
-        if self.dialogs.form.is_some() { return; }
+        if self.dialogs.form.is_some() {
+            return;
+        }
         let Some(b) = self.git_branches.get(k).filter(|b| !b.remote && Some(b.name.as_str()) != self.git_branch()).cloned() else { return };
         let Some((tab, dir)) = self.git_target(true) else { return };
         let controls = vec![Control::paragraph(crate::tr!(S::GitBranchConfirm, branch = b.name))];
@@ -489,12 +514,16 @@ impl App {
         let handled = match &mut f.kind {
             Kind::GitAbort { tab: t, sequence, pending, .. } if *t == tab && *pending && *op == GitOp::Abort(*sequence) => {
                 *pending = false;
-                if let Some(e) = error { f.say(e, true); }
+                if let Some(e) = error {
+                    f.say(e, true);
+                }
                 true
             }
             Kind::GitNewBranch { tab: t, pending, .. } if *t == tab && pending.as_ref() == Some(op) => {
                 *pending = None;
-                if let Some(e) = error { f.say(e, true); }
+                if let Some(e) = error {
+                    f.say(e, true);
+                }
                 true
             }
             Kind::GitDeleteBranch { tab: t, name, force, pending, .. } if *t == tab && *pending && *op == (GitOp::DeleteBranch { name: name.clone(), force: *force }) => {
@@ -506,14 +535,22 @@ impl App {
                         f.note.clear();
                         f.error = false;
                         f.focus = f.controls.len() + 1;
-                    } else { f.say(e, true); }
+                    } else {
+                        f.say(e, true);
+                    }
                 }
                 true
             }
             _ => false,
         };
-        if !handled || error.is_some() { self.dialogs.form = Some(f); }
-        if handled { self.show_conflict_table(); self.layout(); self.dirty = true; }
+        if !handled || error.is_some() {
+            self.dialogs.form = Some(f);
+        }
+        if handled {
+            self.show_conflict_table();
+            self.layout();
+            self.dirty = true;
+        }
         handled
     }
 

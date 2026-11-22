@@ -134,11 +134,7 @@ pub fn missing_from(found: impl Fn(&str) -> bool, os_release: &str, wayland: boo
         When::Terminal => !terminal,
         When::OnDemand => false,
     };
-    NEEDS
-        .iter()
-        .filter(|n| applies(n.when) && !n.tools.iter().any(|t| found(t)))
-        .map(|n| MissingTool { tool: n.tools[0], purpose: n.purpose, package: package(n, os_release) })
-        .collect()
+    NEEDS.iter().filter(|n| applies(n.when) && !n.tools.iter().any(|t| found(t))).map(|n| MissingTool { tool: n.tools[0], purpose: n.purpose, package: package(n, os_release) }).collect()
 }
 
 pub fn os_release() -> String {

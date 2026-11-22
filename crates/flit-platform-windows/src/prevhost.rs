@@ -301,17 +301,7 @@ pub(crate) unsafe fn open_handler(clsid: &str, path: &FsPath, host: HWND, bg: u3
 
 unsafe fn video_device() -> windows::core::Result<VideoDevice> {
     let mut device = None;
-    D3D11CreateDevice(
-        None,
-        D3D_DRIVER_TYPE_HARDWARE,
-        HMODULE::default(),
-        D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-        None,
-        D3D11_SDK_VERSION,
-        Some(&mut device),
-        None,
-        None,
-    )?;
+    D3D11CreateDevice(None, D3D_DRIVER_TYPE_HARDWARE, HMODULE::default(), D3D11_CREATE_DEVICE_VIDEO_SUPPORT | D3D11_CREATE_DEVICE_BGRA_SUPPORT, None, D3D11_SDK_VERSION, Some(&mut device), None, None)?;
     let device = device.ok_or_else(windows::core::Error::empty)?;
     let _ = device.cast::<ID3D10Multithread>()?.SetMultithreadProtected(true);
     let (mut token, mut manager) = (0, None);
@@ -349,11 +339,7 @@ unsafe fn start_mf() -> windows::core::Result<()> {
 unsafe fn open_media(path: &FsPath, host: HWND, video: bool, volume: f32) -> windows::core::Result<Player> {
     start_mf()?;
     let host = video.then_some(host);
-    let (engine, gpu) = if video {
-        video_or_legacy(video_device(), |gpu| Ok((create_engine(host, true, gpu)?, gpu.cloned())))?
-    } else {
-        (create_engine(None, false, None)?, None)
-    };
+    let (engine, gpu) = if video { video_or_legacy(video_device(), |gpu| Ok((create_engine(host, true, gpu)?, gpu.cloned())))? } else { (create_engine(None, false, None)?, None) };
     load_media(&engine, path, volume)?;
     Ok(Player { engine, gpu, resume_at: None, play_requested: false })
 }
@@ -437,9 +423,7 @@ impl Player {
 
     unsafe fn update(&mut self, path: &FsPath, host: HWND, last_position: f64) -> Result<bool, String> {
         let error = self.engine.GetError().ok();
-        if self.gpu.as_ref().is_some_and(|gpu| {
-            gpu.effect_failed.load(Ordering::Relaxed) || gpu.device.GetDeviceRemovedReason().is_err()
-        }) {
+        if self.gpu.as_ref().is_some_and(|gpu| gpu.effect_failed.load(Ordering::Relaxed) || gpu.device.GetDeviceRemovedReason().is_err()) {
             let current = self.engine.GetCurrentTime();
             let position = if current.is_finite() && current > 0.0 { current } else { last_position.max(0.0) };
             let volume = self.engine.GetVolume();
@@ -474,7 +458,9 @@ impl Player {
         let _ = match cmd {
             MediaCmd::Play => {
                 self.play_requested = true;
-                if self.resume_at.is_some() { return; }
+                if self.resume_at.is_some() {
+                    return;
+                }
                 if m.IsEnded().as_bool() {
                     let _ = m.SetCurrentTime(0.0);
                 }

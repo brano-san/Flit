@@ -59,7 +59,20 @@ fn make_dockerfile_and_cmake_have_their_own_keywords_and_comments() {
 
 #[test]
 fn well_known_file_names_pick_their_syntax() {
-    for (name, ext) in [("Makefile", "mk"), ("GNUmakefile", "mk"), ("Dockerfile", "dockerfile"), ("Dockerfile.dev", "dockerfile"), ("build.Dockerfile", "dockerfile"), ("CMakeLists.txt", "cmake"), ("Gemfile", "rb"), ("Jenkinsfile", "groovy"), ("PKGBUILD", "sh"), (".bash_profile", "sh"), (".env.local", "env"), (".npmrc", "ini")] {
+    for (name, ext) in [
+        ("Makefile", "mk"),
+        ("GNUmakefile", "mk"),
+        ("Dockerfile", "dockerfile"),
+        ("Dockerfile.dev", "dockerfile"),
+        ("build.Dockerfile", "dockerfile"),
+        ("CMakeLists.txt", "cmake"),
+        ("Gemfile", "rb"),
+        ("Jenkinsfile", "groovy"),
+        ("PKGBUILD", "sh"),
+        (".bash_profile", "sh"),
+        (".env.local", "env"),
+        (".npmrc", "ini"),
+    ] {
         assert_eq!(by_file_name(name), by_ext(ext), "{name}");
     }
     for name in ["notes.txt", "Makefile2", "readme", "docker-compose.txt", ".envrc2"] {

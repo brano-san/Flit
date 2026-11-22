@@ -56,7 +56,11 @@ pub fn parse_args(args: &[Vec<u8>], cwd: Option<Vec<u8>>) -> Open {
         if let Some(select) = dangling.take() {
             let v = unquote(arg);
             if !v.is_empty() && v[0] != b'/' && !v.starts_with(b"--") {
-                if select { open.select.push(v.to_vec()) } else { open.paths.push(v.to_vec()) }
+                if select {
+                    open.select.push(v.to_vec())
+                } else {
+                    open.paths.push(v.to_vec())
+                }
                 continue;
             }
         }
@@ -110,13 +114,7 @@ pub fn parse_args(args: &[Vec<u8>], cwd: Option<Vec<u8>>) -> Open {
     open
 }
 
-const THIS_PC: [&str; 5] = [
-    "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
-    "shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}",
-    "shell:MyComputerFolder",
-    "shell:::{52205fd8-5dfb-447d-801a-d0b52f2e83e1}",
-    "::{52205fd8-5dfb-447d-801a-d0b52f2e83e1}",
-];
+const THIS_PC: [&str; 5] = ["::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "shell:::{20D04FE0-3AEA-1069-A2D8-08002B30309D}", "shell:MyComputerFolder", "shell:::{52205fd8-5dfb-447d-801a-d0b52f2e83e1}", "::{52205fd8-5dfb-447d-801a-d0b52f2e83e1}"];
 
 const RECYCLE_BIN: [&str; 3] = ["shell:RecycleBinFolder", "::{645FF040-5081-101B-9F08-00AA002F954E}", "shell:::{645FF040-5081-101B-9F08-00AA002F954E}"];
 

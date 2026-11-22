@@ -57,15 +57,20 @@ pub fn run<P: ProfilePlatform>(action: Action) -> Reply {
     let disabled_portal = undone && suppressed(Group::Portal);
     let changes = record.map(|record| {
         let mut seen = std::collections::HashSet::new();
-        record.changes.iter().filter(|change| seen.insert(&change.target)).map(|change| {
-            let title = match change.group {
-                Group::Autostart => S::SettingsPageSystemAutostart,
-                Group::Archive => S::SettingsPageSystemArchive,
-                Group::Protocol => S::SettingsPageSystemProtocol,
-                Group::Portal => S::PickPortalTitle,
-            };
-            (title, change.target.label())
-        }).collect()
+        record
+            .changes
+            .iter()
+            .filter(|change| seen.insert(&change.target))
+            .map(|change| {
+                let title = match change.group {
+                    Group::Autostart => S::SettingsPageSystemAutostart,
+                    Group::Archive => S::SettingsPageSystemArchive,
+                    Group::Protocol => S::SettingsPageSystemProtocol,
+                    Group::Portal => S::PickPortalTitle,
+                };
+                (title, change.target.label())
+            })
+            .collect()
     });
     Reply { changes: changes.map_err(|e| e.to_string()), result: result.map_err(|e| e.to_string()), undone, disabled_autostart, disabled_protocol, disabled_portal, offer_archives, archive_registered }
 }
@@ -105,20 +110,14 @@ fn apply_autostart(journal: &Journal, startup: bool, background: bool) -> io::Re
     #[cfg(windows)]
     let desired = [autostart_registry(exe, background)];
     #[cfg(not(windows))]
-    let desired = [(
-        crate::system_journal::Target::File(flit_platform_linux_gui::xdg::config_home().ok_or(io::ErrorKind::NotFound)?.join("autostart/flit.desktop")),
-        crate::system_journal::Value { kind: 0, bytes: autostart_desktop(exe, background)?.into_bytes() },
-    )];
+    let desired = [(crate::system_journal::Target::File(flit_platform_linux_gui::xdg::config_home().ok_or(io::ErrorKind::NotFound)?.join("autostart/flit.desktop")), crate::system_journal::Value { kind: 0, bytes: autostart_desktop(exe, background)?.into_bytes() })];
     journal.apply(&Native, Group::Autostart, &desired, startup)
 }
 
 #[cfg(any(windows, test))]
 fn reg_string(key: &str, name: &str, text: &str) -> (crate::system_journal::Target, crate::system_journal::Value) {
     use crate::system_journal::{Target, Value};
-    (
-        Target::Registry { key: key.into(), name: name.into() },
-        Value { kind: 1, bytes: text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect() },
-    )
+    (Target::Registry { key: key.into(), name: name.into() }, Value { kind: 1, bytes: text.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect() })
 }
 
 #[cfg(any(windows, test))]
@@ -132,9 +131,7 @@ fn autostart_desktop(exe: &str, background: bool) -> io::Result<String> {
     use flit_core::mimeapps::desktop_exec;
     let exec = desktop_exec(exe).ok_or(io::ErrorKind::InvalidInput)?;
     let exec = if background { format!("{exec} --background") } else { exec };
-    let text = include_str!("../../../assets/flit.desktop").lines().take_while(|line| !line.is_empty()).filter(|line| !line.starts_with("Actions=")).map(|line| {
-        if line.starts_with("Exec=") { format!("Exec={exec}\n") } else { format!("{line}\n") }
-    }).collect::<String>();
+    let text = include_str!("../../../assets/flit.desktop").lines().take_while(|line| !line.is_empty()).filter(|line| !line.starts_with("Actions=")).map(|line| if line.starts_with("Exec=") { format!("Exec={exec}\n") } else { format!("{line}\n") }).collect::<String>();
     Ok(format!("{text}X-GNOME-Autostart-enabled=true\n"))
 }
 
@@ -166,23 +163,22 @@ const ARCHIVE_TYPES: [&str; 8] = ["zip", "7z", "rar", "tar", "tgz", "gz", "lzh",
 
 #[cfg(any(windows, test))]
 fn archive_entries(exe: &str, mut handler: impl FnMut(&str) -> Option<String>) -> Vec<(crate::system_journal::Target, crate::system_journal::Value)> {
-    let open_with: Vec<_> = ARCHIVE_TYPES.into_iter().filter_map(|ext| {
-        let extension = format!(".{ext}");
-        let progid = handler(&extension)?;
-        if progid.is_empty() || progid.eq_ignore_ascii_case("Flit.Archive") || progid.eq_ignore_ascii_case(r"Applications\flit.exe") {
-            return None;
-        }
-        Some(reg_string(&format!(r"Software\Classes\{extension}\OpenWithProgids"), "Flit.Archive", ""))
-    }).collect();
+    let open_with: Vec<_> = ARCHIVE_TYPES
+        .into_iter()
+        .filter_map(|ext| {
+            let extension = format!(".{ext}");
+            let progid = handler(&extension)?;
+            if progid.is_empty() || progid.eq_ignore_ascii_case("Flit.Archive") || progid.eq_ignore_ascii_case(r"Applications\flit.exe") {
+                return None;
+            }
+            Some(reg_string(&format!(r"Software\Classes\{extension}\OpenWithProgids"), "Flit.Archive", ""))
+        })
+        .collect();
     if open_with.is_empty() {
         return Vec::new();
     }
     const ROOT: &str = r"Software\Classes\Flit.Archive";
-    let mut entries = vec![
-        reg_string(ROOT, "", "Flit"),
-        reg_string(&format!(r"{ROOT}\DefaultIcon"), "", &format!("\"{exe}\",0")),
-        reg_string(&format!(r"{ROOT}\shell\open\command"), "", &format!("\"{exe}\" \"%1\"")),
-    ];
+    let mut entries = vec![reg_string(ROOT, "", "Flit"), reg_string(&format!(r"{ROOT}\DefaultIcon"), "", &format!("\"{exe}\",0")), reg_string(&format!(r"{ROOT}\shell\open\command"), "", &format!("\"{exe}\" \"%1\""))];
     entries.extend(open_with);
     entries
 }
@@ -190,19 +186,14 @@ fn archive_entries(exe: &str, mut handler: impl FnMut(&str) -> Option<String>) -
 #[cfg(windows)]
 fn archive_handler(extension: &str) -> Option<String> {
     use windows::core::{PCWSTR, PWSTR};
-    use windows::Win32::UI::Shell::{
-        AssocQueryStringW, ASSOCF_INIT_IGNOREUNKNOWN, ASSOCF_NOFIXUPS,
-        ASSOCSTR_COMMAND, ASSOCSTR_DELEGATEEXECUTE, ASSOCSTR_PROGID,
-    };
+    use windows::Win32::UI::Shell::{AssocQueryStringW, ASSOCF_INIT_IGNOREUNKNOWN, ASSOCF_NOFIXUPS, ASSOCSTR_COMMAND, ASSOCSTR_DELEGATEEXECUTE, ASSOCSTR_PROGID};
 
     let extension: Vec<_> = extension.encode_utf16().chain([0]).collect();
     let query = |kind| {
         let mut output = [0u16; 2048];
         let mut len = output.len() as u32;
         let flags = ASSOCF_INIT_IGNOREUNKNOWN | ASSOCF_NOFIXUPS;
-        let result = unsafe {
-            AssocQueryStringW(flags, kind, PCWSTR(extension.as_ptr()), PCWSTR::null(), Some(PWSTR(output.as_mut_ptr())), &mut len)
-        };
+        let result = unsafe { AssocQueryStringW(flags, kind, PCWSTR(extension.as_ptr()), PCWSTR::null(), Some(PWSTR(output.as_mut_ptr())), &mut len) };
         let end = output.iter().position(|&ch| ch == 0)?;
         (result.is_ok() && end > 0).then(|| String::from_utf16_lossy(&output[..end]))
     };
@@ -224,10 +215,7 @@ fn apply_protocol(journal: &Journal, startup: bool) -> io::Result<()> {
         use flit_platform_linux_gui::xdg;
         let config = xdg::config_home().ok_or(io::ErrorKind::NotFound)?;
         let data = xdg::data_home().ok_or(io::ErrorKind::NotFound)?;
-        [
-            (Target::File(data.join("applications/flit-uri.desktop")), Value { kind: 0, bytes: protocol_desktop(exe)?.into_bytes() }),
-            (Target::MimeDefault(config.join("mimeapps.list")), Value { kind: 0, bytes: b"flit-uri.desktop;".to_vec() }),
-        ]
+        [(Target::File(data.join("applications/flit-uri.desktop")), Value { kind: 0, bytes: protocol_desktop(exe)?.into_bytes() }), (Target::MimeDefault(config.join("mimeapps.list")), Value { kind: 0, bytes: b"flit-uri.desktop;".to_vec() })]
     };
     journal.apply(&Native, Group::Protocol, &desired, startup)
 }
@@ -235,11 +223,7 @@ fn apply_protocol(journal: &Journal, startup: bool) -> io::Result<()> {
 #[cfg(any(windows, test))]
 fn protocol_registry(exe: &str) -> [(crate::system_journal::Target, crate::system_journal::Value); 3] {
     const ROOT: &str = r"Software\Classes\flit";
-    [
-        reg_string(ROOT, "", "URL:Flit"),
-        reg_string(ROOT, "URL Protocol", ""),
-        reg_string(&format!(r"{ROOT}\shell\open\command"), "", &format!("\"{exe}\" {} \"%1\"", crate::system_link::HANDLER)),
-    ]
+    [reg_string(ROOT, "", "URL:Flit"), reg_string(ROOT, "URL Protocol", ""), reg_string(&format!(r"{ROOT}\shell\open\command"), "", &format!("\"{exe}\" {} \"%1\"", crate::system_link::HANDLER))]
 }
 
 #[cfg(any(not(windows), test))]
@@ -275,7 +259,6 @@ pub fn unregister<P: ProfilePlatform + SystemPlatform>() -> i32 {
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "../test/system_changes.rs"]

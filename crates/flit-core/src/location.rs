@@ -222,9 +222,7 @@ impl Location {
 
     pub fn join(&self, child: &[u8]) -> Self {
         match self {
-            Location::Local(p) if p.kind() == PathKind::Computer && std::str::from_utf8(child).is_ok_and(valid_distro) => {
-                Location::Wsl { distro: String::from_utf8_lossy(child).into_owned(), path: FsPath::unix_root() }
-            }
+            Location::Local(p) if p.kind() == PathKind::Computer && std::str::from_utf8(child).is_ok_and(valid_distro) => Location::Wsl { distro: String::from_utf8_lossy(child).into_owned(), path: FsPath::unix_root() },
             Location::Local(p) => Location::Local(p.join(child)),
             Location::Wsl { distro, path } => Location::Wsl { distro: distro.clone(), path: path.join(child) },
             Location::Admin(p) => Self::as_admin(p.join(child)),

@@ -16,19 +16,7 @@ pub fn mode_text(mode: u32) -> String {
         (true, false) => 'x',
         (false, false) => '-',
     };
-    let s: String = [
-        bit(0o400, 'r'),
-        bit(0o200, 'w'),
-        exec(0o100, 0o4000, 's', 'S'),
-        bit(0o040, 'r'),
-        bit(0o020, 'w'),
-        exec(0o010, 0o2000, 's', 'S'),
-        bit(0o004, 'r'),
-        bit(0o002, 'w'),
-        exec(0o001, 0o1000, 't', 'T'),
-    ]
-    .iter()
-    .collect();
+    let s: String = [bit(0o400, 'r'), bit(0o200, 'w'), exec(0o100, 0o4000, 's', 'S'), bit(0o040, 'r'), bit(0o020, 'w'), exec(0o010, 0o2000, 's', 'S'), bit(0o004, 'r'), bit(0o002, 'w'), exec(0o001, 0o1000, 't', 'T')].iter().collect();
     format!("{s} ({:o})", mode & 0o7777)
 }
 
@@ -154,14 +142,8 @@ fn date(t: SystemTime, offset: i32) -> Option<String> {
 
 pub fn properties(path: &Path) -> Vec<PropGroup> {
     let Ok(m) = std::fs::symlink_metadata(path) else { return Vec::new() };
-    let access = PropGroup {
-        title: S::PropertiesAccess.t().to_owned(),
-        rows: vec![
-            (S::PropertiesPermissions.t().to_owned(), mode_text(m.mode())),
-            (S::PropertiesOwner.t().to_owned(), name_of(m.uid(), true)),
-            (S::PropertiesGroup.t().to_owned(), name_of(m.gid(), false)),
-        ],
-    };
+    let access =
+        PropGroup { title: S::PropertiesAccess.t().to_owned(), rows: vec![(S::PropertiesPermissions.t().to_owned(), mode_text(m.mode())), (S::PropertiesOwner.t().to_owned(), name_of(m.uid(), true)), (S::PropertiesGroup.t().to_owned(), name_of(m.gid(), false))] };
     let offset = crate::Linux::utc_offset_minutes();
     let changed = UNIX_EPOCH + std::time::Duration::new(m.ctime().max(0) as u64, m.ctime_nsec().clamp(0, 999_999_999) as u32);
     let dates = [(S::PropertiesCreated, m.created().ok()), (S::PropertiesAccessed, m.accessed().ok()), (S::PropertiesChanged, Some(changed))];

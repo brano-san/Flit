@@ -37,10 +37,7 @@ fn templates_list_files_with_stems_and_extensions() {
     t.file("Sheet.tar.gz", 1);
     std::fs::create_dir(t.path().join("Folder")).unwrap();
     let got: Vec<(String, String, String)> = templates_in(t.path()).into_iter().map(|n| (n.label, n.ext, n.stem)).collect();
-    assert_eq!(
-        got,
-        [("Makefile".into(), "".into(), "Makefile".into()), ("Sheet.tar".into(), ".gz".into(), "Sheet.tar".into()), ("Text Document".into(), ".txt".into(), "Text Document".into())]
-    );
+    assert_eq!(got, [("Makefile".into(), "".into(), "Makefile".into()), ("Sheet.tar".into(), ".gz".into(), "Sheet.tar".into()), ("Text Document".into(), ".txt".into(), "Text Document".into())]);
     let first = templates_in(t.path()).into_iter().find(|n| n.ext == ".txt").unwrap();
     assert_eq!(first.template, Template::Copy(fs_path(&t.path().join("Text Document.txt")).unwrap()));
 }

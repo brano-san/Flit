@@ -60,23 +60,8 @@ const ICONS: &[(u32, &str)] = &[
     (0xEDA2, "hard_drive"),
 ];
 
-const SANS_RANGES: &[(u32, u32)] = &[
-    (0x20, 0x7E),
-    (0xA0, 0x17F),
-    (0x300, 0x36F),
-    (0x370, 0x3FF),
-    (0x400, 0x52F),
-    (0x2010, 0x2027),
-    (0x2030, 0x203A),
-    (0x2044, 0x2044),
-    (0x20AC, 0x20AC),
-    (0x20BD, 0x20BD),
-    (0x2116, 0x2116),
-    (0x2122, 0x2122),
-    (0x2190, 0x2195),
-    (0x2212, 0x2212),
-    (0xFFFD, 0xFFFD),
-];
+const SANS_RANGES: &[(u32, u32)] =
+    &[(0x20, 0x7E), (0xA0, 0x17F), (0x300, 0x36F), (0x370, 0x3FF), (0x400, 0x52F), (0x2010, 0x2027), (0x2030, 0x203A), (0x2044, 0x2044), (0x20AC, 0x20AC), (0x20BD, 0x20BD), (0x2116, 0x2116), (0x2122, 0x2122), (0x2190, 0x2195), (0x2212, 0x2212), (0xFFFD, 0xFFFD)];
 
 pub fn icon_names() -> &'static [(u32, &'static str)] {
     ICONS
@@ -114,11 +99,7 @@ struct Source<'a> {
 impl<'a> Source<'a> {
     fn glyph(&self, gid: u16) -> &'a [u8] {
         let (loca, g) = (self.t[b"loca"], gid as usize);
-        let (a, b) = if self.long_loca {
-            (u32_at(loca, g * 4) as usize, u32_at(loca, g * 4 + 4) as usize)
-        } else {
-            (u16_at(loca, g * 2) as usize * 2, u16_at(loca, g * 2 + 2) as usize * 2)
-        };
+        let (a, b) = if self.long_loca { (u32_at(loca, g * 4) as usize, u32_at(loca, g * 4 + 4) as usize) } else { (u16_at(loca, g * 2) as usize * 2, u16_at(loca, g * 2 + 2) as usize * 2) };
         &self.t[b"glyf"][a..b]
     }
 
@@ -301,18 +282,8 @@ pub fn subset(data: &[u8], map: &[(u32, u16)], family: &str) -> Vec<u8> {
     }
     let mut post = src.t[b"post"][..32].to_vec();
     post[..4].copy_from_slice(&0x0003_0000u32.to_be_bytes());
-    let mut out_tables: Vec<([u8; 4], Vec<u8>)> = vec![
-        (*b"OS/2", src.t[b"OS/2"].to_vec()),
-        (*b"cmap", cmap(&cps)),
-        (*b"glyf", glyf),
-        (*b"head", head),
-        (*b"hhea", hhea),
-        (*b"hmtx", hmtx),
-        (*b"loca", loca),
-        (*b"maxp", maxp),
-        (*b"name", name_table(&src, family)),
-        (*b"post", post),
-    ];
+    let mut out_tables: Vec<([u8; 4], Vec<u8>)> =
+        vec![(*b"OS/2", src.t[b"OS/2"].to_vec()), (*b"cmap", cmap(&cps)), (*b"glyf", glyf), (*b"head", head), (*b"hhea", hhea), (*b"hmtx", hmtx), (*b"loca", loca), (*b"maxp", maxp), (*b"name", name_table(&src, family)), (*b"post", post)];
     out_tables.sort_by_key(|t| t.0);
     let count = out_tables.len();
     let pow = 1usize << (usize::BITS - 1 - count.leading_zeros());

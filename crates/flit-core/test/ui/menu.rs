@@ -15,10 +15,13 @@ const FILE: usize = 1;
 fn windows_paste_menu_exposes_all_link_kinds_but_disables_unknown_sources() {
     let mut app = app_with(&[]);
     let menu = app.build_menu(false);
-    let paste = menu.iter().find_map(|item| match item {
-        MenuItem::Submenu { label, items } if label == "Paste as" => Some(items),
-        _ => None,
-    }).expect("Paste as submenu");
+    let paste = menu
+        .iter()
+        .find_map(|item| match item {
+            MenuItem::Submenu { label, items } if label == "Paste as" => Some(items),
+            _ => None,
+        })
+        .expect("Paste as submenu");
     assert_eq!(commands(paste), ["Shortcut", "Symbolic link", "Junction", "Hard link"]);
     assert!(paste.iter().skip(1).all(|item| matches!(item, MenuItem::Command { disabled: true, .. })));
 }

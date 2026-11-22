@@ -514,10 +514,12 @@ fn lzh_lists_as_a_folder_and_extracts_with_a_crc_check() {
 fn seven_z_word_size_changes_the_stream_and_still_extracts() {
     let t = Temp::new("word");
     let mut seed = 7u64;
-    let text: Vec<u8> = (0..60_000).flat_map(|_| {
-        seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
-        format!("word{} ", (seed >> 33) % 300).into_bytes()
-    }).collect();
+    let text: Vec<u8> = (0..60_000)
+        .flat_map(|_| {
+            seed = seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1_442_695_040_888_963_407);
+            format!("word{} ", (seed >> 33) % 300).into_bytes()
+        })
+        .collect();
     t.write("src/text.txt", &text);
     let mut sizes = Vec::new();
     for word in [8, 273] {
@@ -564,7 +566,6 @@ fn large_files_split_into_parallel_chunks_extract_intact() {
         assert!(t.path(&format!("out{level}/src/empty.txt")).is_file());
     }
 }
-
 
 #[test]
 fn gzip_and_tar_gz_compress_in_parallel_chunks_and_extract_intact() {

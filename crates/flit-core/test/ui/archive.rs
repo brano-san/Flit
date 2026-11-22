@@ -584,12 +584,7 @@ fn every_dialog_draws_inside_its_frame_with_buttons_below_the_rows() {
     let mut app = app_at(r"C:\draw");
     deliver(&mut app, &[("a.zip", FILE), ("b.txt", FILE)]);
     let mut g = crate::text::Gfx::new(crate::text::tests::Mono, 1024);
-    let open: [fn(&mut App); 4] = [
-        |a| a.compress_dialog(),
-        |a| a.extract_dialog(),
-        |a| a.hashes_dialog(),
-        |a| a.ask_password(p(r"C:\draw\a.zip"), Retry::Reload(a.tab().id)),
-    ];
+    let open: [fn(&mut App); 4] = [|a| a.compress_dialog(), |a| a.extract_dialog(), |a| a.hashes_dialog(), |a| a.ask_password(p(r"C:\draw\a.zip"), Retry::Reload(a.tab().id))];
     for (k, show) in open.iter().enumerate() {
         select(&mut app, &[if k == 2 { "b.txt" } else { "a.zip" }]);
         show(&mut app);

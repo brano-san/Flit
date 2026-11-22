@@ -59,10 +59,7 @@ impl SearchClient {
         let (out, events) = unbounded();
         let worker = Worker::<P>::new(rx, tx.clone(), out, wake, utc_offset_min, tags);
         let facets = worker.facets.clone();
-        std::thread::Builder::new()
-            .name("flit-search".into())
-            .spawn(move || worker.run())
-            .map_err(|e| PlatformError::new(-1, format!("cannot start flit-search: {e}")))?;
+        std::thread::Builder::new().name("flit-search".into()).spawn(move || worker.run()).map_err(|e| PlatformError::new(-1, format!("cannot start flit-search: {e}")))?;
         Ok(Self { tx, latest: HashMap::new(), facets, events, portable: false })
     }
 
@@ -283,7 +280,27 @@ fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out:
 
 impl<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static> Worker<P> {
     fn new(rx: Receiver<Cmd>, me: Sender<Cmd>, out: Out, wake: Wake, utc_offset_min: i32, tags: TagCell) -> Self {
-        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, failed_at: None, retry: SERVICE_RETRY, indexing: true, portable: false, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), facets: Arc::default(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
+        Self {
+            rx,
+            me,
+            out,
+            wake,
+            utc_offset_min,
+            remote_failed: None,
+            failed_at: None,
+            retry: SERVICE_RETRY,
+            indexing: true,
+            portable: false,
+            local: None,
+            links: HashMap::new(),
+            last_query: HashMap::new(),
+            latests: HashMap::new(),
+            tags,
+            hits: HashMap::new(),
+            facets: Arc::default(),
+            connect: Box::new(P::Service::connect),
+            fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))),
+        }
     }
 
     fn run(mut self) {
@@ -480,10 +497,7 @@ impl<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static> Worker<P> {
                         } else if let Some(root) = folder {
                             let tags = self.tags.get();
                             self.start_live(window, latest, *gen, *sort, SearchSource::Walk, move |keep_going, found| {
-                                let find_tag = |path: &FsPath, tag: &str| {
-                                    flit_core::tags::find(&tags.defs, tag).zip(P::file_key(path))
-                                        .is_some_and(|(index, key)| tags.mask(key) & (1 << index) != 0)
-                                };
+                                let find_tag = |path: &FsPath, tag: &str| flit_core::tags::find(&tags.defs, tag).zip(P::file_key(path)).is_some_and(|(index, key)| tags.mask(key) & (1 << index) != 0);
                                 find::walk_with_tags(&P::fs(), &root, &q, keep_going, found, &find_tag);
                             });
                         } else {
@@ -516,7 +530,7 @@ impl<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static> Worker<P> {
                         self.send(window, SearchEvent::Done { gen: *gen, total: 0, version: 0 });
                         self.send(window, SearchEvent::QueryError { gen: *gen, message: tr!(S::SearchErrorSyntaxPosition, position = error.position) });
                         true
-                    },
+                    }
                 }
             }
             SearchRequest::Facets { gen, open: true } => {
@@ -530,7 +544,9 @@ impl<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static> Worker<P> {
                 let f = h.found.lock().unwrap_or_else(|e| e.into_inner());
                 let mut facets = flit_core::query_attrs::FacetCounts::default();
                 for (i, hit) in f.hits.iter().enumerate() {
-                    if i.is_multiple_of(4096) && !current() { return true; }
+                    if i.is_multiple_of(4096) && !current() {
+                        return true;
+                    }
                     facets.add(&hit.row.name, hit.row.meta, self.utc_offset_min);
                 }
                 if current() {
@@ -601,7 +617,9 @@ impl<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static> Worker<P> {
         let folder = scope.folder().and_then(|f| f.to_windows());
         let mut counts = vec![0u64; tags.defs.len()];
         for (i, f) in tags.files.iter().filter(|f| f.present).enumerate() {
-            if i.is_multiple_of(512) && !current() { return; }
+            if i.is_multiple_of(512) && !current() {
+                return;
+            }
             if folder.as_ref().is_some_and(|p| !f.path.is_inside(p)) {
                 continue;
             }
@@ -610,7 +628,9 @@ impl<P: SearchPlatform + FilePlatform + ProfilePlatform + 'static> Worker<P> {
             let facts = query::Facts { attrs: f.meta.attrs, created: f.meta.created, depth: Some(f.path.components().count() as u32), ..Default::default() };
             if query.matches_with(&plain, facts, &|n| flit_core::tags::find(&tags.defs, n).is_some_and(|k| f.mask & (1 << k) != 0) || (n.is_empty() && f.mask != 0), &|_| false) {
                 for k in flit_core::tags::bits(f.mask) {
-                    if let Some(count) = counts.get_mut(k) { *count += 1; }
+                    if let Some(count) = counts.get_mut(k) {
+                        *count += 1;
+                    }
                 }
             }
         }

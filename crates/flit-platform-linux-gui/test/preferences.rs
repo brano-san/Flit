@@ -30,7 +30,10 @@ fn kde_buttons_respect_the_decoration_section_and_explicit_empty_values() {
 fn a_kde_worker_notices_atomic_replacement_deletion_and_recreation_then_stops() {
     let temp = Temp::new("window-buttons");
     let (tx, rx) = crossbeam_channel::unbounded();
-    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(25), move |change| { let _ = tx.send(change); }).unwrap();
+    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(25), move |change| {
+        let _ = tx.send(change);
+    })
+    .unwrap();
     assert_eq!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Buttons(WindowButtons::default()));
     std::fs::write(temp.path().join("replacement"), "[org.kde.kdecoration2]\nButtonsOnLeft=X\nButtonsOnRight=\n").unwrap();
     std::fs::rename(temp.path().join("replacement"), temp.path().join("kwinrc")).unwrap();
@@ -60,7 +63,10 @@ fn kde_icon_theme_reads_only_the_icons_section() {
 fn kde_icon_theme_notices_atomic_replacement_and_ignores_unrelated_changes() {
     let temp = Temp::new("icon-theme");
     let (tx, rx) = crossbeam_channel::unbounded();
-    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(15), move |change| { let _ = tx.send(change); }).unwrap();
+    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(15), move |change| {
+        let _ = tx.send(change);
+    })
+    .unwrap();
     assert!(matches!(rx.recv_timeout(Duration::from_secs(2)).unwrap(), Change::Buttons(_)));
     let globals = temp.path().join("kdeglobals");
     std::fs::write(&globals, "[Icons]\nTheme=First\n").unwrap();
@@ -95,7 +101,10 @@ fn removing_the_kde_icon_theme_setting_goes_back_to_breeze() {
     let globals = temp.path().join("kdeglobals");
     std::fs::write(&globals, "[Icons]\nTheme=Papirus\n").unwrap();
     let (tx, rx) = crossbeam_channel::unbounded();
-    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(15), move |change| { let _ = tx.send(change); }).unwrap();
+    let worker = Watch::start(temp.path().to_owned(), Duration::from_millis(15), move |change| {
+        let _ = tx.send(change);
+    })
+    .unwrap();
     let mut first = Vec::new();
     while let Ok(change) = rx.recv_timeout(Duration::from_millis(300)) {
         first.push(change);

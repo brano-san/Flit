@@ -164,7 +164,23 @@ impl App {
                 self.release_shell_menu();
             }
             let key = self.shapes.next.take().filter(|_| *pending);
-            let mut m = OwnMenu { items: items.clone(), at: (*x, *y), launches: launches.clone(), shell: shell.clone(), kind: *kind, view: None, shown: None, right: self.menu_right.take(), pointer: None, pending: *pending, own: items.len(), shape: None, floor_w: 0.0, carry: String::new(), tail: false };
+            let mut m = OwnMenu {
+                items: items.clone(),
+                at: (*x, *y),
+                launches: launches.clone(),
+                shell: shell.clone(),
+                kind: *kind,
+                view: None,
+                shown: None,
+                right: self.menu_right.take(),
+                pointer: None,
+                pending: *pending,
+                own: items.len(),
+                shape: None,
+                floor_w: 0.0,
+                carry: String::new(),
+                tail: false,
+            };
             if let Some(key) = key {
                 if let Some((_, rows, w)) = self.shapes.get(&key) {
                     m.placeholders(rows);

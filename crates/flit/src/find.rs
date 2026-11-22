@@ -82,7 +82,9 @@ fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, 
     let (mut subdirs, mut hits) = (Vec::new(), Vec::new());
     let mut path = Vec::new();
     for i in 0..l.len() as u32 {
-        if needs_metadata && !keep_going() { break; }
+        if needs_metadata && !keep_going() {
+            break;
+        }
         let e = &l.entries[i as usize];
         let name = l.name(i);
         let lower_name = lowercase(name);
@@ -104,9 +106,7 @@ fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, 
         let item = std::cell::OnceCell::new();
         let path = || item.get_or_init(|| dir.join(name));
         let metadata = std::cell::OnceCell::new();
-        if query.matches_with(&plain, facts, &|tag| find_tag(path(), tag), &|filter| {
-            !e.is_dir() && metadata.get_or_init(|| crate::portable_meta::read(path()).ok()).as_ref().is_some_and(|data| filter.matches_metadata(data))
-        }) {
+        if query.matches_with(&plain, facts, &|tag| find_tag(path(), tag), &|filter| !e.is_dir() && metadata.get_or_init(|| crate::portable_meta::read(path()).ok()).as_ref().is_some_and(|data| filter.matches_metadata(data))) {
             let row = SearchRow { name: name.to_vec(), dir: dir.as_bytes().to_vec(), meta: e.meta() };
             hits.push(Hit { lower_name, lower_dir: lowercase(dir.as_bytes()), row });
         }

@@ -99,8 +99,7 @@ fn business_account(key: &str, value: impl Fn(&str) -> Option<String>) -> Option
     }
     let path = FsPath::parse(&folder)?;
     let name = value("DisplayName");
-    let name = name.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned)
-        .or_else(|| Some(Path::new(&folder).file_name()?.to_str()?.to_owned()))?;
+    let name = name.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned).or_else(|| Some(Path::new(&folder).file_name()?.to_str()?.to_owned()))?;
     Some((index, (name, Location::from_local(path))))
 }
 
@@ -332,10 +331,7 @@ fn friendly_name(ext: &str) -> Option<String> {
 }
 
 fn template_dirs() -> Vec<PathBuf> {
-    [("APPDATA", r"Microsoft\Windows\Templates"), ("ProgramData", r"Microsoft\Windows\Templates"), ("SystemRoot", "ShellNew")]
-        .iter()
-        .filter_map(|(var, sub)| Some(PathBuf::from(std::env::var_os(var)?).join(sub)))
-        .collect()
+    [("APPDATA", r"Microsoft\Windows\Templates"), ("ProgramData", r"Microsoft\Windows\Templates"), ("SystemRoot", "ShellNew")].iter().filter_map(|(var, sub)| Some(PathBuf::from(std::env::var_os(var)?).join(sub))).collect()
 }
 
 fn template_file(name: &str, dirs: &[PathBuf]) -> Option<FsPath> {

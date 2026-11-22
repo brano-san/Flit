@@ -530,7 +530,11 @@ fn help_marks(query: &str, text: &str) -> Vec<std::ops::Range<usize>> {
 }
 
 fn indent(i: usize) -> f32 {
-    if NESTED.contains(&SETTINGS[i].id) { INDENT } else { 0.0 }
+    if NESTED.contains(&SETTINGS[i].id) {
+        INDENT
+    } else {
+        0.0
+    }
 }
 
 fn slider(i: usize) -> bool {
@@ -618,7 +622,11 @@ fn remove_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
 }
 
 fn glyph_w(btn: &Btn, s: impl Fn(f32) -> f32) -> f32 {
-    if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag | Btn::NewEntry | Btn::NewSubmenu) { s(18.0) } else { 0.0 }
+    if matches!(btn, Btn::AddHome | Btn::AddCurrent | Btn::NewTag | Btn::NewEntry | Btn::NewSubmenu) {
+        s(18.0)
+    } else {
+        0.0
+    }
 }
 
 fn button_rects(line: &Line, r: Rect, fit: &Fit, s: impl Fn(f32) -> f32) -> Vec<Rect> {
@@ -844,10 +852,7 @@ impl App {
     pub(super) fn show_pending_archive_offer(&mut self) {
         if self.settings.archive_offer_pending && self.dialogs.form.is_none() && self.nav.palette.is_none() {
             self.settings.archive_offer_pending = false;
-            let items = vec![
-                (S::SettingsPageSystemArchivePrompt.t().to_owned(), S::SettingsPageSystemArchivePromptNote.t().to_owned()),
-                (S::SettingsPageDialogCancel.t().to_owned(), String::new()),
-            ];
+            let items = vec![(S::SettingsPageSystemArchivePrompt.t().to_owned(), S::SettingsPageSystemArchivePromptNote.t().to_owned()), (S::SettingsPageDialogCancel.t().to_owned(), String::new())];
             self.open_pick(Palette::new(Pick::Setting(SettingPick::RegisterArchive), items, ""));
             self.effects.push(Effect::Settings(SettingsCmd::ArchiveOfferShown));
         }

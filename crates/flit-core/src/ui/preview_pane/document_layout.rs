@@ -57,14 +57,7 @@ impl<B: TextBackend> TextFlow<'_, B> {
         char_w(self.gfx, self.widths, c, font)
     }
 
-    pub(super) fn lines(
-        &mut self,
-        runs: Range<u32>,
-        area: Range<f32>,
-        wrap: bool,
-        pieces: &mut Vec<Piece>,
-        mut emit: impl FnMut(Range<u32>, f32),
-    ) {
+    pub(super) fn lines(&mut self, runs: Range<u32>, area: Range<f32>, wrap: bool, pieces: &mut Vec<Piece>, mut emit: impl FnMut(Range<u32>, f32)) {
         let mut first = pieces.len();
         let left = area.start;
         let mut x = left;
@@ -168,18 +161,25 @@ impl<B: TextBackend> TextFlow<'_, B> {
             let cols = &columns[first_col..end];
             let words: f32 = cols.iter().map(|c| c.widest_word.max(c.widest_glyph).max(1.0)).sum();
             let minimum = |c: &Column| {
-                if words <= width { c.widest_word.max(c.widest_glyph).max(1.0) } else { c.widest_glyph.max(1.0) }
+                if words <= width {
+                    c.widest_word.max(c.widest_glyph).max(1.0)
+                } else {
+                    c.widest_glyph.max(1.0)
+                }
             };
             let min = cols.iter().map(minimum).sum::<f32>();
             let pad = (4.0 * self.scale).round().min(((width - min) / (2 * cols.len()) as f32).max(0.0));
             let extra: f32 = cols.iter().map(|c| (c.natural - minimum(c)).max(0.0)).sum();
             let ratio = if extra > 0.0 { ((width - min - 2.0 * pad * cols.len() as f32) / extra).clamp(0.0, 1.0) } else { 0.0 };
             let mut x = 0.0;
-            let edges: Vec<_> = cols.iter().map(|c| {
-                let min = minimum(c);
-                x += min + (c.natural - min).max(0.0) * ratio + 2.0 * pad;
-                area.start + x.min(width)
-            }).collect();
+            let edges: Vec<_> = cols
+                .iter()
+                .map(|c| {
+                    let min = minimum(c);
+                    x += min + (c.natural - min).max(0.0) * ratio + 2.0 * pad;
+                    area.start + x.min(width)
+                })
+                .collect();
             let mut grid = Grid { left: area.start, top: *y, bottom: *y, header_bottom: *y, edges };
             for (row_no, row) in table.rows.iter().enumerate() {
                 let mut cell_pieces = Vec::new();
@@ -195,11 +195,13 @@ impl<B: TextBackend> TextFlow<'_, B> {
                     visual.resize_with(visual.len().max(lines.len()), Vec::new);
                     for (line, (range, used)) in visual.iter_mut().zip(lines) {
                         let slack = (cell_width - used).max(0.0);
-                        let x = left + pad + match table.align[col] {
-                            Alignment::Center => slack / 2.0,
-                            Alignment::Right => slack,
-                            _ => 0.0,
-                        };
+                        let x = left
+                            + pad
+                            + match table.align[col] {
+                                Alignment::Center => slack / 2.0,
+                                Alignment::Right => slack,
+                                _ => 0.0,
+                            };
                         line.extend(cell_pieces[range.start as usize..range.end as usize].iter().map(|p| Piece { x: x + p.x, ..*p }));
                     }
                     left = right;

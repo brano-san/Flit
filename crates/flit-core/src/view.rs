@@ -65,7 +65,11 @@ pub fn type_key(l: &Listing, i: u32) -> u64 {
 }
 
 pub fn separator(kind: PathKind) -> u8 {
-    if kind == PathKind::Unix { b'/' } else { b'\\' }
+    if kind == PathKind::Unix {
+        b'/'
+    } else {
+        b'\\'
+    }
 }
 
 pub fn rel_path(l: &Listing, i: u32, sep: u8, out: &mut Vec<u8>) {
@@ -164,7 +168,11 @@ impl DirView {
 
     pub fn depth(&self, i: u32) -> usize {
         let f = self.snap.listing.folder(i);
-        if f.is_empty() { 0 } else { 1 + f.iter().filter(|&&b| b == self.separator()).count() }
+        if f.is_empty() {
+            0
+        } else {
+            1 + f.iter().filter(|&&b| b == self.separator()).count()
+        }
     }
 
     pub fn shaped_rows(&self) -> &[u32] {
@@ -184,7 +192,11 @@ impl DirView {
             let (mut d, mut f) = (0u64, 0u64);
             for i in 0..l.len() as u32 {
                 if sort::visible(l, i, &v) {
-                    if l.entries[i as usize].is_dir() { d += 1 } else { f += 1 }
+                    if l.entries[i as usize].is_dir() {
+                        d += 1
+                    } else {
+                        f += 1
+                    }
                 }
             }
             d << 32 | f
@@ -209,11 +221,7 @@ impl DirView {
             self.filter.as_ref().is_none_or(|f| f.matched(i))
                 && (self.hidden_types.is_empty() || !self.hidden_types.contains(&type_key(l, i)))
                 && !companions.is_some_and(|hidden| hidden.contains(&i))
-                && self.pick.as_ref().is_none_or(|(directories, filter)| {
-                    l.entries[i as usize].is_dir() || (!directories && filter.as_ref().is_none_or(|f| {
-                        f.matches_with_mime(l.name(i), l.picker_mime.get(&i).map(AsRef::as_ref))
-                    }))
-                })
+                && self.pick.as_ref().is_none_or(|(directories, filter)| l.entries[i as usize].is_dir() || (!directories && filter.as_ref().is_none_or(|f| f.matches_with_mime(l.name(i), l.picker_mime.get(&i).map(AsRef::as_ref)))))
         };
         let mut rows = Vec::new();
         match tree {
@@ -444,7 +452,11 @@ impl DirView {
         if was != on {
             self.sel[w] ^= bit;
             self.selected_size.clear();
-            if on { self.sel_count += 1 } else { self.sel_count -= 1 }
+            if on {
+                self.sel_count += 1
+            } else {
+                self.sel_count -= 1
+            }
             self.sel_rev += 1;
         }
     }
@@ -489,9 +501,7 @@ impl DirView {
     }
 
     fn marked(&self) -> impl Iterator<Item = u32> + '_ {
-        self.sel.iter().enumerate().flat_map(|(w, &bits)| {
-            (0..64).filter(move |b| bits >> b & 1 != 0).map(move |b| (w * 64 + b) as u32)
-        })
+        self.sel.iter().enumerate().flat_map(|(w, &bits)| (0..64).filter(move |b| bits >> b & 1 != 0).map(move |b| (w * 64 + b) as u32))
     }
 
     pub fn selected(&self) -> impl Iterator<Item = u32> + '_ {
@@ -801,10 +811,13 @@ impl DirView {
         if !directories && filter.is_none() {
             return;
         }
-        if self.pick.as_ref().is_some_and(|(d, f)| *d == directories && match (f, &filter) {
-            (Some(f), Some(g)) => Arc::ptr_eq(f, g),
-            (None, None) => true,
-            _ => false,
+        if self.pick.as_ref().is_some_and(|(d, f)| {
+            *d == directories
+                && match (f, &filter) {
+                    (Some(f), Some(g)) => Arc::ptr_eq(f, g),
+                    (None, None) => true,
+                    _ => false,
+                }
         }) {
             return;
         }

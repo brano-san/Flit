@@ -15,7 +15,13 @@ pub(crate) enum Desktop {
 impl Desktop {
     pub(crate) fn from_name(name: &str) -> Self {
         let has = |part: &str| name.split(':').any(|s| s.eq_ignore_ascii_case(part));
-        if has("KDE") { Self::Kde } else if has("GNOME") { Self::Gnome } else { Self::Other }
+        if has("KDE") {
+            Self::Kde
+        } else if has("GNOME") {
+            Self::Gnome
+        } else {
+            Self::Other
+        }
     }
 
     pub(crate) fn current() -> Self {
@@ -155,7 +161,9 @@ impl Watch {
                         let next = Some(kde_icons_or_default(&text));
                         if next != icon_theme {
                             icon_theme.clone_from(&next);
-                            if let Some(name) = next { emit(Change::IconTheme(name)); }
+                            if let Some(name) = next {
+                                emit(Change::IconTheme(name));
+                            }
                         }
                         globals.clone_from(&text);
                         emit(Change::Globals(text));

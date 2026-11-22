@@ -85,7 +85,9 @@ pub(super) fn run(mut cmd: Command, ctl: &OpCtl, mut progress: impl FnMut(GitPro
                     break;
                 }
             };
-            if send.send(chunk).is_err() { break; }
+            if send.send(chunk).is_err() {
+                break;
+            }
         }
     }) {
         task.stop();
@@ -101,11 +103,7 @@ pub(super) fn run(mut cmd: Command, ctl: &OpCtl, mut progress: impl FnMut(GitPro
                 return Ok(());
             }
             let forced = task.stop();
-            return if task.child.try_wait().ok().flatten().is_some_and(|status| status.success()) {
-                Ok(())
-            } else {
-                Err(RunError::Cancelled { forced })
-            };
+            return if task.child.try_wait().ok().flatten().is_some_and(|status| status.success()) { Ok(()) } else { Err(RunError::Cancelled { forced }) };
         }
         if open {
             match receive.recv_timeout(POLL) {
@@ -160,7 +158,9 @@ impl Tree {
                 let _ = self.child.wait();
                 return false;
             }
-            if Instant::now() >= deadline { break; }
+            if Instant::now() >= deadline {
+                break;
+            }
             std::thread::sleep(POLL);
         }
         if unsafe { libc::kill(group, libc::SIGKILL) } != 0 {
@@ -181,7 +181,10 @@ mod windows_tree {
     use windows::Win32::Foundation::{HANDLE, STATUS_CONTROL_C_EXIT};
     use windows::Win32::System::Console::{AttachConsole, FreeConsole, GenerateConsoleCtrlEvent, GetConsoleProcessList, GetStdHandle, SetConsoleCtrlHandler, SetStdHandle, CTRL_C_EVENT, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     use windows::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32, TH32CS_SNAPTHREAD};
-    use windows::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE};
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob, JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject, TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
     use windows::Win32::System::Threading::{OpenProcess, OpenThread, ResumeThread, CREATE_NO_WINDOW, CREATE_SUSPENDED, PROCESS_QUERY_LIMITED_INFORMATION, THREAD_SUSPEND_RESUME};
 
     static CONSOLE: Mutex<()> = Mutex::new(());
@@ -211,7 +214,9 @@ mod windows_tree {
 
         pub(super) fn stop(&mut self) -> bool {
             let job = HANDLE(self.job.as_raw_handle());
-            if !job_running(job) { return false; }
+            if !job_running(job) {
+                return false;
+            }
             if interrupt_console(self.child.id(), job) && wait_job(job) {
                 return self.child.wait().ok().and_then(|exit| exit.code()) == Some(STATUS_CONTROL_C_EXIT.0);
             }
@@ -233,7 +238,9 @@ mod windows_tree {
     fn wait_job(job: HANDLE) -> bool {
         let deadline = Instant::now() + STOP_GRACE;
         while job_running(job) {
-            if Instant::now() >= deadline { return false; }
+            if Instant::now() >= deadline {
+                return false;
+            }
             std::thread::sleep(POLL);
         }
         true
@@ -242,15 +249,17 @@ mod windows_tree {
     fn interrupt_console(pid: u32, job: HANDLE) -> bool {
         let _guard = CONSOLE.lock().unwrap_or_else(|e| e.into_inner());
         let std_handles = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|id| (id, unsafe { GetStdHandle(id) }.unwrap_or_default()));
-        if unsafe { AttachConsole(pid) }.is_err() { return false; }
+        if unsafe { AttachConsole(pid) }.is_err() {
+            return false;
+        }
         for (id, handle) in std_handles {
             let _ = unsafe { SetStdHandle(id, handle) };
         }
         let mut pids = [0; 64];
         let count = unsafe { GetConsoleProcessList(&mut pids) } as usize;
-        let sent = count >= 2 && pids.get(..count).is_some_and(|pids| {
-            pids.contains(&pid) && pids.iter().all(|&id| id == std::process::id() || belongs_to_job(id, job))
-        }) && unsafe { SetConsoleCtrlHandler(None, true) }.is_ok()
+        let sent = count >= 2
+            && pids.get(..count).is_some_and(|pids| pids.contains(&pid) && pids.iter().all(|&id| id == std::process::id() || belongs_to_job(id, job)))
+            && unsafe { SetConsoleCtrlHandler(None, true) }.is_ok()
             && unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) }.is_ok();
         let _ = unsafe { FreeConsole() };
         for (id, handle) in std_handles {

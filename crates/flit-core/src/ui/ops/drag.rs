@@ -52,8 +52,7 @@ impl App {
         let t = self.tab();
         if self.caps.unix_paths && t.view_loc.path().is_network() {
             if !right {
-                self.ops.network_drag = items.into_iter().filter_map(|i| t.entry_location(i))
-                    .filter(|p| crate::ui::network::network_address(p.path()).is_some()).map(|folder| Route { folder, select: None }).collect();
+                self.ops.network_drag = items.into_iter().filter_map(|i| t.entry_location(i)).filter(|p| crate::ui::network::network_address(p.path()).is_some()).map(|folder| Route { folder, select: None }).collect();
                 if !self.ops.network_drag.is_empty() {
                     self.drag = Drag::Network;
                     self.pressed = Hit::None;
@@ -218,7 +217,9 @@ impl App {
                     Spot::Row(r) => {
                         let t = self.tab();
                         let is_dir = t.view.as_ref().and_then(|v| v.rows().get(r).map(|&i| v.listing().entries[i as usize].is_dir()));
-                        if is_dir != Some(true) { return drop_effect::NONE; }
+                        if is_dir != Some(true) {
+                            return drop_effect::NONE;
+                        }
                         t
                     }
                     _ => self.tab(),

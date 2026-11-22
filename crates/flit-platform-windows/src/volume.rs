@@ -42,16 +42,8 @@ pub(crate) fn label(drive: &FsPath, label: &str, elevated: bool) -> Result<Outco
 pub(crate) fn label_elevated(owner: HWND, drive: &FsPath, label: &str) -> Event {
     let Ok(exe) = std::env::current_exe() else { return Event::ShellError(failure(ERROR_ACCESS_DENIED)) };
     let (file, args) = (wide(&exe.to_string_lossy()), wide(&format!("{FLAG} {} {}", quote_windows(&drive.display()), quote_windows(label))));
-    let mut info = SHELLEXECUTEINFOW {
-        cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
-        fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC,
-        hwnd: owner,
-        lpVerb: w!("runas"),
-        lpFile: PCWSTR(file.as_ptr()),
-        lpParameters: PCWSTR(args.as_ptr()),
-        nShow: SW_HIDE.0,
-        ..Default::default()
-    };
+    let mut info =
+        SHELLEXECUTEINFOW { cbSize: size_of::<SHELLEXECUTEINFOW>() as u32, fMask: SEE_MASK_NOCLOSEPROCESS | SEE_MASK_NOASYNC, hwnd: owner, lpVerb: w!("runas"), lpFile: PCWSTR(file.as_ptr()), lpParameters: PCWSTR(args.as_ptr()), nShow: SW_HIDE.0, ..Default::default() };
     if let Err(e) = unsafe { ShellExecuteExW(&mut info) } {
         return match WIN32_ERROR::from_error(&e) {
             Some(ERROR_CANCELLED) => Event::DevicesChanged,

@@ -60,13 +60,9 @@ pub enum Undo {
 
 pub fn check_replay(plan: &Replay) -> Result<(), ProtoError> {
     let linux = |path: &FsPath| path.kind() == PathKind::Unix && flit_core::archive::split(path).is_none();
-    let checks_match = flit_core::undo::check_paths(&plan.steps).is_some_and(|paths| {
-        paths.len() == plan.checks.len() && paths.iter().zip(&plan.checks).all(|((path, exists), (checked, stamp))| path == checked && *exists == stamp.is_some())
-    });
-    if !checks_match || plan.steps.is_empty() || plan.steps.iter().any(|op| {
-        !matches!(op, FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Trash(_) | FileOp::Restore(_) | FileOp::Access(_))
-            || !op.all_paths(linux)
-    }) || plan.checks.iter().any(|(path, _)| !linux(path)) {
+    let checks_match = flit_core::undo::check_paths(&plan.steps).is_some_and(|paths| paths.len() == plan.checks.len() && paths.iter().zip(&plan.checks).all(|((path, exists), (checked, stamp))| path == checked && *exists == stamp.is_some()));
+    if !checks_match || plan.steps.is_empty() || plan.steps.iter().any(|op| !matches!(op, FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Trash(_) | FileOp::Restore(_) | FileOp::Access(_)) || !op.all_paths(linux)) || plan.checks.iter().any(|(path, _)| !linux(path))
+    {
         return Err(ProtoError::Invalid("invalid paths or operations in an undo plan"));
     }
     Ok(())
@@ -77,9 +73,7 @@ pub fn check_replacements(op: &FileOp, targets: &[(FsPath, Option<FsPath>)]) -> 
         return Err(ProtoError::Invalid("replacements for an operation that cannot replace items"));
     };
     let (_, allowed) = sets(&scope);
-    if targets.iter().all(|(target, backup)| under(&allowed, target) && backup.as_ref().is_none_or(|p| {
-        p.kind() == PathKind::Unix && p.parent().is_some_and(|dir| dir.file_name() == b"files")
-    })) {
+    if targets.iter().all(|(target, backup)| under(&allowed, target) && backup.as_ref().is_none_or(|p| p.kind() == PathKind::Unix && p.parent().is_some_and(|dir| dir.file_name() == b"files"))) {
         Ok(())
     } else {
         Err(ProtoError::Invalid("a replacement path lies outside the operation"))
@@ -151,7 +145,11 @@ pub fn check_report(op: &FileOp, items: &[(FsPath, FsPath)]) -> Result<(), Proto
     let (sources, targets) = sets(&scope);
     let trashed = |to: &FsPath| to.kind() == PathKind::Unix && to.parent().is_some_and(|p| p.file_name() == b"files");
     let fits = |(from, to): &(FsPath, FsPath)| under(&sources, from) && if scope.trash { trashed(to) } else { under(&targets, to) };
-    if items.iter().all(fits) { Ok(()) } else { Err(ProtoError::Invalid("a reported path lies outside the operation")) }
+    if items.iter().all(fits) {
+        Ok(())
+    } else {
+        Err(ProtoError::Invalid("a reported path lies outside the operation"))
+    }
 }
 
 pub fn check_performed(op: &FileOp, performed: &FileOp) -> Result<(), ProtoError> {
@@ -159,19 +157,26 @@ pub fn check_performed(op: &FileOp, performed: &FileOp) -> Result<(), ProtoError
         return Err(ProtoError::Invalid("a performed operation for an operation that does not report one"));
     };
     let (sources, _) = sets(&scope);
-    if changes.iter().all(|c| under(&sources, &c.item)) { Ok(()) } else { Err(ProtoError::Invalid("a performed path lies outside the operation")) }
+    if changes.iter().all(|c| under(&sources, &c.item)) {
+        Ok(())
+    } else {
+        Err(ProtoError::Invalid("a performed path lies outside the operation"))
+    }
 }
 
 pub fn check_conflict(op: &FileOp, c: &Conflict) -> Result<(), ProtoError> {
     let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Link { .. } | FileOp::Flatten(_));
     let scope = scope(op).filter(|_| asks).ok_or(ProtoError::Invalid("a conflict for an operation that cannot have one"))?;
     let (sources, targets) = sets(&scope);
-    if under(&sources, &c.source) && under(&targets, &c.target) { Ok(()) } else { Err(ProtoError::Invalid("a conflict path lies outside the operation")) }
+    if under(&sources, &c.source) && under(&targets, &c.target) {
+        Ok(())
+    } else {
+        Err(ProtoError::Invalid("a conflict path lies outside the operation"))
+    }
 }
 
 pub fn check_conflicts(op: &FileOp, conflicts: &[Conflict]) -> Result<(), ProtoError> {
-    let scope = scope(op).filter(|_| matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_)))
-        .ok_or(ProtoError::Invalid("a conflict review for an operation that cannot have one"))?;
+    let scope = scope(op).filter(|_| matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_))).ok_or(ProtoError::Invalid("a conflict review for an operation that cannot have one"))?;
     let (sources, targets) = sets(&scope);
     if !conflicts.is_empty() && conflicts.iter().all(|c| under(&sources, &c.source) && under(&targets, &c.target)) {
         conflicts.iter().try_for_each(|c| check_meta(&c.from).and_then(|()| check_meta(&c.to)))
@@ -184,7 +189,11 @@ pub fn check_failure(op: &FileOp, f: &Failure) -> Result<(), ProtoError> {
     let asks = matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Restore(_) | FileOp::Delete(_) | FileOp::Link { .. } | FileOp::Flatten(_) | FileOp::NewFile { .. });
     let scope = scope(op).filter(|_| asks).ok_or(ProtoError::Invalid("a failure for an operation that does not ask about one"))?;
     let (sources, targets) = sets(&scope);
-    if under(&sources, &f.path) || under(&targets, &f.path) { Ok(()) } else { Err(ProtoError::Invalid("a failure path lies outside the operation")) }
+    if under(&sources, &f.path) || under(&targets, &f.path) {
+        Ok(())
+    } else {
+        Err(ProtoError::Invalid("a failure path lies outside the operation"))
+    }
 }
 
 #[cfg(test)]

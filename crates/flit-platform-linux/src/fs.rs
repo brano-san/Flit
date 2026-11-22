@@ -118,10 +118,12 @@ pub fn host(p: &FsPath) -> Option<&Path> {
 pub fn rename_local_noreplace(from: &FsPath, to: &FsPath) -> io::Result<()> {
     let host_bytes = |path: &FsPath| cstring(host(path).ok_or(io::ErrorKind::InvalidInput)?.as_os_str().as_bytes());
     let (from, to) = (host_bytes(from)?, host_bytes(to)?);
-    let result = unsafe {
-        libc::syscall(libc::SYS_renameat2, libc::AT_FDCWD, from.as_ptr(), libc::AT_FDCWD, to.as_ptr(), libc::RENAME_NOREPLACE)
-    };
-    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+    let result = unsafe { libc::syscall(libc::SYS_renameat2, libc::AT_FDCWD, from.as_ptr(), libc::AT_FDCWD, to.as_ptr(), libc::RENAME_NOREPLACE) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 pub fn fs_error(e: &io::Error) -> FsError {
@@ -200,7 +202,13 @@ impl Identity {
         if self.uid == 0 || node.is_link() {
             return true;
         }
-        let bit = if self.uid == node.uid { 0o400 } else if self.groups.contains(&node.gid) { 0o040 } else { 0o004 };
+        let bit = if self.uid == node.uid {
+            0o400
+        } else if self.groups.contains(&node.gid) {
+            0o040
+        } else {
+            0o004
+        };
         node.mode & bit != 0
     }
 }
@@ -619,8 +627,7 @@ impl Fs for LinuxFs {
     }
 
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
-        host(path).and_then(|path| crate::mounts::volume_key(path, &crate::mounts::read().ok()?))
-            .unwrap_or_else(|| path.root_bytes().to_vec())
+        host(path).and_then(|path| crate::mounts::volume_key(path, &crate::mounts::read().ok()?)).unwrap_or_else(|| path.root_bytes().to_vec())
     }
 
     fn remote(&self, path: &FsPath) -> bool {

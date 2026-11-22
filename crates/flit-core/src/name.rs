@@ -5,8 +5,7 @@ pub fn is_delete_stage(name: &[u8]) -> bool {
     let Some(id) = name.strip_prefix(b".flit-deleting-") else { return false };
     let mut fields = id.split(|&byte| byte == b'-');
     let valid = |part: Option<&[u8]>, check: fn(&u8) -> bool| part.is_some_and(|part| !part.is_empty() && part.iter().all(check));
-    valid(fields.next(), u8::is_ascii_digit) && valid(fields.next(), u8::is_ascii_hexdigit)
-        && valid(fields.next(), u8::is_ascii_hexdigit) && fields.next().is_none()
+    valid(fields.next(), u8::is_ascii_digit) && valid(fields.next(), u8::is_ascii_hexdigit) && valid(fields.next(), u8::is_ascii_hexdigit) && fields.next().is_none()
 }
 
 pub fn is_operation_stage(name: &[u8]) -> bool {
@@ -39,18 +38,9 @@ pub fn push_cp(out: &mut Vec<u8>, cp: u32) {
     } else if cp < 0x800 {
         out.extend_from_slice(&[0xC0 | (cp >> 6) as u8, 0x80 | (cp & 0x3F) as u8]);
     } else if cp < 0x10000 {
-        out.extend_from_slice(&[
-            0xE0 | (cp >> 12) as u8,
-            0x80 | ((cp >> 6) & 0x3F) as u8,
-            0x80 | (cp & 0x3F) as u8,
-        ]);
+        out.extend_from_slice(&[0xE0 | (cp >> 12) as u8, 0x80 | ((cp >> 6) & 0x3F) as u8, 0x80 | (cp & 0x3F) as u8]);
     } else {
-        out.extend_from_slice(&[
-            0xF0 | (cp >> 18) as u8,
-            0x80 | ((cp >> 12) & 0x3F) as u8,
-            0x80 | ((cp >> 6) & 0x3F) as u8,
-            0x80 | (cp & 0x3F) as u8,
-        ]);
+        out.extend_from_slice(&[0xF0 | (cp >> 18) as u8, 0x80 | ((cp >> 12) & 0x3F) as u8, 0x80 | ((cp >> 6) & 0x3F) as u8, 0x80 | (cp & 0x3F) as u8]);
     }
 }
 

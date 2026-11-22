@@ -177,7 +177,9 @@ enum Content {
     Doc(Doc),
     Image,
     Folder(FolderSummary),
-    Media { video: bool },
+    Media {
+        video: bool,
+    },
     Handler,
     Basic(Option<Note>),
     Pdf(pdf_view::PdfView),
@@ -351,12 +353,7 @@ impl PreviewPane {
         let content = match &self.content {
             Content::Doc(d) => doc_capacity(d),
             Content::Image => 0,
-            Content::Folder(f) => {
-                f.entries.capacity() * size_of::<preview::FolderItem>()
-                    + f.entries.iter().map(|e| e.name.capacity()).sum::<usize>()
-                    + f.types.capacity() * size_of::<(String, u64)>()
-                    + f.types.iter().map(|(t, _)| t.capacity()).sum::<usize>()
-            }
+            Content::Folder(f) => f.entries.capacity() * size_of::<preview::FolderItem>() + f.entries.iter().map(|e| e.name.capacity()).sum::<usize>() + f.types.capacity() * size_of::<(String, u64)>() + f.types.iter().map(|(t, _)| t.capacity()).sum::<usize>(),
             Content::Basic(None) if self.image.is_some() => 0,
             Content::Basic(Some(Note::Shortcut(target))) => target.capacity(),
             Content::Pdf(pdf) => pdf.retained_bytes(),
@@ -381,18 +378,20 @@ impl PreviewPane {
     }
 
     fn effective_wrap(&self, d: &Doc) -> bool {
-        if d.mono { self.look.wrap.unwrap_or(d.wrap) } else { true }
+        if d.mono {
+            self.look.wrap.unwrap_or(d.wrap)
+        } else {
+            true
+        }
     }
 }
 
 fn doc_capacity(d: &Doc) -> usize {
-    d.text.capacity() + d.runs.capacity() * size_of::<Run>() + d.paras.capacity() * size_of::<preview::Para>()
+    d.text.capacity()
+        + d.runs.capacity() * size_of::<Run>()
+        + d.paras.capacity() * size_of::<preview::Para>()
         + d.tables.capacity() * size_of::<preview::Table>()
-        + d.tables.iter().map(|t| {
-            t.align.capacity() * size_of::<preview::Alignment>()
-                + t.rows.capacity() * size_of::<Vec<Range<u32>>>()
-                + t.rows.iter().map(|r| r.capacity() * size_of::<Range<u32>>()).sum::<usize>()
-        }).sum::<usize>()
+        + d.tables.iter().map(|t| t.align.capacity() * size_of::<preview::Alignment>() + t.rows.capacity() * size_of::<Vec<Range<u32>>>() + t.rows.iter().map(|r| r.capacity() * size_of::<Range<u32>>()).sum::<usize>()).sum::<usize>()
 }
 
 fn ui(px: f32, sc: f32, bold: bool) -> FontStyle {
@@ -593,11 +592,12 @@ fn layout_doc<B: TextBackend>(g: &mut Gfx<B>, d: &Doc, width: f32, (sc, mono): (
             flow.table(index, k as u32, quote_indent..width, (lh, base), &mut y, &mut out);
             continue;
         }
-        let indent = quote_indent + match block {
-            Block::Item { depth } => ((depth as f32 * 18.0 + 4.0) * sc).round(),
-            Block::Code if !d.mono => (8.0 * sc).round(),
-            _ => 0.0,
-        };
+        let indent = quote_indent
+            + match block {
+                Block::Item { depth } => ((depth as f32 * 18.0 + 4.0) * sc).round(),
+                Block::Code if !d.mono => (8.0 * sc).round(),
+                _ => 0.0,
+            };
         let mut number = num;
         flow.lines(para.runs.clone(), indent..width, wrap, &mut out.pieces, |pieces, end| {
             out.lines.push(VLine { y, h: lh, base, block, num: number, para: k as u32, pieces });
@@ -656,7 +656,11 @@ impl App {
     }
 
     pub(super) fn preview_area(&self) -> Rect {
-        if self.preview.state.visible { self.preview.r.pane } else { Rect::default() }
+        if self.preview.state.visible {
+            self.preview.r.pane
+        } else {
+            Rect::default()
+        }
     }
 
     fn show_inspector(&mut self, on: bool) {
@@ -1030,11 +1034,7 @@ impl App {
         };
         let range = self.grain_range(spot, grain);
         let p = &mut self.preview.pick;
-        *p = if self.mods.shift && grain == Grain::Char {
-            Pick { anchor: p.anchor, caret: spot, from: (p.anchor, p.anchor), grain }
-        } else {
-            Pick { anchor: range.0, caret: range.1, from: range, grain }
-        };
+        *p = if self.mods.shift && grain == Grain::Char { Pick { anchor: p.anchor, caret: spot, from: (p.anchor, p.anchor), grain } } else { Pick { anchor: range.0, caret: range.1, from: range, grain } };
         self.drag = Drag::Preview { hit: PaneHit::Body, start: 0.0, size: 0.0 };
     }
 
@@ -1098,7 +1098,11 @@ impl App {
 
     pub(super) fn layout_preview(&mut self) {
         fn sized(saved: f32, room: f32, min: f32, s: impl Fn(f32) -> f32) -> f32 {
-            if saved == HALF { (room / 2.0).round().clamp(min.min(room), s(MAX_SIDE)) } else { s(saved) }
+            if saved == HALF {
+                (room / 2.0).round().clamp(min.min(room), s(MAX_SIDE))
+            } else {
+                s(saved)
+            }
         }
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();

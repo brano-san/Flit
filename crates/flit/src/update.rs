@@ -360,7 +360,6 @@ fn running_exe() -> Result<PathBuf, String> {
     Ok(fs::canonicalize(&exe).unwrap_or(exe))
 }
 
-
 fn run<P: NetworkPlatform + SystemPlatform>(jobs: Receiver<UpdateRequest>, tx: Sender<Reply>, wake: Wake, cancel: Arc<AtomicBool>, metrics: bool) {
     let send = |r: Reply| {
         let _ = tx.send(r);
@@ -370,9 +369,7 @@ fn run<P: NetworkPlatform + SystemPlatform>(jobs: Receiver<UpdateRequest>, tx: S
     for job in jobs {
         let UpdateRequest::Install(release) = job else {
             if let UpdateRequest::Check { manual } = job {
-                if let Some(event) = check_request(manual, packaged, || {
-                    checked(manual, check::<P>(metrics), || running_exe().ok().and_then(|exe| managed(&exe)))
-                }) {
+                if let Some(event) = check_request(manual, packaged, || checked(manual, check::<P>(metrics), || running_exe().ok().and_then(|exe| managed(&exe)))) {
                     send(Reply::Ui(event));
                 }
             }
@@ -436,10 +433,7 @@ impl UpdateWorker {
         let (tx, events) = unbounded();
         let cancel = Arc::new(AtomicBool::new(false));
         let flag = cancel.clone();
-        std::thread::Builder::new()
-            .name("flit-update".into())
-            .spawn(move || run::<P>(rx, tx, wake, flag, metrics))
-            .map_err(|e| PlatformError::new(-1, format!("cannot start flit-update: {e}")))?;
+        std::thread::Builder::new().name("flit-update".into()).spawn(move || run::<P>(rx, tx, wake, flag, metrics)).map_err(|e| PlatformError::new(-1, format!("cannot start flit-update: {e}")))?;
         Ok(Self { jobs, events, cancel })
     }
 

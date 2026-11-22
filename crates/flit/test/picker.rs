@@ -20,7 +20,8 @@ fn console_picker_paths_keep_unicode_and_handle_partial_writes() {
         let count = units.len().min(2);
         out.extend_from_slice(&units[..count]);
         Ok(count)
-    }).unwrap();
+    })
+    .unwrap();
     assert_eq!(out, format!("{path}\r\n").encode_utf16().collect::<Vec<_>>());
     assert_eq!(write_console_paths(&[FsPath::parse(path).unwrap()], |_| Ok(0)).unwrap_err().kind(), io::ErrorKind::WriteZero);
 }

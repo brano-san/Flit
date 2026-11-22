@@ -117,7 +117,9 @@ fn property_notifications_refresh_edges_without_a_move() {
         let state = if window == 10 { &[ATOMS.vertical][..] } else { &[] };
         Some(net_wm_state(state, ATOMS))
     };
-    let report = |id, sides| { edges.borrow_mut().insert(id, sides); };
+    let report = |id, sides| {
+        edges.borrow_mut().insert(id, sides);
+    };
     let property = |window, atom| PropertyNotifyEvent { window, atom, ..Default::default() };
     let (root, state, gtk, workarea, desktop) = (1, 101, 102, 103, 104);
     for (window, atom) in [(10, state), (10, state), (10, workarea), (1, state), (30, state)] {

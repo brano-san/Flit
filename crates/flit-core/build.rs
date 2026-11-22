@@ -122,10 +122,12 @@ fn load(dir: &Path) -> Result<Vec<(String, Entry)>, String> {
 }
 
 fn ident(key: &str) -> String {
-    key.split(['.', '_']).map(|p| {
-        let mut c = p.chars();
-        c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
-    }).collect()
+    key.split(['.', '_'])
+        .map(|p| {
+            let mut c = p.chars();
+            c.next().map(|f| f.to_ascii_uppercase().to_string() + c.as_str()).unwrap_or_default()
+        })
+        .collect()
 }
 
 fn lit(s: &str) -> String {
@@ -135,11 +137,14 @@ fn lit(s: &str) -> String {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("lang");
     println!("cargo:rerun-if-changed={}", root.display());
-    let langs: Vec<_> = LANGS.iter().map(|l| {
-        let dir = root.join(l);
-        println!("cargo:rerun-if-changed={}", dir.display());
-        load(&dir)
-    }).collect::<Result<_, _>>()?;
+    let langs: Vec<_> = LANGS
+        .iter()
+        .map(|l| {
+            let dir = root.join(l);
+            println!("cargo:rerun-if-changed={}", dir.display());
+            load(&dir)
+        })
+        .collect::<Result<_, _>>()?;
     let source = &langs[0];
     let mut seen = BTreeMap::new();
     for (k, _) in source {

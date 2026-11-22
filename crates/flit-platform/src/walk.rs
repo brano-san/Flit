@@ -32,15 +32,8 @@ const PATTERN: [bool; 4] = [false, true, true, false];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Phase {
-    Settled {
-        slices: u32,
-    },
-    Probing {
-        candidate: usize,
-        slice: usize,
-        base: f64,
-        probe: f64,
-    },
+    Settled { slices: u32 },
+    Probing { candidate: usize, slice: usize, base: f64, probe: f64 },
 }
 
 #[derive(Clone, Debug)]
@@ -60,11 +53,7 @@ pub struct Throttle {
 
 impl Throttle {
     pub fn new(media: Media, buffer: usize) -> Self {
-        Self::with_cores(
-            media,
-            std::thread::available_parallelism().map_or(1, |n| n.get()),
-            buffer,
-        )
+        Self::with_cores(media, std::thread::available_parallelism().map_or(1, |n| n.get()), buffer)
     }
 
     pub fn with_cores(media: Media, cores: usize, buffer: usize) -> Self {
@@ -75,32 +64,13 @@ impl Throttle {
             Media::Unknown => (2, ceiling.min(MODEST_CEILING)),
         };
         let threads = start.min(cores.max(1)).min(ceiling);
-        let seek_ceiling =
-            (media == Media::Spinning).then(|| SPINNING_CEILING.min(cores.max(2)).min(ceiling));
-        Self {
-            base: threads,
-            threads,
-            floor: 1,
-            ceiling,
-            seek_ceiling,
-            slow_start: true,
-            upward: true,
-            phase: Phase::Settled { slices: 0 },
-            latency: 0.0,
-            contended: 0,
-            trail: Vec::new(),
-        }
+        let seek_ceiling = (media == Media::Spinning).then(|| SPINNING_CEILING.min(cores.max(2)).min(ceiling));
+        Self { base: threads, threads, floor: 1, ceiling, seek_ceiling, slow_start: true, upward: true, phase: Phase::Settled { slices: 0 }, latency: 0.0, contended: 0, trail: Vec::new() }
     }
 
     pub fn fixed(threads: usize) -> Self {
         let threads = threads.max(1);
-        Self {
-            base: threads,
-            threads,
-            floor: threads,
-            ceiling: threads,
-            ..Self::with_cores(Media::Solid, 1, 1)
-        }
+        Self { base: threads, threads, floor: threads, ceiling: threads, ..Self::with_cores(Media::Solid, 1, 1) }
     }
 
     pub fn threads(&self) -> usize {
@@ -119,35 +89,18 @@ impl Throttle {
         if self.floor == self.ceiling || rate <= 0.0 {
             return self.threads;
         }
-        let cap = self
-            .seek_ceiling
-            .filter(|_| latency.max(self.latency) >= SEEK_SECS)
-            .unwrap_or(self.ceiling);
+        let cap = self.seek_ceiling.filter(|_| latency.max(self.latency) >= SEEK_SECS).unwrap_or(self.ceiling);
         self.phase = match self.phase {
             Phase::Settled { slices } => self.settled(slices, latency, cap),
-            Phase::Probing {
-                candidate,
-                slice,
-                base,
-                probe,
-            } => {
-                let (base, probe) = if PATTERN[slice] {
-                    (base, probe + rate)
-                } else {
-                    (base + rate, probe)
-                };
+            Phase::Probing { candidate, slice, base, probe } => {
+                let (base, probe) = if PATTERN[slice] { (base, probe + rate) } else { (base + rate, probe) };
                 if slice == 1 && candidate > self.base && probe > base * (1.0 + LEAP) {
                     self.leap(candidate, rate, cap)
                 } else {
                     match PATTERN.get(slice + 1) {
                         Some(&next) => {
                             self.threads = if next { candidate } else { self.base };
-                            Phase::Probing {
-                                candidate,
-                                slice: slice + 1,
-                                base,
-                                probe,
-                            }
+                            Phase::Probing { candidate, slice: slice + 1, base, probe }
                         }
                         None => self.decide(candidate, base, probe, cap),
                     }
@@ -180,11 +133,7 @@ impl Throttle {
             return Phase::Settled { slices: 0 };
         }
         self.contended = 0;
-        self.latency = if self.latency == 0.0 {
-            latency
-        } else {
-            self.latency + SMOOTHING * (latency - self.latency)
-        };
+        self.latency = if self.latency == 0.0 { latency } else { self.latency + SMOOTHING * (latency - self.latency) };
         if self.slow_start || slices + 1 >= HOLD {
             return self.probe(cap);
         }
@@ -192,27 +141,14 @@ impl Throttle {
     }
 
     fn probe(&mut self, cap: usize) -> Phase {
-        let step = if self.slow_start {
-            self.base
-        } else {
-            (self.base / STEP).max(1)
-        };
-        let candidate = if self.upward {
-            (self.base + step).min(cap)
-        } else {
-            self.base.saturating_sub(step).max(self.floor)
-        };
+        let step = if self.slow_start { self.base } else { (self.base / STEP).max(1) };
+        let candidate = if self.upward { (self.base + step).min(cap) } else { self.base.saturating_sub(step).max(self.floor) };
         if candidate == self.base {
             self.slow_start = false;
             self.upward = !self.upward;
             return Phase::Settled { slices: 0 };
         }
-        Phase::Probing {
-            candidate,
-            slice: 0,
-            base: 0.0,
-            probe: 0.0,
-        }
+        Phase::Probing { candidate, slice: 0, base: 0.0, probe: 0.0 }
     }
 
     fn leap(&mut self, candidate: usize, rate: f64, cap: usize) -> Phase {
@@ -224,12 +160,7 @@ impl Throttle {
         match self.probe(cap) {
             Phase::Probing { candidate, .. } => {
                 self.threads = candidate;
-                Phase::Probing {
-                    candidate,
-                    slice: 1,
-                    base: rate,
-                    probe: 0.0,
-                }
+                Phase::Probing { candidate, slice: 1, base: rate, probe: 0.0 }
             }
             settled => settled,
         }
@@ -307,8 +238,7 @@ impl<J, L> Pool<'_, J, L> {
             };
             let started = Instant::now();
             let batch = (self.list)(&job, &mut subdirs);
-            self.spread[bucket(started.elapsed().as_nanos() as u64)]
-                .fetch_add(1, Ordering::Relaxed);
+            self.spread[bucket(started.elapsed().as_nanos() as u64)].fetch_add(1, Ordering::Relaxed);
             self.pending.fetch_add(subdirs.len(), Ordering::AcqRel);
             for sub in subdirs.drain(..) {
                 let _ = self.jobs.send(sub);
@@ -321,10 +251,7 @@ impl<J, L> Pool<'_, J, L> {
     }
 
     fn spread(&self) -> Vec<u64> {
-        self.spread
-            .iter()
-            .map(|n| n.load(Ordering::Relaxed))
-            .collect()
+        self.spread.iter().map(|n| n.load(Ordering::Relaxed)).collect()
     }
 }
 
@@ -359,20 +286,8 @@ where
 {
     let (jobs, queue) = unbounded::<J>();
     let (out_tx, out_rx) = unbounded::<B>();
-    let gate = Gate {
-        threads: AtomicUsize::new(throttle.threads()),
-        over: AtomicBool::new(false),
-        lock: Mutex::new(()),
-        wake: Condvar::new(),
-    };
-    let pool = Pool {
-        list: &list,
-        gate,
-        pending: AtomicUsize::new(1),
-        spread: std::array::from_fn(|_| AtomicU64::new(0)),
-        jobs,
-        queue,
-    };
+    let gate = Gate { threads: AtomicUsize::new(throttle.threads()), over: AtomicBool::new(false), lock: Mutex::new(()), wake: Condvar::new() };
+    let pool = Pool { list: &list, gate, pending: AtomicUsize::new(1), spread: std::array::from_fn(|_| AtomicU64::new(0)), jobs, queue };
     let _ = pool.jobs.send(root);
     std::thread::scope(|s| {
         let pool = &pool;
@@ -380,11 +295,7 @@ where
         let mut grow = |upto: usize, out: &Sender<B>| {
             while spawned < upto {
                 let (k, out) = (spawned, out.clone());
-                if std::thread::Builder::new()
-                    .name(format!("flit-walk-{k}"))
-                    .spawn_scoped(s, move || pool.work(k, out))
-                    .is_err()
-                {
+                if std::thread::Builder::new().name(format!("flit-walk-{k}")).spawn_scoped(s, move || pool.work(k, out)).is_err() {
                     break;
                 }
                 spawned += 1;
@@ -400,11 +311,7 @@ where
             match out_rx.recv_timeout(due.saturating_duration_since(Instant::now())) {
                 Ok(batch) => {
                     done += 1;
-                    if !take(
-                        batch,
-                        done,
-                        done + pool.pending.load(Ordering::Relaxed) as u64,
-                    ) {
+                    if !take(batch, done, done + pool.pending.load(Ordering::Relaxed) as u64) {
                         pool.gate.close();
                     }
                 }

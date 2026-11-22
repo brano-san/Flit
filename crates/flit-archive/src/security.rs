@@ -81,7 +81,11 @@ pub(crate) fn preserve(from: &File, path: &Path) -> io::Result<()> {
         let inheritance = if control & SE_DACL_PROTECTED.0 != 0 { PROTECTED_DACL_SECURITY_INFORMATION } else { UNPROTECTED_DACL_SECURITY_INFORMATION };
         let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
         let written = unsafe { SetNamedSecurityInfoW(PCWSTR(wide.as_ptr()), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION | inheritance, None, None, Some(dacl), None) };
-        if written == ERROR_SUCCESS { Ok(()) } else { Err(io::Error::from_raw_os_error(written.0 as i32)) }
+        if written == ERROR_SUCCESS {
+            Ok(())
+        } else {
+            Err(io::Error::from_raw_os_error(written.0 as i32))
+        }
     });
     unsafe {
         let _ = LocalFree(Some(HLOCAL(descriptor.0)));

@@ -172,7 +172,11 @@ impl StripScroll {
     }
 
     pub fn hidden(&self, right: bool, n: usize) -> usize {
-        if right { n.saturating_sub(self.first + self.fit) } else { self.first.min(n) }
+        if right {
+            n.saturating_sub(self.first + self.fit)
+        } else {
+            self.first.min(n)
+        }
     }
 
     fn scroll(&mut self, right: bool, n: usize) {
@@ -181,7 +185,11 @@ impl StripScroll {
     }
 
     fn edge(&self, right: bool, n: usize) -> usize {
-        if right { (self.first + self.fit).min(n).saturating_sub(1) } else { self.first.min(n.saturating_sub(1)) }
+        if right {
+            (self.first + self.fit).min(n).saturating_sub(1)
+        } else {
+            self.first.min(n.saturating_sub(1))
+        }
     }
 }
 
@@ -579,7 +587,9 @@ impl App {
                 let clip = self.strip_clip(true);
                 Rect::new((x - self.tabs.strip.grab).clamp(clip.x, (clip.right() - t.0.w).max(clip.x)), t.0.y, t.0.w, t.0.h)
             })
-        } else { None };
+        } else {
+            None
+        };
         self.tab_out(torn.then_some((x, y)));
         if !on_strip {
             self.tabs.strip.hold = None;

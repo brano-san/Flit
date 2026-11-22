@@ -4,9 +4,13 @@ use flit_core::undo::Stamp;
 use flit_core::FsPath;
 use std::{
     collections::{HashMap, HashSet},
-    fs, io::{self, Read, Write},
+    fs,
+    io::{self, Read, Write},
     path::{Path, PathBuf},
-    sync::{LazyLock, Mutex, OnceLock, atomic::{AtomicU64, Ordering}},
+    sync::{
+        LazyLock, Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -26,8 +30,7 @@ pub fn set_recovery_reporter(report: impl Fn(String) + Send + Sync + 'static) {
 }
 
 pub fn is_stage_name(name: &[u8]) -> bool {
-    (name.starts_with(DELETE_PREFIX) && active_deletes().contains(name))
-        || (name.starts_with(b".flit-stage-") && name.ends_with(b".flit-partial"))
+    (name.starts_with(DELETE_PREFIX) && active_deletes().contains(name)) || (name.starts_with(b".flit-stage-") && name.ends_with(b".flit-partial"))
 }
 
 pub fn is_delete_name(name: &[u8]) -> bool {
@@ -67,7 +70,9 @@ impl Record {
         self.keep();
         let _ = fs::remove_file(self.log.with_extension("objects"));
         match fs::remove_file(&self.log) {
-            Ok(()) => { let _ = fs::remove_file(self.log.with_extension("restore")); }
+            Ok(()) => {
+                let _ = fs::remove_file(self.log.with_extension("restore"));
+            }
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => tracing::warn!(?error, record = ?self.log, "Flit could not remove a pending-delete record"),
         }
@@ -234,7 +239,11 @@ fn read(path: &Path, name: &str) -> Option<Saved> {
     let identity = (device, file);
     let format = bytes.get(..8)?;
     if format == DELETE_FORMAT {
-        let hidden = match *bytes.get(24)? { 0 => false, 1 => true, _ => return None };
+        let hidden = match *bytes.get(24)? {
+            0 => false,
+            1 => true,
+            _ => return None,
+        };
         let original = FsPath::parse_exact(bytes.get(25..)?)?;
         let staged = original.parent()?.join(&[DELETE_PREFIX, name.as_bytes()].concat());
         return (!staged.same(&original) && is_delete_name(staged.file_name())).then_some(Saved { staged, identity, original: Some((original, hidden)) });
@@ -250,14 +259,7 @@ fn read(path: &Path, name: &str) -> Option<Saved> {
     Some(Saved { staged: path, identity, original: None })
 }
 
-pub fn recover(
-    state: &Path,
-    live: impl Fn(u32) -> bool,
-    fs: FileSystem,
-    remove: impl Fn(&FsPath) -> io::Result<()>,
-    restore: impl Fn(&FsPath, &FsPath, bool) -> io::Result<()>,
-    reveal: impl Fn(&FsPath) -> io::Result<()>,
-) {
+pub fn recover(state: &Path, live: impl Fn(u32) -> bool, fs: FileSystem, remove: impl Fn(&FsPath) -> io::Result<()>, restore: impl Fn(&FsPath, &FsPath, bool) -> io::Result<()>, reveal: impl Fn(&FsPath) -> io::Result<()>) {
     let entries = match fs::read_dir(state.join("pending-deletes")) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return,
@@ -285,7 +287,11 @@ pub fn recover(
         let deleting = path.file_name().starts_with(DELETE_PREFIX);
         let result = match (fs.stamp)(&path) {
             Ok((stamp, _)) if !record.matches(stamp) => {
-                if deleting { Err(io::Error::from(io::ErrorKind::WouldBlock)) } else { Ok(()) }
+                if deleting {
+                    Err(io::Error::from(io::ErrorKind::WouldBlock))
+                } else {
+                    Ok(())
+                }
             }
             Ok((_, directory)) => {
                 let armed = record.log.with_extension("delete").is_file() && !record.log.with_extension("restore").is_file();

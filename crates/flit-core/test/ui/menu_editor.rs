@@ -121,7 +121,10 @@ fn the_layout_and_the_old_pins_round_trip_through_the_settings_file() {
     let text = settings::render(&a.setting_values(), &serde_json::Map::new(), None);
     let mut b = app();
     b.apply_doc(&settings::parse(&text));
-    assert_eq!((b.settings.opts.pins.clone(), b.settings.opts.menu.hidden.clone(), b.settings.opts.menu.order.clone(), b.settings.opts.menu.seen.clone(), b.settings.opts.menu.kind), (a.settings.opts.pins.clone(), a.settings.opts.menu.hidden.clone(), a.settings.opts.menu.order.clone(), a.settings.opts.menu.seen.clone(), 2));
+    assert_eq!(
+        (b.settings.opts.pins.clone(), b.settings.opts.menu.hidden.clone(), b.settings.opts.menu.order.clone(), b.settings.opts.menu.seen.clone(), b.settings.opts.menu.kind),
+        (a.settings.opts.pins.clone(), a.settings.opts.menu.hidden.clone(), a.settings.opts.menu.order.clone(), a.settings.opts.menu.seen.clone(), 2)
+    );
     assert!(text.contains("\"menu.edit_kind\": \"background\""));
     let old = settings::parse(r#"{ "menu.pins_folder": ["New › Folder"], "menu.someday": 1 }"#);
     let mut c = app();

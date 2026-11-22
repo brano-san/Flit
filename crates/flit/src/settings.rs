@@ -27,11 +27,18 @@ pub enum Job {
     SystemChanges(crate::system_changes::Action),
     ResolveLink(flit_platform::WindowId, flit_core::open::Open),
     #[cfg(target_os = "linux")]
-    Portal { on: bool, startup: bool },
+    Portal {
+        on: bool,
+        startup: bool,
+    },
 }
 
 pub enum Reply {
-    System { os: String, dates: (String, String), missing: Vec<flit_core::ui::MissingTool> },
+    System {
+        os: String,
+        dates: (String, String),
+        missing: Vec<flit_core::ui::MissingTool>,
+    },
     Changed(String),
     #[cfg(target_os = "linux")]
     TrayAvailable(bool),
@@ -41,12 +48,18 @@ pub enum Reply {
     DiskChanges(WindowId, u64, flit_core::disk_changes::Reply),
     ImportBackedUp(WindowId, Box<settings::ImportPlan>, Result<PathBuf, String>),
     Exported(Result<PathBuf, String>),
-    ExportExists { path: PathBuf, size: u64, modified: i64 },
+    ExportExists {
+        path: PathBuf,
+        size: u64,
+        modified: i64,
+    },
     CacheUsed(u64),
     IntegrationFailed(bool, String),
     WatchLimit(WatchLimit),
     SystemChanges(crate::system_changes::Reply),
-    SystemChangesUnavailable { notify: bool },
+    SystemChangesUnavailable {
+        notify: bool,
+    },
     ResolvedLink(flit_platform::WindowId, Option<crate::system_link::Link>),
     #[cfg(target_os = "linux")]
     Portal(bool, Result<Option<bool>, String>),
@@ -206,8 +219,7 @@ fn work<P: ProfilePlatform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<Thumb
                         reply(Reply::SystemChanges(crate::system_changes::run::<P>(action)));
                     } else {
                         use crate::system_changes::Action;
-                        let notify = matches!(action, Action::Undo | Action::Autostart { startup: false, .. }
-                            | Action::Protocol { startup: false, .. } | Action::RegisterArchive { startup: false });
+                        let notify = matches!(action, Action::Undo | Action::Autostart { startup: false, .. } | Action::Protocol { startup: false, .. } | Action::RegisterArchive { startup: false });
                         reply(Reply::SystemChangesUnavailable { notify });
                     }
                 }
@@ -349,8 +361,7 @@ pub fn autostart_change(before: &[Value], now: &[Value]) -> Option<crate::system
     let previous = flag(before, settings::AUTOSTART);
     let background = flag(now, settings::BACKGROUND).unwrap_or(false);
     let background_changed = flag(before, settings::BACKGROUND).is_some_and(|was| was != background);
-    (previous.map_or(on, |was| was != on) || (on && background_changed))
-        .then_some(crate::system_changes::Action::Autostart { on, startup: previous.is_none(), background })
+    (previous.map_or(on, |was| was != on) || (on && background_changed)).then_some(crate::system_changes::Action::Autostart { on, startup: previous.is_none(), background })
 }
 
 pub fn flag(values: &[Value], id: &str) -> Option<bool> {

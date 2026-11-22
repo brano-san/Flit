@@ -3,10 +3,7 @@ use crate::temp::Temp;
 use std::sync::mpsc;
 
 fn files(name: &str) -> Vec<(PathBuf, String)> {
-    [("plain", ""), (name, "Conditions=exec probe;")]
-        .into_iter()
-        .map(|(label, cond)| (Path::new("/actions").join(label), format!("[Nemo Action]\nName={label}\nExec=tool\nSelection=any\nExtensions=any;\n{cond}")))
-        .collect()
+    [("plain", ""), (name, "Conditions=exec probe;")].into_iter().map(|(label, cond)| (Path::new("/actions").join(label), format!("[Nemo Action]\nName={label}\nExec=tool\nSelection=any\nExtensions=any;\n{cond}"))).collect()
 }
 
 #[test]
@@ -21,7 +18,13 @@ fn opening_another_menu_while_a_condition_runs_shows_plain_actions_immediately()
     });
     let labels = |actions: &[Action]| {
         let (items, _) = menu(actions, &[], Path::new("/tmp"));
-        items.into_iter().filter_map(|item| match item { MenuItem::Command { label, .. } => Some(label), _ => None }).collect::<Vec<_>>()
+        items
+            .into_iter()
+            .filter_map(|item| match item {
+                MenuItem::Command { label, .. } => Some(label),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
     };
     assert_eq!(labels(&first), ["plain"]);
     checking.recv_timeout(Duration::from_secs(2)).unwrap();

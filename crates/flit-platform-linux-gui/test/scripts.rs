@@ -126,10 +126,13 @@ fn actions_are_grouped_by_where_they_come_from_and_kde_submenus_nest() {
     let actions = load(&[data, system], Some(&config), "ru_RU.UTF-8");
     let (entries, launches) = menu(&actions, &[item("/p/a.png", false, "image/png")], Path::new("/p"));
     assert_eq!(labels(&entries), ["Backup", "--", "Images > Изменить размер, Half", "Print it", "--", "Shrink", "--", "Edit in GIMP"]);
-    let runs: Vec<String> = launches.iter().map(|l| match l {
-        Launch::Command { runs, .. } => runs[0].0.join(" "),
-        _ => String::new(),
-    }).collect();
+    let runs: Vec<String> = launches
+        .iter()
+        .map(|l| match l {
+            Launch::Command { runs, .. } => runs[0].0.join(" "),
+            _ => String::new(),
+        })
+        .collect();
     assert_eq!(runs.len(), 6, "one launch per command, in menu order");
     assert!(runs[0].ends_with("Backup a.png"));
     assert_eq!(runs[1..], ["convert /p/a.png -resize 50% /p/a.png", "half /p/a.png", "lp /p/a.png", "shrink /p/a.png", "sh -c gimp '/p/a.png'"]);
@@ -169,15 +172,12 @@ fn nemo_menu_requires_every_dependency_and_condition() {
     }
 }
 
-
 fn nemo_with(text: &str, base: &Path, lang: &str, program: impl Fn(&str) -> bool, exec_ok: impl Fn(&str) -> bool, bus: impl Fn(&str) -> bool, setting: impl Fn(&str, &str) -> Option<String>) -> Option<Action> {
     nemo_action(text, base, lang).filter(|action| action.passes(program, exec_ok, bus, setting))
 }
 
 fn checked_setting(condition: &str, actual: &str) -> bool {
-    nemo_with(&format!("{NEMO}Conditions=gsettings org.example key{condition};"), Path::new("/actions"), "", |_| false, |_| false, |_| false, |schema, key| {
-        (schema == "org.example" && key == "key").then(|| actual.to_owned())
-    }).is_some()
+    nemo_with(&format!("{NEMO}Conditions=gsettings org.example key{condition};"), Path::new("/actions"), "", |_| false, |_| false, |_| false, |schema, key| (schema == "org.example" && key == "key").then(|| actual.to_owned())).is_some()
 }
 
 #[test]

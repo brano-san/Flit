@@ -72,9 +72,7 @@ fn gray_labels(app: &mut App) -> Vec<String> {
 }
 
 fn listed(app: &mut App) -> Vec<String> {
-    app.drain_effects()
-        .filter_map(|e| if let Effect::Provider { req: ProviderRequest::List { path, .. }, .. } = e { Some(path.display().into_owned()) } else { None })
-        .collect()
+    app.drain_effects().filter_map(|e| if let Effect::Provider { req: ProviderRequest::List { path, .. }, .. } = e { Some(path.display().into_owned()) } else { None }).collect()
 }
 
 #[test]
@@ -121,10 +119,7 @@ fn tab_menu_closes_other_left_and_right_tabs_and_remembers_them() {
     ev(&mut app, Event::MouseUp { x, y, button: MouseButton::Right });
     assert_eq!(app.tabs.cur, 2);
     let labels = menu_labels(&mut app);
-    assert_eq!(
-        labels,
-        ["Shift Tab Left", "Shift Tab Right", "Duplicate Tab", "Duplicate Tab To New Window", "Close Tab", "Close Other Tabs", "Close Left Tabs", "Close Right Tabs", "Close All Tabs", "Move tab to a new window", "Reopen closed tab"]
-    );
+    assert_eq!(labels, ["Shift Tab Left", "Shift Tab Right", "Duplicate Tab", "Duplicate Tab To New Window", "Close Tab", "Close Other Tabs", "Close Left Tabs", "Close Right Tabs", "Close All Tabs", "Move tab to a new window", "Reopen closed tab"]);
     assert_eq!(app.menu_owner, Some(Hit::Tab(2)));
     let (x0, y0) = tab_xy(&app, 0);
     ev(&mut app, Event::MouseDown { x: x0, y: y0, button: MouseButton::Right, clicks: 1 });
@@ -795,7 +790,6 @@ fn right_click_on_the_empty_strip_opens_new_tab_and_reopen() {
     assert_eq!(app.tabs().len(), tabs + 1, "New tab from the strip menu opens one");
 }
 
-
 fn many(n: usize, width: u32) -> App {
     let paths: Vec<String> = (0..n).map(|i| format!(r"C:\t{i:02}")).collect();
     let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
@@ -1131,14 +1125,13 @@ fn while_a_new_panel_opens_the_left_strip_stays_clear_of_the_window_buttons() {
 
 fn outlines(app: &App, g: &Gfx<crate::text::tests::Mono>, title: Rect) -> Vec<(Rect, u32)> {
     let sep = app.look.palette.base.separator.0;
-    let mut v: Vec<(Rect, u32)> = g
-        .dl
-        .instances
-        .iter()
-        .filter(|i| i.kind == crate::render::kind::SOLID && i.border > 0.0 && i.rect[2] > 20.0 && i.color & 0x00FF_FFFF == sep & 0x00FF_FFFF)
-        .filter(|i| i.rect[1] >= title.y && i.rect[1] < title.bottom() && i.rect[0] >= title.x && i.rect[0] < title.right())
-        .map(|i| (Rect::new(i.rect[0], i.rect[1], i.rect[2], i.rect[3]), i.color >> 24))
-        .collect();
+    let mut v: Vec<(Rect, u32)> =
+        g.dl.instances
+            .iter()
+            .filter(|i| i.kind == crate::render::kind::SOLID && i.border > 0.0 && i.rect[2] > 20.0 && i.color & 0x00FF_FFFF == sep & 0x00FF_FFFF)
+            .filter(|i| i.rect[1] >= title.y && i.rect[1] < title.bottom() && i.rect[0] >= title.x && i.rect[0] < title.right())
+            .map(|i| (Rect::new(i.rect[0], i.rect[1], i.rect[2], i.rect[3]), i.color >> 24))
+            .collect();
     v.sort_by(|a, b| a.0.x.total_cmp(&b.0.x));
     v
 }

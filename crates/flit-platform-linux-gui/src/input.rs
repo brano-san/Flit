@@ -71,31 +71,9 @@ const LETTER_KEYS: [KeyCode; 26] = [
     KeyCode::KeyZ,
 ];
 
-const NUMPAD_DIGITS: [KeyCode; 10] = [
-    KeyCode::Numpad0,
-    KeyCode::Numpad1,
-    KeyCode::Numpad2,
-    KeyCode::Numpad3,
-    KeyCode::Numpad4,
-    KeyCode::Numpad5,
-    KeyCode::Numpad6,
-    KeyCode::Numpad7,
-    KeyCode::Numpad8,
-    KeyCode::Numpad9,
-];
+const NUMPAD_DIGITS: [KeyCode; 10] = [KeyCode::Numpad0, KeyCode::Numpad1, KeyCode::Numpad2, KeyCode::Numpad3, KeyCode::Numpad4, KeyCode::Numpad5, KeyCode::Numpad6, KeyCode::Numpad7, KeyCode::Numpad8, KeyCode::Numpad9];
 
-const DIGIT_KEYS: [KeyCode; 10] = [
-    KeyCode::Digit0,
-    KeyCode::Digit1,
-    KeyCode::Digit2,
-    KeyCode::Digit3,
-    KeyCode::Digit4,
-    KeyCode::Digit5,
-    KeyCode::Digit6,
-    KeyCode::Digit7,
-    KeyCode::Digit8,
-    KeyCode::Digit9,
-];
+const DIGIT_KEYS: [KeyCode; 10] = [KeyCode::Digit0, KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9];
 
 pub(crate) fn key(physical: PhysicalKey, unmodified: &WinitKey) -> Key {
     let logical = match unmodified {

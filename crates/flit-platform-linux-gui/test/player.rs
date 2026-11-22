@@ -106,9 +106,12 @@ fn user_hlg_playback_honours_the_preview_controls_and_releases_the_file() {
     let path = Path::new(&directory).join("user-hlg.mp4").canonicalize().unwrap();
     let (tx, events) = std::sync::mpsc::channel();
     let start = Start { path: path.clone(), video: true, gen: 8, volume: Some(0.0), area: Some((1280, 720)), every: frame_interval(None) };
-    let player = crate::mpv::Embedded::start(start, Arc::new(move |e| {
-        let _ = tx.send(e);
-    }));
+    let player = crate::mpv::Embedded::start(
+        start,
+        Arc::new(move |e| {
+            let _ = tx.send(e);
+        }),
+    );
     let mut first = None;
     let mut frames = 0;
     let deadline = Instant::now() + Duration::from_secs(30);
@@ -129,7 +132,9 @@ fn user_hlg_playback_honours_the_preview_controls_and_releases_the_file() {
         let deadline = Instant::now() + Duration::from_secs(12);
         loop {
             match events.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("preview playback timed out") {
-                HostEvent::Frame(slot) => { slot.take(); }
+                HostEvent::Frame(slot) => {
+                    slot.take();
+                }
                 HostEvent::Media { position, duration, playing, .. } if duration > 0.0 && expected(position, duration, playing) => break duration,
                 HostEvent::Failed { message, .. } => panic!("{message}"),
                 _ => {}

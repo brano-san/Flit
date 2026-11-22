@@ -93,10 +93,13 @@ fn folder_view_rules_apply_to_network_and_picture_listings() {
     let mut a = app_at(r"C:\pictures");
     a.settings.opts.view_rules.pictures_min = 50;
     deliver(&mut a, &["one.jpg", "two.txt", "subfolder"]);
-    let (tab, ask, snap, cancel) = a.drain_effects().find_map(|e| match e {
-        Effect::ViewPictures { tab, ask, snap, cancel } => Some((tab, ask, snap, cancel)),
-        _ => None,
-    }).unwrap();
+    let (tab, ask, snap, cancel) = a
+        .drain_effects()
+        .find_map(|e| match e {
+            Effect::ViewPictures { tab, ask, snap, cancel } => Some((tab, ask, snap, cancel)),
+            _ => None,
+        })
+        .unwrap();
     let share = crate::ui::count_pictures(&snap.listing, &cancel, ask).unwrap();
     a.on_picture_share(tab, ask, share);
     frame(&mut a);
@@ -450,7 +453,16 @@ fn bench_layouts_on_100k() {
     }
     times.sort();
     let at = |q: f64| ms(times[((times.len() - 1) as f64 * q) as usize]);
-    eprintln!("BENCH Grid scroll over 100k thumbnails, frame CPU  median {:.3} ms  p99 {:.3} ms  max {:.3} ms  ({} thumbnails in the atlas, {} quads, {} on screen, scrolled to {})", at(0.5), at(0.99), at(1.0), gfx.thumbs.len(), gfx.dl.instances.len(), thumb_quads(&gfx), app.tab().scroll);
+    eprintln!(
+        "BENCH Grid scroll over 100k thumbnails, frame CPU  median {:.3} ms  p99 {:.3} ms  max {:.3} ms  ({} thumbnails in the atlas, {} quads, {} on screen, scrolled to {})",
+        at(0.5),
+        at(0.99),
+        at(1.0),
+        gfx.thumbs.len(),
+        gfx.dl.instances.len(),
+        thumb_quads(&gfx),
+        app.tab().scroll
+    );
 }
 
 fn thumb_quads(gfx: &Gfx<Mono>) -> usize {

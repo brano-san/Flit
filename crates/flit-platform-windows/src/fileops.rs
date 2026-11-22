@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use windows::core::{s, HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_CANCELLED;
 use windows::Win32::Storage::FileSystem::{
-    CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, SetFileAttributesW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_READONLY, FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES, MOVEFILE_REPLACE_EXISTING, MOVE_FILE_FLAGS,
+    CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, SetFileAttributesW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL, FILE_ATTRIBUTE_READONLY,
+    FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES, MOVEFILE_REPLACE_EXISTING, MOVE_FILE_FLAGS,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::UI::Shell::*;
@@ -206,9 +206,7 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
     };
     paths.into_iter().try_for_each(shell_addressable)?;
     match op {
-        FileOp::Rename { name, .. } | FileOp::NewFolder { name, .. } | FileOp::NewFile { name, .. } if name.ends_with(b".") || name.ends_with(b" ") || name.is_empty() => {
-            Err(PlatformError::new(-1, S::ErrorsEngineBadName.en()))
-        }
+        FileOp::Rename { name, .. } | FileOp::NewFolder { name, .. } | FileOp::NewFile { name, .. } if name.ends_with(b".") || name.ends_with(b" ") || name.is_empty() => Err(PlatformError::new(-1, S::ErrorsEngineBadName.en())),
         _ => Ok(()),
     }
 }
@@ -328,7 +326,28 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::LinkAs { .. } | FileOp::PasteLinkAs { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) | FileOp::Segments { .. } | FileOp::Dedup { .. } | FileOp::RestoreDedup { .. } => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. }
+        | FileOp::LinkAs { .. }
+        | FileOp::PasteLinkAs { .. }
+        | FileOp::Restore(_)
+        | FileOp::Paste { .. }
+        | FileOp::PasteLink { .. }
+        | FileOp::Purge(_)
+        | FileOp::EmptyBin
+        | FileOp::NewStream { .. }
+        | FileOp::Flatten(_)
+        | FileOp::FolderIcon { .. }
+        | FileOp::Archive(_)
+        | FileOp::InstallFonts(_)
+        | FileOp::LockScreen(_)
+        | FileOp::SetAccess { .. }
+        | FileOp::Access(_)
+        | FileOp::SetAttributes { .. }
+        | FileOp::PasteDropped { .. }
+        | FileOp::GrantAccess(_)
+        | FileOp::Segments { .. }
+        | FileOp::Dedup { .. }
+        | FileOp::RestoreDedup { .. } => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -372,7 +391,11 @@ fn flags(op: &FileOp) -> FILEOPERATION_FLAGS {
         FileOp::Copy { items, dest } if duplicates(items, dest) => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR | FOF_RENAMEONCOLLISION,
         _ => FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR,
     };
-    if quiet(op) { flags | FOF_SILENT } else { flags }
+    if quiet(op) {
+        flags | FOF_SILENT
+    } else {
+        flags
+    }
 }
 
 fn cancelled(op: &FileOp) -> PlatformError {
@@ -498,9 +521,7 @@ pub(crate) fn direct_restore(recycled: &FsPath, original: &FsPath) -> bool {
 }
 
 pub(crate) fn restore_checked(recycled: &FsPath, original: &FsPath) -> bool {
-    recycle::is_original(recycled, original)
-        && original.parent().is_some_and(|dir| std::fs::create_dir_all(std_path(&dir)).is_ok())
-        && direct_restore(recycled, original)
+    recycle::is_original(recycled, original) && original.parent().is_some_and(|dir| std::fs::create_dir_all(std_path(&dir)).is_ok()) && direct_restore(recycled, original)
 }
 
 fn direct(op: &FileOp) -> (Vec<(FsPath, FsPath)>, Option<FileOp>) {
@@ -534,7 +555,11 @@ const SETTABLE: u32 = 0x1 | 0x2 | 0x4 | 0x20 | 0x100 | 0x1000 | 0x2000;
 pub(crate) fn win_attributes(now: u32, set: u32, clear: u32) -> u32 {
     let bits = |a: u32| (if a & attr::READONLY != 0 { FILE_ATTRIBUTE_READONLY.0 } else { 0 }) | if a & attr::HIDDEN != 0 { FILE_ATTRIBUTE_HIDDEN.0 } else { 0 };
     let next = ((now | bits(set)) & !bits(clear)) & SETTABLE;
-    if next == 0 { FILE_ATTRIBUTE_NORMAL.0 } else { next }
+    if next == 0 {
+        FILE_ATTRIBUTE_NORMAL.0
+    } else {
+        next
+    }
 }
 
 fn zone_stream(item: &FsPath) -> PathBuf {
@@ -661,7 +686,9 @@ impl FileOps for ShellCom {
     fn decode_local_ansi(&self, bytes: &[u8]) -> Option<String> {
         use windows::Win32::Globalization::{CP_ACP, MB_ERR_INVALID_CHARS, MultiByteToWideChar};
         let size = unsafe { MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, None) };
-        if size <= 0 { return None; }
+        if size <= 0 {
+            return None;
+        }
         let mut wide = vec![0; size as usize];
         let decoded = unsafe { MultiByteToWideChar(CP_ACP, MB_ERR_INVALID_CHARS, bytes, Some(&mut wide)) };
         (decoded == size).then(|| String::from_utf16_lossy(&wide))
@@ -795,9 +822,10 @@ impl Recycle for SystemRecycle {
         if !std_path(path).symlink_metadata().is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
             return Err(cancelled(&op));
         }
-        out.items.into_iter().find_map(|(original, backup)| {
-            (same_path(&original, path) && recycle::is_original(&backup, path)).then_some(backup)
-        }).or_else(|| stamp.and_then(|stamp| recycle::find_recycled(path, stamp)))
+        out.items
+            .into_iter()
+            .find_map(|(original, backup)| (same_path(&original, path) && recycle::is_original(&backup, path)).then_some(backup))
+            .or_else(|| stamp.and_then(|stamp| recycle::find_recycled(path, stamp)))
             .ok_or_else(|| PlatformError::new(-1, S::ErrorsOpsUndoFailed.en()))
     }
 }

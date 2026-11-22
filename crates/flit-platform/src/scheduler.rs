@@ -141,11 +141,8 @@ impl Pool {
             if healthy >= self.target {
                 return;
             }
-            let next = self.lanes.iter()
-                .filter(|(_, lane)| lane.running < lane.limit)
-                .filter_map(|(key, lane)| lane.latest().map(|(priority, seq)| (priority, seq, key)))
-                .max_by_key(|&(priority, seq, _)| (priority, seq))
-                .map(|(priority, _, key)| (priority, key.clone()));
+            let next =
+                self.lanes.iter().filter(|(_, lane)| lane.running < lane.limit).filter_map(|(key, lane)| lane.latest().map(|(priority, seq)| (priority, seq, key))).max_by_key(|&(priority, seq, _)| (priority, seq)).map(|(priority, _, key)| (priority, key.clone()));
             let Some((priority, key)) = next else { return };
             let idle = self.workers.iter().find_map(|(&id, w)| w.running.is_none().then_some(id));
             let id = if let Some(id) = idle {
@@ -187,10 +184,19 @@ impl Pool {
     }
 
     fn next_check(&self) -> Option<Instant> {
-        self.workers.values().filter_map(|w| w.running.as_ref()).filter(|r| !r.retiring).map(|r| {
-            let stall = r.progress.latest(r.since) + self.stalled;
-            if r.logged { stall } else { stall.min(r.since + self.slow) }
-        }).min()
+        self.workers
+            .values()
+            .filter_map(|w| w.running.as_ref())
+            .filter(|r| !r.retiring)
+            .map(|r| {
+                let stall = r.progress.latest(r.since) + self.stalled;
+                if r.logged {
+                    stall
+                } else {
+                    stall.min(r.since + self.slow)
+                }
+            })
+            .min()
     }
 
     fn receive(&mut self, message: Message) -> bool {

@@ -90,11 +90,19 @@ pub(crate) fn resolve_name(raw: &str) -> Option<String> {
 }
 
 pub(crate) fn thumbnail_flags(not_local: bool) -> SIIGBF {
-    if not_local { SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY } else { SIIGBF_THUMBNAILONLY }
+    if not_local {
+        SIIGBF_THUMBNAILONLY | SIIGBF_INCACHEONLY
+    } else {
+        SIIGBF_THUMBNAILONLY
+    }
 }
 
 pub(crate) fn icon_flags(not_local: bool) -> SIIGBF {
-    if not_local { SIIGBF_ICONONLY | SIIGBF_INCACHEONLY } else { SIIGBF_ICONONLY }
+    if not_local {
+        SIIGBF_ICONONLY | SIIGBF_INCACHEONLY
+    } else {
+        SIIGBF_ICONONLY
+    }
 }
 
 pub(crate) fn recent_worthy(path: &FsPath) -> bool {
@@ -117,10 +125,7 @@ unsafe fn dib_bits(hbm: HBITMAP) -> Option<(u32, u32, Vec<u8>)> {
     if w <= 0 || h <= 0 {
         return None;
     }
-    let mut bi = BITMAPINFO {
-        bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: w, biHeight: -h, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() },
-        ..Default::default()
-    };
+    let mut bi = BITMAPINFO { bmiHeader: BITMAPINFOHEADER { biSize: size_of::<BITMAPINFOHEADER>() as u32, biWidth: w, biHeight: -h, biPlanes: 1, biBitCount: 32, biCompression: BI_RGB.0, ..Default::default() }, ..Default::default() };
     let mut buf = vec![0u8; (w * h * 4) as usize];
     let dc = GetDC(None);
     let lines = GetDIBits(dc, hbm, 0, h as u32, Some(buf.as_mut_ptr() as _), &mut bi, DIB_RGB_COLORS);
@@ -383,10 +388,7 @@ impl Shell for ShellCom {
             },
             IconKind::Place => self.item_image(&req.path, req.size, SIIGBF_ICONONLY).or_else(|| self.generic_icon(&req.path, true, req.size)),
             IconKind::File => self.item_image(&req.path, req.size, icon_flags(crate::fs::not_local(&req.path))).or_else(|| self.generic_icon(&req.path, false, req.size)),
-            IconKind::CustomFolder => desktop_ini(&req.path)
-                .filter(|ini| ini.icon)
-                .and_then(|_| self.item_image(&req.path, req.size, SIIGBF_ICONONLY))
-                .or_else(|| self.generic_icon(&req.path, true, req.size)),
+            IconKind::CustomFolder => desktop_ini(&req.path).filter(|ini| ini.icon).and_then(|_| self.item_image(&req.path, req.size, SIIGBF_ICONONLY)).or_else(|| self.generic_icon(&req.path, true, req.size)),
             IconKind::Thumbnail => self.thumbnail(req),
             IconKind::Content | IconKind::LinkEmblem | IconKind::UnreadableEmblem => None,
         }?;
@@ -569,7 +571,9 @@ fn terminal_line(folder: &str, program: &str, args: &str, terminal: Option<&str>
 }
 
 fn run_terminal_command(dir: &FsPath, argv: &[String], terminal: Option<&str>) -> Option<Command> {
-    if argv.is_empty() { return None; }
+    if argv.is_empty() {
+        return None;
+    }
     let script = argv.iter().map(|arg| format!("'{}'", arg.replace('\'', "''"))).collect::<Vec<_>>().join(" ");
     let utf16: Vec<u8> = format!("& {script}").encode_utf16().flat_map(u16::to_le_bytes).collect();
     let command = flit_core::update::base64_encode(&utf16);
@@ -604,7 +608,25 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
         },
         Launch::RunInTerminal { program } => run_in_terminal(program, terminal).into_iter().collect(),
         Launch::RunInTerminalCommand { dir, argv } => run_terminal_command(dir, argv, terminal).into_iter().collect(),
-        Launch::Eject(_) | Launch::Unmount(_) | Launch::Mount(_) | Launch::Unlock { .. } | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::ConnectAndSaveServer(_) | Launch::ConnectNetwork { .. } | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } | Launch::Execute(_) | Launch::Display(_) | Launch::Print(_) | Launch::FileManager(_) | Launch::Command { .. } | Launch::Wallpaper(_) => Vec::new(),
+        Launch::Eject(_)
+        | Launch::Unmount(_)
+        | Launch::Mount(_)
+        | Launch::Unlock { .. }
+        | Launch::MapDrive(_)
+        | Launch::Disconnect(_)
+        | Launch::ConnectServer(_)
+        | Launch::ConnectAndSaveServer(_)
+        | Launch::ConnectNetwork { .. }
+        | Launch::Reveal { .. }
+        | Launch::ChooseApp { .. }
+        | Launch::SetDefault { .. }
+        | Launch::Custom { .. }
+        | Launch::Execute(_)
+        | Launch::Display(_)
+        | Launch::Print(_)
+        | Launch::FileManager(_)
+        | Launch::Command { .. }
+        | Launch::Wallpaper(_) => Vec::new(),
     }
 }
 

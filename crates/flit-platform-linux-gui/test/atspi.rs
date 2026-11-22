@@ -21,7 +21,9 @@ fn button_layout_signals_preserve_empty_strings_and_ignore_other_settings() {
 
 #[test]
 fn button_layout_changes_arrive_from_a_private_portal_bus_including_no_buttons() {
-    if !tool("dbus-daemon") || !tool("dbus-send") { return; }
+    if !tool("dbus-daemon") || !tool("dbus-send") {
+        return;
+    }
     let mut daemon = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
     let mut address = String::new();
     BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
@@ -29,9 +31,17 @@ fn button_layout_changes_arrive_from_a_private_portal_bus_including_no_buttons()
     let address = address.trim().to_owned();
     let (tx, rx) = crossbeam_channel::unbounded();
     let bus = address.clone();
-    let watcher = std::thread::spawn(move || watch_settings(&bus, &|_| {}, &|_| {}, &move |change| { let _ = tx.send(change); }));
+    let watcher = std::thread::spawn(move || {
+        watch_settings(&bus, &|_| {}, &|_| {}, &move |change| {
+            let _ = tx.send(change);
+        })
+    });
     let emit = |value: &str| {
-        assert!(Command::new("dbus-send").args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", &format!("string:{GNOME_WM}"), "string:button-layout", &format!("variant:string:{value}")]).status().unwrap().success());
+        assert!(Command::new("dbus-send")
+            .args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", &format!("string:{GNOME_WM}"), "string:button-layout", &format!("variant:string:{value}")])
+            .status()
+            .unwrap()
+            .success());
     };
     let until = Instant::now() + Duration::from_secs(10);
     let mut heard = None;
@@ -49,7 +59,9 @@ fn button_layout_changes_arrive_from_a_private_portal_bus_including_no_buttons()
 
 #[test]
 fn the_private_settings_read_reply_unwraps_both_variants_and_preserves_empty() {
-    if !tool("dbus-daemon") { return; }
+    if !tool("dbus-daemon") {
+        return;
+    }
     let mut daemon = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
     let mut address = String::new();
     BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
@@ -234,11 +246,8 @@ fn tool(name: &str) -> bool {
 }
 
 fn gdbus(address: &str, enabled: bool) {
-    let status = Command::new("gdbus")
-        .args(["call", "--address", address, "--dest", BUS_NAME, "--object-path", BUS_PATH, "--method", "org.freedesktop.DBus.Properties.Set", "org.a11y.Status", "IsEnabled", &format!("<{enabled}>")])
-        .stdout(Stdio::null())
-        .status()
-        .unwrap();
+    let status =
+        Command::new("gdbus").args(["call", "--address", address, "--dest", BUS_NAME, "--object-path", BUS_PATH, "--method", "org.freedesktop.DBus.Properties.Set", "org.a11y.Status", "IsEnabled", &format!("<{enabled}>")]).stdout(Stdio::null()).status().unwrap();
     assert!(status.success());
 }
 
@@ -261,15 +270,7 @@ fn a_real_atspi_client_walks_invokes_and_hears_focus() {
         eprintln!("skipped: python3-gi with Atspi 2.0 is missing");
         return;
     }
-    let mut daemon = Command::new("dbus-daemon")
-        .args(["--session", "--nofork", "--print-address=1"])
-        .env_remove("DISPLAY")
-        .env_remove("WAYLAND_DISPLAY")
-        .env("GSETTINGS_BACKEND", "memory")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap();
+    let mut daemon = Command::new("dbus-daemon").args(["--session", "--nofork", "--print-address=1"]).env_remove("DISPLAY").env_remove("WAYLAND_DISPLAY").env("GSETTINGS_BACKEND", "memory").stdout(Stdio::piped()).stderr(Stdio::null()).spawn().unwrap();
     let mut address = String::new();
     BufReader::new(daemon.stdout.take().unwrap()).read_line(&mut address).unwrap();
     let _daemon = Kill(daemon);
@@ -396,10 +397,7 @@ fn a_changed_gnome_double_click_time_is_heard_live_and_other_settings_are_not() 
     let bus = address.clone();
     let watcher = std::thread::spawn(move || watch_settings(&bus, &|_| {}, &move |ms| tx.send(ms).unwrap(), &|_| {}));
     let signal = |ns: &str, key: &str, value: &str| {
-        Command::new("dbus-send")
-            .args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", &format!("string:{ns}"), &format!("string:{key}"), value])
-            .status()
-            .unwrap()
+        Command::new("dbus-send").args([&format!("--bus={address}"), "--type=signal", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Settings.SettingChanged", &format!("string:{ns}"), &format!("string:{key}"), value]).status().unwrap()
     };
     let mut heard = None;
     let until = Instant::now() + Duration::from_secs(10);

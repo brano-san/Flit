@@ -56,11 +56,10 @@ fn business_onedrive_places_follow_personal_and_keep_preferences_when_renamed() 
     let personal = loc(r"C:\Users\u\OneDrive");
     let work = loc(r"D:\Sync\Work");
     let other = loc(r"D:\Sync\Lab");
-    let mut sb = Sidebar { places: Arc::new(Places {
-        folders: vec![(KnownFolder::OneDrive, personal.clone()), (KnownFolder::Music, loc(r"C:\Music"))],
-        business_onedrive: vec![("Компания".into(), work.clone()), ("OneDrive - Lab".into(), other.clone())],
+    let mut sb = Sidebar {
+        places: Arc::new(Places { folders: vec![(KnownFolder::OneDrive, personal.clone()), (KnownFolder::Music, loc(r"C:\Music"))], business_onedrive: vec![("Компания".into(), work.clone()), ("OneDrive - Lab".into(), other.clone())], ..Default::default() }),
         ..Default::default()
-    }), ..Default::default() };
+    };
     let items = sb.section_items(Section::Places);
     let rows: Vec<_> = items.iter().skip(1).take(3).map(|it| (it.label.as_str(), &it.loc, it.glyph)).collect();
     assert_eq!(rows, [("OneDrive", &personal, G_CLOUD), ("OneDrive - Компания", &work, G_CLOUD), ("OneDrive - Lab", &other, G_CLOUD)]);
@@ -82,11 +81,7 @@ fn business_onedrive_places_follow_personal_and_keep_preferences_when_renamed() 
 fn business_onedrive_without_personal_uses_the_onedrive_position_and_its_own_icon() {
     let work = loc(r"D:\Sync\Work");
     let mut app = App::new(Persisted::default(), Vec::new(), 0, false, 1.0, (900, 400), Instant::now());
-    app.set_places(Arc::new(Places {
-        folders: vec![(KnownFolder::Desktop, loc(r"C:\Users\u\Desktop")), (KnownFolder::Home, loc(r"C:\Users\u"))],
-        business_onedrive: vec![("Example".into(), work.clone())],
-        ..Default::default()
-    }));
+    app.set_places(Arc::new(Places { folders: vec![(KnownFolder::Desktop, loc(r"C:\Users\u\Desktop")), (KnownFolder::Home, loc(r"C:\Users\u"))], business_onedrive: vec![("Example".into(), work.clone())], ..Default::default() }));
     let sb = &app.nav.sidebar;
     let items = sb.section_items(Section::Places);
     let labels: Vec<_> = items.iter().map(|it| it.label.as_str()).collect();
@@ -152,10 +147,13 @@ fn opening_an_unmounted_volume_asks_the_platform_to_mount_it() {
     app.drain_effects().for_each(drop);
     let i = app.nav.sidebar.items.iter().position(|it| it.loc.path() == &dev).unwrap();
     app.open_side_item(i, false, Instant::now());
-    let mounts: Vec<_> = app.drain_effects().filter_map(|e| match e {
-        Effect::Provider { req: ProviderRequest::Launch { launch: Launch::Mount(d), .. }, .. } => Some(d),
-        _ => None,
-    }).collect();
+    let mounts: Vec<_> = app
+        .drain_effects()
+        .filter_map(|e| match e {
+            Effect::Provider { req: ProviderRequest::Launch { launch: Launch::Mount(d), .. }, .. } => Some(d),
+            _ => None,
+        })
+        .collect();
     assert_eq!(mounts, [dev]);
 }
 
@@ -352,8 +350,7 @@ fn recent_files_and_folders_have_their_own_capped_group() {
 fn section_toggles(app: &mut App) -> Vec<String> {
     click(empty_area(app), app, MouseButton::Right);
     let m = menu(app);
-    labels(&m.menu)
-        .into_iter().filter(|l| Section::ALL.iter().any(|s| l.trim_end_matches(" *") == s.title())).collect()
+    labels(&m.menu).into_iter().filter(|l| Section::ALL.iter().any(|s| l.trim_end_matches(" *") == s.title())).collect()
 }
 
 fn shown_headers(app: &App) -> Vec<String> {
@@ -865,10 +862,7 @@ fn without_wsl_distributions_the_sections_menu_has_no_wsl_toggle() {
 fn dragging_a_recent_folder_or_file_onto_bookmarks_pins_it() {
     let mut app = app_with_places();
     let mut places = (*app.nav.sidebar.places).clone();
-    places.recent = vec![
-        Recent { name: "proj".into(), target: FsPath::parse(r"C:\r\proj").unwrap(), dir: true, at: 2 },
-        Recent { name: "notes.txt".into(), target: FsPath::parse(r"C:\r\notes.txt").unwrap(), dir: false, at: 1 },
-    ];
+    places.recent = vec![Recent { name: "proj".into(), target: FsPath::parse(r"C:\r\proj").unwrap(), dir: true, at: 2 }, Recent { name: "notes.txt".into(), target: FsPath::parse(r"C:\r\notes.txt").unwrap(), dir: false, at: 1 }];
     app.set_places(Arc::new(places));
     app.frame(&mut Gfx::new(Mono, 1024), Instant::now());
     app.drain_effects().for_each(drop);

@@ -80,11 +80,7 @@ pub(super) enum Listed {
 
 pub(super) fn is_url(text: &str) -> bool {
     let Some((scheme, rest)) = text.split_once(':') else { return false };
-    scheme.len() >= 2
-        && !rest.is_empty()
-        && scheme.starts_with(|c: char| c.is_ascii_alphabetic())
-        && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
-        && !NOT_URLS.iter().any(|s| scheme.eq_ignore_ascii_case(s))
+    scheme.len() >= 2 && !rest.is_empty() && scheme.starts_with(|c: char| c.is_ascii_alphabetic()) && scheme.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.')) && !NOT_URLS.iter().any(|s| scheme.eq_ignore_ascii_case(s))
 }
 
 pub(super) fn split_command(text: &str) -> (String, String) {
@@ -199,9 +195,7 @@ fn remembered_address(text: &str) -> Option<std::borrow::Cow<'_, str>> {
     if matches!(crate::redact::passwords(text), std::borrow::Cow::Borrowed(_)) {
         return Some(std::borrow::Cow::Borrowed(text));
     }
-    super::network::saved_address(text)
-        .filter(|address| matches!(crate::redact::passwords(address), std::borrow::Cow::Borrowed(_)))
-        .map(std::borrow::Cow::Owned)
+    super::network::saved_address(text).filter(|address| matches!(crate::redact::passwords(address), std::borrow::Cow::Borrowed(_))).map(std::borrow::Cow::Owned)
 }
 
 pub(super) fn ready(p: &mut Probe) -> bool {

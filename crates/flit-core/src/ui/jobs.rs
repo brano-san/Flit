@@ -56,22 +56,25 @@ impl ConflictReview {
     }
 
     fn visible_rows(&self) -> Vec<usize> {
-        let blocked: HashSet<_> = self.conflicts.iter().zip(&self.choices)
-            .filter(|(conflict, choice)| review_merge(conflict) && **choice != 0)
-            .map(|(conflict, _)| (&conflict.source, &conflict.target)).collect();
+        let blocked: HashSet<_> = self.conflicts.iter().zip(&self.choices).filter(|(conflict, choice)| review_merge(conflict) && **choice != 0).map(|(conflict, _)| (&conflict.source, &conflict.target)).collect();
         if blocked.is_empty() {
             return (0..self.conflicts.len()).collect();
         }
-        self.conflicts.iter().enumerate().filter(|(_, conflict)| {
-            let mut parents = conflict.source.parent().zip(conflict.target.parent());
-            while let Some((source, target)) = parents {
-                if blocked.contains(&(&source, &target)) {
-                    return false;
+        self.conflicts
+            .iter()
+            .enumerate()
+            .filter(|(_, conflict)| {
+                let mut parents = conflict.source.parent().zip(conflict.target.parent());
+                while let Some((source, target)) = parents {
+                    if blocked.contains(&(&source, &target)) {
+                        return false;
+                    }
+                    parents = source.parent().zip(target.parent());
                 }
-                parents = source.parent().zip(target.parent());
-            }
-            true
-        }).map(|(row, _)| row).collect()
+                true
+            })
+            .map(|(row, _)| row)
+            .collect()
     }
 
     fn controls(&self) -> impl Iterator<Item = Control> + '_ {
@@ -608,20 +611,11 @@ impl App {
             return;
         }
         let Some((id, conflicts)) = self.dialogs.conflict_batches.pop_front() else { return };
-        let bulk = |folders| std::iter::once(S::UiConflictPerItem.t().to_owned())
-            .chain(REVIEW_CHOICES.iter().map(|&choice| review_label(choice, folders))).collect();
+        let bulk = |folders| std::iter::once(S::UiConflictPerItem.t().to_owned()).chain(REVIEW_CHOICES.iter().map(|&choice| review_label(choice, folders))).collect();
         let review = ConflictReview::new(conflicts);
-        let mut controls = vec![
-            Control::choice(S::UiConflictAllFiles.t(), bulk(false), 0),
-            Control::choice(S::UiConflictAllFolders.t(), bulk(true), 0),
-        ];
+        let mut controls = vec![Control::choice(S::UiConflictAllFiles.t(), bulk(false), 0), Control::choice(S::UiConflictAllFolders.t(), bulk(true), 0)];
         controls.extend(review.controls());
-        self.dialogs.form = Some(Form::new(
-            super::archive::Kind::ConflictTable { id, review },
-            S::UiConflictReviewTitle.t(),
-            controls,
-            vec![S::ArchiveOk.t(), S::UiButtonCancel.t()],
-        ));
+        self.dialogs.form = Some(Form::new(super::archive::Kind::ConflictTable { id, review }, S::UiConflictReviewTitle.t(), controls, vec![S::ArchiveOk.t(), S::UiButtonCancel.t()]));
     }
 
     pub(super) fn conflict_table_changed(&mut self, index: usize) {
@@ -673,10 +667,15 @@ impl App {
             form.say(S::UiConflictChooseActions.t(), true);
             return Some(form);
         }
-        let answers = review.conflicts.iter().zip(&review.choices).map(|(c, &choice)| {
-            let actions = review_actions(c);
-            actions.get(choice).copied().unwrap_or_else(|| actions[review_default(c)])
-        }).collect();
+        let answers = review
+            .conflicts
+            .iter()
+            .zip(&review.choices)
+            .map(|(c, &choice)| {
+                let actions = review_actions(c);
+                actions.get(choice).copied().unwrap_or_else(|| actions[review_default(c)])
+            })
+            .collect();
         if let Some(job) = self.job_mut(id) {
             job.asking = false;
             job.ctl.answer_conflicts(answers);
@@ -1157,7 +1156,13 @@ impl App {
             let checked = (matches!(ask, Ask::Conflict { .. }) && !ask.too_large()) || can_delete_instead(ask);
             let policies = policy.iter().filter(|&&p| p).count();
             let buttons = policy.len() - policies - usize::from(elevating);
-            let row_h = if elevating { s(58.0) } else if policies > 0 { s(BUTTON_H) + s(10.0) } else { 0.0 };
+            let row_h = if elevating {
+                s(58.0)
+            } else if policies > 0 {
+                s(BUTTON_H) + s(10.0)
+            } else {
+                0.0
+            };
             let dh = row_h
                 + match ask {
                     Ask::Conflict { .. } if ask.too_large() => s(168.0),
@@ -1376,7 +1381,14 @@ impl App {
             let (more, cancel, pause) = (Jobs::more_rect(row, s), Jobs::cancel_rect(row, s), Jobs::pause_rect(row, s));
             let status = j.status();
             let sw = g.measure(&status, small);
-            let title_end = if j.can_pause() { pause.x } else if running { cancel.x } else { more.x } - s(8.0) - sw;
+            let title_end = if j.can_pause() {
+                pause.x
+            } else if running {
+                cancel.x
+            } else {
+                more.x
+            } - s(8.0)
+                - sw;
             let pause_glyph = if j.ctl.is_paused() { G_PLAY } else { G_PAUSE };
             let mt = g.metrics(font);
             let title_y = (row.y + s(6.0) + (s(24.0) + mt.ascent - mt.descent) / 2.0).round();
@@ -1478,7 +1490,10 @@ impl App {
                 (S::UiConflictTitle.t().into(), lines)
             }
             Some(Ask::Failure { id, failure: f }) => {
-                let op = self.ops.jobs.list.iter().find(|j| j.id == *id).and_then(|j| match &j.kind { JobKind::File(op) => Some(op), JobKind::Git { .. } => None });
+                let op = self.ops.jobs.list.iter().find(|j| j.id == *id).and_then(|j| match &j.kind {
+                    JobKind::File(op) => Some(op),
+                    JobKind::Git { .. } => None,
+                });
                 let folder = f.path.parent().map(|p| p.display().into_owned()).unwrap_or_default();
                 let hint = if f.fatal { S::UiFailureFullHint.t().to_owned() } else { crate::tr!(S::UiFailureWhere, folder = folder) };
                 let title = if f.fatal { S::UiFailureFullTitle.t().to_owned() } else { failure_title(op, quoted(&f.path)) };
@@ -1502,7 +1517,9 @@ impl App {
                 };
                 (S::UiConfirmDelete.t().into(), vec![text, S::UiConfirmNoteUndo.t().into()])
             }
-            Some(Ask::ReplaceExport { path, existing }) => (crate::tr!(S::UiExportReplaceTitle, name = quoted(path)), vec![crate::tr!(S::UiExportReplace, folder = path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line(S::UiConflictExisting, existing, offset, &self.style)]),
+            Some(Ask::ReplaceExport { path, existing }) => {
+                (crate::tr!(S::UiExportReplaceTitle, name = quoted(path)), vec![crate::tr!(S::UiExportReplace, folder = path.parent().map(|p| quoted(&p)).unwrap_or_default()), meta_line(S::UiConflictExisting, existing, offset, &self.style)])
+            }
             Some(Ask::ExtensionChange(name)) => (S::UiOpsExtensionTitle.t().into(), vec![crate::tr!(S::UiOpsExtensionWarning, name = name)]),
             Some(Ask::Restore { session, dump }) => {
                 let title = if *session { S::UiSessionRestoreTitle } else { S::UiSessionCrashTitle };
@@ -1602,11 +1619,17 @@ fn review_label(choice: Resolve, merge: bool) -> String {
         Resolve::Replace => S::UiButtonReplace,
         Resolve::Skip => S::UiButtonSkip,
         _ => S::UiConflictRenameIncoming,
-    }.t().to_owned()
+    }
+    .t()
+    .to_owned()
 }
 
 fn review_default(conflict: &Conflict) -> usize {
-    if review_merge(conflict) { 0 } else { review_actions(conflict).len() - 1 }
+    if review_merge(conflict) {
+        0
+    } else {
+        review_actions(conflict).len() - 1
+    }
 }
 
 fn review_merge(conflict: &Conflict) -> bool {

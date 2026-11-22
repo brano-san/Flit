@@ -9,9 +9,7 @@ pub(super) fn isolate(c: &mut Command) {
         fs::write(&path, "").unwrap();
         path
     });
-    c.env("GIT_CONFIG_GLOBAL", empty).env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "Ann").env("GIT_AUTHOR_EMAIL", "ann@example.com")
-        .env("GIT_COMMITTER_NAME", "Ann").env("GIT_COMMITTER_EMAIL", "ann@example.com");
+    c.env("GIT_CONFIG_GLOBAL", empty).env("GIT_CONFIG_NOSYSTEM", "1").env("GIT_AUTHOR_NAME", "Ann").env("GIT_AUTHOR_EMAIL", "ann@example.com").env("GIT_COMMITTER_NAME", "Ann").env("GIT_COMMITTER_EMAIL", "ann@example.com");
 }
 
 #[test]
@@ -19,7 +17,11 @@ fn sync_pulls_before_pushing_and_keeps_the_push_upstream_fallback() {
     let mut calls = Vec::new();
     let result = sync(&mut |args| {
         calls.push(args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        if args == ["push"] { Err("fatal: The current branch topic/x has no upstream branch.".into()) } else { Ok(()) }
+        if args == ["push"] {
+            Err("fatal: The current branch topic/x has no upstream branch.".into())
+        } else {
+            Ok(())
+        }
     });
     assert_eq!(result, Ok(()));
     assert_eq!(calls, [vec!["pull"], vec!["push"], vec!["push", "--set-upstream", "origin", "HEAD"]]);
@@ -41,7 +43,11 @@ fn sync_reports_push_rejection_without_retrying_as_a_new_upstream() {
     let mut calls = Vec::new();
     let result = sync(&mut |args| {
         calls.push(args.iter().map(|s| s.to_string()).collect::<Vec<_>>());
-        if args == ["push"] { Err("error: failed to push some refs".into()) } else { Ok(()) }
+        if args == ["push"] {
+            Err("error: failed to push some refs".into())
+        } else {
+            Ok(())
+        }
     });
     assert_eq!(result, Err("error: failed to push some refs".into()));
     assert_eq!(calls, [vec!["pull"], vec!["push"]]);
@@ -227,11 +233,7 @@ fn git_cancellation_allows_git_to_remove_its_index_lock() {
         use std::os::windows::process::CommandExt;
         use windows::Win32::System::Threading::DETACHED_PROCESS;
         if std::env::var_os("FLIT_GIT_CANCEL_TEST_CHILD").is_none() {
-            let child = Command::new(std::env::current_exe().unwrap())
-                .args(["--exact", "git::tests::git_cancellation_allows_git_to_remove_its_index_lock", "--nocapture"])
-                .env("FLIT_GIT_CANCEL_TEST_CHILD", "1")
-                .creation_flags(DETACHED_PROCESS.0)
-                .output().unwrap();
+            let child = Command::new(std::env::current_exe().unwrap()).args(["--exact", "git::tests::git_cancellation_allows_git_to_remove_its_index_lock", "--nocapture"]).env("FLIT_GIT_CANCEL_TEST_CHILD", "1").creation_flags(DETACHED_PROCESS.0).output().unwrap();
             assert!(child.status.success(), "{}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
             assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
             return;
@@ -285,11 +287,7 @@ fn git_cancellation_escalates_if_the_group_ignores_sigterm() {
 
 #[test]
 fn abort_restores_each_conflicted_sequence_and_refuses_a_different_operation() {
-    for (tag, kind, start) in [
-        ("merge", git::Sequence::Merge, "merge"),
-        ("rebase", git::Sequence::Rebase, "rebase"),
-        ("pick", git::Sequence::CherryPick, "cherry-pick"),
-    ] {
+    for (tag, kind, start) in [("merge", git::Sequence::Merge, "merge"), ("rebase", git::Sequence::Rebase, "rebase"), ("pick", git::Sequence::CherryPick, "cherry-pick")] {
         let t = temp(&format!("abort {tag} папка"));
         let r = &t.0;
         sh(r, &["init", "-q"]);
@@ -337,17 +335,20 @@ fn sequence_markers_belong_to_the_worktree_git_directory() {
     let w = r.join("linked");
     let (_, gitdir) = discover(&w).unwrap();
     assert!(w.join(".git").is_file());
-    for (marker, kind, directory) in [
-        ("MERGE_HEAD", git::Sequence::Merge, false),
-        ("rebase-merge", git::Sequence::Rebase, true),
-        ("rebase-apply", git::Sequence::Rebase, true),
-        ("CHERRY_PICK_HEAD", git::Sequence::CherryPick, false),
-    ] {
+    for (marker, kind, directory) in [("MERGE_HEAD", git::Sequence::Merge, false), ("rebase-merge", git::Sequence::Rebase, true), ("rebase-apply", git::Sequence::Rebase, true), ("CHERRY_PICK_HEAD", git::Sequence::CherryPick, false)] {
         let p = gitdir.join(marker);
-        if directory { fs::create_dir(&p).unwrap(); } else { fs::write(&p, output(r, &["rev-parse", "HEAD"]).unwrap().stdout).unwrap(); }
+        if directory {
+            fs::create_dir(&p).unwrap();
+        } else {
+            fs::write(&p, output(r, &["rev-parse", "HEAD"]).unwrap().stdout).unwrap();
+        }
         assert_eq!(status(&w, false, &mut Cache::default()).unwrap().sequence, Some(kind));
         assert!(status(r, false, &mut Cache::default()).unwrap().sequence.is_none());
-        if directory { fs::remove_dir(&p).unwrap(); } else { fs::remove_file(&p).unwrap(); }
+        if directory {
+            fs::remove_dir(&p).unwrap();
+        } else {
+            fs::remove_file(&p).unwrap();
+        }
     }
     assert!(status(&w, false, &mut Cache::default()).unwrap().sequence.is_none());
 }

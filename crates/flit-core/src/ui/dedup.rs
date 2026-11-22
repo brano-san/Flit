@@ -13,9 +13,7 @@ impl App {
         let selected = self.selected_items();
         let tab = self.tab();
         let Some(view) = &tab.view else { return self.status(S::DedupSelect.t()) };
-        if selected.len() < 2 || tab.view_loc.provider() != ProviderId::Local || tab.view_loc.is_recycle_bin() || self.archive_view().is_some()
-            || selected.iter().any(|&n| view.listing().entries[n as usize].is_dir())
-        {
+        if selected.len() < 2 || tab.view_loc.provider() != ProviderId::Local || tab.view_loc.is_recycle_bin() || self.archive_view().is_some() || selected.iter().any(|&n| view.listing().entries[n as usize].is_dir()) {
             return self.status(S::DedupSelect.t());
         }
         let keep_index = view.focus.filter(|i| selected.contains(i)).unwrap_or(selected[0]);

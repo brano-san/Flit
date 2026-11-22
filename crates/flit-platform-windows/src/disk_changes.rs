@@ -39,17 +39,25 @@ pub fn read(root: &FsPath, filter: &Filter, cancelled: &dyn Fn() -> bool) -> Res
     let mut buf = vec![0u8; BYTES];
     let mask = (if filter.created { CREATE } else { 0 }) | (if filter.deleted { DELETE } else { 0 }) | (if filter.renamed { OLD_NAME | NEW_NAME } else { 0 });
     while next < journal.NextUsn && mask != 0 {
-        if cancelled() { return Err(Error::Cancelled); }
+        if cancelled() {
+            return Err(Error::Cancelled);
+        }
         let input = READ_USN_JOURNAL_DATA_V0 { StartUsn: next, ReasonMask: mask | CLOSE, ReturnOnlyOnClose: 0, Timeout: 0, BytesToWaitFor: 0, UsnJournalID: journal.UsnJournalID };
         let mut got = 0;
         unsafe { DeviceIoControl(handle.0, FSCTL_READ_USN_JOURNAL, Some(&input as *const _ as _), size_of::<READ_USN_JOURNAL_DATA_V0>() as u32, Some(buf.as_mut_ptr().cast()), buf.len() as u32, Some(&mut got), None) }.map_err(failure)?;
-        let Some(page) = buf.get(..got as usize) else { return Err(Error::Failed(S::DiskChangesJournalUnavailable.en().into())); };
-        let Some((cursor, records)) = page.split_first_chunk::<8>() else { return Err(Error::Failed(S::DiskChangesJournalUnavailable.en().into())); };
+        let Some(page) = buf.get(..got as usize) else {
+            return Err(Error::Failed(S::DiskChangesJournalUnavailable.en().into()));
+        };
+        let Some((cursor, records)) = page.split_first_chunk::<8>() else {
+            return Err(Error::Failed(S::DiskChangesJournalUnavailable.en().into()));
+        };
         let after = i64::from_le_bytes(*cursor);
         for record in crate::mft::usn_records(records).take_while(|r| r.usn < journal.NextUsn) {
             reports.push(&record);
         }
-        if after <= next { break; }
+        if after <= next {
+            break;
+        }
         next = after;
     }
     Ok(reports.finish())
@@ -88,12 +96,7 @@ impl<'a> Rows<'a> {
         if label.is_empty() || !label.to_lowercase().contains(&self.text) {
             return;
         }
-        let possible = [
-            (CREATE, self.filter.created, ChangeKind::Created),
-            (DELETE, self.filter.deleted, ChangeKind::Deleted),
-            (OLD_NAME, self.filter.renamed, ChangeKind::RenameFrom),
-            (NEW_NAME, self.filter.renamed, ChangeKind::RenameTo),
-        ];
+        let possible = [(CREATE, self.filter.created, ChangeKind::Created), (DELETE, self.filter.deleted, ChangeKind::Deleted), (OLD_NAME, self.filter.renamed, ChangeKind::RenameFrom), (NEW_NAME, self.filter.renamed, ChangeKind::RenameTo)];
         for (mask, enabled, kind) in possible {
             if !enabled || mask & fresh == 0 {
                 continue;

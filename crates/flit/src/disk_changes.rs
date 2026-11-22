@@ -7,11 +7,7 @@ pub fn run(req: Request) -> Reply {
     match req {
         Request::Read { root, filter, elevated, ctl } => {
             #[cfg(windows)]
-            let report = if elevated {
-                flit_platform_windows::disk_changes::read_elevated(&root, &filter, &|| ctl.is_cancelled())
-            } else {
-                flit_platform_windows::disk_changes::read(&root, &filter, &|| ctl.is_cancelled())
-            };
+            let report = if elevated { flit_platform_windows::disk_changes::read_elevated(&root, &filter, &|| ctl.is_cancelled()) } else { flit_platform_windows::disk_changes::read(&root, &filter, &|| ctl.is_cancelled()) };
             #[cfg(not(windows))]
             let report = {
                 let _ = (root, filter, elevated, ctl);
@@ -23,7 +19,9 @@ pub fn run(req: Request) -> Reply {
             let write = || {
                 let target = std_path(&path);
                 let text = report.csv();
-                if ctl.is_cancelled() { return Err(Error::Cancelled); }
+                if ctl.is_cancelled() {
+                    return Err(Error::Cancelled);
+                }
                 let mut file = File::create_new(&target).map_err(error)?;
                 let result = file.write_all(text.as_bytes()).and_then(|()| file.sync_data()).map_err(error);
                 if result.is_err() {

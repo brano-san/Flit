@@ -39,11 +39,7 @@ impl Atlas {
         if pw > self.size {
             return None;
         }
-        let fit = self
-            .shelves
-            .iter_mut()
-            .filter(|s| s.h >= ph && s.h <= ph + ph / 4 + 1 && s.x + pw <= self.size)
-            .min_by_key(|s| s.h);
+        let fit = self.shelves.iter_mut().filter(|s| s.h >= ph && s.h <= ph + ph / 4 + 1 && s.x + pw <= self.size).min_by_key(|s| s.h);
         let shelf = match fit {
             Some(s) => s,
             None => {

@@ -29,11 +29,7 @@ impl HdrColor {
             v if v == MFVideoTransFunc_HLG.0 as u32 => true,
             _ => return None,
         };
-        let peak_nits = [MF_MT_MAX_LUMINANCE_LEVEL, MF_MT_MAX_MASTERING_LUMINANCE]
-            .into_iter()
-            .filter_map(|key| kind.GetUINT32(&key).ok())
-            .find(|value| (100..=10000).contains(value))
-            .unwrap_or(1000) as f32;
+        let peak_nits = [MF_MT_MAX_LUMINANCE_LEVEL, MF_MT_MAX_MASTERING_LUMINANCE].into_iter().filter_map(|key| kind.GetUINT32(&key).ok()).find(|value| (100..=10000).contains(value)).unwrap_or(1000) as f32;
         let full_range = kind.GetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE).ok() == Some(MFNominalRange_0_255.0 as u32);
         Some(Self { hlg, peak_nits, full_range })
     }
@@ -103,15 +99,7 @@ unsafe fn output_type(input: &IMFMediaType, subtype: &GUID) -> Result<IMFMediaTy
     let output = MFCreateMediaType()?;
     input.CopyAllItems(&output)?;
     let (w, h) = dimensions(input)?;
-    for attr in [
-        MF_MT_CUSTOM_VIDEO_PRIMARIES,
-        MF_MT_MIN_MASTERING_LUMINANCE,
-        MF_MT_MAX_MASTERING_LUMINANCE,
-        MF_MT_MAX_LUMINANCE_LEVEL,
-        MF_MT_MAX_FRAME_AVERAGE_LUMINANCE_LEVEL,
-        MF_MT_VIDEO_CHROMA_SITING,
-        MF_MT_YUV_MATRIX,
-    ] {
+    for attr in [MF_MT_CUSTOM_VIDEO_PRIMARIES, MF_MT_MIN_MASTERING_LUMINANCE, MF_MT_MAX_MASTERING_LUMINANCE, MF_MT_MAX_LUMINANCE_LEVEL, MF_MT_MAX_FRAME_AVERAGE_LUMINANCE_LEVEL, MF_MT_VIDEO_CHROMA_SITING, MF_MT_YUV_MATRIX] {
         output.DeleteItem(&attr)?;
     }
     output.SetGUID(&MF_MT_SUBTYPE, subtype)?;
@@ -202,18 +190,18 @@ unsafe fn upload(buffer: &IMFMediaBuffer, input: &IMFMediaType, mapper: &mut Ton
     let mut data = std::ptr::null_mut();
     let mut len = 0;
     buffer.Lock(&mut data, None, Some(&mut len))?;
-    let result = if stride < width * 2 || u64::from(stride) * u64::from(height + height.div_ceil(2)) > u64::from(len) {
-        Err(MF_E_BUFFERTOOSMALL.into())
-    } else {
-        mapper.upload(width, height, data.cast(), stride)
-    };
+    let result = if stride < width * 2 || u64::from(stride) * u64::from(height + height.div_ceil(2)) > u64::from(len) { Err(MF_E_BUFFERTOOSMALL.into()) } else { mapper.upload(width, height, data.cast(), stride) };
     buffer.Unlock()?;
     result
 }
 
 impl State {
     fn take_passthrough(&mut self) -> Option<IMFSample> {
-        if self.input.as_ref()?.color.is_none() { self.pending.take() } else { None }
+        if self.input.as_ref()?.color.is_none() {
+            self.pending.take()
+        } else {
+            None
+        }
     }
 
     unsafe fn convert(&mut self, fallback_device: &ID3D11Device) -> Result<IMFSample> {
@@ -241,15 +229,7 @@ impl State {
         };
         let color = input.color.ok_or(MF_E_INVALIDMEDIATYPE)?;
         gpu.mapper.render(&source, subresource, (&target, slice), color.hlg, color.peak_nits, color.full_range)?;
-        for attr in [
-            MFSampleExtension_Discontinuity,
-            MFSampleExtension_CleanPoint,
-            MFSampleExtension_Interlaced,
-            MFSampleExtension_BottomFieldFirst,
-            MFSampleExtension_RepeatFirstField,
-            MFSampleExtension_SingleField,
-            MFSampleExtension_DerivedFromTopField,
-        ] {
+        for attr in [MFSampleExtension_Discontinuity, MFSampleExtension_CleanPoint, MFSampleExtension_Interlaced, MFSampleExtension_BottomFieldFirst, MFSampleExtension_RepeatFirstField, MFSampleExtension_SingleField, MFSampleExtension_DerivedFromTopField] {
             if let Ok(value) = sample.GetUINT32(&attr) {
                 result.SetUINT32(&attr, value)?;
             } else {
@@ -307,26 +287,14 @@ impl IMFTransform_Impl for Effect_Impl {
     fn GetInputStreamInfo(&self, id: u32, info: *mut MFT_INPUT_STREAM_INFO) -> Result<()> {
         stream(id)?;
         unsafe {
-            *info.as_mut().ok_or(E_POINTER)? = MFT_INPUT_STREAM_INFO {
-                dwFlags: (MFT_INPUT_STREAM_WHOLE_SAMPLES.0
-                    | MFT_INPUT_STREAM_SINGLE_SAMPLE_PER_BUFFER.0
-                    | MFT_INPUT_STREAM_FIXED_SAMPLE_SIZE.0
-                    | MFT_INPUT_STREAM_HOLDS_BUFFERS.0) as u32,
-                ..Default::default()
-            };
+            *info.as_mut().ok_or(E_POINTER)? = MFT_INPUT_STREAM_INFO { dwFlags: (MFT_INPUT_STREAM_WHOLE_SAMPLES.0 | MFT_INPUT_STREAM_SINGLE_SAMPLE_PER_BUFFER.0 | MFT_INPUT_STREAM_FIXED_SAMPLE_SIZE.0 | MFT_INPUT_STREAM_HOLDS_BUFFERS.0) as u32, ..Default::default() };
         }
         Ok(())
     }
 
     fn GetOutputStreamInfo(&self, id: u32) -> Result<MFT_OUTPUT_STREAM_INFO> {
         stream(id)?;
-        Ok(MFT_OUTPUT_STREAM_INFO {
-            dwFlags: (MFT_OUTPUT_STREAM_WHOLE_SAMPLES.0
-                | MFT_OUTPUT_STREAM_SINGLE_SAMPLE_PER_BUFFER.0
-                | MFT_OUTPUT_STREAM_FIXED_SAMPLE_SIZE.0
-                | MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0) as u32,
-            ..Default::default()
-        })
+        Ok(MFT_OUTPUT_STREAM_INFO { dwFlags: (MFT_OUTPUT_STREAM_WHOLE_SAMPLES.0 | MFT_OUTPUT_STREAM_SINGLE_SAMPLE_PER_BUFFER.0 | MFT_OUTPUT_STREAM_FIXED_SAMPLE_SIZE.0 | MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0) as u32, ..Default::default() })
     }
 
     fn GetAttributes(&self) -> Result<IMFAttributes> {

@@ -88,13 +88,7 @@ impl Wl {
         // SAFETY: device is a live libwayland proxy bound at version >= 2.
         // The release request takes no arguments and is sent exactly once.
         unsafe {
-            wayland_sys::ffi_dispatch!(
-                wayland_client_handle(),
-                wl_proxy_marshal_array,
-                device.id().as_ptr().cast(),
-                wl_data_device::REQ_RELEASE_OPCODE.into(),
-                std::ptr::null_mut(),
-            );
+            wayland_sys::ffi_dispatch!(wayland_client_handle(), wl_proxy_marshal_array, device.id().as_ptr().cast(), wl_data_device::REQ_RELEASE_OPCODE.into(), std::ptr::null_mut(),);
         }
         self.state.sources.push(source);
         let delivered = self.queue.roundtrip(&mut self.state).is_ok();

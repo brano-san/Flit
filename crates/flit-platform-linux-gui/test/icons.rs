@@ -116,7 +116,28 @@ fn bench_an_icon_from_the_cache() {
 #[test]
 #[ignore]
 fn bench_twenty_distinct_lookups_in_the_system_theme() {
-    let names = ["folder", "text-x-generic", "image-x-generic", "image-png", "application-pdf", "audio-x-generic", "video-x-generic", "application-x-executable", "text-x-script", "application-zip", "package-x-generic", "x-office-document", "unknown", "user-home", "drive-harddisk", "user-trash", "text-html", "text-x-rust", "application-json", "no-such-icon"];
+    let names = [
+        "folder",
+        "text-x-generic",
+        "image-x-generic",
+        "image-png",
+        "application-pdf",
+        "audio-x-generic",
+        "video-x-generic",
+        "application-x-executable",
+        "text-x-script",
+        "application-zip",
+        "package-x-generic",
+        "x-office-document",
+        "unknown",
+        "user-home",
+        "drive-harddisk",
+        "user-trash",
+        "text-html",
+        "text-x-rust",
+        "application-json",
+        "no-such-icon",
+    ];
     let mut runs = Vec::new();
     let mut found = Vec::new();
     let theme = theme_name();

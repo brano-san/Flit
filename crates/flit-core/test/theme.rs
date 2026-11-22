@@ -69,15 +69,8 @@ fn tints_parse_and_print_their_settings_value() {
     }
 }
 
-const HC_BLACK: SystemColors = SystemColors {
-    window: Color::rgb(0x000000),
-    window_text: Color::rgb(0xFFFFFF),
-    highlight: Color::rgb(0x1AEBFF),
-    highlight_text: Color::rgb(0x000000),
-    hotlight: Color::rgb(0x75E9FC),
-    gray_text: Color::rgb(0x3FF23F),
-    btn_face: Color::rgb(0x000000),
-};
+const HC_BLACK: SystemColors =
+    SystemColors { window: Color::rgb(0x000000), window_text: Color::rgb(0xFFFFFF), highlight: Color::rgb(0x1AEBFF), highlight_text: Color::rgb(0x000000), hotlight: Color::rgb(0x75E9FC), gray_text: Color::rgb(0x3FF23F), btn_face: Color::rgb(0x000000) };
 
 #[test]
 fn high_contrast_maps_every_token_to_a_system_color() {

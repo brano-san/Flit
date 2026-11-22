@@ -21,11 +21,7 @@ impl App {
         let target = (at, self.tabs.items[at].id);
         let sc = self.scale;
         let s = |v: f32| (v * sc).round();
-        let status_h = if active && self.dialogs.picker.is_some() {
-            s(self.picker_height(area.w))
-        } else {
-            self.status_slide(if status_bar { s(STATUS_H) } else { 0.0 })
-        };
+        let status_h = if active && self.dialogs.picker.is_some() { s(self.picker_height(area.w)) } else { self.status_slide(if status_bar { s(STATUS_H) } else { 0.0 }) };
         let l = &mut self.layout;
         l.row_h = s(ROW_H);
         l.title = Rect::new(area.x, area.y, area.w, s(TAB_H));
@@ -218,8 +214,12 @@ impl App {
         if l.encoding.contains(x, y) {
             return Hit::Encoding;
         }
-        if l.git_bar[2].contains(x, y) { return Hit::GitAbort; }
-        if l.git_bar[3].contains(x, y) { return Hit::GitConflicts; }
+        if l.git_bar[2].contains(x, y) {
+            return Hit::GitAbort;
+        }
+        if l.git_bar[3].contains(x, y) {
+            return Hit::GitConflicts;
+        }
         if l.branch.contains(x, y) {
             return Hit::Branch;
         }

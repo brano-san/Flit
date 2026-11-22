@@ -77,8 +77,7 @@ fn release_notes(doc: &Json, version: &str, current: &str) -> String {
     }
     skipped.sort_by(|a, b| compare_versions(b.0, a.0).unwrap_or(Ordering::Equal));
     skipped.dedup_by(|a, b| compare_versions(a.0, b.0) == Some(Ordering::Equal));
-    std::iter::once((version, latest)).chain(skipped).filter(|(_, notes)| !notes.is_empty())
-        .map(|(tag, notes)| format!("## {tag}\n\n{notes}")).collect::<Vec<_>>().join("\n\n")
+    std::iter::once((version, latest)).chain(skipped).filter(|(_, notes)| !notes.is_empty()).map(|(tag, notes)| format!("## {tag}\n\n{notes}")).collect::<Vec<_>>().join("\n\n")
 }
 
 pub fn render_manifest(version: &str, notes: &str, pub_date: &str, platforms: &[(&str, String, String)]) -> String {

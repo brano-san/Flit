@@ -53,20 +53,26 @@ impl Item {
     }
 
     fn tree(menu: Option<&Menu>) -> Self {
-        let children = menu.map(|menu| {
-            let mut children = vec![Self::command(1, menu.new_window.clone(), Action::NewWindow)];
-            if !menu.pinned.is_empty() {
-                let pinned = menu.pinned.iter().enumerate().map(|(i, (loc, label))| Self::command(i as i32 + 4, label.clone(), Action::Bookmark(loc.clone()))).collect();
-                children.push(Self { id: 3, label: Some(menu.bookmarks.clone()), action: None, children: pinned });
-            }
-            children.push(Self::command(2, menu.quit.clone(), Action::Quit));
-            children
-        }).unwrap_or_default();
+        let children = menu
+            .map(|menu| {
+                let mut children = vec![Self::command(1, menu.new_window.clone(), Action::NewWindow)];
+                if !menu.pinned.is_empty() {
+                    let pinned = menu.pinned.iter().enumerate().map(|(i, (loc, label))| Self::command(i as i32 + 4, label.clone(), Action::Bookmark(loc.clone()))).collect();
+                    children.push(Self { id: 3, label: Some(menu.bookmarks.clone()), action: None, children: pinned });
+                }
+                children.push(Self::command(2, menu.quit.clone(), Action::Quit));
+                children
+            })
+            .unwrap_or_default();
         Self { id: 0, label: None, action: None, children }
     }
 
     fn find(&self, id: i32) -> Option<&Self> {
-        if id == self.id { Some(self) } else { self.children.iter().find_map(|n| n.find(id)) }
+        if id == self.id {
+            Some(self)
+        } else {
+            self.children.iter().find_map(|n| n.find(id))
+        }
     }
 
     fn props(&self, names: &[Arg]) -> Vec<(String, V)> {
@@ -87,7 +93,11 @@ impl Item {
     }
 
     fn clicked(&self, id: i32, event: &str) -> Option<Action> {
-        if event == "clicked" { self.find(id)?.action.clone() } else { None }
+        if event == "clicked" {
+            self.find(id)?.action.clone()
+        } else {
+            None
+        }
     }
 }
 
@@ -136,7 +146,6 @@ impl Activation {
     }
 }
 
-
 enum Event<'a> {
     Token(&'a str),
     Action(Action),
@@ -158,47 +167,49 @@ impl Export<'_> {
         let active = self.active;
         let reply = match (iface.to_bytes(), member.to_bytes(), values) {
             (b"org.freedesktop.DBus.Introspectable", b"Introspect", []) => Some(vec![V::S(if item { STATUS_XML } else { MENU_XML }.into())]),
-            (b"org.freedesktop.DBus.Properties", b"GetAll", [Arg::S(name)]) if name.as_bytes() == (if item { ITEM } else { MENU }).to_bytes() => {
-                Some(vec![V::Props(properties(item, active))])
-            }
-            (b"org.freedesktop.DBus.Properties", b"Get", [Arg::S(name), Arg::S(key)]) if name.as_bytes() == (if item { ITEM } else { MENU }).to_bytes() => {
-                properties(item, active).into_iter().find(|(k, _)| k == key).map(|(_, value)| vec![V::Var(Box::new(value))])
-            }
+            (b"org.freedesktop.DBus.Properties", b"GetAll", [Arg::S(name)]) if name.as_bytes() == (if item { ITEM } else { MENU }).to_bytes() => Some(vec![V::Props(properties(item, active))]),
+            (b"org.freedesktop.DBus.Properties", b"Get", [Arg::S(name), Arg::S(key)]) if name.as_bytes() == (if item { ITEM } else { MENU }).to_bytes() => properties(item, active).into_iter().find(|(k, _)| k == key).map(|(_, value)| vec![V::Var(Box::new(value))]),
             (b"org.kde.StatusNotifierItem", b"ProvideXdgActivationToken", [Arg::S(token)]) if item => {
-                if active { emit(Event::Token(token)); }
+                if active {
+                    emit(Event::Token(token));
+                }
                 Some(Vec::new())
             }
             (b"org.kde.StatusNotifierItem", b"Activate" | b"SecondaryActivate", [Arg::I(_), Arg::I(_)]) if item => {
-                if active { emit(Event::Action(Action::Activate)); }
+                if active {
+                    emit(Event::Action(Action::Activate));
+                }
                 Some(Vec::new())
             }
-            (b"org.kde.StatusNotifierItem", b"ContextMenu", [Arg::I(_), Arg::I(_)])
-            | (b"org.kde.StatusNotifierItem", b"Scroll", [Arg::I(_), Arg::S(_)]) if item => Some(Vec::new()),
-            (b"com.canonical.dbusmenu", b"GetLayout", [Arg::I(id), Arg::I(depth), Arg::L(names)]) if !item => {
-                i32::try_from(*id).ok().and_then(|id| tree.find(id)).map(|n| vec![V::U(self.revision), n.layout(*depth as i32, names)])
-            }
+            (b"org.kde.StatusNotifierItem", b"ContextMenu", [Arg::I(_), Arg::I(_)]) | (b"org.kde.StatusNotifierItem", b"Scroll", [Arg::I(_), Arg::S(_)]) if item => Some(Vec::new()),
+            (b"com.canonical.dbusmenu", b"GetLayout", [Arg::I(id), Arg::I(depth), Arg::L(names)]) if !item => i32::try_from(*id).ok().and_then(|id| tree.find(id)).map(|n| vec![V::U(self.revision), n.layout(*depth as i32, names)]),
             (b"com.canonical.dbusmenu", b"GetGroupProperties", [Arg::L(ids), Arg::L(names)]) if !item => {
-                let props = ids.iter().filter_map(|id| {
-                    let Arg::I(id) = id else { return None };
-                    let n = tree.find(*id as i32)?;
-                    Some(V::Tuple(vec![V::I(n.id), V::Props(n.props(names))]))
-                }).collect();
+                let props = ids
+                    .iter()
+                    .filter_map(|id| {
+                        let Arg::I(id) = id else { return None };
+                        let n = tree.find(*id as i32)?;
+                        Some(V::Tuple(vec![V::I(n.id), V::Props(n.props(names))]))
+                    })
+                    .collect();
                 Some(vec![V::Array("(ia{sv})", props)])
             }
-            (b"com.canonical.dbusmenu", b"GetProperty", [Arg::I(id), Arg::S(name)]) if !item => {
-                tree.find(*id as i32).and_then(|n| n.props(&[Arg::S(name.clone())]).pop()).map(|(_, v)| vec![V::Var(Box::new(v))])
-            }
+            (b"com.canonical.dbusmenu", b"GetProperty", [Arg::I(id), Arg::S(name)]) if !item => tree.find(*id as i32).and_then(|n| n.props(&[Arg::S(name.clone())]).pop()).map(|(_, v)| vec![V::Var(Box::new(v))]),
             (b"com.canonical.dbusmenu", b"AboutToShow", [Arg::I(_)]) if !item => Some(vec![V::B(false)]),
             (b"com.canonical.dbusmenu", b"AboutToShowGroup", [Arg::L(_)]) if !item => Some(vec![V::Empty("i"), V::Empty("i")]),
             (b"com.canonical.dbusmenu", b"Event", [Arg::I(id), Arg::S(event), _, Arg::I(_)]) if !item => {
-                if let Some(action) = tree.clicked(*id as i32, event) { emit(Event::Action(action)); }
+                if let Some(action) = tree.clicked(*id as i32, event) {
+                    emit(Event::Action(action));
+                }
                 Some(Vec::new())
             }
             (b"com.canonical.dbusmenu", b"EventGroup", [Arg::L(events)]) if !item => {
                 for ev in events {
                     if let Arg::L(fields) = ev {
                         if let [Arg::I(id), Arg::S(event), _, Arg::I(_)] = fields.as_slice() {
-                            if let Some(action) = tree.clicked(*id as i32, event) { emit(Event::Action(action)); }
+                            if let Some(action) = tree.clicked(*id as i32, event) {
+                                emit(Event::Action(action));
+                            }
                         }
                     }
                 }
@@ -214,7 +225,11 @@ unsafe fn handle(bus: &Bus, msg: *mut c_void, tray: &Tray, export: &Export<'_>, 
     let api = bus.api;
     let header = |get: unsafe extern "C" fn(*mut c_void) -> *const c_char| {
         let value = get(msg);
-        if value.is_null() { c"" } else { CStr::from_ptr(value) }
+        if value.is_null() {
+            c""
+        } else {
+            CStr::from_ptr(value)
+        }
     };
     let reply = export.reply(header(api.path), header(api.interface), header(api.member), &args(api, msg), |event| {
         let sender = text((api.sender)(msg));
@@ -242,10 +257,8 @@ fn watcher(bus: &Bus) -> Option<CString> {
 fn has_host(bus: &Bus, owner: Option<&CStr>) -> bool {
     let Some(dest) = owner else { return false };
     let args = [V::S(WATCHER.to_string_lossy().into_owned()), V::S("IsStatusNotifierHostRegistered".into())];
-    bus.call(dest, WATCHER_PATH, c"org.freedesktop.DBus.Properties", c"Get", &args)
-        .is_some_and(|value| matches!(value.as_slice(), [Arg::L(inner)] if matches!(inner.as_slice(), [Arg::I(1)])))
+    bus.call(dest, WATCHER_PATH, c"org.freedesktop.DBus.Properties", c"Get", &args).is_some_and(|value| matches!(value.as_slice(), [Arg::L(inner)] if matches!(inner.as_slice(), [Arg::I(1)])))
 }
-
 
 const HOST_GRACE: Duration = Duration::from_secs(30);
 const WATCH_READABLE: u32 = 1;
@@ -295,10 +308,7 @@ struct Wakeup {
 impl Wakeup {
     fn new() -> Option<Self> {
         let fd = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
-        (fd >= 0).then(|| Self {
-            event: unsafe { OwnedFd::from_raw_fd(fd) },
-            active: Mutex::new(true),
-        })
+        (fd >= 0).then(|| Self { event: unsafe { OwnedFd::from_raw_fd(fd) }, active: Mutex::new(true) })
     }
 
     fn poll_fd(&self) -> libc::pollfd {
@@ -307,14 +317,12 @@ impl Wakeup {
 
     fn notify(&self) {
         let event = 1u64;
-        while unsafe { libc::write(self.event.as_raw_fd(), std::ptr::from_ref(&event).cast(), size_of::<u64>()) } < 0
-            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {}
+        while unsafe { libc::write(self.event.as_raw_fd(), std::ptr::from_ref(&event).cast(), size_of::<u64>()) } < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {}
     }
 
     fn drain(&self) {
         let mut event = 0u64;
-        while unsafe { libc::read(self.event.as_raw_fd(), std::ptr::from_mut(&mut event).cast(), size_of::<u64>()) } < 0
-            && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {}
+        while unsafe { libc::read(self.event.as_raw_fd(), std::ptr::from_mut(&mut event).cast(), size_of::<u64>()) } < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::Interrupted {}
     }
 
     fn running(&self) -> bool {
@@ -368,8 +376,12 @@ impl<'a> Watches<'a> {
         fds.extend(watches.iter().map(|&watch| unsafe {
             let flags = (api.watch_flags)(watch);
             let mut events = 0;
-            if flags & WATCH_READABLE != 0 { events |= libc::POLLIN; }
-            if flags & WATCH_WRITABLE != 0 { events |= libc::POLLOUT; }
+            if flags & WATCH_READABLE != 0 {
+                events |= libc::POLLIN;
+            }
+            if flags & WATCH_WRITABLE != 0 {
+                events |= libc::POLLOUT;
+            }
             libc::pollfd { fd: (api.watch_fd)(watch), events, revents: 0 }
         }));
         let millis = timeout.map_or(-1, |duration| duration.as_nanos().div_ceil(1_000_000) as i32);
@@ -388,10 +400,18 @@ impl<'a> Watches<'a> {
                 continue;
             }
             let mut flags = 0;
-            if fd.revents & libc::POLLIN != 0 { flags |= WATCH_READABLE; }
-            if fd.revents & libc::POLLOUT != 0 { flags |= WATCH_WRITABLE; }
-            if fd.revents & (libc::POLLERR | libc::POLLNVAL) != 0 { flags |= WATCH_ERROR; }
-            if fd.revents & libc::POLLHUP != 0 { flags |= WATCH_HANGUP; }
+            if fd.revents & libc::POLLIN != 0 {
+                flags |= WATCH_READABLE;
+            }
+            if fd.revents & libc::POLLOUT != 0 {
+                flags |= WATCH_WRITABLE;
+            }
+            if fd.revents & (libc::POLLERR | libc::POLLNVAL) != 0 {
+                flags |= WATCH_ERROR;
+            }
+            if fd.revents & libc::POLLHUP != 0 {
+                flags |= WATCH_HANGUP;
+            }
             unsafe {
                 if (api.watch_enabled)(watch) != 0 && (api.watch_handle)(watch, flags) == 0 {
                     return false;
@@ -474,9 +494,7 @@ fn serve(tray: &Tray, wakeup: &Wakeup) -> Option<()> {
         if std::mem::take(&mut refresh) {
             let owner = watcher(&bus);
             let host = has_host(&bus, owner.as_deref());
-            registration.refresh(owner, host, |dest| {
-                bus.call(dest, WATCHER_PATH, WATCHER, c"RegisterStatusNotifierItem", &[V::S("/StatusNotifierItem".into())]).is_some()
-            });
+            registration.refresh(owner, host, |dest| bus.call(dest, WATCHER_PATH, WATCHER, c"RegisterStatusNotifierItem", &[V::S("/StatusNotifierItem".into())]).is_some());
         }
         let (available, timeout) = availability.update(registration.registered, Instant::now());
         wakeup.publish(tray, available);
@@ -491,10 +509,13 @@ fn start_worker(tray: &Tray) -> Option<Arc<Wakeup>> {
     let wakeup = Arc::new(Wakeup::new()?);
     let worker = wakeup.clone();
     let tray = tray.clone();
-    std::thread::Builder::new().name("flit-tray".into()).spawn(move || {
-        let _ = serve(&tray, &worker);
-        worker.publish(&tray, Some(false));
-    }).ok()?;
+    std::thread::Builder::new()
+        .name("flit-tray".into())
+        .spawn(move || {
+            let _ = serve(&tray, &worker);
+            worker.publish(&tray, Some(false));
+        })
+        .ok()?;
     Some(wakeup)
 }
 

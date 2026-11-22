@@ -123,7 +123,11 @@ impl std::fmt::Display for Cancelled {
 impl std::error::Error for Cancelled {}
 
 pub(crate) fn write_error(e: io::Error) -> PlatformError {
-    if e.get_ref().is_some_and(|e| e.is::<Cancelled>()) { cancelled() } else { io_error(e) }
+    if e.get_ref().is_some_and(|e| e.is::<Cancelled>()) {
+        cancelled()
+    } else {
+        io_error(e)
+    }
 }
 
 struct Split {
@@ -373,7 +377,11 @@ fn write_all(sink: Sink, sources: Vec<Source>, format: Format, options: &Compres
 
 pub fn effective(format: Format, items: &[FsPath]) -> Format {
     let single_file = items.len() == 1 && std_path(&items[0]).is_file();
-    if format == Format::Gz && !single_file { Format::TarGz } else { format }
+    if format == Format::Gz && !single_file {
+        Format::TarGz
+    } else {
+        format
+    }
 }
 
 pub fn compress(items: &[FsPath], archive: &FsPath, options: &Compression, job: &Job, env: &Env<'_>) -> Outcome {

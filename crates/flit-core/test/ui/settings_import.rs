@@ -12,9 +12,7 @@ fn sample() -> Doc {
 
 fn confirmed_plan(a: &mut App) -> ImportPlan {
     a.form_submit(0);
-    a.drain_effects().find_map(|e| {
-        if let Effect::Settings(SettingsCmd::ConfirmImport(plan)) = e { Some(*plan) } else { None }
-    }).expect("approval requests a backup")
+    a.drain_effects().find_map(|e| if let Effect::Settings(SettingsCmd::ConfirmImport(plan)) = e { Some(*plan) } else { None }).expect("approval requests a backup")
 }
 
 #[test]

@@ -338,13 +338,25 @@ impl App {
                 }
             }
             PasteField::Search => self.search_paste(line),
-            PasteField::Rename => { self.ops_paste(line); }
+            PasteField::Rename => {
+                self.ops_paste(line);
+            }
             PasteField::Field(Hit::Form(k)) => self.form_insert_at(k, line),
-            PasteField::Field(Hit::QuickField) => { self.quick_insert(line); }
-            PasteField::Field(Hit::FilterField) => { self.filter_insert(line); }
-            PasteField::Field(Hit::PaletteField) => { self.palette_insert(line); }
-            PasteField::Field(Hit::Settings(_)) => { self.settings_insert(line); }
-            PasteField::Field(Hit::Preview(_)) => { self.inspector_insert(line); }
+            PasteField::Field(Hit::QuickField) => {
+                self.quick_insert(line);
+            }
+            PasteField::Field(Hit::FilterField) => {
+                self.filter_insert(line);
+            }
+            PasteField::Field(Hit::PaletteField) => {
+                self.palette_insert(line);
+            }
+            PasteField::Field(Hit::Settings(_)) => {
+                self.settings_insert(line);
+            }
+            PasteField::Field(Hit::Preview(_)) => {
+                self.inspector_insert(line);
+            }
             PasteField::Field(_) => return,
         }
         self.dirty = true;

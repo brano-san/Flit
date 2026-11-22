@@ -28,7 +28,9 @@ fn read_records(file: &mut File) -> io::Result<(u64, Metadata)> {
         return Err(io::ErrorKind::InvalidData.into());
     }
     let complete = bytes.iter().rposition(|&b| b == b'\n').map_or(0, |k| k + 1);
-    if complete == 0 { return Ok((0, Metadata::default())); }
+    if complete == 0 {
+        return Ok((0, Metadata::default()));
+    }
     let mut lines = bytes[..complete - 1].rsplit(|&b| b == b'\n');
     let meta: Metadata = serde_json::from_slice(lines.next().unwrap_or_default()).map_err(io::Error::other)?;
     if !meta.valid() {
@@ -51,13 +53,16 @@ pub fn write(path: &FsPath, before: &Metadata, after: &Metadata) -> io::Result<(
     let stream = stream_path(path)?;
     let mut data = serde_json::to_vec(after).map_err(io::Error::other)?;
     data.push(b'\n');
-    if data.len() as u64 > MAX_METADATA { return Err(io::ErrorKind::InvalidInput.into()); }
+    if data.len() as u64 > MAX_METADATA {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
     let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(false).share_mode(1).custom_flags(0x0020_0000).open(stream)?;
     let preserve = FILETIME { dwLowDateTime: u32::MAX, dwHighDateTime: u32::MAX };
-    unsafe { SetFileTime(HANDLE(file.as_raw_handle()), None, Some(&preserve), Some(&preserve)) }
-        .map_err(|e| io::Error::from_raw_os_error(e.code().0 & 0xffff))?;
+    unsafe { SetFileTime(HANDLE(file.as_raw_handle()), None, Some(&preserve), Some(&preserve)) }.map_err(|e| io::Error::from_raw_os_error(e.code().0 & 0xffff))?;
     let (len, current) = read_records(&mut file)?;
-    if &current != before { return Err(io::Error::other(S::PortableMetaChanged.en())); }
+    if &current != before {
+        return Err(io::Error::other(S::PortableMetaChanged.en()));
+    }
     if len + data.len() as u64 > MAX_STREAM / 2 {
         file.seek(SeekFrom::Start(0))?;
         file.write_all(&data)?;
