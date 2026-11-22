@@ -22,11 +22,11 @@ fn fail(key: S) -> PlatformError {
 }
 
 fn io_err(e: io::Error) -> PlatformError {
-    PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string())
+    PlatformError::from_io(&e, e.to_string())
 }
 
 fn ensure_active(job: &Job) -> Result<(), PlatformError> {
-    if job.cancelled() { Err(PlatformError::new(-1, crate::CANCELLED)) } else { Ok(()) }
+    if job.cancelled() { Err(PlatformError::cancelled(-1, crate::CANCELLED)) } else { Ok(()) }
 }
 
 fn stamp(sh: &mut impl FileOps, path: &FsPath) -> Result<Stamp, PlatformError> {
@@ -187,7 +187,7 @@ pub fn run(sh: &mut impl FileOps, op: &FileOp, job: &Job) -> Option<OpOutcome> {
             begin(job, backups.len(), total);
             for backup in backups {
                 if job.cancelled() {
-                    out.error.get_or_insert_with(|| PlatformError::new(-1, crate::CANCELLED));
+                    out.error.get_or_insert_with(|| PlatformError::cancelled(-1, crate::CANCELLED));
                     break;
                 }
                 match restore(sh, keep, backup, job) {

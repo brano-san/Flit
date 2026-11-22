@@ -277,7 +277,7 @@ fn join(sh: &impl FileOps, source: &FsPath, dest: &FsPath, job: &Job) -> io::Res
 }
 
 pub(crate) fn run(sh: &mut impl FileOps, source: &FsPath, dest: &FsPath, part_size: Option<u64>, job: &Job) -> OpOutcome {
-    let fail = |e: io::Error| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string());
+    let fail = |e: io::Error| if job.cancelled() { PlatformError::cancelled(-1, crate::local::CANCELLED) } else { PlatformError::from_io(&e, e.to_string()) };
     let work = match part_size {
         Some(size) => split(source, dest, size, job),
         None => join(sh, source, dest, job),

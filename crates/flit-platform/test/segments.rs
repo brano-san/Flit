@@ -85,7 +85,7 @@ fn invalid_manifest_corrupt_content_and_cancelled_jobs_leave_no_output() {
     fs::write(std_path(&from), "\u{feff}filename=отчёт.pdf\r\nsize=1\r\ncrc32=E8B7BE43\r\n").unwrap();
     let job = Job::detached(Resolve::Skip);
     job.ctl().cancel();
-    assert!(run(&mut Publisher, &part, &output, None, &job).error.is_some());
+    assert_eq!(run(&mut Publisher, &part, &output, None, &job).error.map(|e| e.kind), Some(crate::PlatformErrorKind::Cancelled));
     assert_eq!(fs::read_dir(std_path(&output)).unwrap().count(), 0);
     let good = run(&mut Publisher, &from, &output, None, &Job::detached(Resolve::Skip));
     assert!(good.error.is_none(), "{:?}", good.error);

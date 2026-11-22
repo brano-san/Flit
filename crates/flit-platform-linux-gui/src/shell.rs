@@ -894,12 +894,12 @@ impl Shell for LinuxShell {
 impl FileOps for LinuxShell {
     fn rename_local_noreplace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
         flit_platform_linux::rename_local_noreplace(from, to)
-            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))
+            .map_err(|e| PlatformError::from_io(&e, e.to_string()))
     }
 
     fn verify_dedup_data(&mut self, path: &FsPath) -> Result<(), PlatformError> {
         let attribute = flit_platform_linux::portable_metadata::other_user_attribute(path)
-            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))?;
+            .map_err(|e| PlatformError::from_io(&e, e.to_string()))?;
         if let Some(name) = attribute {
             return Err(PlatformError::new(-1, flit_core::tr_en!(S::DedupRichDataNamed, name = flit_core::name::display(&name))));
         }

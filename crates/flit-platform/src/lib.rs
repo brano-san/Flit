@@ -687,7 +687,7 @@ pub trait FileOps {
     fn keep_dedup_backup(&mut self, _path: &FsPath, _original: &FsPath) -> Option<FsPath> { None }
     fn rename_local_replace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
         std::fs::rename(std_path(from), std_path(to))
-            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))
+            .map_err(|e| PlatformError::from_io(&e, e.to_string()))
     }
     fn verify_dedup_data(&mut self, _path: &FsPath) -> Result<(), PlatformError> { Ok(()) }
     fn decode_local_ansi(&self, _bytes: &[u8]) -> Option<String> { None }
