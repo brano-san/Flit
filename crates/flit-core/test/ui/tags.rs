@@ -102,6 +102,39 @@ fn path(s: &str) -> FsPath {
 }
 
 #[test]
+fn w3_quick_tags_uses_the_number_keys_only_while_enabled() {
+    let mut app = app_with(&[("a.txt", 0), ("b.txt", 0)]);
+    select(&mut app, &["b.txt"]);
+    let now = Instant::now();
+    let key = |key, mods| Event::Key { key, mods, pressed: true };
+    let ctrl_shift = crate::input::Mods { ctrl: true, shift: true, alt: false };
+    let number = key(crate::input::Key::Char('2'), Default::default());
+    app.on_event(&key(crate::input::Key::Char('G'), ctrl_shift), now);
+    app.on_event(&number, now);
+    assert_eq!(requests(&mut app).len(), 1);
+    app.on_event(&key(crate::input::Key::Escape, Default::default()), now);
+    app.on_event(&number, now);
+    assert!(requests(&mut app).is_empty());
+}
+
+#[test]
+fn w3_quick_tags_keeps_tab_search_and_ignores_digits_without_a_tag() {
+    use crate::input::{Key, Mods};
+    let chord = |key| crate::ui::actions::ctrl_shift(Key::Char(key));
+    for unix in [false, true] {
+        let map = crate::ui::keymap::defaults_for(unix);
+        let action = |key| map.owner(chord(key)).map(|i| crate::ui::actions::ACTIONS[i].id);
+        assert_eq!(action('A'), Some("tab.search"));
+        assert_eq!(action('G'), Some("tags.quick"));
+    }
+    let mut app = app_with(&[("a.txt", 0)]);
+    select(&mut app, &["a.txt"]);
+    assert!(app.run_action("tags.quick", Instant::now()));
+    app.on_event(&Event::Key { key: Key::Char('9'), mods: Mods::default(), pressed: true }, Instant::now());
+    assert!(requests(&mut app).is_empty());
+}
+
+#[test]
 fn edit_tags_menu_checks_shared_tags_and_toggles_them() {
     let mut app = app_with(&[("a.txt", 0b011), ("b.txt", 0b010), ("c.txt", 0)]);
     select(&mut app, &["a.txt", "b.txt"]);

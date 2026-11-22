@@ -139,17 +139,18 @@ impl Book {
         changed
     }
 
-    fn set(&mut self, items: Vec<FsPath>, tag: usize, on: bool, out: &mut Outcome) {
+    fn set(&mut self, items: Vec<FsPath>, tag: usize, on: Option<bool>, out: &mut Outcome) {
         if tag >= self.store.tags.len() {
             out.status = Some(S::ErrorsTagsGone.en().into());
             return;
         }
         let mut refused = 0;
-        for item in items {
-            let Some(key) = (self.key_of)(&item) else {
-                refused += 1;
-                continue;
-            };
+        let resolved: Vec<_> = items.into_iter().filter_map(|item| match (self.key_of)(&item) {
+            Some(key) => Some((item, key)),
+            None => { refused += 1; None }
+        }).collect();
+        let on = on.unwrap_or_else(|| resolved.iter().any(|(_, key)| self.store.files.get(key).is_none_or(|f| f.mask & (1 << tag) == 0)));
+        for (item, key) in resolved {
             let mask = self.store.update(key, item.clone(), |m| if on { m | 1 << tag } else { m & !(1 << tag) });
             out.files.push((item, mask));
             out.changed = true;
@@ -185,7 +186,14 @@ impl Book {
         let holders: Vec<FileKey> = renamed.as_ref().map(|(k, _)| self.store.files.iter().filter(|(_, t)| t.mask & 1 << k != 0).map(|(key, _)| *key).collect()).unwrap_or_default();
         let holder_paths: Vec<FsPath> = holders.iter().filter_map(|k| self.store.files.get(k).map(|t| t.path.clone())).collect();
         match req {
-            TagRequest::Set { items, tag, on } => self.set(items, tag, on, &mut out),
+            TagRequest::Set { items, tag, on } => self.set(items, tag, Some(on), &mut out),
+            TagRequest::Toggle { items, name } => {
+                if let Some(tag) = tags::find(&self.store.tags, &name) {
+                    self.set(items, tag, None, &mut out);
+                } else {
+                    out.status = Some(S::ErrorsTagsGone.en().into());
+                }
+            }
             TagRequest::Clear(items) => {
                 for item in items {
                     if let Some(key) = (self.key_of)(&item).filter(|k| self.store.files.contains_key(k)) {
@@ -198,7 +206,7 @@ impl Book {
             TagRequest::Create { name, color, assign } => match self.store.add(&name, color) {
                 Ok(k) => {
                     out.changed = true;
-                    self.set(assign, k, true, &mut out);
+                    self.set(assign, k, Some(true), &mut out);
                 }
                 Err(e) => out.status = Some(e.into()),
             },
@@ -241,7 +249,7 @@ impl Book {
         };
         out.changed = true;
         let n = items.len();
-        self.set(items, k, true, out);
+        self.set(items, k, Some(true), out);
         if out.status.is_none() {
             out.status = Some(flit_core::trn!(flit_core::i18n::P::SidebarTagTagged, n, tag = self.store.tags[k].name));
         }

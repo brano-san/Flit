@@ -60,6 +60,7 @@ none_available = "Keine verfügbaren Elemente haben dieses Tag"
 opened_some = ["{opened} von {n} Element mit Tag geöffnet", "{opened} von {n} Elementen mit Tag geöffnet"]
 tagged = ["{n} Element mit {tag} versehen", "{n} Elemente mit {tag} versehen"]
 needs_args = "Flit -Tag benötigt einen Tagnamen und die Dateien, die das Tag erhalten sollen"
+quick_keys = "Tags · Esc zum Beenden"
 
 [drive]
 local = "Lokaler Datenträger"

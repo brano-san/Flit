@@ -60,6 +60,7 @@ none_available = "没有可用的项目带有此标记"
 opened_some = ["已打开 {n} 个带标记项目中的 {opened} 个"]
 tagged = ["已为 {n} 个项目添加标记 {tag}"]
 needs_args = "Flit -Tag 需要标记名称和要添加标记的文件"
+quick_keys = "标签 · 按 Esc 退出"
 
 [drive]
 local = "本地磁盘"

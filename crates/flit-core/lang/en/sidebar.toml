@@ -60,6 +60,7 @@ none_available = "No available items have this tag"
 opened_some = ["Opened {opened} of {n} tagged item", "Opened {opened} of {n} tagged items"]
 tagged = ["Tagged {n} item with {tag}", "Tagged {n} items with {tag}"]
 needs_args = "Flit -Tag needs a tag name and the files to tag"
+quick_keys = "Tags · Esc to exit"
 
 [drive]
 local = "Local Disk"

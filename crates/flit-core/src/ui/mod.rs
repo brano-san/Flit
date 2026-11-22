@@ -738,6 +738,7 @@ pub struct App {
     cur: usize,
     tab_use: u64,
     tab_cycle: bool,
+    quick_tags: bool,
     next_tab: TabId,
     next_gen: u64,
     timer_at: Option<Instant>,
@@ -884,6 +885,7 @@ impl App {
             cur: 0,
             tab_use: 0,
             tab_cycle: false,
+            quick_tags: false,
             next_tab: tab_base + 1,
             next_gen: 0,
             timer_at: None,
@@ -1284,6 +1286,7 @@ impl App {
     }
 
     fn show_selected_tab(&mut self) {
+        self.quick_tags = false;
         self.focus = Focus::List;
         self.wake_tab();
         self.effects.push(Effect::Title(self.window_title()));
@@ -1928,6 +1931,9 @@ impl App {
         } {
             self.finish_tab_cycle();
         }
+        if matches!(ev, Event::Focus(false)) {
+            self.quick_tags = false;
+        }
         if let Event::WindowButtons(buttons) = ev {
             if self.panels.buttons != *buttons {
                 self.panels.buttons = buttons.clone();
@@ -2508,6 +2514,9 @@ impl App {
         if self.field_menu_key(key, m) || self.jobs_key(key, m) || self.settings_key(key, m) || self.ops_key(key, m) || self.strip_key(key) || self.inspector_key(key, m) {
             return;
         }
+        if self.nav.palette.is_none() && self.focus == Focus::List && self.quick_tag_key(key, m) {
+            return;
+        }
         if self.focus_key(key, m, now) {
             return;
         }
@@ -2533,6 +2542,9 @@ impl App {
             return;
         }
         if self.nav_insert(c.encode_utf8(&mut [0; 4])) {
+            return;
+        }
+        if self.quick_tags && self.focus == Focus::List && ('1'..='9').contains(&c) && self.mods == Mods::default() {
             return;
         }
         if self.mods.ctrl != self.mods.alt {

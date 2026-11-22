@@ -102,6 +102,45 @@ impl App {
         self.effects.push(Effect::Tags(TagRequest::Set { items, tag: k, on }));
     }
 
+    pub(super) fn toggle_quick_tags(&mut self) {
+        if self.quick_tags {
+            self.quick_tags = false;
+        } else if self.tag_defs().is_empty() {
+            self.status(S::SidebarTagNoneYet.t());
+        } else if self.tag_items().is_some() {
+            self.quick_tags = true;
+            self.tab_mut().error = None;
+            self.focus = super::Focus::List;
+        }
+        self.dirty = true;
+    }
+
+    pub(super) fn quick_tag_key(&mut self, key: crate::input::Key, mods: crate::input::Mods) -> bool {
+        use crate::input::{Key, Mods};
+        if !self.quick_tags || mods != Mods::default() {
+            return false;
+        }
+        match key {
+            Key::Escape => self.quick_tags = false,
+            Key::Char(c @ '1'..='9') => {
+                if let Some(name) = self.tag_defs().get(c as usize - '1' as usize).map(|t| t.name.clone()) {
+                    if let Some(items) = self.tag_items() {
+                        self.effects.push(Effect::Tags(TagRequest::Toggle { items, name }));
+                    }
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    pub(super) fn quick_tag_hint(&self, text: &mut impl std::fmt::Write) {
+        let _ = write!(text, "{}", S::SidebarTagQuickKeys.t());
+        for (i, tag) in self.tag_defs().iter().take(9).enumerate() {
+            let _ = write!(text, "  {} {}", i + 1, tag.name);
+        }
+    }
+
     pub fn remove_tags(&mut self) {
         let Some(items) = self.tag_items() else { return };
         self.effects.push(Effect::Tags(TagRequest::Clear(items)));

@@ -371,3 +371,4 @@
 "item.quick_view" = "Ver la selección en una ventana aparte, espacio"
 "preview.play" = "Iniciar o detener el audio o el vídeo de la vista previa"
 "app.check_updates" = "Preguntar a GitHub si hay un Flit más reciente, luego descargarlo, instalarlo y reiniciar, actualización, nueva versión"
+"tags.quick" = "Usa las teclas 1–9 para alternar etiquetas de la selección. Pulsa Esc para salir."

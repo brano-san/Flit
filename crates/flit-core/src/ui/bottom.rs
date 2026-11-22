@@ -348,6 +348,9 @@ impl App {
         if let Some(err) = &tab.error {
             s.push_str(err);
             color = t.error;
+        } else if self.quick_tags {
+            self.quick_tag_hint(&mut s);
+            color = t.text;
         } else if let Some(n) = trashed {
             crate::trn_into!(&mut s, P::UiJobTrashBar, n as u64);
             color = t.text;
