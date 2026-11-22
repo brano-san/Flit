@@ -241,6 +241,8 @@ pub struct Tools {
     toolbar: RetiredToolbar,
     pub searches: Vec<String>,
     pub streams: bool,
+    #[serde(skip)]
+    pub commands: flit_core::ui::CommandUsage,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
@@ -474,8 +476,11 @@ impl Saved {
                                         p.folders.put(key, v);
                                     }
                                 }
-                                if let Ok((servers, _)) = postcard::take_from_bytes::<Vec<SavedServer>>(tail) {
+                                if let Ok((servers, tail)) = postcard::take_from_bytes::<Vec<SavedServer>>(tail) {
                                     saved.side.saved_servers = servers;
+                                    if let Ok((commands, _)) = postcard::take_from_bytes::<flit_core::ui::CommandUsage>(tail) {
+                                        saved.tools.commands = commands.sanitized();
+                                    }
                                 }
                             }
                             p.folders.set_deep(std::mem::take(&mut deep));
@@ -531,6 +536,9 @@ impl Saved {
         bytes.extend(postcard::to_stdvec(&shells).ok()?);
         bytes.extend(postcard::to_stdvec(&hashes).ok()?);
         bytes.extend(postcard::to_stdvec(&side.saved_servers).ok()?);
+        if self.tools.commands != flit_core::ui::CommandUsage::default() {
+            bytes.extend(postcard::to_stdvec(&self.tools.commands).ok()?);
+        }
         Some(bytes)
     }
 

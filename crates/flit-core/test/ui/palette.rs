@@ -26,6 +26,50 @@ fn wheel_frame(a: &mut App, dy: f32, now: Instant) -> f32 {
     pos(a)
 }
 
+fn invoke_palette_command(a: &mut App, id: &str, now: Instant) {
+    a.open_palette();
+    let p = a.nav.palette.as_ref().unwrap();
+    let i = (0..p.matches.len()).find(|&i| p.row_action(i).is_some_and(|k| ACTIONS[k].id == id)).unwrap();
+    a.run_palette_item(i, now);
+}
+
+#[test]
+fn w3_empty_palette_suggests_recent_and_frequent_commands() {
+    let now = Instant::now();
+    let mut a = crate::ui::harness::app(&[]);
+    for id in ["view.hidden", "view.hidden", "view.hidden", "view.sort.name", "view.sort.size", "view.sort.type"] {
+        invoke_palette_command(&mut a, id, now);
+    }
+    a.open_palette();
+    let p = a.nav.palette.as_ref().unwrap();
+    let ids: Vec<_> = (1..5).filter_map(|i| p.row_action(i).map(|k| ACTIONS[k].id)).collect();
+    assert_eq!(ids, ["view.sort.type", "view.sort.size", "view.sort.name", "view.hidden"]);
+}
+
+#[test]
+fn w3_palette_usage_does_not_override_typed_ranking() {
+    let now = Instant::now();
+    let mut a = crate::ui::harness::app(&[]);
+    invoke_palette_command(&mut a, "view.hidden", now);
+    a.open_palette();
+    a.palette_insert("sort size");
+    let p = a.nav.palette.as_ref().unwrap();
+    assert_eq!(p.row_action(0).map(|k| ACTIONS[k].id), Some("view.sort.size"));
+}
+
+#[test]
+fn w3_review_palette_history_ignores_shortcuts_and_programmatic_actions() {
+    let now = Instant::now();
+    let mut a = crate::ui::harness::app(&[]);
+    a.set_caps(crate::caps::Caps { unix_paths: false });
+    invoke_palette_command(&mut a, "view.hidden", now);
+    let after_palette = a.command_usage();
+    assert_ne!(after_palette, Default::default());
+    press(&mut a, Key::Char('H'), CTRL);
+    a.run_action("view.sort.size", now);
+    assert_eq!(a.command_usage(), after_palette);
+}
+
 #[test]
 fn palette_wheel_up_and_down_move_on_the_same_frame() {
     let start = Instant::now();

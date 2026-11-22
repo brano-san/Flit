@@ -33,6 +33,34 @@ const G_SEARCH: &str = "\u{E721}";
 const G_DESCRIBE: &str = "\u{E8A5}";
 const G_SHORTCUTS: &str = "\u{E8AC}";
 const CHIP: f32 = 24.0;
+const SUGGESTED_COMMANDS: usize = 3;
+
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CommandUsage(Vec<(String, u32)>);
+
+impl CommandUsage {
+    pub fn sanitized(mut self) -> Self {
+        let mut seen = crate::hash::FxHashSet::default();
+        self.0.retain(|(id, count)| *count != 0 && super::actions::index(id).is_some_and(|i| seen.insert(i)));
+        self
+    }
+
+    fn record(&mut self, id: &str) {
+        let count = self.0.iter().position(|(name, _)| name == id)
+            .map_or(0, |i| self.0.remove(i).1);
+        self.0.insert(0, (id.to_owned(), count.saturating_add(1)));
+    }
+
+    fn suggestions(&self, ids: &[usize], live: &[bool]) -> Vec<usize> {
+        let mut candidates: Vec<_> = self.0.iter().filter_map(|(id, count)| {
+            ids.iter().zip(live).position(|(&i, &enabled)| enabled && ACTIONS[i].id == id)
+                .map(|i| (i, *count))
+        }).collect();
+        let recent = candidates.len().min(SUGGESTED_COMMANDS);
+        candidates[recent..].sort_by_key(|&(_, count)| Reverse(count));
+        candidates.into_iter().take(recent + SUGGESTED_COMMANDS).map(|(i, _)| i).collect()
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum Line {
@@ -46,6 +74,7 @@ pub(super) struct Commands {
     pub collapsed: Vec<Group>,
     pub descriptions: bool,
     groups: Vec<Group>,
+    suggested: Vec<usize>,
     shown: Vec<&'static str>,
     caps: Vec<Vec<String>>,
     pub live: Vec<bool>,
@@ -268,6 +297,9 @@ impl Palette {
             ..Default::default()
         });
         p.ids = ids;
+        if let Some(c) = &mut p.commands {
+            c.suggested = app.command_usage().suggestions(&p.ids, &c.live);
+        }
         p.refresh();
         p
     }
@@ -286,6 +318,12 @@ impl Palette {
         let Some(c) = &mut self.commands else { return };
         c.lines.clear();
         if query.trim().is_empty() {
+            if !c.suggested.is_empty() {
+                c.lines.push(Line::Header(Group::CommandUsage));
+                if !c.collapsed.contains(&Group::CommandUsage) {
+                    c.lines.extend(c.suggested.iter().map(|&k| Line::Item(k, Vec::new(), Vec::new())));
+                }
+            }
             for g in Group::ALL {
                 let items: Vec<usize> = (0..c.groups.len()).filter(|&k| c.groups[k] == g).collect();
                 if items.is_empty() {
@@ -399,6 +437,20 @@ impl Palette {
 }
 
 impl App {
+    pub fn command_usage(&self) -> CommandUsage {
+        self.command_usage.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub fn share_command_usage(&mut self, usage: std::sync::Arc<std::sync::Mutex<CommandUsage>>) {
+        self.command_usage = usage;
+    }
+
+    fn record_command_use(&self, id: &str) {
+        if id != "palette.show" && self.available(id) {
+            self.command_usage.lock().unwrap_or_else(|e| e.into_inner()).record(id);
+        }
+    }
+
     pub(super) fn open_palette(&mut self) {
         self.nav.back = None;
         self.open_pick(Palette::commands(self));
@@ -486,9 +538,8 @@ impl App {
                     self.layout();
                 }
                 Some(Line::Item(k, ..)) if c.live[*k] => {
-                    if let Some(run) = ACTIONS[p.ids[*k]].run {
-                        run(self, now);
-                    }
+                    self.record_command_use(ACTIONS[p.ids[*k]].id);
+                    self.invoke_action(p.ids[*k], now);
                 }
                 _ => self.nav.palette = Some(p),
             }

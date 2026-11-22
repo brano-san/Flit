@@ -72,6 +72,7 @@ mod pointer;
 mod touch;
 
 pub use ops::{base_name_len, batch_names, changes_extension, choose_effect, drop_effect, same_volume, unique_name, validate_name, DragEvent, NewTemplate, ShellMenu, Spot, TemplateNames, SHELL_VERBS};
+pub use palette::CommandUsage;
 pub use search::{thousands, IndexState, IndexVolume, SearchBackend, SearchEvent, SearchKey, SearchRequest, SearchRow, SearchScope, SearchSort, SearchSource, MAX_HISTORY};
 pub use sidebar::{Drive, KnownFolder, NavPrefs, NavState, Places, QuickPrefs, SavedServer, Section};
 pub use home::{Recent, Widget};
@@ -680,6 +681,7 @@ pub struct App {
     git_branches: Vec<crate::git::Branch>,
     pub tab_wheel_reversed: bool,
     pub mru_tabs: bool,
+    command_usage: Arc<std::sync::Mutex<CommandUsage>>,
     pub tab_actions_button: bool,
     pub folders_in_new_tab: bool,
     pub double_click_up: bool,
@@ -823,6 +825,7 @@ impl App {
             git_branches: Vec::new(),
             tab_wheel_reversed: false,
             mru_tabs: true,
+            command_usage: Arc::default(),
             tab_actions_button: true,
             folders_in_new_tab: false,
             double_click_up: true,

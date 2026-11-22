@@ -78,6 +78,7 @@ pub enum Group {
     Text,
     Scroll,
     Flit,
+    CommandUsage,
 }
 
 impl Group {
@@ -100,6 +101,7 @@ impl Group {
             Group::Text => S::PaletteGroupText,
             Group::Scroll => S::PaletteGroupScroll,
             Group::Flit => S::PaletteGroupFlit,
+            Group::CommandUsage => S::PaletteGroupCommandUsage,
         }
     }
 
@@ -120,6 +122,7 @@ impl Group {
             Group::Text => "\u{E8D2}",
             Group::Scroll => "\u{E70E}",
             Group::Flit => "\u{E7B8}",
+            Group::CommandUsage => "\u{E81C}",
         }
     }
 }
