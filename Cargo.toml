@@ -66,6 +66,11 @@ debug = "line-tables-only"
 [profile.bench]
 inherits = "release"
 
+[profile.measure]
+inherits = "release"
+lto = false
+incremental = true
+
 [profile.dist]
 inherits = "release"
 debug = false
