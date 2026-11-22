@@ -8,7 +8,7 @@ fn shutdown_drains_pending_background_state_and_settings_writes() {
     let (jobs, pending) = unbounded();
     let (reply, replies) = unbounded();
     let settings_file = path.clone();
-    let worker = std::thread::spawn(move || work(Some(settings_file), None, None, String::new(), pending, reply, Arc::new(|| {})));
+    let worker = std::thread::spawn(move || work::<crate::P>(Some(settings_file), None, None, String::new(), pending, reply, Arc::new(|| {})));
     let mut settings = Settings { values: Vec::new(), unknown: Map::new(), replies, read_only: false, jobs: Some(jobs), thread: Some(worker) };
     let location = flit_core::Location::parse("/tmp").unwrap();
     let saved = crate::state::Saved::new(flit_core::ui::Persisted { path: location, ..Default::default() }, None);
