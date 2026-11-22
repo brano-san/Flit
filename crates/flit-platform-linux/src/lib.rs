@@ -11,6 +11,7 @@ pub mod sock;
 mod tags;
 mod trash;
 mod walk;
+mod io_priority;
 
 #[cfg(test)]
 #[path = "../test/temp.rs"]

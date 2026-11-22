@@ -74,6 +74,18 @@ impl Fs for LinuxGuiFs {
         }
     }
 
+    fn read_background_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        if dir.kind() != PathKind::Unix {
+            return self.read_dir(dir, out);
+        }
+        flit_archive::read_dir(dir, out, <crate::Linux as flit_platform::Platform>::utc_offset_minutes())
+            .unwrap_or_else(|| LinuxFs.read_background_dir(dir, out))
+    }
+
+    fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, PlatformError> {
+        LinuxFs.hash(file, kinds, job)
+    }
+
     fn seek_penalty(&self, path: &FsPath) -> Option<bool> {
         LinuxFs.seek_penalty(path)
     }

@@ -271,6 +271,9 @@ pub trait Fs: Send + Sync + 'static {
     fn volume_size(&self, _path: &FsPath) -> u64 {
         0
     }
+    fn read_background_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        self.read_dir(dir, out)
+    }
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
         path.root_bytes().to_ascii_lowercase()
     }

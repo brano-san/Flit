@@ -221,6 +221,7 @@ fn open_child(parent: &Handle, name: &[u16]) -> Option<Handle> {
 }
 
 fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, mut subdir: impl FnMut(&[u16])) -> (u64, u64) {
+    crate::io_priority::idle(dir.0);
     SCAN_BUFFER.with_borrow_mut(|buf| {
         let (mut bytes, mut files) = (0, 0);
         let mut first = true;
@@ -426,8 +427,8 @@ fn list_parallel(h: HANDLE, out: &mut ListingBuilder<'_>) -> Result<(), FsError>
     })
 }
 
-impl Fs for NtFs {
-    fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+impl NtFs {
+    fn list(&self, dir: &FsPath, out: &mut ListingBuilder<'_>, background: bool) -> Result<(), FsError> {
         match dir.kind() {
             PathKind::Computer => return volumes(out),
             PathKind::RecycleBin => return crate::recycle::list(&crate::recycle::roots(), out),
@@ -442,6 +443,9 @@ impl Fs for NtFs {
             Err(e) if crate::network::needs_logon(dir, &e) && crate::network::logon(dir) => open_dir(dir, FILE_LIST_DIRECTORY.0, false)?,
             opened => opened?,
         };
+        if background {
+            crate::io_priority::idle(h);
+        }
         if let Some(v) = (out.wants_ids() && dir.kind() == PathKind::Drive).then(|| crate::tags::volume_serial(h)).flatten() {
             out.set_volume(v);
         }
@@ -472,6 +476,17 @@ impl Fs for NtFs {
             let _ = CloseHandle(h);
         }
         result
+    }
+}
+
+impl Fs for NtFs {
+    fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        self.list(dir, out, false)
+    }
+
+
+    fn read_background_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        self.list(dir, out, true)
     }
 
     fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, flit_platform::PlatformError> {

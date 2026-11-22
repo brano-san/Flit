@@ -205,6 +205,7 @@ pub fn walk<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree) -> Result<
 }
 
 fn walk_with<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree, throttle: Option<Throttle>) -> Result<u64, PlatformError> {
+    let _idle = crate::io_priority::IdleIo::enter();
     let fail = |e: std::io::Error| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("cannot open {}: {e}", root.display()));
     let dir = open_dir(root).map_err(fail)?;
     let top = node_at(dir.as_raw_fd(), c".", false).map_err(fail)?;
@@ -396,7 +397,10 @@ impl IndexSource for WalkIndex {
         let dirty = self.take_dirty(volume);
         let watched = self.live.as_ref().and_then(|l| l.watched.get(volume));
         let Some(tree) = self.trees.get_mut(volume) else { return Ok(None) };
-        if self.walked[walked].1.elapsed() >= REWALK {
+        let rewalk = self.walked[walked].1.elapsed() >= REWALK;
+        let sweep = tree.swept.is_none_or(|at| at.elapsed() >= SWEEP);
+        let _idle = (rewalk || !dirty.is_empty() || sweep).then(crate::io_priority::IdleIo::enter);
+        if rewalk {
             let jobs = tree.dirs.iter().filter(|(id, _)| watched.is_none_or(|w| !w.contains(id))).filter_map(|(&id, d)| job_at(id, &d.path, false)).collect();
             tree.reread(jobs, sink);
             self.walked[walked].1 = Instant::now();
@@ -405,7 +409,7 @@ impl IndexSource for WalkIndex {
             let jobs = dirty.into_iter().filter_map(|id| job_at(id, &tree.dirs.get(&id)?.path, true)).collect();
             tree.reread(jobs, sink);
         }
-        if tree.swept.is_none_or(|at| at.elapsed() >= SWEEP) {
+        if sweep {
             tree.sweep(sink);
             tree.swept = Some(Instant::now());
         }

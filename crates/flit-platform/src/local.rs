@@ -780,7 +780,7 @@ fn tree_stats<F: Fs + ?Sized>(fs: &F, root: &FsPath, keep_going: &(dyn Fn() -> b
     while let Some(dir) = stack.pop() {
         let mut each_batch = |_: &ListingBuilder<'_>| keep_going();
         let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut each_batch);
-        if fs.read_dir(&dir, &mut b).is_err() {
+        if fs.read_background_dir(&dir, &mut b).is_err() {
             s.partial |= keep_going();
             continue;
         }
