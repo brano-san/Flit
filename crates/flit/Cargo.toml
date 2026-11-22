@@ -10,6 +10,7 @@ license.workspace = true
 profile = ["dep:tracing-tracy"]
 
 [dependencies]
+flit-archive.workspace = true
 flit-core.workspace = true
 flit-platform.workspace = true
 flit-proto.workspace = true
@@ -83,3 +84,7 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 
 [target.'cfg(not(windows))'.dev-dependencies]
 flit-platform-linux.workspace = true
+
+[[test]]
+name = "parser_process"
+path = "test/parser_process.rs"

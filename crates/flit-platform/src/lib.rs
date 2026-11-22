@@ -1,6 +1,7 @@
 mod digest;
 mod indexer;
 mod local;
+pub mod parse_process;
 pub mod walk;
 mod wsl;
 
@@ -334,6 +335,12 @@ pub trait Watcher: Sized + Send + 'static {
     fn watch(&mut self, tab: TabId, gen: u64, dir: Option<&FsPath>);
 }
 
+pub enum PreviewPicture {
+    Ready(Bitmap),
+    Missing,
+    Failed,
+}
+
 pub trait Shell: Sized {
     const BATCHES_FOLDER_ICONS: bool = false;
     const ICON_OVERLAYS: bool = false;
@@ -348,6 +355,9 @@ pub trait Shell: Sized {
     }
     fn overlay_image(&mut self, _slot: u8, _size: u32) -> Option<Bitmap> {
         None
+    }
+    fn thumbnail_current(&mut self, req: &IconRequest, _current: &dyn Fn() -> bool) -> Option<Bitmap> {
+        self.thumbnail(req)
     }
     fn thumbnail(&mut self, _req: &IconRequest) -> Option<Bitmap> {
         None
@@ -374,6 +384,9 @@ pub trait Shell: Sized {
     }
     fn link_target(&mut self, _link: &FsPath) -> Option<FsPath> {
         None
+    }
+    fn preview_picture(&mut self, path: &FsPath, max: u32, _current: &dyn Fn() -> bool) -> PreviewPicture {
+        self.preview_image(path, max).map_or(PreviewPicture::Missing, PreviewPicture::Ready)
     }
     fn preview_image(&mut self, _path: &FsPath, _max: u32) -> Option<Bitmap> {
         None

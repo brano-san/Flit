@@ -7,13 +7,14 @@ reading = "Lecture des propriétés…"
 loading = "Chargement de l’aperçu…"
 new_tag = "+ Nouvelle balise"
 shortcut = "Raccourci vers {target}"
-too_large = "L’image est trop grande pour l’aperçu"
+too_large = "Le fichier est trop volumineux pour l’aperçu"
 online_only = "Stocké en ligne uniquement.\nL’aperçu télécharge le fichier sur cet appareil."
 download = "Télécharger pour l’aperçu"
 copy_image = "Copier l’image"
 truncated = ["Affichage du premier caractère ({n})", "Affichage des {n} de premiers caractères", "Affichage des {n} premiers caractères"]
 folders = ["{n} dossier", "{n} de dossiers", "{n} dossiers"]
 files = ["{n} fichier", "{n} de fichiers", "{n} fichiers"]
+cannot_open = "Impossible d’ouvrir ce fichier"
 
 [field]
 path = "Chemin"

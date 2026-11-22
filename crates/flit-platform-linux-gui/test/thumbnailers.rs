@@ -123,7 +123,7 @@ fn a_generated_thumbnail_goes_to_the_shared_cache_where_flit_and_other_apps_find
     let stored = cache.join("normal").join(crate::thumb::freedesktop_name(&book));
     assert_eq!(std::fs::metadata(&stored).unwrap().permissions().mode() & 0o777, 0o600);
     assert_eq!(std::fs::metadata(cache.join("normal")).unwrap().permissions().mode() & 0o777, 0o700);
-    let again = crate::thumb::thumbnail(&book, 96, Some(cache.clone())).expect("read back from the cache without running the thumbnailer");
+    let flit_platform::PreviewPicture::Ready(again) = crate::thumb::thumbnail(&book, 96, Some(cache.clone()), &|| true) else { panic!("read back from the cache without running the thumbnailer") };
     assert_eq!((again.width, again.height), (96, 48));
     produce(&book, 200, Some(&cache), |px| Some(png_data(px, px)));
     assert!(cache.join("large").join(crate::thumb::freedesktop_name(&book)).exists());
@@ -139,7 +139,7 @@ fn a_changed_file_broken_output_or_a_preview_never_reuse_or_pollute_the_cache() 
     std::fs::write(&doc, b"changed contents").unwrap();
     let older = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
     std::fs::File::options().write(true).open(&doc).unwrap().set_modified(older).unwrap();
-    assert!(crate::thumb::thumbnail(&doc, 96, Some(cache.clone())).is_none(), "a thumbnail of the old contents is not shown");
+    assert!(!matches!(crate::thumb::thumbnail(&doc, 96, Some(cache.clone()), &|| true), flit_platform::PreviewPicture::Ready(_)), "a thumbnail of the old contents is not shown");
     let other = t.file("broken.odt", 3);
     assert!(produce(&other, 96, Some(&cache), |_| Some(b"not a png".to_vec())).is_none());
     assert!(!cache.join("normal").join(crate::thumb::freedesktop_name(&other)).exists());

@@ -7,13 +7,14 @@ reading = "Eigenschaften werden gelesen…"
 loading = "Vorschau wird geladen…"
 new_tag = "+ Neues Tag"
 shortcut = "Verknüpfung mit {target}"
-too_large = "Das Bild ist für eine Vorschau zu groß"
+too_large = "Die Datei ist für eine Vorschau zu groß"
 online_only = "Nur online gespeichert.\nFür die Vorschau wird die Datei auf dieses Gerät heruntergeladen."
 download = "Für Vorschau herunterladen"
 copy_image = "Bild kopieren"
 truncated = ["Das erste {n} Zeichen wird angezeigt", "Die ersten {n} Zeichen werden angezeigt"]
 folders = ["{n} Ordner", "{n} Ordner"]
 files = ["{n} Datei", "{n} Dateien"]
+cannot_open = "Datei konnte nicht geöffnet werden"
 
 [field]
 path = "Pfad"

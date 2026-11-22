@@ -152,6 +152,40 @@ fn open(item: &FsPath, job: &Job, env: &Env<'_>) -> extract::Outcome {
     extract::entries(&archive, std::slice::from_ref(item), &dest, job, env)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PreviewError {
+    Failed,
+    TooLarge,
+    PasswordRequired,
+}
+
+pub fn preview_paths(path: &FsPath) -> Result<String, PreviewError> {
+    let meta = std::fs::metadata(std_path(path)).map_err(|_| PreviewError::Failed)?;
+    const MAX_PREVIEW_ARCHIVE: u64 = 256 << 20;
+    if !meta.is_file() {
+        return Err(PreviewError::Failed);
+    }
+    if meta.len() > MAX_PREVIEW_ARCHIVE {
+        return Err(PreviewError::TooLarge);
+    }
+    let index = index::open(path, 0).map_err(|error| {
+        if archive::needs_password(error.kind) { PreviewError::PasswordRequired } else { PreviewError::Failed }
+    })?;
+    let mut out = String::new();
+    for item in &index.items {
+        let bytes = item.path.len() + 2;
+        if out.len() + bytes > flit_core::preview::TEXT_BYTES {
+            break;
+        }
+        out.push_str(&item.path);
+        if item.dir {
+            out.push('/');
+        }
+        out.push('\n');
+    }
+    Ok(out)
+}
+
 pub fn forget(archive: &FsPath) {
     index::forget(archive);
 }

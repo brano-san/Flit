@@ -1,6 +1,6 @@
 use flit_core::preview::{self, FolderSummary, Kind, Note, PreviewData, PreviewRequest, FOLDER_SCAN, IMAGE_FILE_LIMIT, POSTER_PX, RTF_BYTES, SNIFF_LIMIT, TEXT_BYTES};
 use flit_core::FsPath;
-use flit_platform::Shell;
+use flit_platform::{parse_process, PreviewPicture, Shell};
 use std::io::Read;
 use std::time::UNIX_EPOCH;
 
@@ -46,6 +46,35 @@ fn basic<S: Shell>(shell: &mut S, req: &PreviewRequest, note: Option<Note>) -> P
     PreviewData::Basic { poster: shell.poster(&req.path, POSTER_PX), note }
 }
 
+fn cannot_open() -> PreviewData {
+    PreviewData::Basic { poster: None, note: Some(Note::Message(flit_core::i18n::S::PreviewCannotOpen.t().to_owned())) }
+}
+
+fn archive<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData> {
+    let current = || req.cancel.is_current(req.gen);
+    let result = parse_process::run(&std_path(&req.path), "archive", &[], TEXT_BYTES + parse_process::ARCHIVE_HEADER.len(), &current);
+    if !current() {
+        return None;
+    }
+    archive_preview(shell, req, result)
+}
+
+fn archive_preview<S: Shell>(shell: &mut S, req: &PreviewRequest, result: Result<Vec<u8>, parse_process::Error>) -> Option<PreviewData> {
+    use parse_process::Error;
+    match result {
+        Ok(bytes) => {
+            let names = bytes.strip_prefix(parse_process::ARCHIVE_HEADER).filter(|names| {
+                (names.is_empty() || names.ends_with(b"\n")) && std::str::from_utf8(names).is_ok()
+            });
+            Some(names.map_or_else(cannot_open, |names| PreviewData::Doc(preview::build(Kind::Text, names))))
+        }
+        Err(Error::TooLarge) => Some(basic(shell, req, Some(Note::TooLarge))),
+        Err(Error::TimedOut | Error::PasswordRequired) => Some(basic(shell, req, None)),
+        Err(Error::Cancelled) => None,
+        _ => Some(cannot_open()),
+    }
+}
+
 fn other<S: Shell>(shell: &mut S, req: &PreviewRequest, ext: &[u8]) -> Option<PreviewData> {
     if ext.eq_ignore_ascii_case(b"lnk") {
         let note = shell.link_target(&req.path).map(|t| Note::Shortcut(t.display().into_owned()));
@@ -75,7 +104,15 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
     match req.kind {
         Kind::Folder => folder(req).map(PreviewData::Folder),
         Kind::Image if req.size > IMAGE_FILE_LIMIT => Some(basic(shell, req, Some(Note::TooLarge))),
-        Kind::Image => Some(shell.preview_image(&req.path, req.px).map_or_else(|| basic(shell, req, None), PreviewData::Image)),
+        Kind::Image => {
+            let current = || req.cancel.is_current(req.gen);
+            let result = shell.preview_picture(&req.path, req.px, &current);
+            current().then(|| match result {
+                PreviewPicture::Ready(bitmap) => PreviewData::Image(bitmap),
+                PreviewPicture::Missing => basic(shell, req, None),
+                PreviewPicture::Failed => cannot_open(),
+            })
+        }
         Kind::Audio | Kind::Video => Some(PreviewData::Media { video: req.kind == Kind::Video, poster: shell.poster(&req.path, POSTER_PX) }),
         Kind::Rtf => match shell.preview_handler(ext) {
             Some(clsid) => Some(PreviewData::Handler(clsid)),
@@ -88,6 +125,7 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
             }
             Some(PreviewData::Doc(preview::build(req.kind, &bytes)))
         }
+        Kind::Other if flit_core::archive::browsable(req.path.file_name()).is_some() => archive(shell, req),
         Kind::Other => other(shell, req, ext),
     }
 }
