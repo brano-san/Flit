@@ -256,6 +256,10 @@ impl Location {
                 _ => name::display(loc.file_name()).into_owned(),
             };
             cur = loc.parent();
+            let label = match crate::redact::passwords(&label) {
+                Cow::Owned(masked) => masked,
+                Cow::Borrowed(_) => label,
+            };
             out.push((label, loc));
         }
         out.reverse();

@@ -1138,7 +1138,7 @@ impl App {
         if let Some(e) = errors.first() {
             self.tab_mut().error = Some(match e {
                 ResolveError::UnknownShellLocation(s) => self.hand_to_explorer(s),
-                ResolveError::Invalid(s) => crate::tr!(S::UiInvalidPath, path = s),
+                ResolveError::Invalid(s) => crate::tr!(S::UiInvalidPath, path = crate::redact::passwords(s)),
             });
             self.dirty = true;
         }
@@ -1524,7 +1524,7 @@ impl App {
             ProviderEvent::Status { tab, gen, text } => {
                 if let Some(k) = tab_of(&self.tabs, tab, gen) {
                     if let Some(l) = self.tabs[k].loading.as_mut() {
-                        l.note = Some(crate::i18n::localize(&text).into_owned());
+                        l.note = Some(crate::redact::passwords(&crate::i18n::localize(&text)).into_owned());
                         self.dirty |= k == self.cur;
                     }
                 }

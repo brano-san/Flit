@@ -41,7 +41,7 @@ pub fn saved_address(text: &str) -> Option<String> {
     }
     address.push_str(&host.to_lowercase());
     address.push_str(path.trim_end_matches('/'));
-    Some(address)
+    matches!(crate::redact::passwords(&address), std::borrow::Cow::Borrowed(_)).then_some(address)
 }
 
 pub(super) fn server_label(uri: &str) -> &str {
@@ -236,7 +236,7 @@ impl App {
             result => {
                 self.load_tab(k, None, now);
                 if let Err(error) = result {
-                    self.tabs[k].error = Some(crate::i18n::localize(&error).into_owned());
+                    self.tabs[k].error = Some(crate::redact::passwords(&crate::i18n::localize(&error)).into_owned());
                 }
             }
         }
@@ -253,10 +253,10 @@ impl App {
                 return;
             }
             MountAsk::Question { server, message, choices } => {
-                let mut controls: Vec<Control> = message_lines(&message).iter().map(|l| Control::line(l)).collect();
+                let mut controls: Vec<Control> = message_lines(&crate::redact::passwords(&message)).iter().map(|l| Control::line(l)).collect();
                 let at = controls.len();
                 controls.push(Control::choice(S::SidebarDriveLoginAnswer.t(), choices, 0));
-                let title = crate::tr!(S::SidebarDriveLoginTitle, server = server);
+                let title = crate::tr!(S::SidebarDriveLoginTitle, server = crate::redact::passwords(&server));
                 Form::new(Kind::MountQuestion(Question { answer, at }), &title, controls, vec![S::SidebarDriveLoginContinue.t(), S::WidgetsCancel.t()])
             }
         };
@@ -348,7 +348,7 @@ pub(super) fn message_lines(text: &str) -> Vec<String> {
 }
 
 fn login_form(ask: LoginAsk, answer: MountAnswer) -> Form {
-    let mut controls: Vec<Control> = message_lines(&ask.message).iter().map(|l| Control::line(l)).collect();
+    let mut controls: Vec<Control> = message_lines(&crate::redact::passwords(&ask.message)).iter().map(|l| Control::line(l)).collect();
     let mut add = |wanted: bool, c: Control| {
         wanted.then(|| {
             controls.push(c);
@@ -360,7 +360,7 @@ fn login_form(ask: LoginAsk, answer: MountAnswer) -> Form {
     let password = add(ask.wants(ASK_PASSWORD), Control::secret(S::SidebarDriveLoginPassword.t(), ""));
     let anonymous = add(ask.wants(ASK_ANONYMOUS), Control::check(S::SidebarDriveLoginAnonymous.t(), false));
     let remember = add(ask.wants(ASK_SAVING), Control::choice(S::SidebarDriveLoginRemember.t(), vec![S::SidebarDriveLoginForget.t().to_owned(), S::SidebarDriveLoginSession.t().to_owned()], 0));
-    let title = crate::tr!(S::SidebarDriveLoginTitle, server = ask.server);
+    let title = crate::tr!(S::SidebarDriveLoginTitle, server = crate::redact::passwords(&ask.server));
     let login = Login { answer, default_user: ask.user, default_domain: ask.domain, user, domain, password, anonymous, remember };
     let mut form = Form::new(Kind::Login(login), &title, controls, vec![S::SidebarDriveLoginConnect.t(), S::WidgetsCancel.t()]);
     if let Some(k) = password.filter(|_| user.is_none_or(|u| !form.text(u).is_empty())) {

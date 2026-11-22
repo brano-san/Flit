@@ -24,6 +24,20 @@ fn read(dir: &Path, name: &str) -> String {
 }
 
 #[test]
+fn tracing_connection_errors_reach_disk_with_masked_passwords() {
+    let d = temp("connection");
+    let sink = Sink::start(Some(d.0.clone()), false).unwrap();
+    let subscriber = tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(sink.clone()));
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::error!(address = %"ftp://demo:private@ftp.example.test", "connection failed: password='another secret'");
+    });
+    assert!(sink.flush(Duration::from_secs(5)));
+    let log = read(&d.0, FILE);
+    assert!(log.contains("ftp://demo:***@ftp.example.test") && log.contains("password=***"));
+    assert!(!log.contains("private") && !log.contains("another secret"));
+}
+
+#[test]
 fn lines_reach_the_file_in_order_without_a_shutdown() {
     let d = temp("order");
     let sink = Sink::start(Some(d.0.clone()), false).unwrap();

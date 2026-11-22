@@ -56,7 +56,7 @@ pub fn report<P: Platform>() -> String {
         let log = std::fs::read_to_string(dir.join(crate::logs::FILE)).unwrap_or_default();
         let _ = writeln!(out, "\nLast {LOG_LINES} log lines:\n{}", tail(&log, LOG_LINES));
     }
-    out
+    flit_core::redact::passwords(&out).into_owned()
 }
 
 pub fn run<P: Platform>() -> std::io::Result<PathBuf> {

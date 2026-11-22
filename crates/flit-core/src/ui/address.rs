@@ -195,6 +195,15 @@ pub(super) fn label(loc: &Location) -> String {
     loc.crumbs().pop().map(|c| c.0).unwrap_or_default()
 }
 
+fn remembered_address(text: &str) -> Option<std::borrow::Cow<'_, str>> {
+    if matches!(crate::redact::passwords(text), std::borrow::Cow::Borrowed(_)) {
+        return Some(std::borrow::Cow::Borrowed(text));
+    }
+    super::network::saved_address(text)
+        .filter(|address| matches!(crate::redact::passwords(address), std::borrow::Cow::Borrowed(_)))
+        .map(std::borrow::Cow::Owned)
+}
+
 pub(super) fn ready(p: &mut Probe) -> bool {
     if let Some(s) = p.slot.take().filter(|s| s.gen == p.gen && (s.done || s.error.is_some())) {
         p.view = Some(DirView::new(s));
@@ -204,6 +213,14 @@ pub(super) fn ready(p: &mut Probe) -> bool {
 
 impl App {
     pub fn share_typed(&mut self, typed: Typed) {
+        typed.lock().unwrap_or_else(|e| e.into_inner()).retain_mut(|text| {
+            match remembered_address(text) {
+                Some(std::borrow::Cow::Owned(clean)) => *text = clean,
+                Some(std::borrow::Cow::Borrowed(_)) => {}
+                None => return false,
+            }
+            true
+        });
         self.addr.typed = typed;
     }
 
@@ -234,21 +251,23 @@ impl App {
     }
 
     pub(super) fn hand_to_explorer(&mut self, location: &str) -> String {
+        let shown = crate::redact::passwords(location);
         if location.contains('"') {
-            return crate::tr!(S::AddressCannotOpen, location = location);
+            return crate::tr!(S::AddressCannotOpen, location = shown);
         }
-        tracing::info!("handing {location} to File Explorer");
+        tracing::info!("handing {shown} to File Explorer");
         self.launch(Launch::Run { program: EXPLORER.into(), args: format!("\"{location}\""), dir: None });
-        crate::tr!(S::AddressHandedToExplorer, location = location)
+        crate::tr!(S::AddressHandedToExplorer, location = shown)
     }
 
     fn remember_typed(&mut self, text: &str) {
         if self.opts.recents == super::options::Recents::Never {
             return;
         }
+        let Some(text) = remembered_address(text) else { return };
         let mut typed = self.addr.typed.lock().unwrap_or_else(|e| e.into_inner());
-        typed.retain(|t| !t.eq_ignore_ascii_case(text));
-        typed.insert(0, text.to_owned());
+        typed.retain(|t| !t.eq_ignore_ascii_case(&text));
+        typed.insert(0, text.into_owned());
         typed.truncate(MAX_TYPED);
     }
 

@@ -707,7 +707,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::Compact(on)) => window.set_compact(on),
                 Effect::Window(WindowCmd::Attention) => window.request_attention(),
                 Effect::Window(WindowCmd::ServerDecorations(on)) => window.set_server_decorations(on),
-                Effect::Notify(text) => window.notify(&text),
+                Effect::Notify(text) => window.notify(&flit_core::redact::passwords(&text)),
                 Effect::MoveTab { tab, at, last } => self.move_tab(window, tab, at, last),
                 Effect::TabOver(at) => self.tab_over(window, at),
                 Effect::RestoreSession => {
@@ -1047,9 +1047,9 @@ impl<P: Platform> Handler<P> {
         let now = Instant::now();
         while let Ok(ev) = self.events.try_recv() {
             match &ev {
-                ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {e}"),
-                ProviderEvent::Hashed { result: Err(e), .. } => tracing::warn!("hashing failed: {e}"),
-                ProviderEvent::Denied { error, .. } => tracing::warn!("{error}"),
+                ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {}", flit_core::redact::passwords(e)),
+                ProviderEvent::Hashed { result: Err(e), .. } => tracing::warn!("hashing failed: {}", flit_core::redact::passwords(e)),
+                ProviderEvent::Denied { error, .. } => tracing::warn!("{}", flit_core::redact::passwords(error)),
                 _ => {}
             }
             let target = match &ev {

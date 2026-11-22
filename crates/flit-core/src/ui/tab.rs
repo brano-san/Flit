@@ -155,7 +155,7 @@ impl Tab {
     pub fn title(&self) -> String {
         let mut s = match self.crumbs.last() {
             Some((label, _)) => label.clone(),
-            None => name::display(self.location().file_name()).into_owned(),
+            None => crate::redact::passwords(&name::display(self.location().file_name())).into_owned(),
         };
         if self.subfolders {
             s.push_str(SUBFOLDERS_MARK);

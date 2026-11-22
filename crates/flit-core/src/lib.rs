@@ -35,6 +35,7 @@ pub mod ui;
 pub mod undo;
 pub mod update;
 pub mod view;
+pub mod redact;
 
 pub use listing::{attr, DirChange, DirSnapshot, Entry, FsError, FsErrorKind, Listing, ListingBuilder, Meta};
 pub use location::{Location, ProviderId};

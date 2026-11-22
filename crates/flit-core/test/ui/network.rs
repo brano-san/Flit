@@ -8,6 +8,33 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 
 #[test]
+fn connection_failure_hides_passwords_from_the_status_line() {
+    let mut a = linux();
+    let tab = a.tab().id;
+    a.on_provider_event(ProviderEvent::OpDone {
+        tab, id: 0,
+        error: Some("Cannot connect to sftp://ann:secret@nas/docs (password=also-secret&port=22)".into()),
+        report: None,
+    }, Instant::now());
+    assert_eq!(a.tab().error.as_deref(), Some("Cannot connect to sftp://ann:***@nas/docs (password=***&port=22)"));
+}
+
+#[test]
+fn connection_history_masks_the_address_but_the_request_uses_the_password() {
+    let mut a = linux();
+    let now = Instant::now();
+    let uri = "smb://ann:secret@nas/";
+    a.submit_address(uri, now);
+    assert_eq!(a.addr.typed.lock().unwrap().as_slice(), ["smb://ann@nas"]);
+    a.connect_server(uri);
+    assert_eq!(launches(&mut a), [Launch::ConnectServer(uri.into())]);
+    let loc = Location::from_local(FsPath::network_server(uri.as_bytes()).unwrap());
+    assert!(loc.display().contains("smb://ann:***@nas/"));
+    assert_eq!(loc.crumbs().last().unwrap().0, "smb://ann:***@nas/");
+    assert!(loc.to_bytes().ends_with(uri.as_bytes()));
+}
+
+#[test]
 fn connect_dialog_offers_an_unchecked_network_checkbox_only_on_linux() {
     let mut a = linux();
     a.run_action("drive.connect_server", Instant::now());

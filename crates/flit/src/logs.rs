@@ -33,6 +33,10 @@ impl Sink {
     }
 
     pub fn line(&self, bytes: Vec<u8>) {
+        let bytes = match std::str::from_utf8(&bytes).ok().map(flit_core::redact::passwords) {
+            Some(std::borrow::Cow::Owned(masked)) => masked.into_bytes(),
+            _ => bytes,
+        };
         let _ = self.0.send(Msg::Line(bytes));
     }
 

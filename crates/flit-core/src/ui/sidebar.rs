@@ -525,7 +525,7 @@ impl Sidebar {
         let home = self.known(KnownFolder::Home).filter(|_| !self.full_paths);
         let item = |label: String, glyph, loc: Location, usage| Item { section, label, glyph, path: short_path(&loc, home), loc, usage, marks: Vec::new() };
         match section {
-            Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(r.name.clone(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
+            Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(crate::redact::passwords(&r.name).into_owned(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
             Section::Bookmarks => {
                 let library_name = |l: &Location| p.libraries.iter().find(|lib| lib.path == *l.path()).map(|lib| lib.name.clone());
                 let glyph = |l: &Location| if self.state.files.contains(l) { G_FILE } else { pinned_glyph(l) };

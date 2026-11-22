@@ -115,9 +115,10 @@ fn entry_rows(dir: &Location, entries: &Entries) -> Vec<Row> {
     entries
         .iter()
         .map(|(n, d)| {
-            let (label, raw) = match name::display(n) {
-                Cow::Borrowed(s) => (s.to_owned(), None),
-                Cow::Owned(s) => (s, Some(n.to_vec())),
+            let shown = name::display(n);
+            let (label, raw) = match crate::redact::passwords(&shown) {
+                Cow::Borrowed(s) if matches!(shown, Cow::Borrowed(_)) => (s.to_owned(), None),
+                label => (label.into_owned(), Some(n.to_vec())),
             };
             Row { label, path: String::new(), kind: Kind::Entry { parent: parent.clone(), raw, dir: d } }
         })

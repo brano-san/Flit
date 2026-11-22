@@ -452,7 +452,7 @@ impl Shell for ShellCom {
             Launch::Wallpaper(image) => return crate::install::wallpaper(image),
             Launch::Command { runs, dir } => {
                 let owner = owner_window().unwrap_or_default();
-                return launch_commands(runs, dir.as_ref(), |text| crate::toast::notify(owner, text));
+                return launch_commands(runs, dir.as_ref(), |text| crate::toast::notify(owner, &flit_core::redact::passwords(text)));
             }
             Launch::Run { program, args, .. } if program.eq_ignore_ascii_case("explorer.exe") && crate::shellwin::explorer_place(args).is_some_and(crate::shellwin::raise_explorer) => return Ok(()),
             _ => {}

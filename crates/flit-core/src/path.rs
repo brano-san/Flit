@@ -256,7 +256,7 @@ impl FsPath {
                     b.push(b'\\');
                     b.extend_from_slice(c);
                 }
-                Cow::Owned(name::display(&b).into_owned())
+                Cow::Owned(crate::redact::passwords(&name::display(&b)).into_owned())
             }
             _ => name::display(&self.s),
         }
