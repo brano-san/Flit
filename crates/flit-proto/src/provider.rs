@@ -4,10 +4,11 @@ use flit_core::listing::{DirChange, DirStats};
 use flit_core::path::PathKind;
 use flit_core::provider::{Conflict, Failure, FileOp, OpProgress, Recover, Resolve};
 use flit_core::{FsError, FsPath, Meta};
+use flit_core::undo::Replay;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const MAX_FAILURE_TEXT: usize = 4096;
 
 pub type ReqId = u64;
@@ -25,6 +26,7 @@ pub enum Request {
     Recover { id: ReqId, choice: Option<Recover>, all: bool },
     Lang { code: String },
     Pause { id: ReqId, paused: bool },
+    Replay { id: ReqId, plan: Replay },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -40,6 +42,45 @@ pub enum Event {
     OpDone { id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)> },
     OpFailure { id: ReqId, failure: Failure },
     OpPerformed { id: ReqId, op: FileOp },
+    OpReplaced { id: ReqId, targets: Vec<(FsPath, Option<FsPath>)> },
+    OpUndo { id: ReqId, undo: Undo },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum Undo {
+    Checked(Replay),
+    Unavailable,
+    BackupUnavailable,
+    NotRecycled,
+    StampUnavailable,
+}
+
+pub fn check_replay(plan: &Replay) -> Result<(), ProtoError> {
+    let linux = |path: &FsPath| path.kind() == PathKind::Unix && flit_core::archive::split(path).is_none();
+    let checks_match = flit_core::undo::check_paths(&plan.steps).is_some_and(|paths| {
+        paths.len() == plan.checks.len() && paths.iter().zip(&plan.checks).all(|((path, exists), (checked, stamp))| path == checked && *exists == stamp.is_some())
+    });
+    if !checks_match || plan.steps.is_empty() || plan.steps.iter().any(|op| {
+        !matches!(op, FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Trash(_) | FileOp::Restore(_) | FileOp::Access(_))
+            || !op.all_paths(linux)
+    }) || plan.checks.iter().any(|(path, _)| !linux(path)) {
+        return Err(ProtoError::Invalid("invalid paths or operations in an undo plan"));
+    }
+    Ok(())
+}
+
+pub fn check_replacements(op: &FileOp, targets: &[(FsPath, Option<FsPath>)]) -> Result<(), ProtoError> {
+    let Some(scope) = scope(op).filter(|_| matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_) | FileOp::Restore(_))) else {
+        return Err(ProtoError::Invalid("replacements for an operation that cannot replace items"));
+    };
+    let (_, allowed) = sets(&scope);
+    if targets.iter().all(|(target, backup)| under(&allowed, target) && backup.as_ref().is_none_or(|p| {
+        p.kind() == PathKind::Unix && p.parent().is_some_and(|dir| dir.file_name() == b"files")
+    })) {
+        Ok(())
+    } else {
+        Err(ProtoError::Invalid("a replacement path lies outside the operation"))
+    }
 }
 
 impl Event {
@@ -53,6 +94,7 @@ impl Event {
             Event::Stat { result: Ok(meta), .. } => check_meta(meta),
             Event::OpConflict { conflict, .. } => check_meta(&conflict.from).and_then(|()| check_meta(&conflict.to)),
             Event::OpFailure { failure, .. } if failure.error.len() > MAX_FAILURE_TEXT => Err(ProtoError::Invalid("a failure message is too long")),
+            Event::OpUndo { undo: Undo::Checked(plan), .. } => check_replay(plan),
             _ => Ok(()),
         }
     }

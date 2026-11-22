@@ -15,10 +15,15 @@ use windows::Win32::UI::Shell::{SHChangeNotify, SHCNE_UPDATEDIR, SHCNF_FLUSHNOWA
 type Pairs = Vec<(FsPath, FsPath)>;
 type MakeLink<'a> = &'a dyn Fn(LinkKind, &FsPath, &FsPath) -> windows::core::Result<()>;
 type ElevateLinks<'a> = &'a dyn Fn(&[(FsPath, FsPath)]) -> windows::core::Result<()>;
+use crate::fileops::{Recycle, SystemRecycle};
 
 #[cfg(test)]
 #[path = "../test/engine.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../test/replay.rs"]
+mod replay_tests;
 
 const PROTECTED: u32 = FILE_ATTRIBUTE_READONLY.0 | FILE_ATTRIBUTE_HIDDEN.0 | FILE_ATTRIBUTE_SYSTEM.0;
 
@@ -51,6 +56,10 @@ struct Tally {
 struct Chunk<'a> {
     job: &'a Job,
     base: u64,
+    #[cfg(test)]
+    fail_after_chunk: Option<fn(u64) -> Option<WIN32_ERROR>>,
+    #[cfg(test)]
+    failure: std::cell::Cell<Option<WIN32_ERROR>>,
 }
 
 fn wide(p: &FsPath) -> Vec<u16> {
@@ -80,6 +89,44 @@ fn inside(path: &FsPath, folder: &FsPath) -> bool {
 
 fn ticks(t: FILETIME) -> i64 {
     ((t.dwHighDateTime as u64) << 32 | t.dwLowDateTime as u64) as i64
+}
+
+pub(crate) fn undo_stamp(path: &FsPath) -> std::io::Result<(flit_core::undo::Stamp, bool)> {
+    use flit_core::path::PathKind;
+    if !matches!(path.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim) {
+        return Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
+    }
+    let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+    let handle = crate::walk_index::Handle(unsafe { CreateFileW(PCWSTR(wide(path).as_ptr()), FILE_READ_ATTRIBUTES.0, share, None, OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT, None) }.map_err(io_error)?);
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    unsafe { GetFileInformationByHandle(handle.0, &mut info) }.map_err(io_error)?;
+    let file = u64::from(info.nFileIndexHigh) << 32 | u64::from(info.nFileIndexLow);
+    if file == 0 {
+        return Err(std::io::Error::from(std::io::ErrorKind::Unsupported));
+    }
+    let stamp = flit_core::undo::Stamp {
+        size: u64::from(info.nFileSizeHigh) << 32 | u64::from(info.nFileSizeLow),
+        modified: (i128::from(ticks(info.ftLastWriteTime)) - 116_444_736_000_000_000) * 100,
+        device: u64::from(info.dwVolumeSerialNumber),
+        file,
+        access: None,
+    };
+    let directory = info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY.0 | FILE_ATTRIBUTE_REPARSE_POINT.0) == FILE_ATTRIBUTE_DIRECTORY.0;
+    Ok((stamp, directory))
+}
+
+fn io_error(error: windows::core::Error) -> std::io::Error {
+    std::io::Error::from_raw_os_error(code(&error).0 as i32)
+}
+
+pub(crate) fn undo_children(dir: &FsPath) -> std::io::Result<Vec<FsPath>> {
+    use std::os::windows::ffi::OsStrExt;
+    std::fs::read_dir(crate::fileops::std_path(dir))?.map(|entry| {
+        let name = entry?.file_name();
+        let mut bytes = Vec::new();
+        flit_core::name::push_utf16(&mut bytes, &name.encode_wide().collect::<Vec<_>>());
+        Ok(dir.join(&bytes))
+    }).collect()
 }
 
 pub(crate) fn link_stat(p: &FsPath) -> Option<Meta> {
@@ -148,8 +195,11 @@ pub(crate) fn copy_name(item: &FsPath, dest: &FsPath, dir: bool) -> FsPath {
 }
 
 fn partial(to: &FsPath) -> FsPath {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
     let dir = to.parent().unwrap_or_else(|| to.clone());
-    numbered(&dir, &[to.file_name(), b".flit-partial"].concat(), true, b"", true)
+    let id = NEXT.fetch_add(1, Ordering::Relaxed);
+    dir.join(format!(".flit-stage-{}-{id}.flit-partial", std::process::id()).as_bytes())
 }
 
 struct LinkStage {
@@ -157,18 +207,24 @@ struct LinkStage {
     path: FsPath,
     made: bool,
     directory: bool,
+    pending: Option<flit_platform::pending::Record>,
 }
 
 impl LinkStage {
-    fn reserve(dir: FsPath, kind: LinkKind, directory: bool) -> windows::core::Result<Self> {
+    fn reserve(dir: FsPath, kind: LinkKind, directory: bool, state: Option<&std::path::Path>) -> windows::core::Result<Self> {
         unsafe { CreateDirectoryW(PCWSTR(wide(&dir).as_ptr()), None) }?;
+        let _ = set_hidden(&dir, true);
         let path = dir.join(if kind == LinkKind::Shortcut { b"link.lnk" } else { b"link" });
-        Ok(Self { dir, path, made: false, directory })
+        let pending = state.and_then(|state| {
+            let (stamp, _) = undo_stamp(&dir).ok()?;
+            flit_platform::pending::partial(state, &dir, stamp).ok()
+        });
+        Ok(Self { dir, path, made: false, directory, pending })
     }
 
-    fn new(dst: &FsPath, kind: LinkKind, directory: bool) -> windows::core::Result<Self> {
+    fn new(dst: &FsPath, kind: LinkKind, directory: bool, state: Option<&std::path::Path>) -> windows::core::Result<Self> {
         loop {
-            match Self::reserve(partial(dst), kind, directory) {
+            match Self::reserve(partial(dst), kind, directory, state) {
                 Err(error) if matches!(code(&error), ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) => {}
                 result => return result,
             }
@@ -196,7 +252,9 @@ impl Drop for LinkStage {
         if self.made {
             if self.directory { let _ = remove_dir(&self.path); } else { let _ = delete_file(&self.path); }
         }
-        let _ = remove_dir(&self.dir);
+        if let (Ok(()), Some(pending)) = (remove_dir(&self.dir), self.pending.take()) {
+            pending.finish();
+        }
     }
 }
 
@@ -215,6 +273,18 @@ fn move_file(from: &FsPath, to: &FsPath, flags: MOVE_FILE_FLAGS) -> windows::cor
 
 fn create_dir(dst: &FsPath, template: &FsPath) -> windows::core::Result<()> {
     unsafe { CreateDirectoryExW(PCWSTR(wide(template).as_ptr()), PCWSTR(wide(dst).as_ptr()), None) }
+}
+
+fn set_hidden(path: &FsPath, hidden: bool) -> windows::core::Result<()> {
+    let name = wide(path);
+    let attributes = unsafe { GetFileAttributesW(PCWSTR(name.as_ptr())) };
+    if attributes == INVALID_FILE_ATTRIBUTES {
+        return Err(windows::core::Error::from_thread());
+    }
+    let set = if hidden { attr::HIDDEN } else { 0 };
+    let clear = if hidden { 0 } else { attr::HIDDEN };
+    let next = crate::fileops::win_attributes(attributes, set, clear);
+    unsafe { SetFileAttributesW(PCWSTR(name.as_ptr()), FILE_FLAGS_AND_ATTRIBUTES(next)) }
 }
 
 fn unprotect(p: &FsPath) -> bool {
@@ -265,8 +335,34 @@ unsafe extern "system" fn on_chunk(msg: *const COPYFILE2_MESSAGE, ctx: *const c_
     if (*msg).Type == COPYFILE2_CALLBACK_CHUNK_FINISHED {
         let done = (*msg).Info.ChunkFinished.uliTotalBytesTransferred;
         c.job.update(|p| p.bytes = c.base + done);
+        #[cfg(test)]
+        if let Some(error) = c.fail_after_chunk.and_then(|fail| fail(done)) {
+            c.failure.set(Some(error));
+            return COPYFILE2_PROGRESS_CANCEL;
+        }
     }
     COPYFILE2_PROGRESS_CONTINUE
+}
+
+fn copy_file(from: &FsPath, to: &FsPath, size: u64, chunk: &Chunk<'_>) -> windows::core::Result<()> {
+    let params = COPYFILE2_EXTENDED_PARAMETERS {
+        dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32,
+        dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS,
+        pProgressRoutine: Some(on_chunk),
+        pvCallbackContext: chunk as *const Chunk as *mut c_void,
+        ..Default::default()
+    };
+    let result = unsafe { CopyFile2(PCWSTR(wide(from).as_ptr()), PCWSTR(wide(to).as_ptr()), Some(&params)) };
+    #[cfg(test)]
+    if let Some(error) = chunk.failure.get() {
+        return Err(error.to_hresult().into());
+    }
+    result?;
+    chunk.job.update(|p| {
+        p.bytes = chunk.base + size;
+        p.items += 1;
+    });
+    Ok(())
 }
 
 const QUICK_MAX: u64 = 1 << 20;
@@ -323,11 +419,16 @@ pub(crate) struct Engine<'a> {
     limit: Option<(Vec<u8>, Option<u64>)>,
     make_link: MakeLink<'a>,
     elevate_links: ElevateLinks<'a>,
+    recycle: &'a dyn Recycle,
+    pending_state: Option<std::path::PathBuf>,
+    replacement_stage: Option<LinkStage>,
+    #[cfg(test)]
+    fail_after_chunk: Option<fn(u64) -> Option<WIN32_ERROR>>,
 }
 
 impl<'a> Engine<'a> {
     pub(crate) fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, first_code: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None, make_link: &crate::links::create, elevate_links: &crate::links::elevated }
+        Self { job, done: Vec::new(), failed: 0, first: None, first_code: None, fatal: false, elevate: false, dirs: Vec::new(), limit: None, make_link: &crate::links::create, elevate_links: &crate::links::elevated, recycle: &SystemRecycle, pending_state: pending_state(), replacement_stage: None, #[cfg(test)] fail_after_chunk: None }
     }
 
     fn stopped(&self) -> bool {
@@ -364,6 +465,11 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn left_staged(&mut self, original: &FsPath, saved: &FsPath, error: &windows::core::Error) {
+        self.first = Some(tr_en!(S::ErrorsOpsSavedFile, original = original.display(), saved = saved.display(), error = reason(saved, error)));
+        self.failed += 1;
+    }
+
     fn trouble(&mut self, path: &FsPath, e: &windows::core::Error, top: bool) -> bool {
         if self.job.cancelled() {
             return false;
@@ -387,7 +493,7 @@ impl<'a> Engine<'a> {
     }
 
     fn error(&self) -> Option<PlatformError> {
-        if self.job.cancelled() {
+        if self.job.cancelled() && self.first.is_none() {
             return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
         }
         let first = self.first.clone()?;
@@ -466,26 +572,106 @@ impl<'a> Engine<'a> {
         Some(if choice == Resolve::Replace && is_dir(&from) != is_dir(&to) { Resolve::KeepBoth } else { choice })
     }
 
-    pub(crate) fn copy_file(&self, from: &FsPath, to: &FsPath, size: u64, replace: bool) -> windows::core::Result<()> {
-        let chunk = Chunk { job: self.job, base: self.job.progress().bytes };
-        let params = COPYFILE2_EXTENDED_PARAMETERS {
-            dwSize: size_of::<COPYFILE2_EXTENDED_PARAMETERS>() as u32,
-            dwCopyFlags: COPY_FILE_FAIL_IF_EXISTS,
-            pProgressRoutine: Some(on_chunk),
-            pvCallbackContext: &chunk as *const Chunk as *mut c_void,
-            ..Default::default()
-        };
-        let target = if replace { partial(to) } else { to.clone() };
-        unsafe { CopyFile2(PCWSTR(wide(from).as_ptr()), PCWSTR(wide(&target).as_ptr()), Some(&params)) }?;
-        let placed = if replace { move_file(&target, to, MOVEFILE_REPLACE_EXISTING) } else { Ok(()) };
-        if let Err(e) = placed {
-            let _ = delete_file(&target);
-            return Err(e);
+    fn chunk(&self) -> Chunk<'a> {
+        Chunk {
+            job: self.job,
+            base: self.job.progress().bytes,
+            #[cfg(test)]
+            fail_after_chunk: self.fail_after_chunk,
+            #[cfg(test)]
+            failure: Default::default(),
         }
-        self.job.update(|p| {
-            p.bytes = chunk.base + size;
-            p.items += 1;
-        });
+    }
+
+    pub(crate) fn copy_file(&self, from: &FsPath, to: &FsPath, size: u64) -> windows::core::Result<()> {
+        copy_file(from, to, size, &self.chunk())
+    }
+
+    fn replace_file(&mut self, src: &FsPath, dst: &FsPath, size: u64, mode: Mode) -> windows::core::Result<()> {
+        let chunk = self.chunk();
+        self.replace_staged(src, dst, mode, |stage| copy_file(src, stage, size, &chunk))
+    }
+
+    fn replace_staged(&mut self, src: &FsPath, dst: &FsPath, mode: Mode, copy: impl FnOnce(&FsPath) -> windows::core::Result<()>) -> windows::core::Result<()> {
+        let mut stage = match self.replacement_stage.take() {
+            Some(stage) if stage.dir.parent() == dst.parent() => stage,
+            _ => LinkStage::new(dst, LinkKind::Hard, false, self.pending_state.as_deref())?,
+        };
+        if mode != Mode::Move {
+            stage.made = true;
+            if let Err(error) = copy(&stage.path) {
+                if matches!(code(&error), ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS) {
+                    stage.made = false;
+                }
+                return Err(error);
+            }
+        }
+        if self.job.cancelled() {
+            return Err(ERROR_CANCELLED.to_hresult().into());
+        }
+        let placed_stamp = (mode == Mode::Across).then(|| undo_stamp(&stage.path).ok()).flatten();
+
+        let old = stage.dir.join(b"replaced");
+        let recycled = self.recycle.direct(dst);
+        if recycled.is_none() {
+            if self.job.cancelled() {
+                return Err(ERROR_CANCELLED.to_hresult().into());
+            }
+            move_file(dst, &old, MOVE_FILE_FLAGS(0))?;
+        }
+        let saved = recycled.as_ref().unwrap_or(&old);
+        let restore_old = || {
+            if let Some(backup) = &recycled {
+                self.recycle.restore(backup, dst)
+            } else {
+                move_file(&old, dst, MOVE_FILE_FLAGS(0)).is_ok()
+            }
+        };
+        let placed = if mode == Mode::Move {
+            move_file(src, dst, MOVE_FILE_FLAGS(0))
+        } else {
+            stage.place(dst, false)
+        };
+        if let Err(error) = placed {
+            if !restore_old() {
+                self.left_staged(dst, saved, &error);
+                self.job.replaced(dst.clone(), recycled);
+                self.fatal = true;
+            }
+            return Err(error);
+        }
+        if mode == Mode::Across {
+            if let Err(error) = delete_file(src) {
+                let displaced = placed_stamp.is_some_and(|stamp| undo_stamp(dst).is_ok_and(|current| current == stamp))
+                    && move_file(dst, &stage.path, MOVE_FILE_FLAGS(0)).is_ok();
+                stage.made = displaced;
+                if !displaced || !restore_old() {
+                    self.left_staged(dst, saved, &error);
+                    self.job.replaced(dst.clone(), recycled);
+                    self.fatal = true;
+                }
+                return Err(error);
+            }
+        }
+        if mode == Mode::Move {
+            self.job.update(|p| p.items += 1);
+        }
+        let clean = if recycled.is_none() {
+            unprotect(&old);
+            match delete_file(&old) {
+                Ok(()) => true,
+                Err(error) => {
+                    self.left_staged(dst, &old, &error);
+                    false
+                }
+            }
+        } else {
+            true
+        };
+        if clean {
+            self.replacement_stage = Some(stage);
+        }
+        self.job.replaced(dst.clone(), recycled);
         Ok(())
     }
 
@@ -525,10 +711,18 @@ impl<'a> Engine<'a> {
         }
         let (mut replace, mut retried) = (false, false);
         loop {
+            if replace {
+                match self.replace_file(src, &dst, m.size, mode) {
+                    Ok(()) => return Res::Whole(dst),
+                    Err(e) if !self.stopped() && mode == Mode::Move && code(&e) == ERROR_NOT_SAME_DEVICE => return self.transfer(src, dst, m, Mode::Across, top),
+                    Err(e) if !self.stopped() && self.trouble(src, &e, false) => continue,
+                    Err(_) => return Res::Nothing,
+                }
+            }
             let tried = match mode {
-                Mode::Move => move_file(src, &dst, if replace { MOVEFILE_REPLACE_EXISTING } else { MOVE_FILE_FLAGS(0) }),
+                Mode::Move => move_file(src, &dst, MOVE_FILE_FLAGS(0)),
                 _ if dir => create_dir(&dst, src),
-                _ => self.copy_file(src, &dst, m.size, replace),
+                _ => self.copy_file(src, &dst, m.size),
             };
             let Err(e) = tried else { break };
             if self.job.cancelled() {
@@ -542,11 +736,7 @@ impl<'a> Engine<'a> {
                 retried = true;
                 continue;
             }
-            if replace && c == ERROR_ACCESS_DENIED && !retried && unprotect(&dst) {
-                retried = true;
-                continue;
-            }
-            if !replace && exists(&dst) {
+            if exists(&dst) {
                 match self.ask(src, m, &dst) {
                     Some(Resolve::KeepBoth) => dst = free_name(&dst, dir),
                     Some(Resolve::Replace) if dir => return self.merge(src, &dst, mode),
@@ -752,7 +942,7 @@ impl<'a> Engine<'a> {
                 if self.job.cancelled() {
                     break;
                 }
-                let mut stage = match LinkStage::new(&dst, kind, dir) {
+                let mut stage = match LinkStage::new(&dst, kind, dir, self.pending_state.as_deref()) {
                     Ok(stage) => stage,
                     Err(error) if self.trouble(&dst, &error, false) => continue,
                     Err(_) => break,
@@ -912,6 +1102,9 @@ impl<'a> Engine<'a> {
                 Err(e) => self.note(tr_en!(S::ErrorsEngineUnreadable, path = p.display(), code = e.code)),
             }
         }
+        if self.stopped() {
+            return false;
+        }
         let gone = if is_dir(m) { remove_dir(p) } else { delete_file(p) };
         match gone {
             Ok(()) => {
@@ -928,31 +1121,84 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn delete(&mut self, items: &[FsPath]) -> Option<FileOp> {
+    fn delete(&mut self, items: &[FsPath], state: Option<&std::path::Path>) -> Option<FileOp> {
         self.job.update(|p| p.stage = Stage::Preparing);
         let metas = self.stat_all(items);
+        let stages: Vec<_> = items.iter().zip(&metas).map(|(item, meta)| {
+            let state = state?;
+            let _ = meta.as_ref().filter(|_| !self.stopped())?;
+            let (stamp, _) = undo_stamp(item).ok()?;
+            let attributes = unsafe { GetFileAttributesW(PCWSTR(wide(item).as_ptr())) };
+            if attributes == INVALID_FILE_ATTRIBUTES {
+                return None;
+            }
+            let hidden = attributes & FILE_ATTRIBUTE_HIDDEN.0 != 0;
+            let (path, record) = flit_platform::pending::stage_delete(state, item, stamp, hidden, |from, to| {
+                move_file(from, to, MOVE_FILE_FLAGS(0)).map_err(io_error)
+            }).ok()?;
+            let _ = set_hidden(&path, true);
+            self.touch(item.parent());
+            Some((path, record, hidden))
+        }).collect();
         let mut total = Tally::default();
-        for (p, m) in items.iter().zip(&metas) {
+        for ((p, m), stage) in items.iter().zip(&metas).zip(&stages) {
             if let Some(m) = m {
-                self.measure(p, m, true, &mut total);
+                self.measure(stage.as_ref().map_or(p, |(staged, _, _)| staged), m, true, &mut total);
             }
         }
         self.running(total);
-        for (k, item) in items.iter().enumerate() {
-            let Some(m) = metas[k] else { continue };
-            self.touch(item.parent());
-            if self.delete_tree(item, &m, true) {
+        let mut rest = Vec::new();
+        for ((item, meta), stage) in items.iter().zip(metas).zip(stages) {
+            let Some(m) = meta else { continue };
+            let mut deleted = false;
+            let mut original_available = true;
+            if let Some((path, record, hidden)) = stage {
+                let matches = || undo_stamp(&path).is_ok_and(|(stamp, _)| record.matches(stamp));
+                if matches() && !self.stopped() {
+                    let prepared = if is_dir(&m) && !is_dir_link(&m) {
+                        record.inventory(&path, undo_fs(), || self.stopped())
+                    } else {
+                        Ok(())
+                    };
+                    match prepared.and_then(|()| record.begin_delete()) {
+                        Ok(()) => deleted = self.delete_tree(&path, &m, true),
+                        Err(error) if !self.stopped() => {
+                            original_available = false;
+                            self.note(format!("{}: {}", item.display(), flit_core::fmt::io_reason(&error)));
+                        }
+                        Err(_) => {}
+                    }
+                }
+                if deleted {
+                    record.finish();
+                } else {
+                    record.keep();
+                    let restored = if matches() { move_file(&path, item, MOVE_FILE_FLAGS(0)) }
+                        else { Err(ERROR_INVALID_DATA.to_hresult().into()) };
+                    match restored {
+                        Ok(()) => {
+                            record.finish();
+                            let _ = set_hidden(item, hidden);
+                        }
+                        Err(error) => {
+                            original_available = false;
+                            drop(record);
+                            let _ = set_hidden(&path, false);
+                            self.left_staged(item, &path, &error);
+                        }
+                    }
+                }
+            } else if !self.stopped() {
+                self.touch(item.parent());
+                deleted = self.delete_tree(item, &m, true);
+            }
+            if deleted {
                 self.done.push((item.clone(), item.clone()));
-            }
-            if self.elevate {
-                self.elevate = false;
-                return Some(FileOp::Delete(items[k..].to_vec()));
-            }
-            if self.stopped() {
-                break;
+            } else if self.elevate && !self.fatal && !self.job.cancelled() && original_available {
+                rest.push(item.clone());
             }
         }
-        None
+        (!rest.is_empty()).then_some(FileOp::Delete(rest))
     }
 
     fn flatten_dir(&mut self, root: &FsPath, dir: &FsPath) {
@@ -1002,18 +1248,92 @@ impl<'a> Engine<'a> {
     }
 }
 
+fn pending_state() -> Option<std::path::PathBuf> {
+    #[cfg(test)]
+    {
+        Some(crate::test_temp().join(format!("flit-pending-state-{}", std::process::id())))
+    }
+    #[cfg(not(test))]
+    {
+        use flit_platform::Platform;
+        crate::Windows::state_dir()
+    }
+}
+
+pub(crate) fn start_pending_recovery() {
+    let Some(state) = pending_state() else { return };
+    static START: std::sync::Once = std::sync::Once::new();
+    START.call_once(|| {
+        if let Err(error) = std::thread::Builder::new().name("flit-pending-deletes".into()).spawn(move || {
+            recover_pending(&state, process_is_live);
+        }) {
+            tracing::warn!(?error, "Flit could not start pending-delete recovery");
+        }
+    });
+}
+
+fn process_is_live(pid: u32) -> bool {
+    use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+    match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+        Ok(handle) => {
+            let handle = crate::walk_index::Handle(handle);
+            unsafe { WaitForSingleObject(handle.0, 0) != WAIT_OBJECT_0 }
+        }
+        Err(error) => code(&error) != ERROR_INVALID_PARAMETER,
+    }
+}
+
+fn recover_pending(state: &std::path::Path, live: impl Fn(u32) -> bool) {
+    flit_platform::pending::recover(state, live, undo_fs(), delete_pending, |staged, original, hidden| {
+        move_file(staged, original, MOVE_FILE_FLAGS(0)).map_err(io_error)?;
+        if let Err(error) = set_hidden(original, hidden) {
+            tracing::warn!(?error, path = %original.display(), "Flit could not restore the hidden attribute");
+        }
+        Ok(())
+    }, |staged| set_hidden(staged, false).map_err(io_error));
+}
+
+fn delete_pending(path: &FsPath) -> std::io::Result<()> {
+    let fail = || std::io::Error::other("pending deletion was incomplete");
+    if path.file_name().ends_with(b".flit-partial") {
+        let children = undo_children(path)?;
+        for child in &children {
+            let m = stat(child).ok_or_else(fail)?;
+            if !matches!(child.file_name(), b"link" | b"link.lnk" | b"new") || (is_dir(&m) && !is_dir_link(&m)) {
+                return Err(fail());
+            }
+        }
+        for child in children {
+            delete_pending(&child)?;
+        }
+    }
+    let m = stat(path).ok_or_else(fail)?;
+    if is_dir(&m) { remove_dir(path) } else { delete_file(path) }.map_err(io_error)
+}
+
+pub(crate) fn undo_fs() -> flit_platform::replay::FileSystem {
+    flit_platform::replay::FileSystem { stamp: undo_stamp, children: undo_children }
+}
+
 pub(crate) fn native(op: &FileOp) -> bool {
     matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Rename { .. } | FileOp::Delete(_) | FileOp::Flatten(_) | FileOp::Link { .. } | FileOp::LinkAs { .. })
 }
 
 pub(crate) fn run(op: &FileOp, job: &Job) -> Outcome {
-    let mut e = Engine::new(job);
+    run_with_recycler(op, job, &SystemRecycle)
+}
+
+pub(crate) fn run_with_recycler(op: &FileOp, job: &Job, recycle: &dyn Recycle) -> Outcome {
+    let mut e = Engine { recycle, ..Engine::new(job) };
     let rest = match op {
         FileOp::Copy { items, dest } => e.copy(items, dest),
         FileOp::Move { items, dest } => e.moves(&items.iter().map(|i| (i.clone(), dest.join(i.file_name()))).collect::<Vec<_>>()),
         FileOp::MoveTo(pairs) => e.moves(pairs),
         FileOp::Rename { item, name } => e.rename(item, name),
-        FileOp::Delete(items) => e.delete(items),
+        FileOp::Delete(items) => {
+            let state = e.pending_state.clone();
+            e.delete(items, state.as_deref())
+        }
         FileOp::Flatten(dirs) => e.flatten(dirs),
         FileOp::Link { items, dest } => e.links(items, dest, LinkKind::Shortcut),
         FileOp::LinkAs { items, dest, kind } => e.links(items, dest, *kind),

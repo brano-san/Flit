@@ -95,7 +95,7 @@ fn a_program_without_execute_permission_asks_then_allows_and_runs_it() {
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     assert_eq!(op, FileOp::SetAccess { items: vec![path.clone()], edit: AccessEdit { mode: ModeEdit { set: 0o100, clear: 0 }, ..Default::default() } });
     let change = AccessChange { item: path.clone(), from: Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 }, to: Access { mode: Access::FILE | 0o744, uid: 1000, gid: 1000 } };
-    let report = OpReport { op: FileOp::Access(vec![change]), items: vec![(path.clone(), path.clone())] };
+    let report = OpReport::new(FileOp::Access(vec![change]), vec![(path.clone(), path.clone())]);
     app.on_provider_event(ProviderEvent::OpDone { tab, id, error: None, report: Some(report) }, Instant::now());
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Open { path: opened, .. } } if opened == path)));
 }
@@ -168,7 +168,7 @@ fn the_run_question_can_run_the_program_in_a_terminal_instead() {
     let [(id, op)] = ops(&mut app).try_into().unwrap();
     assert_eq!(op, FileOp::SetAccess { items: vec![path.clone()], edit: AccessEdit { mode: ModeEdit { set: 0o100, clear: 0 }, ..Default::default() } });
     let change = AccessChange { item: path.clone(), from: Access { mode: Access::FILE | 0o644, uid: 1000, gid: 1000 }, to: Access { mode: Access::FILE | 0o744, uid: 1000, gid: 1000 } };
-    let report = OpReport { op: FileOp::Access(vec![change]), items: vec![(path.clone(), path.clone())] };
+    let report = OpReport::new(FileOp::Access(vec![change]), vec![(path.clone(), path.clone())]);
     app.on_provider_event(ProviderEvent::OpDone { tab, id, error: None, report: Some(report) }, Instant::now());
     assert!(app.drain_effects().any(|e| matches!(&e, Effect::Provider { req: ProviderRequest::Launch { launch, .. }, .. } if *launch == Launch::RunInTerminal { program: path.clone() })), "the terminal variant launches in a terminal, not the normal open");
 }

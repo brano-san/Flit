@@ -27,6 +27,7 @@ use windows_core::{implement, ComObject, Ref};
 #[implement(IFileOperationProgressSink)]
 struct Sink {
     done: RefCell<Vec<(FsPath, FsPath)>>,
+    existing: RefCell<Vec<(FsPath, FsPath)>>,
     job: Job,
 }
 
@@ -61,6 +62,36 @@ impl Sink_Impl {
         }
     }
 
+    fn before_transfer(&self, item: Ref<IShellItem>, dir: Ref<IShellItem>, name: &PCWSTR) -> windows_core::Result<()> {
+        self.go_on()?;
+        if let (Some(source), Some(dir)) = (item.as_ref().and_then(item_path), dir.as_ref().and_then(item_path)) {
+            let mut leaf = Vec::new();
+            if name.is_null() {
+                leaf.extend_from_slice(source.file_name());
+            } else {
+                flit_core::name::push_utf16(&mut leaf, unsafe { name.as_wide() });
+            }
+            let target = dir.join(&leaf);
+            if !same_path(&source, &target) && engine::stat(&target).is_some_and(|meta| meta.attrs & attr::DIR == 0) {
+                self.existing.borrow_mut().push((source, target));
+            }
+        }
+        Ok(())
+    }
+
+    fn after_transfer(&self, item: Ref<IShellItem>, hr: HRESULT, created: Ref<IShellItem>) {
+        if let Some(source) = item.as_ref().and_then(item_path) {
+            let mut existing = self.existing.borrow_mut();
+            if let Some(index) = existing.iter().position(|(path, _)| same_path(path, &source)) {
+                let (_, before) = existing.swap_remove(index);
+                if hr.is_ok() && created.as_ref().and_then(item_path).is_some_and(|target| same_path(&before, &target)) {
+                    self.job.replaced(before, None);
+                }
+            }
+        }
+        self.record(item, hr, created);
+    }
+
     fn record(&self, source: Ref<IShellItem>, hr: HRESULT, created: Ref<IShellItem>) {
         if hr.is_err() {
             return;
@@ -86,18 +117,18 @@ impl IFileOperationProgressSink_Impl for Sink_Impl {
         self.record(item, hr, created);
         Ok(())
     }
-    fn PreMoveItem(&self, _: u32, _: Ref<IShellItem>, _: Ref<IShellItem>, _: &PCWSTR) -> windows_core::Result<()> {
-        self.go_on()
+    fn PreMoveItem(&self, _: u32, item: Ref<IShellItem>, dir: Ref<IShellItem>, name: &PCWSTR) -> windows_core::Result<()> {
+        self.before_transfer(item, dir, name)
     }
     fn PostMoveItem(&self, _: u32, item: Ref<IShellItem>, _: Ref<IShellItem>, _: &PCWSTR, hr: HRESULT, created: Ref<IShellItem>) -> windows_core::Result<()> {
-        self.record(item, hr, created);
+        self.after_transfer(item, hr, created);
         Ok(())
     }
-    fn PreCopyItem(&self, _: u32, _: Ref<IShellItem>, _: Ref<IShellItem>, _: &PCWSTR) -> windows_core::Result<()> {
-        self.go_on()
+    fn PreCopyItem(&self, _: u32, item: Ref<IShellItem>, dir: Ref<IShellItem>, name: &PCWSTR) -> windows_core::Result<()> {
+        self.before_transfer(item, dir, name)
     }
     fn PostCopyItem(&self, _: u32, item: Ref<IShellItem>, _: Ref<IShellItem>, _: &PCWSTR, hr: HRESULT, created: Ref<IShellItem>) -> windows_core::Result<()> {
-        self.record(item, hr, created);
+        self.after_transfer(item, hr, created);
         Ok(())
     }
     fn PreDeleteItem(&self, _: u32, _: Ref<IShellItem>) -> windows_core::Result<()> {
@@ -337,7 +368,7 @@ fn cancelled(op: &FileOp) -> PlatformError {
 }
 
 unsafe fn operate(flags: FILEOPERATION_FLAGS, fill: impl FnOnce(&IFileOperation) -> Result<(), PlatformError>, cancelled: impl Fn() -> PlatformError, job: &Job) -> OpOutcome {
-    let sink = ComObject::new(Sink { done: RefCell::default(), job: job.clone() });
+    let sink = ComObject::new(Sink { done: RefCell::default(), existing: RefCell::default(), job: job.clone() });
     let result = (|| {
         let fo: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(err)?;
         fo.SetOperationFlags(flags).map_err(err)?;
@@ -348,13 +379,12 @@ unsafe fn operate(flags: FILEOPERATION_FLAGS, fill: impl FnOnce(&IFileOperation)
         let cookie = fo.Advise(&sink.to_interface::<IFileOperationProgressSink>()).map_err(err)?;
         let performed = fo.PerformOperations();
         let _ = fo.Unadvise(cookie);
-        if job.cancelled() {
+        let aborted = fo.GetAnyOperationsAborted();
+        if job.cancelled() || aborted.as_ref().is_ok_and(|value| value.as_bool()) {
             return Err(cancelled());
         }
         performed.map_err(err)?;
-        if fo.GetAnyOperationsAborted().map_err(err)?.as_bool() {
-            return Err(cancelled());
-        }
+        let _ = aborted.map_err(err)?;
         Ok(())
     })();
     OpOutcome { items: sink.done.take(), error: result.err() }
@@ -445,13 +475,19 @@ fn folder_icon(folder: &FsPath, icon: Option<&FsPath>, index: i32) -> OpOutcome 
     }
 }
 
-fn direct_restore(recycled: &FsPath, original: &FsPath) -> bool {
+pub(crate) fn direct_restore(recycled: &FsPath, original: &FsPath) -> bool {
     let Some(info) = info_file(recycled) else { return false };
     if !direct_move(recycled, original) {
         return false;
     }
     delete_file(&info);
     true
+}
+
+pub(crate) fn restore_checked(recycled: &FsPath, original: &FsPath) -> bool {
+    recycle::is_original(recycled, original)
+        && original.parent().is_some_and(|dir| std::fs::create_dir_all(std_path(&dir)).is_ok())
+        && direct_restore(recycled, original)
 }
 
 fn direct(op: &FileOp) -> (Vec<(FsPath, FsPath)>, Option<FileOp>) {
@@ -574,6 +610,14 @@ fn device_op(op: &FileOp, job: &Job) -> OpOutcome {
 }
 
 impl FileOps for ShellCom {
+    fn undo_fs(&self) -> Option<flit_platform::replay::FileSystem> {
+        Some(engine::undo_fs())
+    }
+
+    fn can_restore(&self, backup: &FsPath, original: &FsPath) -> bool {
+        recycle::is_original(backup, original)
+    }
+
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         if !op.all_paths(|p| p.kind() != flit_core::path::PathKind::Shell) {
             return device_op(op, job);
@@ -586,6 +630,9 @@ impl FileOps for ShellCom {
             return OpOutcome { items: Vec::new(), error: Some(e) };
         }
         crate::prevhost::release(crate::prevhost::releasing(op));
+        if job.ctl().replay().is_some() {
+            return checked_op(op, job, &SystemRecycle);
+        }
         match op {
             FileOp::NewStream { item, name } => new_stream(item, name),
             FileOp::FolderIcon { folder, icon, index } => folder_icon(folder, icon.as_ref(), *index),
@@ -600,7 +647,13 @@ impl FileOps for ShellCom {
             FileOp::SetAttributes { items, set, clear, unblock } => set_attributes(items, *set, *clear, *unblock),
             op if engine::native(op) => {
                 let out = engine::run(op, job);
-                with_rest(out.items, out.error, out.rest, job)
+                let engine_items = out.items.len();
+                let unknown = matches!(&out.rest, Some(FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_)));
+                let outcome = with_rest(out.items, out.error, out.rest, job);
+                if unknown && outcome.items.len() > engine_items {
+                    job.mark_unverified();
+                }
+                outcome
             }
             _ => {
                 let (items, rest) = direct(op);
@@ -631,6 +684,99 @@ impl FileOps for ShellCom {
     fn clear_clipboard(&mut self) {
         clipboard::clear_if_unchanged();
     }
+}
+
+pub(crate) trait Recycle {
+    fn direct(&self, path: &FsPath) -> Option<FsPath>;
+
+    fn shell(&self, path: &FsPath, job: &Job) -> Result<FsPath, PlatformError>;
+
+    fn restore(&self, backup: &FsPath, original: &FsPath) -> bool {
+        restore_checked(backup, original)
+    }
+}
+
+pub(crate) struct SystemRecycle;
+
+impl Recycle for SystemRecycle {
+    fn direct(&self, path: &FsPath) -> Option<FsPath> {
+        recycle::for_undo(path)
+    }
+
+    fn shell(&self, path: &FsPath, job: &Job) -> Result<FsPath, PlatformError> {
+        let stamp = engine::undo_stamp(path).ok().map(|(stamp, _)| stamp);
+        let op = FileOp::Trash(vec![path.clone()]);
+        let flags = FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOF_WANTNUKEWARNING | FOF_SILENT;
+        let shell = Job::new(job.ctl().clone(), Box::new(|_| {}), Box::new(|_| {}));
+        let out = unsafe { operate(flags, |fo| queue(fo, &op), || cancelled(&op), &shell) };
+        if let Some(error) = out.error {
+            return Err(error);
+        }
+        if !std_path(path).symlink_metadata().is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound) {
+            return Err(cancelled(&op));
+        }
+        out.items.into_iter().find_map(|(original, backup)| {
+            (same_path(&original, path) && recycle::is_original(&backup, path)).then_some(backup)
+        }).or_else(|| stamp.and_then(|stamp| recycle::find_recycled(path, stamp)))
+            .ok_or_else(|| PlatformError::new(-1, S::ErrorsOpsUndoFailed.en()))
+    }
+}
+
+pub(crate) fn checked_op(op: &FileOp, job: &Job, recycle: &dyn Recycle) -> OpOutcome {
+    let failed = || PlatformError::new(-1, S::ErrorsOpsUndoFailed.en());
+    let mut out = OpOutcome::default();
+    match op {
+        FileOp::Trash(paths) => {
+            for path in paths {
+                if job.cancelled() {
+                    out.error = Some(cancelled(op));
+                    break;
+                }
+                let backup = match recycle.direct(path) {
+                    Some(backup) => backup,
+                    None if job.cancelled() => {
+                        out.error = Some(cancelled(op));
+                        break;
+                    }
+                    None => match recycle.shell(path, job) {
+                        Ok(backup) => backup,
+                        Err(error) => {
+                            out.error = Some(error);
+                            break;
+                        }
+                    },
+                };
+                notify(SHCNE_DELETE, path, None);
+                out.items.push((path.clone(), backup));
+            }
+            if !out.items.is_empty() {
+                unsafe { SHUpdateRecycleBinIcon() };
+            }
+        }
+        FileOp::Restore(pairs) => {
+            for (recycled, original) in pairs {
+                if job.cancelled() {
+                    out.error = Some(cancelled(op));
+                    break;
+                }
+                if !recycle.restore(recycled, original) {
+                    out.error = Some(failed());
+                    break;
+                }
+                notify(SHCNE_CREATE, original, None);
+                out.items.push((recycled.clone(), original.clone()));
+            }
+            if !out.items.is_empty() {
+                unsafe { SHUpdateRecycleBinIcon() };
+            }
+        }
+        op if engine::native(op) => {
+            let ran = engine::run_with_recycler(op, job, recycle);
+            return OpOutcome { items: ran.items, error: ran.error.or_else(|| ran.rest.map(|_| failed())) };
+        }
+        _ => out.error = Some(failed()),
+    }
+    out
 }
 
 #[cfg(test)]

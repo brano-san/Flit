@@ -360,6 +360,7 @@ impl Shell for ShellCom {
 
     fn new() -> Result<Self, PlatformError> {
         com_sta();
+        crate::engine::start_pending_recovery();
         static INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _guard = INIT.lock().unwrap_or_else(|e| e.into_inner());
         let mut shell = Self { lists: Vec::new(), overlay_folder: None };

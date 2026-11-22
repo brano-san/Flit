@@ -147,7 +147,7 @@ impl Client {
     fn done(&self, id: ReqId) -> (Option<String>, Vec<(FsPath, FsPath)>) {
         loop {
             match self.next() {
-                Event::OpProgress { id: got, .. } if got == id => {}
+                Event::OpProgress { id: got, .. } | Event::OpUndo { id: got, .. } | Event::OpReplaced { id: got, .. } if got == id => {}
                 Event::OpDone { id: got, error, items } if got == id => return (error, items),
                 other => panic!("unexpected {other:?}"),
             }
@@ -173,6 +173,32 @@ fn trash_operation_moves_to_the_freedesktop_trash_and_back() {
     c.op(4, FileOp::Delete(vec![fs_path(&t.path().join("data"))]));
     assert_eq!(c.done(4).0, None);
     assert!(!t.path().join("data").exists());
+}
+
+#[test]
+fn the_agent_checks_a_rename_before_undoing_it_on_the_same_filesystem() {
+    let t = Temp::new("agent-undo-rename");
+    let old = t.file("before", 3);
+    let new = t.path().join("after");
+    let mut client = Client::start(None);
+    client.op(1, FileOp::Rename { item: fs_path(&old), name: b"after".to_vec() });
+    let plan = loop {
+        match client.next() {
+            Event::OpProgress { id: 1, .. } => {}
+            Event::OpUndo { id: 1, undo: Undo::Checked(plan) } => break plan,
+            event => panic!("unexpected {event:?}"),
+        }
+    };
+    assert_eq!(client.done(1), (None, vec![(fs_path(&old), fs_path(&new))]));
+    std::fs::write(&old, b"do not overwrite").unwrap();
+    client.send(Request::Replay { id: 2, plan: plan.clone() });
+    let (error, items) = client.done(2);
+    assert!(error.is_some() && items.is_empty());
+    assert_eq!(std::fs::read(&old).unwrap(), b"do not overwrite");
+    std::fs::remove_file(&old).unwrap();
+    client.send(Request::Replay { id: 3, plan });
+    assert_eq!(client.done(3), (None, vec![(fs_path(&new), fs_path(&old))]));
+    assert!(old.exists() && !new.exists());
 }
 
 #[test]

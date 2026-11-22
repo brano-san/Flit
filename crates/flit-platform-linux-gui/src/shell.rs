@@ -699,6 +699,7 @@ impl Shell for LinuxShell {
     const BATCHES_FOLDER_ICONS: bool = true;
 
     fn new() -> Result<Self, PlatformError> {
+        flit_platform_linux::start_pending_recovery();
         Ok(LinuxShell)
     }
 
@@ -860,6 +861,15 @@ impl Shell for LinuxShell {
 }
 
 impl FileOps for LinuxShell {
+    fn undo_fs(&self) -> Option<flit_platform::replay::FileSystem> {
+        Some(flit_platform_linux::undo_fs())
+    }
+
+    fn can_restore(&self, backup: &FsPath, original: &FsPath) -> bool {
+        let (Some(backup), Some(original), Ok(trash)) = (host(backup), host(original), places::trash()) else { return false };
+        trash.entry(backup).is_ok_and(|(_, found)| found.as_path() == original)
+    }
+
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         let free_space = |p: &Path| p.ancestors().find_map(flit_platform_linux::mounts::space).map(|s| s.1);
         let env = flit_archive::Env { utc_offset: <crate::Linux as flit_platform::Platform>::utc_offset_minutes(), free_space: &free_space };
@@ -876,6 +886,7 @@ impl FileOps for LinuxShell {
             (FileOp::Purge(_) | FileOp::EmptyBin, Err(e)) => OpOutcome { items: Vec::new(), error: Some(e.clone()) },
             (FileOp::SetAccess { .. } | FileOp::Access(_), _) => crate::elevated::access_op(op, job, || run_op(op, job, None)),
             (FileOp::GrantAccess(dir), _) => crate::elevated::grant_access(dir),
+            _ if job.ctl().replay().is_some() => run_op(op, job, trash.as_ref().ok()),
             _ => crate::elevated::file_op(op, job, || run_op(op, job, trash.as_ref().ok())),
         };
         fs::rescan_blind();

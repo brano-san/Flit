@@ -67,19 +67,31 @@ fn unlink_at(dir: RawFd, name: &CStr, folder: bool) -> io::Result<()> {
     check(unsafe { libc::unlinkat(dir, name.as_ptr(), if folder { libc::AT_REMOVEDIR } else { 0 }) })
 }
 
+pub(crate) fn rename_exact(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr) -> io::Result<()> {
+    rename_fallback(sdir, sname, ddir, dname, rename_noreplace(sdir, sname, ddir, dname))
+}
+
+fn rename_noreplace(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr) -> io::Result<()> {
+    let result = unsafe { libc::syscall(libc::SYS_renameat2, sdir, sname.as_ptr(), ddir, dname.as_ptr(), RENAME_NOREPLACE) };
+    if result == 0 { Ok(()) } else { Err(io::Error::last_os_error()) }
+}
+
+fn rename_fallback(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr, result: io::Result<()>) -> io::Result<()> {
+    match result {
+        Err(e) if matches!(e.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS | libc::EOPNOTSUPP)) => {}
+        result => return result,
+    }
+    match node_at(ddir, dname, false) {
+        Ok(_) => return Err(errno(libc::EEXIST)),
+        Err(e) if e.raw_os_error() != Some(libc::ENOENT) => return Err(e),
+        Err(_) => {}
+    }
+    check(unsafe { libc::renameat(sdir, sname.as_ptr(), ddir, dname.as_ptr()) })
+}
+
 fn rename_at(sdir: RawFd, sname: &CStr, ddir: RawFd, dname: &CStr, replace: bool) -> io::Result<()> {
     if !replace {
-        let r = unsafe { libc::syscall(libc::SYS_renameat2, sdir, sname.as_ptr(), ddir, dname.as_ptr(), RENAME_NOREPLACE) };
-        if r == 0 {
-            return Ok(());
-        }
-        let e = io::Error::last_os_error();
-        if !matches!(e.raw_os_error(), Some(libc::EINVAL | libc::ENOSYS)) {
-            return Err(e);
-        }
-        if node_at(ddir, dname, false).is_ok() {
-            return Err(errno(libc::EEXIST));
-        }
+        return rename_exact(sdir, sname, ddir, dname);
     }
     check(unsafe { libc::renameat(sdir, sname.as_ptr(), ddir, dname.as_ptr()) })
 }
@@ -220,6 +232,46 @@ fn fs_path(p: &Path) -> Option<FsPath> {
     FsPath::parse_exact(p.as_os_str().as_bytes()).filter(|p| p.kind() == PathKind::Unix)
 }
 
+pub fn undo_fs() -> flit_platform::replay::FileSystem {
+    flit_platform::replay::FileSystem { stamp: undo_stamp, children: undo_children }
+}
+
+fn undo_stamp(path: &FsPath) -> io::Result<(flit_core::undo::Stamp, bool)> {
+    use std::os::unix::fs::MetadataExt;
+    let meta = std::fs::symlink_metadata(host(path).ok_or_else(|| errno(libc::EINVAL))?)?;
+    if meta.ino() == 0 {
+        return Err(io::Error::from(io::ErrorKind::Unsupported));
+    }
+    let stamp = flit_core::undo::Stamp {
+        size: meta.size(),
+        modified: i128::from(meta.mtime()) * 1_000_000_000 + i128::from(meta.mtime_nsec()),
+        device: meta.dev(),
+        file: meta.ino(),
+        access: Some(flit_core::provider::Access { mode: meta.mode(), uid: meta.uid(), gid: meta.gid() }),
+    };
+    Ok((stamp, meta.is_dir()))
+}
+
+fn undo_children(dir: &FsPath) -> io::Result<Vec<FsPath>> {
+    std::fs::read_dir(host(dir).ok_or_else(|| errno(libc::EINVAL))?)?.map(|e| {
+        Ok(dir.join(e?.file_name().as_bytes()))
+    }).collect()
+}
+
+fn reserve_stage(dir: RawFd) -> io::Result<(CString, OwnedFd)> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    loop {
+        let id = NEXT.fetch_add(1, Ordering::Relaxed);
+        let name = CString::new(format!(".flit-stage-{}-{id}.flit-partial", std::process::id())).unwrap();
+        match check(unsafe { libc::mkdirat(dir, name.as_ptr(), 0o700) }) {
+            Ok(()) => return open_dir_at(dir, &name).map(|fd| (name, fd)),
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+
 fn on_windows_volume(path: &FsPath) -> bool {
     crate::fs::LinuxFs.file_system(path).is_some_and(|fs| matches!(fs.as_str(), "ntfs" | "ntfs3" | "fuseblk"))
 }
@@ -298,11 +350,12 @@ struct Engine<'a> {
     dest_fs: Option<(u64, Option<String>)>,
     lang: Lang,
     free: fn(RawFd) -> Option<u64>,
+    trash: Option<&'a Trash>,
 }
 
 impl<'a> Engine<'a> {
     fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang(), free: free_space }
+        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang(), free: free_space, trash: None }
     }
 
     fn stopped(&self) -> bool {
@@ -344,7 +397,7 @@ impl<'a> Engine<'a> {
     }
 
     fn error(&self) -> Option<PlatformError> {
-        if self.job.cancelled() {
+        if self.job.cancelled() && self.first.is_none() {
             return Some(PlatformError::new(libc::ECANCELED as i64, CANCELLED));
         }
         let first = self.first.clone()?;
@@ -559,20 +612,80 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn placed(&self, dir: RawFd, name: &CStr, replace: bool, make: impl FnOnce(&CStr) -> io::Result<()>) -> io::Result<()> {
-        if !replace {
-            return make(name);
+    fn replace_file(&self, source: (RawFd, &CStr), target: (RawFd, &CStr, &FsPath), node: &Node, mode: Mode) -> io::Result<()> {
+        let (sdir, sname) = source;
+        let (ddir, dname, dst) = target;
+        let (name, stage) = reserve_stage(ddir)?;
+        let pending = pending_state().and_then(|state| {
+            let path = sibling(dst, name.to_bytes());
+            let (stamp, _) = undo_stamp(&path).ok()?;
+            flit_platform::pending::partial(&state, &path, stamp).ok()
+        });
+        let dir = stage.as_raw_fd();
+        let new = c"new";
+        let old = c"replaced";
+        let result = (|| {
+            if mode != Mode::Move {
+                self.create(sdir, sname, node, dir, new, mode)?;
+            }
+            if self.job.cancelled() {
+                return Err(errno(libc::ECANCELED));
+            }
+            let recycled = self.trash.and_then(|trash| {
+                let path = host(dst)?;
+                let file = fs_path(&trash.trash_checked(path).ok()?)?;
+                Some((trash, file))
+            });
+            if recycled.is_none() {
+                rename_exact(ddir, dname, dir, old)?;
+            }
+            let restore = || {
+                if let Some((trash, backup)) = &recycled {
+                    let info = host(backup).and_then(|p| trash.entry(p).ok()).map(|(info, _)| info);
+                    if let (Some(info), Ok(from)) = (info, top(backup)) {
+                        if rename_exact(from.dir.as_raw_fd(), &from.name, ddir, dname).is_ok() {
+                            let _ = std::fs::remove_file(info);
+                        }
+                    }
+                } else {
+                    let _ = rename_exact(dir, old, ddir, dname);
+                }
+            };
+            let (from, file) = if mode == Mode::Move { (sdir, sname) } else { (dir, new) };
+            let placed_node = (mode == Mode::Across).then(|| node_at(from, file, false).ok()).flatten();
+            if let Err(error) = rename_exact(from, file, ddir, dname) {
+                restore();
+                return Err(error);
+            }
+            if mode == Mode::Across {
+                if let Err(error) = unlink_at(sdir, sname, false) {
+                    if placed_node.is_some_and(|n| node_at(ddir, dname, false).is_ok_and(|now| (now.dev, now.ino) == (n.dev, n.ino)))
+                        && rename_exact(ddir, dname, dir, new).is_ok() {
+                        restore();
+                    }
+                    return Err(error);
+                }
+            }
+            if mode == Mode::Move {
+                self.job.update(|p| p.items += 1);
+            }
+            if recycled.is_none() {
+                let _ = unlink_at(dir, old, false);
+            }
+            self.job.replaced(dst.clone(), recycled.map(|(_, path)| path));
+            Ok(())
+        })();
+        if result.is_err() {
+            let _ = unlink_at(dir, new, false);
         }
-        let tmp = cstring(&numbered(dir, &[name.to_bytes(), b".flit-partial"].concat(), true, b"", true))?;
-        let r = make(&tmp).and_then(|()| rename_at(dir, &tmp, dir, name, true));
-        if r.is_err() {
-            let _ = unlink_at(dir, &tmp, false);
+        if let (Ok(()), Some(pending)) = (unlink_at(ddir, &name, true), pending) {
+            pending.finish();
         }
-        r
+        result
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn copy_file(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode) -> io::Result<()> {
+    fn copy_file(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, mode: Mode) -> io::Result<()> {
         let src = open_at(sdir, sname, libc::O_RDONLY | libc::O_NONBLOCK, 0)?;
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         check(unsafe { libc::fstat(src.as_raw_fd(), &mut st) })?;
@@ -580,18 +693,18 @@ impl<'a> Engine<'a> {
             return Err(io::Error::other("the file changed while it was being copied"));
         }
         let base = self.job.progress().bytes;
-        self.placed(ddir, dname, replace, |name| {
-            let dst = open_at(ddir, name, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o600)?;
+        {
+            let dst = open_at(ddir, dname, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o600)?;
             let r = self.copy_data(src.as_raw_fd(), dst.as_raw_fd(), sparse(&st));
             if r.is_ok() {
                 keep_meta(src.as_raw_fd(), dst.as_raw_fd(), node, mode);
             }
             drop(dst);
             if r.is_err() {
-                let _ = unlink_at(ddir, name, false);
+                let _ = unlink_at(ddir, dname, false);
             }
-            r
-        })?;
+            r?;
+        }
         self.job.update(|p| {
             p.bytes = base + node.size;
             p.items += 1;
@@ -600,26 +713,20 @@ impl<'a> Engine<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn create(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode) -> io::Result<()> {
+    fn create(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, mode: Mode) -> io::Result<()> {
         match node.kind() {
             libc::S_IFDIR => check(unsafe { libc::mkdirat(ddir, dname.as_ptr(), 0o700) }),
-            libc::S_IFREG => self.copy_file(sdir, sname, node, ddir, dname, replace, mode),
+            libc::S_IFREG => self.copy_file(sdir, sname, node, ddir, dname, mode),
             libc::S_IFLNK => {
                 let target = read_link(sdir, sname, node.size)?;
-                self.placed(ddir, dname, replace, |name| {
-                    check(unsafe { libc::symlinkat(target.as_ptr(), ddir, name.as_ptr()) })?;
-                    keep_link_meta(ddir, name, node);
-                    Ok(())
-                })?;
+                check(unsafe { libc::symlinkat(target.as_ptr(), ddir, dname.as_ptr()) })?;
+                keep_link_meta(ddir, dname, node);
                 self.job.update(|p| p.items += 1);
                 Ok(())
             }
             libc::S_IFIFO => {
-                self.placed(ddir, dname, replace, |name| {
-                    check(unsafe { libc::mknodat(ddir, name.as_ptr(), libc::S_IFIFO | (node.mode & 0o777) as libc::mode_t, 0) })?;
-                    keep_link_meta(ddir, name, node);
-                    Ok(())
-                })?;
+                check(unsafe { libc::mknodat(ddir, dname.as_ptr(), libc::S_IFIFO | (node.mode & 0o777) as libc::mode_t, 0) })?;
+                keep_link_meta(ddir, dname, node);
                 self.job.update(|p| p.items += 1);
                 Ok(())
             }
@@ -651,9 +758,18 @@ impl<'a> Engine<'a> {
                     return Res::Nothing;
                 }
             };
+            if replace {
+                match self.replace_file((sdir, sname), (ddir, &dname, &dst), node, mode) {
+                    Ok(()) => return Res::Whole(dst),
+                    Err(e) if mode == Mode::Move && e.raw_os_error() == Some(libc::EXDEV) => return self.transfer(sdir, sname, src, ddir, dst, node, Mode::Across),
+                    Err(e) if self.trouble(src, &e) => continue,
+                    Err(_) => return Res::Nothing,
+                }
+            }
             let tried = match mode {
-                Mode::Move => rename_at(sdir, sname, ddir, &dname, replace),
-                _ => self.create(sdir, sname, node, ddir, &dname, replace, mode),
+                Mode::Move if self.job.ctl().replay().is_some() => rename_exact(sdir, sname, ddir, &dname),
+                Mode::Move => rename_at(sdir, sname, ddir, &dname, false),
+                _ => self.create(sdir, sname, node, ddir, &dname, mode),
             };
             let Err(e) = tried else { break dname };
             if self.job.cancelled() {
@@ -662,7 +778,7 @@ impl<'a> Engine<'a> {
             let blamed = if mode != Mode::Move && e.raw_os_error() == Some(libc::EROFS) { &dst } else { src };
             match e.raw_os_error() {
                 Some(libc::EXDEV) if mode == Mode::Move => return self.transfer(sdir, sname, src, ddir, dst, node, Mode::Across),
-                Some(libc::EEXIST) if !replace => {}
+                Some(libc::EEXIST) => {}
                 _ if self.trouble(blamed, &e) => continue,
                 _ => return Res::Nothing,
             }
@@ -872,6 +988,9 @@ impl<'a> Engine<'a> {
         }
         let renamed = top(item).and_then(|t| {
             let (dir, target) = (t.dir.as_raw_fd(), cstring(name)?);
+            if self.job.ctl().replay().is_some() {
+                return rename_exact(dir, &t.name, dir, &target);
+            }
             match rename_at(dir, &t.name, dir, &target, false) {
                 Err(e) if e.raw_os_error() == Some(libc::EEXIST) && t.name != target && node_at(dir, &target, false).is_ok_and(|n| (n.dev, n.ino) == (t.node.dev, t.node.ino)) => rename_through_temporary(dir, &t.name, &target),
                 r => r,
@@ -1070,6 +1189,9 @@ impl<'a> Engine<'a> {
                 Err(_) => {}
             }
         }
+        if self.stopped() {
+            return false;
+        }
         match unlink_at(dir, name, node.is_dir()) {
             Ok(()) => {
                 self.counted(node);
@@ -1082,19 +1204,29 @@ impl<'a> Engine<'a> {
         }
     }
 
-    fn delete(&mut self, items: &[FsPath]) {
+    fn delete(&mut self, items: &[FsPath], state: Option<&Path>) {
         self.preparing();
         let tops = self.tops(items);
+        let stages: Vec<_> = items.iter().zip(&tops).map(|(path, top)| {
+            let state = state?;
+            let top = top.as_ref().filter(|t| !t.node.mounted_on(t.parent_dev) && !self.stopped())?;
+            let (stamp, _) = undo_stamp(path).ok()?;
+            flit_platform::pending::stage_delete(state, path, stamp, false, |_, to| {
+                let dir = top.dir.as_raw_fd();
+                rename_exact(dir, &top.name, dir, &cstring(to.file_name())?)
+            }).ok()
+        }).collect();
         let mut total = Tally::default();
         let mut allowed = Vec::with_capacity(items.len());
-        for (item, t) in items.iter().zip(&tops) {
+        for ((item, t), stage) in items.iter().zip(&tops).zip(&stages) {
             let ok = match t {
                 Some(t) if t.node.mounted_on(t.parent_dev) => {
                     self.note(format!("{}: a file system is mounted here, and Flit does not delete mount points", item.display()));
                     false
                 }
                 Some(t) => {
-                    self.tally(t.dir.as_raw_fd(), &t.name, &t.node, false, &mut total);
+                    let name = stage.as_ref().and_then(|(p, _)| cstring(p.file_name()).ok());
+                    self.tally(t.dir.as_raw_fd(), name.as_deref().unwrap_or(&t.name), &t.node, false, &mut total);
                     true
                 }
                 None => false,
@@ -1102,12 +1234,50 @@ impl<'a> Engine<'a> {
             allowed.push(ok);
         }
         self.running(total);
-        for ((item, t), ok) in items.iter().zip(&tops).zip(allowed) {
-            if self.stopped() {
-                break;
-            }
+        for (((item, t), ok), stage) in items.iter().zip(&tops).zip(allowed).zip(stages) {
             let Some(t) = t.as_ref().filter(|_| ok) else { continue };
-            if self.delete_at(t.dir.as_raw_fd(), &t.name, item, &t.node) {
+            let dir = t.dir.as_raw_fd();
+            let deleted = if let Some((path, record)) = stage {
+                let name = cstring(path.file_name()).expect("generated stage name");
+                let matches = || undo_stamp(&path).is_ok_and(|(stamp, _)| record.matches(stamp));
+                let deleted = if matches() && !self.stopped() {
+                    let prepared = if t.node.is_dir() {
+                        record.inventory(&path, undo_fs(), || self.stopped())
+                    } else {
+                        Ok(())
+                    };
+                    match prepared.and_then(|()| record.begin_delete()) {
+                        Ok(()) => self.delete_at(dir, &name, &path, &t.node),
+                        Err(error) => {
+                            if !self.stopped() {
+                                self.fail(item, &error);
+                            }
+                            false
+                        }
+                    }
+                } else {
+                    false
+                };
+                if deleted {
+                    record.finish();
+                } else {
+                    record.keep();
+                    let restored = if matches() { rename_noreplace(dir, &name, dir, &t.name) } else { Err(errno(libc::EBUSY)) };
+                    match restored {
+                        Ok(()) => record.finish(),
+                        Err(error) => {
+                            self.first = Some(flit_core::i18n::fill(S::ErrorsOpsSavedFile.in_lang(self.lang), &[
+                                ("original", &item.display()), ("saved", &path.display()), ("error", &reason(&path, &error)),
+                            ]));
+                            self.failed += 1;
+                        }
+                    }
+                }
+                deleted
+            } else {
+                self.delete_at(dir, &t.name, item, &t.node)
+            };
+            if deleted {
                 self.done.push((item.clone(), item.clone()));
             }
         }
@@ -1123,7 +1293,9 @@ impl<'a> Engine<'a> {
             if self.stopped() {
                 break;
             }
-            let moved = host(p).ok_or_else(|| errno(libc::EINVAL)).and_then(|h| trash.trash(h));
+            let moved = host(p).ok_or_else(|| errno(libc::EINVAL)).and_then(|h| {
+                if self.job.ctl().replay().is_some() { trash.trash_checked(h) } else { trash.trash(h) }
+            });
             match moved.map(|to| fs_path(&to)) {
                 Ok(Some(to)) => self.done.push((p.clone(), to)),
                 Ok(None) => self.note(format!("{} was moved to the Trash under a name Flit cannot record", p.display())),
@@ -1165,12 +1337,65 @@ impl<'a> Engine<'a> {
     }
 }
 
+fn pending_state() -> Option<std::path::PathBuf> {
+    use flit_platform::Platform;
+    if cfg!(test) {
+        Some(std::env::temp_dir().join(format!("flit-pending-state-{}", std::process::id())))
+    } else {
+        crate::Linux::state_dir()
+    }
+}
+
+pub fn start_pending_recovery() {
+    let Some(state) = pending_state() else { return };
+    static START: std::sync::Once = std::sync::Once::new();
+    START.call_once(|| {
+        if let Err(error) = std::thread::Builder::new().name("flit-pending-deletes".into()).spawn(move || {
+            recover_pending(&state, process_is_live);
+        }) {
+            eprintln!("Flit could not start pending-delete recovery: {error}");
+        }
+    });
+}
+
+fn process_is_live(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else { return false };
+    (unsafe { libc::kill(pid, 0) == 0 }) || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+}
+
+fn recover_pending(state: &Path, live: impl Fn(u32) -> bool) {
+    flit_platform::pending::recover(state, live, undo_fs(), delete_pending, |staged, original, _| {
+        let item = top(staged)?;
+        let dir = item.dir.as_raw_fd();
+        rename_noreplace(dir, &item.name, dir, &cstring(original.file_name())?)
+    }, |_| Ok(()));
+}
+
+fn delete_pending(path: &FsPath) -> io::Result<()> {
+    if path.file_name().ends_with(b".flit-partial") {
+        let children = undo_children(path)?;
+        for child in &children {
+            if child.file_name() != b"new" || undo_stamp(child)?.1 {
+                return Err(errno(libc::EEXIST));
+            }
+        }
+        for child in children {
+            delete_pending(&child)?;
+        }
+    }
+    let item = top(path)?;
+    if item.node.mounted_on(item.parent_dev) {
+        return Err(errno(libc::EBUSY));
+    }
+    unlink_at(item.dir.as_raw_fd(), &item.name, item.node.is_dir())
+}
+
 pub fn run(op: &FileOp, job: &Job, trash: Option<&Trash>) -> OpOutcome {
     run_in(op, job, trash, flit_core::i18n::lang())
 }
 
 pub fn run_in(op: &FileOp, job: &Job, trash: Option<&Trash>, lang: Lang) -> OpOutcome {
-    let mut e = Engine { lang, ..Engine::new(job) };
+    let mut e = Engine { lang, trash, ..Engine::new(job) };
     let linux = op.all_paths(|p| p.kind() == PathKind::Unix);
     match op {
         _ if !linux => e.note(NOT_LINUX.into()),
@@ -1187,7 +1412,7 @@ pub fn run_in(op: &FileOp, job: &Job, trash: Option<&Trash>, lang: Lang) -> OpOu
         FileOp::Access(changes) => e.access(changes),
         FileOp::NewFolder { dir, name } => e.new_folder(dir, name),
         FileOp::NewFile { dir, name, template } => e.new_file(dir, name, template),
-        FileOp::Delete(items) => e.delete(items),
+        FileOp::Delete(items) => e.delete(items, pending_state().as_deref()),
         FileOp::Trash(items) => e.trash(items, trash),
         FileOp::Restore(pairs) => e.restore(pairs, trash),
         FileOp::Link { items, dest } => e.link(items, dest),

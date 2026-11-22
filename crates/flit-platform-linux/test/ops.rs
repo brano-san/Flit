@@ -53,6 +53,102 @@ fn listing(dir: &Path) -> Vec<Vec<u8>> {
 }
 
 #[test]
+fn unsupported_rename_noreplace_checks_the_destination_before_using_renameat() {
+    let t = Temp::new("ops-rename-fallback");
+    let source = t.path().join("source");
+    let target = t.path().join("target");
+    write(&source, "new");
+    write(&target, "keep");
+    let dir = open_dir(t.path()).unwrap();
+    let dir = dir.as_raw_fd();
+    for no_support in [libc::EINVAL, libc::ENOSYS, libc::EOPNOTSUPP] {
+        let attempt = || rename_fallback(dir, c"source", dir, c"target", Err(errno(no_support)));
+        assert_eq!(attempt().unwrap_err().raw_os_error(), Some(libc::EEXIST));
+        assert_eq!(read(&target), "keep");
+        assert_eq!(read(&source), "new");
+    }
+    std::fs::remove_file(&target).unwrap();
+    rename_fallback(dir, c"source", dir, c"target", Err(errno(libc::EINVAL))).unwrap();
+    assert_eq!(read(&target), "new");
+    assert!(!source.exists());
+}
+
+#[test]
+fn cancelled_delete_restores_names_and_restart_leaves_them_in_place() {
+    let t = Temp::new("ops-cancel-staged");
+    let state = t.path().join("state");
+    let directory = t.path().join("selected");
+    std::fs::create_dir(&directory).unwrap();
+    let paths: Vec<_> = (0..10).map(|index| {
+        let path = directory.join(format!("item-{index}"));
+        std::fs::create_dir(&path).unwrap();
+        fp(&path)
+    }).collect();
+    let stage = directory.join(".flit-stage-1.flit-partial");
+    std::fs::create_dir(&stage).unwrap();
+    let ctl = OpCtl::default();
+    let cancel = ctl.clone();
+    let listed = directory.clone();
+    let job = Job::new(ctl, Box::new(move |progress| {
+        if progress.stage == Stage::Running && progress.items == 0 {
+            let mut names = Vec::new();
+            crate::fs::scan(&listed, |name, _| { names.push(name.to_vec()); true }).unwrap();
+            assert!(names.is_empty());
+            assert_eq!(std::fs::read_dir(&listed).unwrap().count(), 11);
+            std::thread::sleep(Duration::from_millis(40));
+        } else if progress.items == 1 {
+            cancel.cancel();
+        }
+    }), Box::new(|_| {}));
+    let mut engine = Engine::new(&job);
+    engine.delete(&paths, Some(&state));
+    assert_eq!(engine.done, vec![(paths[0].clone(), paths[0].clone())]);
+    assert_eq!(std::fs::read_dir(state.join("pending-deletes")).unwrap().count(), 0);
+    assert!(!host(&paths[0]).unwrap().exists());
+    recover_pending(&state, |_| false);
+    assert!(paths[1..].iter().all(|p| host(p).unwrap().exists()));
+    assert!(stage.exists());
+}
+
+#[test]
+fn a_cancelled_delete_left_under_its_staged_name_is_visible_and_can_be_recovered() {
+    let t = Temp::new("ops-recover-cancelled");
+    let state = t.path().join("state");
+    let directory = t.path().join("data");
+    let original = directory.join("item");
+    write(&original, "keep this");
+    let occupied = original.clone();
+    let ctl = OpCtl::default();
+    let cancel = ctl.clone();
+    let job = Job::new(ctl, Box::new(move |progress| {
+        if progress.stage == Stage::Running {
+            write(&occupied, "occupant");
+            cancel.cancel();
+        }
+    }), Box::new(|_| {}));
+    let mut engine = Engine::new(&job);
+    engine.delete(&[fp(&original)], Some(&state));
+    let mut staged = None;
+    crate::fs::scan(&directory, |name, meta| {
+        if flit_platform::pending::is_delete_name(name) {
+            assert_eq!(meta.attrs & flit_core::listing::attr::HIDDEN, 0);
+            staged = Some(directory.join(OsStr::from_bytes(name)));
+        }
+        true
+    }).unwrap();
+    let staged = staged.unwrap();
+    assert!(engine.done.is_empty() && engine.error().unwrap().message.contains(staged.to_str().unwrap()));
+    recover_pending(&state, |_| false);
+    assert_eq!(read(&original), "occupant");
+    assert_eq!(read(&staged), "keep this");
+    std::fs::remove_file(&original).unwrap();
+    recover_pending(&state, |_| false);
+    assert_eq!(read(&original), "keep this");
+    assert!(!staged.exists());
+    assert_eq!(std::fs::read_dir(state.join("pending-deletes")).unwrap().count(), 0);
+}
+
+#[test]
 fn copy_keeps_mode_times_links_and_odd_names() {
     let t = Temp::new("ops-copy");
     let src = t.path().join("src");
@@ -477,13 +573,57 @@ fn cancelling_removes_the_partial_copy() {
     let e = Engine::new(&job);
     let src = top(&fp(&big)).unwrap();
     let into = open_dir(&dst).unwrap();
-    let r = e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", false, Mode::Copy);
+    let r = e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", Mode::Copy);
     assert_eq!(r.unwrap_err().raw_os_error(), Some(libc::ECANCELED));
     assert!(listing(&dst).is_empty(), "the half-written file is removed");
     write(&dst.join("big"), "old");
-    assert!(e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", true, Mode::Copy).is_err());
+    assert!(e.replace_file((src.dir.as_raw_fd(), &src.name), (into.as_raw_fd(), c"big", &fp(&dst.join("big"))), &src.node, Mode::Copy).is_err());
     assert_eq!(listing(&dst), [b"big".to_vec()]);
     assert_eq!(read(&dst.join("big")), "old");
+}
+
+#[test]
+fn replacing_a_linux_file_can_restore_both_versions_in_their_original_paths() {
+    use flit_core::{provider::OpReport, undo::Step};
+    use flit_platform::{replay, FileOps};
+
+    struct Shell(Trash);
+    impl FileOps for Shell {
+        fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+            run(op, job, Some(&self.0))
+        }
+
+        fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
+            unreachable!()
+        }
+
+        fn clear_clipboard(&mut self) {}
+
+        fn can_restore(&self, backup: &FsPath, original: &FsPath) -> bool {
+            let (Some(backup), Some(original)) = (host(backup), host(original)) else { return false };
+            self.0.entry(backup).is_ok_and(|(_, found)| found.as_path() == original)
+        }
+    }
+
+    for moving in [false, true] {
+        let t = Temp::new("undo-linux-replace");
+        let from = t.path().join("source/file");
+        let to = t.path().join("destination/file");
+        write(&from, "incoming");
+        write(&to, "old");
+        let dest = fp(to.parent().unwrap());
+        let op = if moving { FileOp::Move { items: vec![fp(&from)], dest } } else { FileOp::Copy { items: vec![fp(&from)], dest } };
+        let mut shell = Shell(Trash::new(t.path().join("data/Trash"), unsafe { libc::getuid() }));
+        let job = quiet(Resolve::Replace);
+        let report: OpReport = replay::report(op.clone(), ok(shell.file_op(&op, &job)), Some(undo_fs()), &job);
+        assert_eq!(read(&to), "incoming");
+        let Some(Step::Checked(plan)) = flit_core::undo::inverse(&report) else { panic!("expected a checked replacement") };
+        let job = Job::new(OpCtl::checked(plan.clone()), Box::new(|_| {}), Box::new(|_| {}));
+        let (result, _) = replay::run(&mut shell, &plan, Some(undo_fs()), &job);
+        ok(result);
+        assert_eq!(read(&from), "incoming");
+        assert_eq!(read(&to), "old");
+    }
 }
 
 #[test]
@@ -585,7 +725,7 @@ fn links_point_at_absolute_targets_get_numbered_names_and_undo_deletes_them() {
     assert_eq!(raw[0].1.file_name(), b"Link to x\xFF");
     let missing = run(&FileOp::Link { items: vec![fp(&t.path().join("gone"))], dest: fp(&dest) }, &quiet(Resolve::Skip), None);
     assert!(missing.error.unwrap().message.ends_with("gone does not exist"));
-    let report = flit_core::provider::OpReport { op, items: made };
+    let report = flit_core::provider::OpReport::new(op, made);
     let Some(flit_core::undo::Step::Run(undo)) = flit_core::undo::inverse(&report) else { panic!("making links is undoable") };
     ok(run(&undo, &quiet(Resolve::Skip), None));
     assert!(std::fs::symlink_metadata(dest.join("Link to report.txt")).is_err() && std::fs::symlink_metadata(dest.join("Link to docs")).is_err());
@@ -614,7 +754,7 @@ fn flatten_moves_nested_files_up_numbers_collisions_and_undoes() {
     assert_eq!(listing(&root), [b"link".to_vec(), b"one.txt".to_vec(), b"top (2).txt".to_vec(), b"top.txt".to_vec(), b"two.txt".to_vec()]);
     assert_eq!((read(&root.join("top.txt")), read(&root.join("top (2).txt"))), ("root".into(), "c".into()));
     assert!(std::fs::symlink_metadata(root.join("link")).unwrap().file_type().is_symlink());
-    let report = flit_core::provider::OpReport { op: FileOp::Flatten(vec![fp(&root)]), items: out.items };
+    let report = flit_core::provider::OpReport::new(FileOp::Flatten(vec![fp(&root)]), out.items);
     let Some(flit_core::undo::Step::Run(undo)) = flit_core::undo::inverse(&report) else { panic!("flatten is undoable") };
     ok(run(&undo, &quiet(Resolve::Skip), None));
     assert_eq!([read(&root.join("a/one.txt")), read(&root.join("a/b/two.txt")), read(&root.join("c/top.txt")), read(&root.join("top.txt"))], ["1", "2", "c", "root"]);

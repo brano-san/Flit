@@ -141,6 +141,7 @@ fn flush<K: Clone>(watches: &Mutex<Watches<K>>, pending: HashMap<i32, Pending>, 
         let changes: Vec<DirChange> = p
             .names
             .into_iter()
+            .filter(|name| !flit_platform::pending::is_stage_name(name))
             .map(|name| match stat_path(&dir.join(OsStr::from_bytes(&name))) {
                 Ok(mut meta) => {
                     mark_listed_hidden(&mut meta, &name, &hidden);

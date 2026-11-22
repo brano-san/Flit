@@ -11,10 +11,10 @@ use rayon::prelude::*;
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;
-use std::os::windows::fs::MetadataExt;
+use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
 use windows::core::PCWSTR;
 use windows::Wdk::Storage::FileSystem::FILE_NON_DIRECTORY_FILE;
-use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives, MoveFileExW, ReadFile, FILE_ATTRIBUTE_DIRECTORY, FILE_LIST_DIRECTORY, FILE_READ_DATA, MOVE_FILE_FLAGS};
+use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetLogicalDrives, MoveFileExW, ReadFile, FILE_ATTRIBUTE_DIRECTORY, FILE_FLAG_WRITE_THROUGH, FILE_LIST_DIRECTORY, FILE_READ_DATA, MOVE_FILE_FLAGS};
 
 const HEADER: usize = 24;
 const V1_PATH_UNITS: usize = 260;
@@ -176,7 +176,11 @@ fn next_id(seed: &mut u64, ext: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn recycle_into(root: &FsPath, p: &FsPath, budget: &mut u64, seed: &mut u64) -> Option<FsPath> {
-    let meta = std::fs::symlink_metadata(std_path(p)).ok().filter(|m| m.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 == 0)?;
+    recycle_payload(root, p, budget, seed, false)
+}
+
+pub(crate) fn recycle_payload(root: &FsPath, p: &FsPath, budget: &mut u64, seed: &mut u64, dirs: bool) -> Option<FsPath> {
+    let meta = std::fs::symlink_metadata(std_path(p)).ok().filter(|m| dirs || m.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 == 0)?;
     *budget = budget.checked_sub(meta.len())?;
     let name = p.file_name();
     let ext = name.iter().rposition(|&c| c == b'.').map_or(&b""[..], |i| &name[i..]);
@@ -184,7 +188,12 @@ pub(crate) fn recycle_into(root: &FsPath, p: &FsPath, budget: &mut u64, seed: &m
     for _ in 0..8 {
         let id = next_id(seed, ext);
         let (info, payload) = (root.join(&[&b"$I"[..], &id].concat()), root.join(&[&b"$R"[..], &id].concat()));
-        let mut f = match std::fs::File::create_new(std_path(&info)) {
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        if dirs {
+            options.custom_flags(FILE_FLAG_WRITE_THROUGH.0);
+        }
+        let mut f = match options.open(std_path(&info)) {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(_) => return None,
@@ -199,6 +208,45 @@ pub(crate) fn recycle_into(root: &FsPath, p: &FsPath, budget: &mut u64, seed: &m
         return None;
     }
     None
+}
+
+pub(crate) fn for_undo(p: &FsPath) -> Option<FsPath> {
+    static SID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    if p.kind() != flit_core::path::PathKind::Drive {
+        return None;
+    }
+    let volume = FsPath::parse_exact(p.root_bytes())?;
+    if unsafe { GetDriveTypeW(PCWSTR(volume.to_wide(false).as_ptr())) } != DRIVE_FIXED {
+        return None;
+    }
+    let sid = SID.get_or_init(user_sid).as_ref()?;
+    let root = volume.join(BIN_FOLDER).join(sid.as_bytes());
+    let mut seed = now_filetime() as u64 | 1;
+    let mut budget = u64::MAX;
+    recycle_payload(&root, p, &mut budget, &mut seed, true)
+}
+
+pub(crate) fn find_recycled(original: &FsPath, stamp: flit_core::undo::Stamp) -> Option<FsPath> {
+    let root = FsPath::parse_exact(original.root_bytes())?;
+    let sid = user_sid()?;
+    let root = root.join(BIN_FOLDER).join(sid.as_bytes());
+    let listing = entries(&root)?;
+    (0..listing.len() as u32).filter_map(|index| {
+        let name = listing.name(index);
+        name.starts_with(b"$R").then(|| root.join(name))
+    }).find(|candidate| crate::engine::undo_stamp(candidate).is_ok_and(|(current, _)| {
+        current.device == stamp.device && current.file == stamp.file
+    }) && is_original(candidate, original))
+}
+
+pub(crate) fn is_original(recycled: &FsPath, original: &FsPath) -> bool {
+    let info = || {
+        let file = info_file(recycled)?;
+        let dir = Handle(open_dir(&file.parent()?, FILE_LIST_DIRECTORY.0, false).ok()?);
+        let info = read_info(&dir, file.file_name())?;
+        FsPath::from_utf16(&info.path)
+    };
+    info().is_some_and(|p| p.same(original))
 }
 
 pub(crate) fn trash(paths: &[FsPath]) -> (Vec<(FsPath, FsPath)>, Vec<FsPath>) {

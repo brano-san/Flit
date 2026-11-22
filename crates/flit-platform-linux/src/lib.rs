@@ -19,6 +19,8 @@ mod temp;
 pub use fs::{host, stat_path, xattr, xattr_names, LinuxFs};
 pub use inotify::{Inotify, Notice, Notify};
 pub use ops::run as run_op;
+pub use ops::start_pending_recovery;
+pub use ops::undo_fs;
 pub use tags::{file_key, merged_tag_names, resolve_files, sync_tag_names};
 pub use walk::{indexed, WalkIndex};
 pub use trash::{percent_decode, percent_encode, trash_time, Trash};
@@ -238,7 +240,17 @@ impl Shell for FreedesktopShell {
 }
 
 impl FileOps for FreedesktopShell {
+    fn undo_fs(&self) -> Option<flit_platform::replay::FileSystem> {
+        Some(ops::undo_fs())
+    }
+
+    fn can_restore(&self, backup: &FsPath, original: &FsPath) -> bool {
+        let (Some(backup), Some(original), Some(trash)) = (host(backup), host(original), Trash::from_env()) else { return false };
+        trash.entry(backup).is_ok_and(|(_, found)| found.as_path() == original)
+    }
+
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
+        start_pending_recovery();
         ops::run(op, job, Trash::from_env().as_ref())
     }
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {

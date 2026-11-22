@@ -602,16 +602,19 @@ impl App {
     }
 
     fn start_op_on(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then) {
+        self.start_op_with_ctl(provider, tab, op, origin, then, OpCtl::new(self.conflict_default));
+    }
+
+    fn start_op_with_ctl(&mut self, provider: ProviderId, tab: TabId, op: FileOp, origin: Origin, then: Then, ctl: OpCtl) {
         if let Some(t) = self.tabs.iter_mut().find(|t| t.id == tab) {
             t.undo = None;
         }
-        let provider = self.admin_route(provider, tab);
-        let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
+        let routed = if ctl.replay().is_some() { Some((provider, op)) } else { route(self.admin_route(provider, tab), op, self.caps.unix_paths) };
+        let Some((provider, op)) = routed else { return self.status(MIXED_PATHS.t()) };
         self.ops.next_id += 1;
         let id = self.ops.next_id;
-        let ctl = OpCtl::new(self.conflict_default);
         self.track_job(id, &provider, &op, &ctl);
-        let optimistic_removal = provider == ProviderId::Local
+        let optimistic_removal = ctl.replay().is_none() && provider == ProviderId::Local
             && match &op {
                 FileOp::Trash(items) | FileOp::Delete(items) => self.tabs.iter().find(|t| t.id == tab).is_some_and(|t| {
                     let (Some(view), Some(dir)) = (&t.view, t.view_loc.to_windows()) else { return false };
@@ -629,7 +632,7 @@ impl App {
                 FileOp::Trash(items) | FileOp::Delete(items) => items,
                 _ => unreachable!(),
             };
-            let report = OpReport { op: op.clone(), items: sources.iter().cloned().map(|path| (path.clone(), path)).collect() };
+            let report = OpReport::new(op.clone(), sources.iter().cloned().map(|path| (path.clone(), path)).collect());
             if let Some(k) = self.tabs.iter().position(|t| t.id == tab) {
                 self.drop_gone(k, &provider, &report);
             }
@@ -1177,6 +1180,11 @@ impl App {
             None => self.status(if origin == Origin::Undo { S::UiOpsNothingToUndo } else { S::UiOpsNothingToRedo }.t()),
             Some((_, Step::Refuse(msg))) => self.status(msg),
             Some((provider, Step::Run(op))) => self.start_op_on(provider, self.tab().id, op, origin, Then::Select),
+            Some((provider, Step::Checked(replay))) => {
+                if let Some(op) = replay.steps.first().cloned() {
+                    self.start_op_with_ctl(provider, self.tab().id, op, origin, Then::Select, OpCtl::checked(replay));
+                }
+            }
         }
     }
 
@@ -1298,7 +1306,8 @@ impl App {
             }
         }
         let incomplete_removal = p.optimistic_removal && (error.is_some() || report.items.len() != removal_count(&report.op));
-        if incomplete_removal {
+        let composite = p.ctl.replay().is_some_and(|plan| plan.steps.len() > 1);
+        if incomplete_removal || (composite && any_done) {
             if let Some(k) = k {
                 self.reload(k, now);
             }

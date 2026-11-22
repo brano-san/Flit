@@ -6,7 +6,24 @@ fn p(s: &str) -> FsPath {
 }
 
 fn report(op: FileOp, items: &[(&str, &str)]) -> OpReport {
-    OpReport { op, items: items.iter().map(|&(a, b)| (p(a), p(b))).collect() }
+    OpReport::new(op, items.iter().map(|&(a, b)| (p(a), p(b))).collect())
+}
+
+#[test]
+fn replacing_a_destination_adds_its_restore_to_the_same_step() {
+    let original = p("/target/a");
+    let backup = p("/trash/files/a");
+    for (op, first) in [
+        (FileOp::Copy { items: vec![p("/source/a")], dest: p("/target") }, FileOp::Trash(vec![original.clone()])),
+        (FileOp::Move { items: vec![p("/source/a")], dest: p("/target") }, FileOp::MoveTo(vec![(original.clone(), p("/source/a"))])),
+    ] {
+        let mut made = report(op, &[("/source/a", "/target/a")]);
+        made.undo.replaced.push((original.clone(), Some(backup.clone())));
+        let Some(Step::Checked(replay)) = inverse(&made) else { panic!("replacement must be reversed as one step") };
+        assert_eq!(replay.steps, [first, FileOp::Restore(vec![(backup.clone(), original.clone())])]);
+        made.undo.replaced[0].1 = None;
+        assert!(matches!(inverse(&made), Some(Step::Refuse(_))));
+    }
 }
 
 #[test]
@@ -38,6 +55,17 @@ fn nothing_done_means_nothing_to_undo_and_permanent_deletes_refuse() {
     assert_eq!(inverse(&report(FileOp::Copy { items: vec![p(r"C:\a\x")], dest: p(r"C:\b") }, &[])), None);
     let gone = report(FileOp::Trash(vec![p(r"\\srv\s\x")]), &[(r"\\srv\s\x", r"\\srv\s\x")]);
     assert_eq!(inverse(&gone), Some(Step::Refuse(crate::i18n::S::ErrorsOpsNotRecycled.en())));
+}
+
+#[test]
+fn an_unverified_system_transfer_has_a_distinct_reason_from_an_unbacked_replacement() {
+    use crate::i18n::S;
+    let mut moved = report(FileOp::Move { items: vec![p("/a")], dest: p("/target") }, &[("/a", "/target/a")]);
+    moved.undo.unverified = true;
+    assert_eq!(inverse(&moved), Some(Step::Refuse(S::ErrorsOpsUndoSystem.en())));
+    assert!(moved.undo.replaced.is_empty());
+    moved.undo.replaced.push((p("/target/a"), None));
+    assert_eq!(inverse(&moved), Some(Step::Refuse(S::ErrorsOpsUndoBackup.en())));
 }
 
 #[test]

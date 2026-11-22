@@ -24,6 +24,12 @@ impl TempDir {
         std::fs::write(self.0.join(rel), body).unwrap();
         self.path(rel)
     }
+    fn assert_no_stages(&self, rel: &str) {
+        assert!(!std::fs::read_dir(self.0.join(rel)).unwrap().any(|entry| {
+            let name = entry.unwrap().file_name();
+            flit_platform::pending::is_stage_name(name.to_string_lossy().as_bytes())
+        }));
+    }
     fn has(&self, rel: &str) -> bool {
         self.0.join(rel).exists()
     }
@@ -46,6 +52,22 @@ fn names(items: &[(FsPath, FsPath)]) -> Vec<String> {
 
 fn run(sh: &mut ShellCom, op: &FileOp) -> OpOutcome {
     sh.file_op(op, &Job::detached(Resolve::KeepBoth))
+}
+
+struct UnavailableRecycle;
+
+impl Recycle for UnavailableRecycle {
+    fn direct(&self, _: &FsPath) -> Option<FsPath> {
+        None
+    }
+
+    fn shell(&self, _: &FsPath, _: &Job) -> Result<FsPath, PlatformError> {
+        panic!("native file operations must not call the Shell recycler")
+    }
+}
+
+fn run_native(op: &FileOp, job: &Job) -> engine::Outcome {
+    engine::run_with_recycler(op, job, &UnavailableRecycle)
 }
 
 fn read(t: &TempDir, rel: &str) -> String {
@@ -469,7 +491,7 @@ fn copies_trees_natively_and_names_duplicates_like_explorer() {
     t.file(r"src\a.txt", "a");
     t.file(r"src\sub\deep\c.txt", "c");
     let job = Job::detached(Resolve::Skip);
-    let out = engine::run(&FileOp::Copy { items: vec![t.path("src")], dest: t.path("dst") }, &job);
+    let out = run_native(&FileOp::Copy { items: vec![t.path("src")], dest: t.path("dst") }, &job);
     assert!(out.error.is_none() && out.rest.is_none(), "{:?}", out.error);
     assert_eq!(out.items, vec![(t.path("src"), t.path(r"dst\src"))], "a new folder is one undo item");
     assert_eq!((read(&t, r"dst\src\a.txt"), read(&t, r"dst\src\sub\deep\c.txt")), ("a".into(), "c".into()));
@@ -499,23 +521,23 @@ fn conflicts_keep_both_replace_or_skip_and_never_touch_unchosen_items() {
     let items: Vec<FsPath> = ["x.txt", "y.txt", "z.txt"].iter().map(|n| t.file(&format!(r"src\{n}"), "new")).collect();
     ["x.txt", "y.txt", "z.txt"].iter().for_each(|n| drop(t.file(&format!(r"dst\{n}"), "old!")));
     let (job, asked) = answering(&[(Resolve::KeepBoth, false), (Resolve::Replace, false), (Resolve::Skip, false)]);
-    let out = engine::run(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
+    let out = run_native(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     assert_eq!(out.items, vec![(items[0].clone(), t.path(r"dst\x (2).txt")), (items[1].clone(), t.path(r"dst\y.txt"))]);
     assert_eq!([read(&t, r"dst\x.txt"), read(&t, r"dst\x (2).txt"), read(&t, r"dst\y.txt"), read(&t, r"dst\z.txt")], ["old!", "new", "new", "old!"]);
     let seen = asked.lock().unwrap().clone();
     assert_eq!(seen.len(), 3);
     assert_eq!((seen[0].source.clone(), seen[0].target.clone(), seen[0].from.size, seen[0].to.size), (items[0].clone(), t.path(r"dst\x.txt"), 3, 4));
-    assert!(!t.has(r"dst\y.txt.flit-partial"));
+    t.assert_no_stages("dst");
 
     let (job, asked) = answering(&[(Resolve::Skip, true)]);
-    let out = engine::run(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
+    let out = run_native(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
     assert_eq!((out.items.len(), asked.lock().unwrap().len(), out.error.is_none()), (0, 1, true), "the answer applies to all remaining conflicts");
 
     let mut ro = std::fs::metadata(t.0.join(r"dst\z.txt")).unwrap().permissions();
     ro.set_readonly(true);
     std::fs::set_permissions(t.0.join(r"dst\z.txt"), ro).unwrap();
-    let out = engine::run(&FileOp::Copy { items: vec![items[2].clone()], dest: t.path("dst") }, &Job::detached(Resolve::Replace));
+    let out = run_native(&FileOp::Copy { items: vec![items[2].clone()], dest: t.path("dst") }, &Job::detached(Resolve::Replace));
     assert_eq!((out.items.len(), read(&t, r"dst\z.txt")), (1, "new".into()), "{:?}", out.error);
 }
 
@@ -537,14 +559,14 @@ fn replace_older_and_skip_identical_decide_each_file_of_a_merged_folder() {
     at(r"dst\f\same", "same", 1);
     let copy = FileOp::Copy { items: vec![t.path(r"src\f")], dest: t.path("dst") };
     let (job, asked) = answering(&[(Resolve::ReplaceOlder, true)]);
-    let out = engine::run(&copy, &job);
+    let out = run_native(&copy, &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     assert_eq!(asked.lock().unwrap().len(), 1, "only the folder is asked about");
     assert_eq!([read(&t, r"dst\f\newer"), read(&t, r"dst\f\older"), read(&t, r"dst\f\same")], ["new", "old!", "same"]);
 
     at(r"dst\f\newer", "old!", 1);
     let (job, asked) = answering(&[(Resolve::SkipSame, true), (Resolve::KeepBoth, false), (Resolve::KeepBoth, false)]);
-    let out = engine::run(&copy, &job);
+    let out = run_native(&copy, &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     let targets: Vec<String> = asked.lock().unwrap().iter().map(|c| String::from_utf8_lossy(c.target.file_name()).into_owned()).collect();
     assert_eq!(targets, ["f", "newer", "older"], "the identical file is skipped without a question");
@@ -564,16 +586,16 @@ fn many_small_files_copy_in_parallel_and_still_ask_about_every_conflict_in_order
         drop(t.file(&format!(r"dst\tree\{}", names[k]), "old!"));
     }
     let (job, asked) = answering(&[(Resolve::Skip, false), (Resolve::Replace, false), (Resolve::KeepBoth, false)]);
-    let out = engine::run(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
+    let out = run_native(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     let targets: Vec<FsPath> = asked.lock().unwrap().iter().map(|c| c.target.clone()).collect();
     assert_eq!(targets, [3, 11, 27].map(|k| t.path(&format!(r"dst\{}", names[k]))));
     assert_eq!(out.items.len(), 29);
     assert_eq!([read(&t, r"dst\f03.txt"), read(&t, r"dst\f11.txt"), read(&t, r"dst\f27.txt"), read(&t, r"dst\f27 (2).txt"), read(&t, r"dst\f00.txt")], ["old!", "new", "old!", "new", "new"]);
-    assert!(!t.has(r"dst\f11.txt.flit-partial"));
+    t.assert_no_stages("dst");
 
     let (job, asked) = answering(&[(Resolve::Replace, false), (Resolve::Skip, true)]);
-    let out = engine::run(&FileOp::Copy { items: vec![t.path(r"src\tree")], dest: t.path("dst") }, &job);
+    let out = run_native(&FileOp::Copy { items: vec![t.path(r"src\tree")], dest: t.path("dst") }, &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     assert_eq!(asked.lock().unwrap().len(), 2, "the folder, then one file with Skip for all");
     assert_eq!(out.items.len(), 27);
@@ -592,7 +614,7 @@ fn replacing_a_folder_merges_and_keeps_what_only_the_target_has() {
     t.file(r"dst\f\a", "old");
     t.file(r"dst\f\keep", "old");
     let (job, _) = answering(&[(Resolve::Replace, false), (Resolve::Replace, false), (Resolve::Replace, false)]);
-    let out = engine::run(&FileOp::Move { items: vec![t.path(r"src\f"), t.path(r"src\g")], dest: t.path("dst") }, &job);
+    let out = run_native(&FileOp::Move { items: vec![t.path(r"src\f"), t.path(r"src\g")], dest: t.path("dst") }, &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     let mut items = out.items;
     items.sort_by(|a, b| a.1.as_bytes().cmp(b.1.as_bytes()));
@@ -629,22 +651,45 @@ fn cancelling_leaves_the_remaining_sources_in_place() {
     let items: Vec<FsPath> = ["a", "b", "c"].iter().map(|n| t.file(n, n)).collect();
     other.file("b", "old");
     let (job, _) = answering(&[]);
-    let out = engine::run(&FileOp::Move { items: items.clone(), dest: other.path("") }, &job);
+    let out = run_native(&FileOp::Move { items: items.clone(), dest: other.path("") }, &job);
     assert_eq!(out.error.map(|e| e.message), Some(CANCELLED.into()));
     assert_eq!((out.items, out.rest), (vec![(items[0].clone(), other.path("a"))], None));
     assert!(!t.has("a") && t.has("b") && t.has("c") && !other.has("c"));
     assert_eq!(std::fs::read_to_string(other.0.join("b")).unwrap(), "old");
+}
 
-    let big = t.path("big");
+#[test]
+fn cancelling_a_replacement_after_copy_starts_keeps_the_old_file_and_removes_the_stage() {
+    let t = TempDir::new("cancel-replacement");
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let source = t.path("big");
     std::fs::File::create(t.0.join("big")).unwrap().set_len(8 << 20).unwrap();
-    other.file("big", "old");
-    let stopped = Job::detached(Resolve::Replace);
-    stopped.ctl().cancel();
-    let engine = engine::Engine::new(&stopped);
-    assert!(engine.copy_file(&big, &other.path("big"), 8 << 20, true).is_err());
-    assert!(engine.copy_file(&big, &other.path("fresh"), 8 << 20, false).is_err());
-    assert_eq!(std::fs::read_to_string(other.0.join("big")).unwrap(), "old", "a cancelled replacement keeps the old file");
-    assert!(!other.has("fresh") && !other.has("big.flit-partial"));
+    t.file(r"out\big", "old");
+    for existing in [true, false] {
+        if !existing {
+            std::fs::remove_file(t.0.join(r"out\big")).unwrap();
+        }
+        let ctl = OpCtl::new(Some(Resolve::Replace));
+        let cancel = ctl.clone();
+        let job = Job::new(ctl, Box::new(move |progress| {
+            if progress.bytes > 0 {
+                cancel.cancel();
+            } else if progress.stage == Stage::Running {
+                std::thread::sleep(std::time::Duration::from_millis(40));
+            }
+        }), Box::new(|_| {}));
+        let out = run_native(&FileOp::Copy { items: vec![source.clone()], dest: t.path("out") }, &job);
+        assert_eq!(out.error.map(|e| e.message), Some(CANCELLED.into()));
+        assert!(job.progress().bytes > 0 && out.items.is_empty());
+        assert_eq!(std::fs::metadata(t.0.join("big")).unwrap().len(), 8 << 20);
+        if existing {
+            assert_eq!(read(&t, r"out\big"), "old");
+        } else {
+            assert!(!t.has(r"out\big"));
+        }
+        t.assert_no_stages("out");
+        assert_eq!(std::fs::read_dir(t.0.join("out")).unwrap().count(), usize::from(existing));
+    }
 }
 
 #[test]
@@ -662,7 +707,7 @@ fn delete_clears_read_only_trees_and_reports_top_items() {
     read_only(r"d\ro.txt");
     read_only("f.txt");
     let job = Job::detached(Resolve::Skip);
-    let out = engine::run(&FileOp::Delete(vec![t.path("d"), t.path("f.txt")]), &job);
+    let out = run_native(&FileOp::Delete(vec![t.path("d"), t.path("f.txt")]), &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     assert_eq!(out.items, vec![(t.path("d"), t.path("d")), (t.path("f.txt"), t.path("f.txt"))]);
     assert!(!t.has("d") && !t.has("f.txt"));
@@ -679,7 +724,7 @@ fn flatten_moves_nested_files_up_asks_on_collisions_and_undoes() {
     t.file(r"root\a\b\two.txt", "2");
     t.file(r"root\c\top.txt", "c");
     let (job, asked) = answering(&[(Resolve::KeepBoth, false)]);
-    let out = engine::run(&FileOp::Flatten(vec![t.path("root")]), &job);
+    let out = run_native(&FileOp::Flatten(vec![t.path("root")]), &job);
     assert!(out.error.is_none(), "{:?}", out.error);
     let mut moved = out.items.clone();
     moved.sort_by(|a, b| a.1.as_bytes().cmp(b.1.as_bytes()));
@@ -687,9 +732,9 @@ fn flatten_moves_nested_files_up_asks_on_collisions_and_undoes() {
     assert_eq!(asked.lock().unwrap().len(), 1);
     assert!(!t.has(r"root\a") && !t.has(r"root\c") && read(&t, r"root\top.txt") == "root");
 
-    let report = flit_core::provider::OpReport { op: FileOp::Flatten(vec![t.path("root")]), items: out.items };
+    let report = flit_core::provider::OpReport::new(FileOp::Flatten(vec![t.path("root")]), out.items);
     let Some(flit_core::undo::Step::Run(undo)) = flit_core::undo::inverse(&report) else { panic!("flatten is undoable") };
-    let back = engine::run(&undo, &Job::detached(Resolve::Skip));
+    let back = run_native(&undo, &Job::detached(Resolve::Skip));
     assert!(back.error.is_none(), "{:?}", back.error);
     assert_eq!([read(&t, r"root\a\one.txt"), read(&t, r"root\a\b\two.txt"), read(&t, r"root\c\top.txt")], ["1", "2", "c"]);
 }
@@ -790,7 +835,7 @@ fn a_failing_item_asks_to_retry_skip_or_skip_all_and_the_rest_carries_on() {
             unlock.lock().unwrap()[0] = None;
         }
     });
-    let out = engine::run(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
+    let out = run_native(&FileOp::Copy { items: items.clone(), dest: t.path("dst") }, &job);
     drop(held);
     let seen = failed.lock().unwrap().clone();
     assert_eq!(seen.iter().map(|f| f.path.clone()).collect::<Vec<_>>(), [items[0].clone(), items[2].clone(), items[3].clone()], "e.txt is not asked about after Skip all");
@@ -805,14 +850,14 @@ fn a_failing_item_asks_to_retry_skip_or_skip_all_and_the_rest_carries_on() {
     t.file(r"tree\free.txt", "f");
     let hold = locked(&t, r"tree\sub\held.txt");
     let (job, failed) = recovering(&[(Recover::Skip, false)], |_| {});
-    let out = engine::run(&FileOp::Delete(vec![t.path("tree")]), &job);
+    let out = run_native(&FileOp::Delete(vec![t.path("tree")]), &job);
     drop(hold);
     assert_eq!(failed.lock().unwrap().iter().map(|f| f.path.clone()).collect::<Vec<_>>(), [t.path(r"tree\sub\held.txt")], "the folders around a skipped file are not asked about");
     assert!(out.items.is_empty() && t.has(r"tree\sub\held.txt") && !t.has(r"tree\free.txt"));
 
     let hold = Mutex::new(Some(locked(&t, r"tree\sub\held.txt")));
     let (job, _) = recovering(&[(Recover::Retry, false)], move |_| drop(hold.lock().unwrap().take()));
-    let out = engine::run(&FileOp::Delete(vec![t.path("tree")]), &job);
+    let out = run_native(&FileOp::Delete(vec![t.path("tree")]), &job);
     assert!(out.error.is_none() && !t.has("tree"), "{:?}", out.error);
 }
 
@@ -822,7 +867,7 @@ fn quiet_jobs_collect_failures_and_report_them_at_the_end() {
     std::fs::create_dir_all(t.0.join("dst")).unwrap();
     let items = vec![t.file("a.txt", "a"), t.file("b.txt", "b")];
     let held = [locked(&t, "a.txt"), locked(&t, "b.txt")];
-    let out = engine::run(&FileOp::Copy { items, dest: t.path("dst") }, &Job::detached(Resolve::Skip));
+    let out = run_native(&FileOp::Copy { items, dest: t.path("dst") }, &Job::detached(Resolve::Skip));
     drop(held);
     let e = out.error.expect("a summary").message;
     assert!(e.starts_with('2') && e.contains("a.txt"), "{e}");
@@ -834,13 +879,13 @@ fn a_file_in_use_names_the_program_in_the_question_and_the_summary() {
     let f = t.file("held.txt", "h");
     let hold = locked(&t, "held.txt");
     let (job, failed) = recovering(&[(Recover::Skip, false)], |_| {});
-    let out = engine::run(&FileOp::Delete(vec![f.clone()]), &job);
-    let quiet = engine::run(&FileOp::Delete(vec![f]), &Job::detached(Resolve::Skip));
+    let out = run_native(&FileOp::Delete(vec![f.clone()]), &job);
+    let quiet = run_native(&FileOp::Delete(vec![f]), &Job::detached(Resolve::Skip));
     drop(hold);
     let asked = failed.lock().unwrap()[0].error.clone();
     assert!(asked.contains(". It is open in "), "{asked}");
     assert!(out.error.unwrap().message.contains(". It is open in ") && quiet.error.unwrap().message.contains(". It is open in "));
-    let missing = engine::run(&FileOp::Delete(vec![t.path("nothing.txt")]), &Job::detached(Resolve::Skip));
+    let missing = run_native(&FileOp::Delete(vec![t.path("nothing.txt")]), &Job::detached(Resolve::Skip));
     assert!(!missing.error.unwrap().message.contains("It is open in"), "other errors stay as they were");
 }
 

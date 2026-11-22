@@ -20,6 +20,16 @@ fn unix(p: &[u8]) -> FsPath {
 
 #[test]
 fn roundtrip_every_message() {
+    let target = unix(b"/tmp/target");
+    let replay = Replay {
+        steps: vec![FileOp::Trash(vec![target.clone()])],
+        checks: vec![(target, Some(flit_core::undo::Stamp { size: 1, modified: -10, device: 2, file: 3, access: None }))],
+        recheck_tree: false,
+        captured_ns: Some(1_234_567_890_123_456_789),
+    };
+    assert!(check_replay(&replay).is_ok());
+    assert!(check_replay(&Replay { checks: Vec::new(), ..replay.clone() }).is_err());
+    assert!(check_replay(&Replay { steps: vec![FileOp::Delete(vec![unix(b"/tmp/target")])], ..replay.clone() }).is_err());
     let requests = vec![
         Request::List { id: 1, path: unix(b"/home/\xFFuser") },
         Request::Stat { id: 2, path: unix(b"/") },
@@ -35,6 +45,7 @@ fn roundtrip_every_message() {
         Request::Recover { id: 6, choice: Some(Recover::Skip), all: true },
         Request::Recover { id: 6, choice: None, all: false },
         Request::Pause { id: 6, paused: true },
+        Request::Replay { id: 7, plan: replay.clone() },
     ];
     for m in requests {
         let mut buf = Vec::new();
@@ -57,6 +68,8 @@ fn roundtrip_every_message() {
         Event::OpConflict { id: 6, conflict: Conflict { source: unix(b"/tmp/\xFF"), target: unix(b"/home/\xFF"), from: Meta::default(), to: Meta { size: 5, ..Default::default() } } },
         Event::OpFailure { id: 6, failure: Failure { path: unix(b"/tmp/\xFF"), error: "Permission denied (os error 13)".into(), fatal: false } },
         Event::OpFailure { id: 6, failure: Failure { path: unix(b"/home"), error: "No space left on device".into(), fatal: true } },
+        Event::OpUndo { id: 7, undo: Undo::Checked(replay) },
+        Event::OpReplaced { id: 6, targets: vec![(unix(b"/home/a"), None)] },
     ];
     for m in events {
         let mut buf = Vec::new();

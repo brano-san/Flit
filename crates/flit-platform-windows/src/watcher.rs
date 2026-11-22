@@ -282,6 +282,10 @@ fn long_name(dir: &FsPath, alias: &[u16]) -> Option<Vec<u16>> {
 fn changes(dir: &FsPath, notices: Vec<Notice>, extended: bool) -> Option<Vec<DirChange>> {
     notices
         .into_iter()
+        .filter_map(|mut notice| {
+            notice.meta = crate::fs::operation_entry(&notice.name, notice.meta)?;
+            Some(notice)
+        })
         .map(|n| {
             let wide = match short_alias(&n.name) {
                 false => n.name,
@@ -293,7 +297,7 @@ fn changes(dir: &FsPath, notices: Vec<Notice>, extended: bool) -> Option<Vec<Dir
             let meta = match n.kind {
                 ChangeKind::Removed => None,
                 _ if extended => Some(n.meta),
-                _ => Some(crate::engine::stat(&dir.join(&name))?),
+                _ => Some(crate::fs::operation_entry(&wide, crate::engine::stat(&dir.join(&name))?)?),
             };
             Some(DirChange { label: flit_core::listing::Label::Keep, kind: n.kind, name, meta })
         })

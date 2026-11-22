@@ -7,7 +7,8 @@ use flit_core::path::PathKind;
 use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpId, OpReport, Recover, Resolve, SnapshotSlot};
 use flit_core::sort::{SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
-use flit_proto::provider::{agent_runs, check_conflict, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
+use flit_core::undo::{self, Step};
+use flit_proto::provider::{agent_runs, check_conflict, check_failure, check_performed, check_replacements, check_report, Event, ReqId, Request, Undo, VERSION};
 use flit_proto::transport::{read_frame, read_hello, write_frame, Hello, ProtoError, Protocol};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
@@ -158,12 +159,14 @@ struct OpState {
     paused: bool,
     clear: bool,
     performed: Option<FileOp>,
+    undo: Option<Step>,
+    replaced: Vec<(FsPath, Option<FsPath>)>,
 }
 
 enum Pending {
     List(Box<ListState>),
     Sizes { tab: TabId, gen: u64, cancel: GenToken, wanted: HashSet<u32> },
-    Op(OpState),
+    Op(Box<OpState>),
 }
 
 struct Ctl {
@@ -418,6 +421,11 @@ impl Ctl {
     }
 
     fn fallback(&self, req: ProviderRequest) {
+        if let ProviderRequest::Op { tab, id, ctl, .. } = &req {
+            if ctl.replay().is_some() {
+                return self.emit(ProviderEvent::OpDone { tab: *tab, id: *id, error: Some(S::ErrorsOpsUndoUnavailable.en().into()), report: None });
+            }
+        }
         if self.admin {
             return match req {
                 ProviderRequest::Op { tab, id, .. } => self.emit(ProviderEvent::OpDone { tab, id, error: Some(S::ErrorsEngineAdminUnavailable.en().into()), report: None }),
@@ -652,13 +660,16 @@ impl Ctl {
             ProviderRequest::Op { tab, id: op, op: request, ctl } if runs(&request, self.admin) => {
                 let clear = self.clears.remove(&op);
                 if ctl.is_cancelled() {
-                    return self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(CANCELLED.into()), report: Some(OpReport { op: request, items: Vec::new() }) });
+                    return self.emit(ProviderEvent::OpDone { tab, id: op, error: Some(CANCELLED.into()), report: Some(OpReport::new(request, Vec::new())) });
                 }
                 let id = self.id();
-                let policy = ctl.policy();
-                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, paused: false, clear, performed: None }));
+                let message = match ctl.replay() {
+                    Some(plan) => Request::Replay { id, plan: plan.clone() },
+                    None => Request::Op { id, op: request.clone(), policy: ctl.policy() },
+                };
+                self.pending.insert(id, Pending::Op(Box::new(OpState { tab, op, request, ctl, cancelled: false, paused: false, clear, performed: None, undo: None, replaced: Vec::new() })));
                 self.send(Request::Lang { code: flit_core::i18n::lang().code().into() });
-                self.send(Request::Op { id, op: request, policy });
+                self.send(message);
             }
             other => self.fallback(other),
         }
@@ -693,8 +704,13 @@ impl Ctl {
 
     fn recover(&mut self, id: ReqId, failure: Failure) {
         let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
-        if let Err(e) = check_failure(&o.request, &failure) {
-            return self.crashed(&e.to_string());
+        let valid = if let Some(plan) = o.ctl.replay() {
+            plan.steps.iter().any(|op| check_failure(op, &failure).is_ok())
+        } else {
+            check_failure(&o.request, &failure).is_ok()
+        };
+        if !valid {
+            return self.crashed("a failure path lies outside the operation");
         }
         let (tab, op, ctl, events, wake, tx) = (o.tab, o.op, o.ctl.clone(), self.events.clone(), self.wake.clone(), self.tx.clone());
         let asked = std::thread::Builder::new().name(format!("flit-wsl-fail-{op}")).spawn(move || {
@@ -711,18 +727,46 @@ impl Ctl {
 
     fn finished(&mut self, id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)>) {
         let Some(Pending::Op(o)) = self.pending.remove(&id) else { return };
-        if let Err(e) = check_report(&o.request, &items) {
+        let valid = if let Some(plan) = o.ctl.replay() {
+            items.iter().all(|item| plan.steps.iter().any(|op| check_report(op, std::slice::from_ref(item)).is_ok()))
+        } else {
+            check_report(&o.request, &items).is_ok()
+        };
+        if !valid {
             self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(self.lost()), report: None });
-            return self.crashed(&e.to_string());
+            return self.crashed("a reported path lies outside the operation");
         }
         if o.clear && error.is_none() {
             (self.clipboard.clear)();
         }
-        self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error, report: Some(OpReport { op: o.performed.unwrap_or(o.request), items }) });
+        let mut report = OpReport::new(o.performed.unwrap_or(o.request), items);
+        report.undo.replaced = o.replaced;
+        report.undo.checked = o.undo.or_else(|| undo::inverse(&report).map(|_| Step::Refuse(S::ErrorsOpsUndoUnavailable.en())));
+        if !report.items.is_empty() && matches!(report.undo.checked, Some(Step::Checked(_))) && o.ctl.replay().is_none() {
+            let expected = undo::inverse_ops(&report).unwrap_or_default().into_iter().filter_map(|step| match step {
+                Step::Run(FileOp::Delete(paths)) => Some(FileOp::Trash(paths)),
+                Step::Run(op) => Some(op),
+                _ => None,
+            }).collect::<Vec<_>>();
+            if !matches!(&report.undo.checked, Some(Step::Checked(plan)) if plan.steps == expected) {
+                report.undo.checked = Some(Step::Refuse(S::ErrorsOpsUndoUnavailable.en()));
+            }
+        }
+        if let (Some(previous), Some(Step::Checked(next))) = (o.ctl.replay(), &report.undo.checked) {
+            let known: HashSet<_> = previous.checks.iter().map(|(path, _)| path)
+                .chain(report.items.iter().flat_map(|(from, to)| [from, to])).collect();
+            if !next.checks.iter().all(|(path, _)| known.contains(path)) {
+                report.undo.checked = Some(Step::Refuse(S::ErrorsOpsUndoUnavailable.en()));
+            }
+        }
+        self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error, report: Some(report) });
     }
 
     fn performed(&mut self, id: ReqId, op: FileOp) {
         let Some(Pending::Op(o)) = self.pending.get_mut(&id) else { return };
+        if o.ctl.replay().is_some() {
+            return;
+        }
         match check_performed(&o.request, &op) {
             Ok(()) => o.performed = Some(op),
             Err(e) => self.crashed(&e.to_string()),
@@ -779,6 +823,25 @@ impl Ctl {
             Event::OpFailure { id, failure } => self.recover(id, failure),
             Event::OpDone { id, error, items } => self.finished(id, error, items),
             Event::OpPerformed { id, op } => self.performed(id, op),
+            Event::OpReplaced { id, targets } => {
+                if let Some(Pending::Op(o)) = self.pending.get_mut(&id).filter(|p| matches!(p, Pending::Op(o) if o.ctl.replay().is_none())) {
+                    if let Err(e) = check_replacements(&o.request, &targets) {
+                        return self.crashed(&e.to_string());
+                    }
+                    o.replaced.extend(targets);
+                }
+            }
+            Event::OpUndo { id, undo } => {
+                if let Some(Pending::Op(o)) = self.pending.get_mut(&id) {
+                    o.undo = Some(match undo {
+                        Undo::Checked(plan) => Step::Checked(plan),
+                        Undo::Unavailable => Step::Refuse(S::ErrorsOpsUndoUnavailable.en()),
+                        Undo::BackupUnavailable => Step::Refuse(S::ErrorsOpsUndoBackup.en()),
+                        Undo::NotRecycled => Step::Refuse(S::ErrorsOpsNotRecycled.en()),
+                        Undo::StampUnavailable => Step::Refuse(S::ErrorsOpsUndoStamp.en()),
+                    });
+                }
+            }
             Event::Stat { .. } => {}
         }
     }

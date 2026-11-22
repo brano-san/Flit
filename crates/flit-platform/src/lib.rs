@@ -384,6 +384,9 @@ pub struct OpOutcome {
     pub error: Option<PlatformError>,
 }
 
+pub mod replay;
+pub mod pending;
+
 const PROGRESS_EVERY: std::time::Duration = std::time::Duration::from_millis(33);
 
 type Sink<T> = Box<dyn Fn(T) + Send + Sync>;
@@ -401,6 +404,8 @@ struct JobState {
     failure: Option<Sink<Failure>>,
     now: std::sync::Mutex<Shown>,
     performed: std::sync::Mutex<Option<FileOp>>,
+    replaced: std::sync::Mutex<Vec<(FsPath, Option<FsPath>)>>,
+    unverified: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone)]
@@ -408,11 +413,11 @@ pub struct Job(Arc<JobState>);
 
 impl Job {
     pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default(), replaced: Default::default(), unverified: Default::default() }))
     }
 
     pub fn asking(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default(), replaced: Default::default(), unverified: Default::default() }))
     }
 
     pub fn performed(&self, op: FileOp) {
@@ -421,6 +426,22 @@ impl Job {
 
     pub fn take_performed(&self) -> Option<FileOp> {
         self.0.performed.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    pub fn replaced(&self, target: FsPath, backup: Option<FsPath>) {
+        self.0.replaced.lock().unwrap_or_else(|e| e.into_inner()).push((target, backup));
+    }
+
+    pub fn take_replaced(&self) -> Vec<(FsPath, Option<FsPath>)> {
+        std::mem::take(&mut *self.0.replaced.lock().unwrap_or_else(|e| e.into_inner()))
+    }
+
+    pub fn mark_unverified(&self) {
+        self.0.unverified.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn take_unverified(&self) -> bool {
+        self.0.unverified.swap(false, std::sync::atomic::Ordering::Relaxed)
     }
 
     pub fn detached(policy: Resolve) -> Self {
@@ -539,6 +560,12 @@ pub trait FileOps {
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);
+    fn undo_fs(&self) -> Option<replay::FileSystem> {
+        None
+    }
+    fn can_restore(&self, _backup: &FsPath, _original: &FsPath) -> bool {
+        false
+    }
     fn link_choices(&mut self, _items: Option<&[FsPath]>, _dest: &FsPath) -> flit_core::provider::LinkChoices {
         Default::default()
     }

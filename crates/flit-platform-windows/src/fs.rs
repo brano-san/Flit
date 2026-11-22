@@ -349,10 +349,27 @@ fn each_entry(buf: &[u64], f: &mut EntryVisit) {
     }
 }
 
+pub(crate) fn operation_entry(name: &[u16], mut meta: Meta) -> Option<Meta> {
+    if name.first() != Some(&u16::from(b'.')) {
+        return Some(meta);
+    }
+    let mut bytes = Vec::new();
+    flit_core::name::push_utf16(&mut bytes, name);
+    bytes.make_ascii_lowercase();
+    if flit_platform::pending::is_stage_name(&bytes) {
+        return None;
+    }
+    if flit_platform::pending::is_delete_name(&bytes) {
+        meta.attrs &= !attr::HIDDEN;
+    }
+    Some(meta)
+}
+
 fn list_part(buf: &[u64], case: flit_core::sort::CaseMode, tagging: &Option<(Arc<flit_core::tags::Tags>, u32)>) -> (flit_core::listing::Listing, flit_core::sort::SortKeys) {
     let mut listing = flit_core::listing::Listing::default();
     let mut keys = flit_core::sort::SortKeys::new(case);
     each_entry(buf, &mut |name, meta, id, accessed| {
+        let Some(meta) = operation_entry(name, meta) else { return };
         let i = listing.push_utf16(name, meta);
         listing.set_accessed(i, accessed);
         keys.push(listing.name(i));
@@ -458,6 +475,7 @@ impl Fs for NtFs {
             }
             reads += 1;
             each_entry(&buf, &mut |name, meta, id, accessed| {
+                let Some(meta) = operation_entry(name, meta) else { return };
                 out.push_utf16_id(name, meta, id);
                 out.set_accessed(accessed);
                 if out.wants_streams() && meta.attrs & attr::DIR == 0 {
