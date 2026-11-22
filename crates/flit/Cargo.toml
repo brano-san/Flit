@@ -27,6 +27,7 @@ tracing-tracy = { workspace = true, optional = true }
 [package.metadata.deb]
 name = "flit"
 maintainer = "Flit developers"
+license-file = ["../../packaging/debian/copyright", "0"]
 section = "utils"
 priority = "optional"
 extended-description = "A fast GPU-drawn file manager for Wayland and X11."
@@ -49,6 +50,7 @@ assets = [
 
 [package.metadata.generate-rpm]
 summary = "Fast GPU-drawn file manager"
+license = "MIT AND LicenseRef-UnRAR AND Bitstream-Vera"
 assets = [
     { source = "target/release/flit", dest = "/usr/bin/flit", mode = "755" },
     { source = "target/release/flit-indexd", dest = "/usr/bin/flit-indexd", mode = "755" },
@@ -58,6 +60,10 @@ assets = [
     { source = "../../assets/icon/hicolor/scalable/apps/flit.svg", dest = "/usr/share/icons/hicolor/scalable/apps/flit.svg", mode = "644" },
     { source = "../../assets/icon/hicolor/256x256/apps/flit.png", dest = "/usr/share/icons/hicolor/256x256/apps/flit.png", mode = "644" },
     { source = "../../assets/icon/hicolor/48x48/apps/flit.png", dest = "/usr/share/icons/hicolor/48x48/apps/flit.png", mode = "644" },
+    { source = "../../LICENSE", dest = "/usr/share/licenses/flit/LICENSE", mode = "644" },
+    { source = "../../packaging/licenses/UnRAR.txt", dest = "/usr/share/licenses/flit/UnRAR.txt", mode = "644" },
+    { source = "../flit-platform-linux-gui/assets/LICENSE-FlitSans.txt", dest = "/usr/share/licenses/flit/LICENSE-FlitSans.txt", mode = "644" },
+    { source = "../flit-platform-linux-gui/assets/LICENSE-FlitIcons.txt", dest = "/usr/share/licenses/flit/LICENSE-FlitIcons.txt", mode = "644" },
 ]
 
 [package.metadata.generate-rpm.requires]

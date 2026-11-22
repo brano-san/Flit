@@ -4,7 +4,7 @@ pkgrel=1
 pkgdesc="Fast GPU-drawn file manager"
 arch=('x86_64' 'aarch64')
 url="https://github.com/brano-san/Flit"
-license=('MIT')
+license=('MIT AND LicenseRef-UnRAR AND Bitstream-Vera')
 depends=('glibc' 'libglvnd' 'libxkbcommon' 'fontconfig')
 optdepends=('libjpeg-turbo: faster JPEG thumbnails through libturbojpeg' 'libxkbcommon-x11: X11 sessions' 'wayland: Wayland sessions' 'xdg-utils: opening files' 'shared-mime-info: file type names')
 makedepends=('cargo')
@@ -39,4 +39,7 @@ package() {
     install -d "$pkgdir/usr/share/icons"
     cp -r assets/icon/hicolor "$pkgdir/usr/share/icons/"
     install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+    install -Dm644 packaging/licenses/UnRAR.txt "$pkgdir/usr/share/licenses/$pkgname/UnRAR.txt"
+    install -Dm644 crates/flit-platform-linux-gui/assets/LICENSE-FlitSans.txt "$pkgdir/usr/share/licenses/$pkgname/LICENSE-FlitSans.txt"
+    install -Dm644 crates/flit-platform-linux-gui/assets/LICENSE-FlitIcons.txt "$pkgdir/usr/share/licenses/$pkgname/LICENSE-FlitIcons.txt"
 }
