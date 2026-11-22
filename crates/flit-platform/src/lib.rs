@@ -352,6 +352,12 @@ pub trait Shell: Sized {
     fn poster(&mut self, _path: &FsPath, _size: u32) -> Option<Bitmap> {
         None
     }
+    fn pdf_document(&mut self, _req: &flit_core::preview::PreviewRequest) -> Option<Vec<Option<flit_core::preview::pdf::Size>>> {
+        None
+    }
+    fn pdf_page(&mut self, _req: &flit_core::preview::PreviewRequest, _page: u32) -> Option<Bitmap> {
+        None
+    }
     fn column_props(&mut self, _path: &FsPath) -> flit_core::listing::ColumnValues {
         flit_core::listing::ColumnValues::default()
     }

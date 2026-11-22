@@ -1,4 +1,5 @@
 pub mod markdown;
+pub mod pdf;
 pub mod syntax;
 
 use crate::hash::FxHashMap;
@@ -539,6 +540,7 @@ pub enum PreviewData {
     Handler(String),
     Basic { poster: Option<Bitmap>, note: Option<Note> },
     Props(Vec<PropGroup>),
+    Pdf(Vec<Option<pdf::Size>>),
 }
 
 #[derive(Clone, Debug, PartialEq)]

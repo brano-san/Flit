@@ -174,6 +174,7 @@ struct SortJob {
 enum PreviewJob {
     Load { window: WindowId, req: PreviewRequest },
     Pretty { window: WindowId, req: PreviewRequest },
+    PdfPage { window: WindowId, req: PreviewRequest, page: u32 },
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
@@ -190,6 +191,7 @@ enum Done {
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
     Preview { window: WindowId, gen: u64, data: PreviewData },
     Pretty { window: WindowId, gen: u64, result: Result<flit_core::preview::Doc, flit_core::preview::PrettyError> },
+    PdfPage { window: WindowId, gen: u64, page: u32, image: Option<flit_core::ui::Bitmap> },
     QuickView { window: WindowId, shown: bool },
     Backdrop { window: WindowId, gen: u64, image: Option<flit_core::ui::Bitmap> },
     Browsed { window: WindowId, path: Option<FsPath> },
@@ -232,6 +234,13 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         Some(result) => Done::Pretty { window, gen: req.gen, result },
                         None => continue,
                     },
+                    PreviewJob::PdfPage { window, req, page } => {
+                        let image = shell.pdf_page(&req, page);
+                        if !req.cancel.is_current(req.gen) {
+                            continue;
+                        }
+                        Done::PdfPage { window, gen: req.gen, page, image }
+                    }
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
                     PreviewJob::ColumnProps { window, tab, gen, ask, dir, names } => Done::ColumnProps { window, tab, gen, ask, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
@@ -774,6 +783,9 @@ impl<P: Platform> Handler<P> {
                 Effect::PrettyPreview(req) => {
                     let _ = self.previews.send(PreviewJob::Pretty { window: id, req });
                 }
+                Effect::PreviewPdfPage { req, page } => {
+                    let _ = self.previews.send(PreviewJob::PdfPage { window: id, req, page });
+                }
                 Effect::QuickView(path) => {
                     let _ = self.previews.send(PreviewJob::QuickView { window: id, path });
                 }
@@ -1109,6 +1121,11 @@ impl<P: Platform> Handler<P> {
                 Done::Pretty { window, gen, result } => {
                     if let Some(st) = self.windows.get_mut(&window) {
                         st.app.on_pretty(gen, result);
+                    }
+                }
+                Done::PdfPage { window, gen, page, image } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_pdf_page(&mut st.gfx, gen, page, image);
                     }
                 }
                 Done::ColumnProps { window, tab, gen, ask, rows } => {

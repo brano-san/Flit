@@ -291,6 +291,39 @@ fn review_preview_controls_follow_the_animated_inspector_footer() {
 }
 
 #[test]
+fn a_pdf_requests_visible_pages_and_cancels_pages_scrolled_out_of_view() {
+    let mut a = app((1200, 700));
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    add_file(&mut a, "paper.pdf");
+    select(&mut a, "paper.pdf");
+    frame(&mut a);
+    let initial = requests(&mut a).pop().unwrap();
+    let mut pages = vec![None; 10];
+    pages[0] = Some(preview::pdf::Size { width: 300.0, height: 500.0 });
+    a.on_preview(initial.gen, PreviewData::Pdf(pages));
+    frame(&mut a);
+    let get_pages = |a: &mut App| a.drain_effects().filter_map(|e| match e {
+        Effect::PreviewPdfPage { req, page } => Some((page, req)),
+        _ => None,
+    }).collect::<Vec<_>>();
+    let first = get_pages(&mut a);
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].0, 1);
+    a.scroll_preview(-50.0);
+    frame(&mut a);
+    let visible = get_pages(&mut a);
+    assert!(!visible.is_empty());
+    assert!(visible.iter().all(|(page, _)| *page > 1));
+    assert!(!first[0].1.cancel.is_current(first[0].1.gen));
+    let extent = a.preview.extent;
+    let mut g = Gfx::new(Mono, 2048);
+    let (page, req) = &visible[0];
+    a.on_pdf_page(&mut g, req.gen, *page, Some(Bitmap { width: 16, height: 8, rgba: vec![255; 512] }));
+    a.frame(&mut g, Instant::now());
+    assert!(a.preview.extent < extent, "the missing geometry is measured from the rendered page");
+}
+
+#[test]
 fn properties_card_details_and_many_items() {
     let mut a = app((1200, 700));
     press(&mut a, Key::Space, NO);

@@ -438,6 +438,7 @@ pub enum Effect {
     Search(SearchRequest),
     Preview(PreviewRequest),
     PrettyPreview(PreviewRequest),
+    PreviewPdfPage { req: PreviewRequest, page: u32 },
     QuickView(FsPath),
     Backdrop { gen: u64, path: FsPath },
     Host(HostCmd),

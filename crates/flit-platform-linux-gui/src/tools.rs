@@ -22,7 +22,7 @@ struct Need {
     when: When,
 }
 
-const NEEDS: [Need; 21] = [
+const NEEDS: &[Need] = &[
     Need { tools: &["xdg-open"], purpose: S::SettingsPageToolOpen, packages: ["xdg-utils", "xdg-utils", "xdg-utils", "xdg-utils"], when: When::Always },
     Need { tools: &["gdbus"], purpose: S::SettingsPageToolDesktop, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
     Need { tools: &["gio"], purpose: S::SettingsPageToolDrives, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
@@ -39,6 +39,7 @@ const NEEDS: [Need; 21] = [
     Need { tools: &["curl"], purpose: S::SettingsPageToolUpdate, packages: ["curl", "curl", "curl", "curl"], when: When::Always },
     Need { tools: &["recollq", "recoll", "localsearch", "tracker3", "baloosearch6", "baloosearch"], purpose: S::SettingsPageToolSearch, packages: ["recollcmd", "recoll", "recoll", "recoll"], when: When::Always },
     Need { tools: &["pdftoppm"], purpose: S::SettingsPageToolPdf, packages: ["poppler-utils", "poppler-utils", "poppler", "poppler-tools"], when: When::Always },
+    Need { tools: &["pdfinfo"], purpose: S::SettingsPageToolPdf, packages: ["poppler-utils", "poppler-utils", "poppler", "poppler-tools"], when: When::Always },
     Need { tools: &["ffmpegthumbnailer"], purpose: S::SettingsPageToolVideo, packages: ["ffmpegthumbnailer", "ffmpegthumbnailer", "ffmpegthumbnailer", "ffmpegthumbnailer"], when: When::Always },
     Need { tools: &["mpv", "gst-play-1.0", "ffplay", "paplay"], purpose: S::SettingsPageToolMedia, packages: ["mpv", "mpv", "mpv", "mpv"], when: When::Always },
     Need { tools: &["libmpv"], purpose: S::SettingsPageToolMediaInside, packages: ["libmpv2", "mpv-libs", "mpv", "libmpv2"], when: When::Always },

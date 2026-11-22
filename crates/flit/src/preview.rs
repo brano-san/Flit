@@ -94,6 +94,14 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
     }
     let ext = req.path.file_name();
     let ext = &ext[ext.len() - flit_core::name::ext_len(ext)..];
+    if ext.eq_ignore_ascii_case(b"pdf") && req.kind != Kind::Folder {
+        if let Some(pages) = shell.pdf_document(req) {
+            return Some(PreviewData::Pdf(pages));
+        }
+        if !req.cancel.is_current(req.gen) {
+            return None;
+        }
+    }
     if preview::is_svg(ext) && req.kind != Kind::Folder {
         let result = svg::load(&req.path, req.px, || req.cancel.is_current(req.gen));
         if !req.cancel.is_current(req.gen) {

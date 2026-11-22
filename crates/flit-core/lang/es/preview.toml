@@ -66,3 +66,6 @@ white = "Blanco"
 black = "Negro"
 background = "Fondo SVG"
 background_help = "Fondo para vistas previas SVG transparentes."
+
+[pdf]
+failed = "No se pudo mostrar esta página."

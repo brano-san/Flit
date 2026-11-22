@@ -66,3 +66,6 @@ white = "Blanc"
 black = "Noir"
 background = "Arrière-plan SVG"
 background_help = "Arrière-plan des aperçus SVG transparents."
+
+[pdf]
+failed = "Impossible d’afficher cette page."

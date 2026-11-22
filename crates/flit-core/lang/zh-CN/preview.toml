@@ -66,3 +66,6 @@ white = "白色"
 black = "黑色"
 background = "SVG 背景"
 background_help = "透明 SVG 预览所用的背景。"
+
+[pdf]
+failed = "无法渲染此页。"

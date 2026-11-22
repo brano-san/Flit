@@ -66,3 +66,6 @@ white = "White"
 black = "Black"
 background = "SVG background"
 background_help = "Background for transparent SVG previews."
+
+[pdf]
+failed = "This page could not be rendered."

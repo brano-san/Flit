@@ -1,4 +1,5 @@
 mod document_layout;
+mod pdf_view;
 
 use document_layout::{Grid, TextFlow};
 use super::field::{Field, TextCmd};
@@ -176,6 +177,7 @@ enum Content {
     Media { video: bool },
     Handler,
     Basic(Option<Note>),
+    Pdf(pdf_view::PdfView),
 }
 
 struct PreviousPreview {
@@ -354,6 +356,7 @@ impl PreviewPane {
             }
             Content::Basic(None) if self.image.is_some() => 0,
             Content::Basic(Some(Note::Shortcut(target))) => target.capacity(),
+            Content::Pdf(pdf) => pdf.retained_bytes(),
             _ => return None,
         };
         let raw = if let Pretty::On(raw) = &self.pretty { doc_capacity(raw) } else { 0 };
@@ -1494,6 +1497,9 @@ impl App {
         let cached = if previous.as_ref().is_some_and(|v| v.key == key) { previous.take() } else { None };
         let had_image = p.image.is_some();
         if p.key != 0 && p.previous_size().is_some_and(|n| n <= PREVIOUS_PREVIEW_BYTES) {
+            if let Content::Pdf(pdf) = &mut p.content {
+                pdf.cancel();
+            }
             previous = Some(PreviousPreview {
                 key: p.key,
                 until: now + KEEP_PREVIEW_FOR,
@@ -1601,6 +1607,7 @@ impl App {
             PreviewData::Handler(clsid) => (Content::Handler, None, Some(Hosted::Handler(clsid))),
             PreviewData::Basic { poster, note } => (Content::Basic(note), poster, None),
             PreviewData::Props(_) => (Content::Basic(None), None, None),
+            PreviewData::Pdf(sizes) => (Content::Pdf(pdf_view::PdfView::new(sizes)), None, None),
         };
         p.content = content;
         p.pick = Pick::default();
@@ -2159,6 +2166,7 @@ impl App {
         }
         match &self.preview.content {
             Content::Doc(_) => return self.draw_doc(g, t),
+            Content::Pdf(_) => return self.draw_pdf(g, t),
             Content::Image => {
                 if let Some((w, h)) = dims {
                     return self.draw_image(g, t, w, h);
