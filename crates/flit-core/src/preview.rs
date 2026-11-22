@@ -23,6 +23,30 @@ pub const POSTER_PX: u32 = 256;
 pub const FOLDER_SCAN: usize = 20_000;
 pub const MAX_PROPS: usize = 120;
 pub const FOLDER_ROWS: usize = 2_000;
+pub const PRETTY_FILE_LIMIT: u64 = 8 << 20;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrettyFormat {
+    Json,
+    Yaml,
+    Toml,
+    Xml,
+}
+
+impl PrettyFormat {
+    pub fn for_ext(ext: &[u8]) -> Option<Self> {
+        [(b"json".as_slice(), Self::Json), (b"yaml", Self::Yaml), (b"yml", Self::Yaml), (b"toml", Self::Toml), (b"xml", Self::Xml)]
+            .into_iter()
+            .find_map(|(suffix, format)| ext.eq_ignore_ascii_case(suffix).then_some(format))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PrettyError {
+    Invalid,
+    TooLarge,
+    Unavailable,
+}
 
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "dib", "tif", "tiff", "ico", "webp", "heic", "heif", "avif", "jxr", "wdp", "dds", "jxl"];
 const AUDIO: &[&str] = &["mp3", "wav", "wma", "flac", "m4a", "aac", "ogg", "oga", "opus", "aif", "aiff", "amr", "ac3"];

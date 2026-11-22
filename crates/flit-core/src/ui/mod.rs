@@ -437,6 +437,7 @@ pub enum Effect {
     RefreshPlaces,
     Search(SearchRequest),
     Preview(PreviewRequest),
+    PrettyPreview(PreviewRequest),
     QuickView(FsPath),
     Backdrop { gen: u64, path: FsPath },
     Host(HostCmd),

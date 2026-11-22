@@ -120,6 +120,7 @@ pub enum PaneHit {
     Tag(usize),
     NewTag,
     Download,
+    Pretty,
     Body,
 }
 
@@ -171,6 +172,14 @@ enum Content {
     Media { video: bool },
     Handler,
     Basic(Option<Note>),
+}
+
+#[derive(Default)]
+enum Pretty {
+    #[default]
+    Off,
+    Loading,
+    On(Doc),
 }
 
 #[derive(Default)]
@@ -307,9 +316,18 @@ pub(super) struct PreviewPane {
     chips: Vec<(Rect, PaneHit)>,
     buttons: Vec<(Rect, PaneHit)>,
     download: u64,
+    pretty: Pretty,
 }
 
 impl PreviewPane {
+    fn replace_text(&mut self, doc: Doc) {
+        self.content = Content::Doc(doc);
+        self.doc = None;
+        self.pick = Pick::default();
+        self.scroll = 0.0;
+        self.hscroll = 0.0;
+    }
+
     fn held(&self) -> usize {
         let image = self.image.as_ref().map_or(0, |b| b.rgba.len() * 2);
         let doc = match &self.content {
@@ -1215,6 +1233,7 @@ impl App {
                 let p = &mut self.preview;
                 p.download = std::mem::take(&mut p.key);
             }
+            PaneHit::Pretty => self.toggle_pretty(),
             PaneHit::Play => {
                 let p = &mut self.preview;
                 p.media.playing = !p.media.playing;
@@ -1336,6 +1355,55 @@ impl App {
         }
     }
 
+    fn pretty_available(&self) -> bool {
+        matches!(self.preview.content, Content::Doc(_))
+            && self.preview.subject.as_ref().is_some_and(|s| preview::PrettyFormat::for_ext(&s.ext).is_some())
+    }
+
+    fn toggle_pretty(&mut self) {
+        let p = &mut self.preview;
+        if matches!(p.pretty, Pretty::Loading) {
+            return;
+        }
+        if let Pretty::On(raw) = std::mem::take(&mut p.pretty) {
+            p.replace_text(raw);
+            return;
+        }
+        let Some(s) = p.subject.as_ref().filter(|s| preview::PrettyFormat::for_ext(&s.ext).is_some()) else { return };
+        let (Some(path), Some(entry)) = (s.path.clone(), s.entry) else { return };
+        if !matches!(p.content, Content::Doc(_)) {
+            return;
+        }
+        if entry.size > preview::PRETTY_FILE_LIMIT {
+            self.status(S::PreviewPrettyTooLarge.t());
+            return;
+        }
+        p.pretty = Pretty::Loading;
+        self.effects.push(Effect::PrettyPreview(PreviewRequest {
+            gen: p.gen, cancel: p.cancel.clone(), path, kind: s.kind, size: entry.size, details: false, px: 0,
+        }));
+    }
+
+    pub fn on_pretty(&mut self, gen: u64, result: Result<Doc, preview::PrettyError>) {
+        let p = &mut self.preview;
+        if p.gen != gen || !matches!(p.pretty, Pretty::Loading) {
+            return;
+        }
+        p.pretty = Pretty::Off;
+        self.dirty = true;
+        match result {
+            Ok(doc) => {
+                if let Content::Doc(raw) = std::mem::replace(&mut p.content, Content::Empty) {
+                    p.pretty = Pretty::On(raw);
+                    p.replace_text(doc);
+                }
+            }
+            Err(preview::PrettyError::Invalid) => self.status(S::PreviewPrettyInvalid.t()),
+            Err(preview::PrettyError::TooLarge) => self.status(S::PreviewPrettyTooLarge.t()),
+            Err(preview::PrettyError::Unavailable) => self.status(S::PreviewPrettyUnavailable.t()),
+        }
+    }
+
     pub(super) fn sync_preview(&mut self, now: Instant) {
         let shown = self.preview.state.visible && !self.search.active && !self.on_home();
         let subject = if shown { self.subject() } else { None };
@@ -1365,6 +1433,7 @@ impl App {
         let archived = self.archive_view().is_some();
         let (types, dirs, files) = if subject.as_ref().is_some_and(|s| s.many.is_some()) { self.selection_types() } else { (Vec::new(), 0, 0) };
         let p = &mut self.preview;
+        p.pretty = Pretty::Off;
         p.key = key;
         p.gen = gen;
         p.cancel.set(gen);
@@ -1646,6 +1715,14 @@ impl App {
         match &self.preview.content {
             Content::Doc(d) => {
                 let mut v = vec![("", self.opts.inspector_size.to_string(), Some(PaneHit::Size)), (G_LINES, super::thousands(d.paras.len() as u64), None)];
+                if self.pretty_available() {
+                    let (label, hit) = match self.preview.pretty {
+                        Pretty::Off => (S::PreviewPrettyButton, Some(PaneHit::Pretty)),
+                        Pretty::Loading => (S::PreviewPrettyWorking, None),
+                        Pretty::On(_) => (S::PreviewPrettyOriginal, Some(PaneHit::Pretty)),
+                    };
+                    v.insert(0, ("", label.t().to_owned(), hit));
+                }
                 if !d.encoding.is_empty() {
                     v.push(("", d.encoding.to_owned(), None));
                 }
@@ -1681,6 +1758,9 @@ impl App {
         for (glyph, label, hit) in blocks {
             let icon_w = if glyph.is_empty() { 0.0 } else { self.s(18.0) };
             let w = g.measure(&label, font) + self.s(14.0) + icon_w;
+            if right - w < r.x + self.s(6.0) {
+                continue;
+            }
             let br = Rect::new(right - w, r.y + self.s(2.0), w, block_h);
             if let Some(h) = hit {
                 g.dl.round_rect(br, t.input_bg, self.s(3.0));

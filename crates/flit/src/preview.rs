@@ -1,7 +1,12 @@
+pub(crate) mod pretty;
+mod child;
+
 use flit_core::preview::{self, FolderSummary, Kind, Note, PreviewData, PreviewRequest, FOLDER_SCAN, IMAGE_FILE_LIMIT, POSTER_PX, RTF_BYTES, SNIFF_LIMIT, TEXT_BYTES};
 use flit_core::FsPath;
 use flit_platform::Shell;
+use std::fs::File;
 use std::io::Read;
+use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 pub(crate) use flit_platform::std_path;
@@ -22,8 +27,23 @@ fn ticks(m: &std::fs::Metadata) -> i64 {
 
 fn head(path: &FsPath, limit: usize) -> Option<Vec<u8>> {
     let mut buf = Vec::with_capacity(limit.min(1 << 20));
-    std::fs::File::open(std_path(path)).ok()?.take(limit as u64).read_to_end(&mut buf).ok()?;
+    regular_file(&std_path(path))?.take(limit as u64).read_to_end(&mut buf).ok()?;
     Some(buf)
+}
+
+fn regular_file(path: &Path) -> Option<File> {
+    if !std::fs::metadata(path).ok()?.is_file() {
+        return None;
+    }
+    let mut options = File::options();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NONBLOCK);
+    }
+    let file = options.open(path).ok()?;
+    file.metadata().ok()?.is_file().then_some(file)
 }
 
 fn folder(req: &PreviewRequest) -> Option<FolderSummary> {

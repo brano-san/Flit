@@ -104,6 +104,34 @@ fn selection_requests_previews_and_drops_stale_results() {
 }
 
 #[test]
+fn pretty_is_requested_only_by_the_inspector_button() {
+    let mut a = app((520, 790));
+    a.animations = false;
+    a.set_pane_state(PaneState { visible: true, ..Default::default() });
+    add_file(&mut a, "data.json");
+    select(&mut a, "data.json");
+    frame(&mut a);
+    let raw = requests(&mut a).pop().unwrap();
+    a.on_preview(raw.gen, PreviewData::Doc(preview::text_doc(r#"{"n":1}"#, None)));
+    frame(&mut a);
+    assert!(a.preview_rect(PaneHit::Pretty).is_none());
+    let body = a.preview.r.body;
+    mouse(&mut a, (body.x + 5.0, body.y + 5.0), MouseButton::Left, 1);
+    frame(&mut a);
+    let r = a.preview_rect(PaneHit::Pretty).expect("formatting is available");
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::PrettyPreview(_))));
+    mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
+    let job = a.drain_effects().find_map(|e| match e { Effect::PrettyPreview(r) => Some(r), _ => None }).unwrap();
+    assert_eq!(job.path, raw.path);
+    select(&mut a, "a.rs");
+    frame(&mut a);
+    assert!(!job.cancel.is_current(job.gen));
+    a.on_pretty(job.gen, Ok(preview::text_doc("formatted", None)));
+    assert!(matches!(a.preview.content, Content::Loading));
+    assert!(a.preview_rect(PaneHit::Pretty).is_none());
+}
+
+#[test]
 fn properties_card_details_and_many_items() {
     let mut a = app((1200, 700));
     press(&mut a, Key::Space, NO);

@@ -69,7 +69,9 @@ fn main() {
     let mut activated = false;
     let mut it = std::env::args_os().skip(1);
     while let Some(a) = it.next() {
-        if a == "--diagnose" {
+        if a == preview::pretty::COMMAND {
+            std::process::exit(preview::pretty::serve(it.next().as_deref()));
+        } else if a == "--diagnose" {
             #[cfg(windows)]
             flit_platform_windows::diagnose::attach_console();
             match diagnose::run::<P>() {

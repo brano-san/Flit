@@ -51,3 +51,11 @@ no_extension = "sans extension"
 [filter]
 lines = "Filtrer {n} lignes..."
 files = "Filtrer {n} fichiers..."
+
+[pretty]
+button = "Formater"
+working = "Formatage…"
+original = "Original"
+too_large = "Le fichier est trop volumineux pour être formaté (8 Mio maximum)."
+invalid = "Le fichier contient des données non valides pour ce format."
+unavailable = "Impossible de formater l’aperçu."

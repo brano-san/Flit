@@ -51,3 +51,11 @@ no_extension = "无扩展名"
 [filter]
 lines = "筛选 {n} 行..."
 files = "筛选 {n} 个文件..."
+
+[pretty]
+button = "格式化"
+working = "正在格式化…"
+original = "原文"
+too_large = "文件过大，无法格式化（上限为 8 MiB）。"
+invalid = "文件包含不符合此格式的数据。"
+unavailable = "无法格式化预览。"

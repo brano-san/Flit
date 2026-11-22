@@ -51,3 +51,11 @@ no_extension = "sin extensión"
 [filter]
 lines = "Filtrar {n} líneas..."
 files = "Filtrar {n} archivos..."
+
+[pretty]
+button = "Formatear"
+working = "Formateando…"
+original = "Original"
+too_large = "El archivo es demasiado grande para formatearlo (máximo 8 MiB)."
+invalid = "El archivo contiene datos no válidos para este formato."
+unavailable = "No se pudo formatear la vista previa."

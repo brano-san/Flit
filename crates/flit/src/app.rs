@@ -172,6 +172,7 @@ struct SortJob {
 
 enum PreviewJob {
     Load { window: WindowId, req: PreviewRequest },
+    Pretty { window: WindowId, req: PreviewRequest },
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
@@ -187,6 +188,7 @@ enum Done {
     LinkChoices { window: WindowId, generation: u64, choices: flit_core::provider::LinkChoices },
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
     Preview { window: WindowId, gen: u64, data: PreviewData },
+    Pretty { window: WindowId, gen: u64, result: Result<flit_core::preview::Doc, flit_core::preview::PrettyError> },
     QuickView { window: WindowId, shown: bool },
     Backdrop { window: WindowId, gen: u64, image: Option<flit_core::ui::Bitmap> },
     Browsed { window: WindowId, path: Option<FsPath> },
@@ -223,6 +225,10 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                 let done = match job {
                     PreviewJob::Load { window, req } => match crate::preview::load(&mut shell, &req) {
                         Some(data) => Done::Preview { window, gen: req.gen, data },
+                        None => continue,
+                    },
+                    PreviewJob::Pretty { window, req } => match crate::preview::pretty::load(&req) {
+                        Some(result) => Done::Pretty { window, gen: req.gen, result },
                         None => continue,
                     },
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
@@ -763,6 +769,9 @@ impl<P: Platform> Handler<P> {
                 Effect::Preview(req) => {
                     let _ = self.previews.send(PreviewJob::Load { window: id, req });
                 }
+                Effect::PrettyPreview(req) => {
+                    let _ = self.previews.send(PreviewJob::Pretty { window: id, req });
+                }
                 Effect::QuickView(path) => {
                     let _ = self.previews.send(PreviewJob::QuickView { window: id, path });
                 }
@@ -1093,6 +1102,11 @@ impl<P: Platform> Handler<P> {
                 Done::Preview { window, gen, data } => {
                     if let Some(st) = self.windows.get_mut(&window) {
                         st.app.on_preview(gen, data);
+                    }
+                }
+                Done::Pretty { window, gen, result } => {
+                    if let Some(st) = self.windows.get_mut(&window) {
+                        st.app.on_pretty(gen, result);
                     }
                 }
                 Done::ColumnProps { window, tab, gen, ask, rows } => {

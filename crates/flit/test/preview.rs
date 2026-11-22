@@ -49,6 +49,35 @@ fn req(dir: &Dir, name: &str, details: bool) -> PreviewRequest {
 }
 
 #[test]
+fn pretty_formats_structured_files_and_preserves_mixed_xml_content() {
+    let d = temp();
+    for (name, input, part) in [
+        ("data.json", r#"{"b":123456789012345678901,"a":[1,2],"a":3}"#, r#"  "b": 123456789012345678901,"#),
+        ("data.yaml", "list:\n -  a\n -   b\n", "  - a\n  - b"),
+        ("data.toml", "count=3 # keep\nnames=[1,2]\n", "count = 3 # keep\nnames = [1, 2]"),
+        ("data.xml", "<root><mixed>a <em>b</em> c</mixed><empty/></root>", "  <mixed>a <em>b</em> c</mixed>\n  <empty/>"),
+    ] {
+        let file = d.0.join(name);
+        std::fs::write(&file, input).unwrap();
+        assert!(super::pretty::format_file(&file).unwrap().contains(part), "{name}");
+        assert_eq!(std::fs::read_to_string(file).unwrap(), input);
+    }
+}
+
+#[test]
+fn pretty_refuses_invalid_formats_and_files_over_its_read_limit() {
+    let d = temp();
+    for (name, input) in [("bad.json", "[1,"), ("bad.yaml", "items: ["), ("bad.toml", "items = ["), ("bad.xml", "<a><b></a>")] {
+        let p = d.0.join(name);
+        std::fs::write(&p, input).unwrap();
+        assert_eq!(super::pretty::format_file(&p), Err(preview::PrettyError::Invalid), "{name}");
+    }
+    let p = d.0.join("big.json");
+    std::fs::File::create(&p).unwrap().set_len(preview::PRETTY_FILE_LIMIT + 1).unwrap();
+    assert_eq!(super::pretty::format_file(&p), Err(preview::PrettyError::TooLarge));
+}
+
+#[test]
 fn loads_by_kind_within_limits() {
     let d = temp();
     std::fs::write(d.0.join("a.rs"), "fn main() {}\n").unwrap();
