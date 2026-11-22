@@ -1,23 +1,23 @@
 [status]
 assigned = "{key} ejecuta ahora «{command}»"
-left_without = "«{command}» se queda sin método abreviado"
+left_without = "«{command}» se queda sin atajo de teclado"
 keeps = "«{command}» conserva {keys}"
-no_shortcut = "«{command}» ya no tiene método abreviado"
+no_shortcut = "«{command}» ya no tiene atajo de teclado"
 removed = "Se quitó {key} de «{command}»"
-restored = "«{command}» vuelve a tener sus métodos abreviados predeterminados"
-restored_all = "Todos los comandos vuelven a tener sus métodos abreviados predeterminados"
+restored = "«{command}» vuelve a tener sus atajos predeterminados"
+restored_all = "Se restablecieron los atajos predeterminados de todos los comandos"
 
 [capture]
-press = "Presiona el nuevo método abreviado para «{command}»"
+press = "Pulse el nuevo atajo para «{command}»"
 esc_cancels = "Esc cancela"
 cannot = "No se puede usar {key}: {why}"
-other_keys = "Presiona otras teclas"
+other_keys = "Pulse otras teclas"
 already = "{key} ya ejecuta «{command}»"
-reassign = "Reasignar {key} de «{from}» a «{command}»"
+reassign = "Reasignar {key} a «{command}» en lugar de «{from}»"
 assign = "Asignar {key} a «{command}»"
-remove = "Quitar el método abreviado {key}"
+remove = "Quitar el atajo {key}"
 
 [editor]
-title = "Métodos abreviados de «{command}»"
+title = "Atajos de teclado de «{command}»"
 change = "Cambiar {key}"
-removes = "Supr lo quita"
+removes = "Supr quita el atajo"

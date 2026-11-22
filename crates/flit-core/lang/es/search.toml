@@ -5,43 +5,43 @@ title_in = "Búsqueda en {name} — Flit"
 invalid = "La consulta no es válida."
 no_match = "Ningún archivo coincide."
 searching = "Buscando…"
-walking = ["Buscando… {n} resultado", "Buscando… {n} de resultados", "Buscando… {n} resultados"]
-walking_in = ["Buscando… {results} en {n} carpeta", "Buscando… {results} en {n} de carpetas", "Buscando… {results} en {n} carpetas"]
-results = ["{n} resultado", "{n} de resultados", "{n} resultados"]
+walking = ["Buscando… {n} resultado", "Buscando… {n} resultados", "Buscando… {n} resultados"]
+walking_in = ["Buscando… {results} en {n} carpeta", "Buscando… {results} en {n} carpetas", "Buscando… {results} en {n} carpetas"]
+results = ["{n} resultado", "{n} resultados", "{n} resultados"]
 done_in = "{results} en {ms} ms"
 in = "En {name}"
 all_drives = "Todas las unidades"
-recent = "Búsquedas recientes · Shift+Supr quita una"
-folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
+recent = "Búsquedas recientes · Shift+Supr quita la búsqueda seleccionada"
+folders = ["{n} carpeta", "{n} carpetas", "{n} carpetas"]
 
 [error]
-rows_without_folders = "El índice envió filas sin carpetas."
-invalid_rows = "El índice envió filas no válidas: {error}"
+rows_without_folders = "El índice devolvió entradas sin carpeta."
+invalid_rows = "El índice devolvió entradas no válidas: {error}"
 unavailable = "La búsqueda no está disponible: {error}"
 cannot_start = "No se puede iniciar la búsqueda: {error}"
 shell = "Windows Search: {error}"
 syntax_position = "Consulta de búsqueda no válida en la posición {position}"
-timestamps_need_folder = "Las fechas de creación y acceso están disponibles en la búsqueda de carpetas."
+timestamps_need_folder = "Las fechas de creación y acceso están disponibles al buscar dentro de una carpeta."
 
 [column]
 folder = "Carpeta"
 
 [source]
-walk = "Búsqueda en vivo de la carpeta y sus subcarpetas"
+walk = "Búsqueda directa en la carpeta y sus subcarpetas"
 shell = "Windows Search"
 content = "Búsqueda de contenido (Tracker, Baloo o Recoll)"
 tagged = "Archivos etiquetados"
 connecting = "Conectando con el índice"
-service = "Servicio de índice"
+service = "Servicio de indexación"
 fallback = "Índice local (flit-indexd no disponible)"
 local = "Índice local"
-off = "La indexación está desactivada en Configuración › Avanzado; Ctrl+Shift+F busca en la carpeta abierta"
+off = "La indexación está desactivada en Configuración › Avanzado. Ctrl+Shift+F busca en la carpeta abierta."
 
 [index]
 default = "índice"
-ready = ["{label} {n} archivo", "{label} {n} de archivos", "{label} {n} archivos"]
-scanning = ["{label} indexando {percent}% ({n} archivo)", "{label} indexando {percent}% ({n} de archivos)", "{label} indexando {percent}% ({n} archivos)"]
-error = "{label} error: {error}"
+ready = ["{label}: {n} archivo", "{label}: {n} archivos", "{label}: {n} archivos"]
+scanning = ["{label}: indexación al {percent} % ({n} archivo)", "{label}: indexación al {percent} % ({n} archivos)", "{label}: indexación al {percent} % ({n} archivos)"]
+error = "{label}: error {error}"
 
 [exclude]
 action = "Excluir de la búsqueda"
@@ -53,7 +53,7 @@ folders_help = "Muestra las carpetas y el número de resultados."
 within_help = "Acota el conjunto de resultados actual."
 similar = "Buscar similares"
 similar_help = "Busca por tipo, fecha de modificación, tamaño y etiquetas del archivo seleccionado."
-facets = "Facetas"
+facets = "Filtros"
 facets_help = "Muestra filtros y un histograma de fechas de modificación."
 year = "Año"
 no_extension = "Sin extensión"

@@ -1,5 +1,5 @@
-selected = ["{n} elemento seleccionado", "{n} de elementos seleccionados", "{n} elementos seleccionados"]
-archived = "Dentro de un archivo comprimido: extráelo para verlo"
+selected = ["{n} elemento seleccionado", "{n} elementos seleccionados", "{n} elementos seleccionados"]
+archived = "Extraiga este elemento del archivo comprimido para abrir su vista previa"
 cannot_play = "No se puede reproducir este archivo: {error}"
 no_player = "no se encontró ningún reproductor. Instale el paquete {package}"
 properties = "Propiedades"
@@ -8,12 +8,12 @@ loading = "Cargando la vista previa…"
 new_tag = "+ Nueva etiqueta"
 shortcut = "Acceso directo a {target}"
 too_large = "El archivo es demasiado grande para la vista previa"
-online_only = "Almacenado solo en línea.\nLa vista previa descarga el archivo en este dispositivo."
+online_only = "Solo disponible en línea.\nAl mostrar la vista previa, el archivo se descargará en este dispositivo."
 download = "Descargar para la vista previa"
 copy_image = "Copiar imagen"
-truncated = ["Se muestra el primer {n} carácter", "Se muestran los primeros {n} de caracteres", "Se muestran los primeros {n} caracteres"]
-folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
-files = ["{n} archivo", "{n} de archivos", "{n} archivos"]
+truncated = ["Se muestra el primer carácter ({n})", "Se muestran los primeros {n} caracteres", "Se muestran los primeros {n} caracteres"]
+folders = ["{n} carpeta", "{n} carpetas", "{n} carpetas"]
+files = ["{n} archivo", "{n} archivos", "{n} archivos"]
 cannot_open = "No se pudo abrir este archivo"
 
 [field]
@@ -23,7 +23,7 @@ items = "Elementos"
 total_size = "Tamaño total"
 used_space = "Espacio usado"
 free_space = "Espacio disponible"
-size_bytes = ["{size} ({n} byte)", "{size} ({n} de bytes)", "{size} ({n} bytes)"]
+size_bytes = ["{size} ({n} byte)", "{size} ({n} bytes)", "{size} ({n} bytes)"]
 modified = "Modificado"
 created = "Creado"
 attributes = "Atributos"
@@ -34,7 +34,7 @@ free_of = "{free} de {total}"
 read_only = "Solo lectura"
 hidden = "Oculto"
 system = "Sistema"
-link = "Vínculo"
+link = "Enlace"
 compressed = "Comprimido"
 encrypted = "Cifrado"
 online_only = "Solo en línea"
@@ -43,30 +43,30 @@ offline = "Sin conexión"
 
 [folder]
 empty = "Esta carpeta está vacía."
-scanned = ["{size} en el primer {n} elemento", "{size} en los primeros {n} de elementos", "{size} en los primeros {n} elementos"]
-hidden = ["{n} elemento oculto", "{n} de elementos ocultos", "{n} elementos ocultos"]
+scanned = ["{size} en el primer elemento ({n})", "{size} en los primeros {n} elementos", "{size} en los primeros {n} elementos"]
+hidden = ["{n} elemento oculto", "{n} elementos ocultos", "{n} elementos ocultos"]
 last_change = "Último cambio: {date}"
 most_common = "Más comunes: {types}"
 no_extension = "sin extensión"
 
 [filter]
-lines = "Filtrar {n} líneas..."
-files = "Filtrar {n} archivos..."
+lines = "Filtrar {n} líneas…"
+files = "Filtrar {n} archivos…"
 
 [pretty]
-button = "Formatear"
-working = "Formateando…"
+button = "Dar formato"
+working = "Aplicando formato…"
 original = "Original"
-too_large = "El archivo es demasiado grande para formatearlo (máximo 8 MiB)."
+too_large = "El archivo es demasiado grande para darle formato (máximo 8 MiB)."
 invalid = "El archivo contiene datos no válidos para este formato."
-unavailable = "No se pudo formatear la vista previa."
+unavailable = "No se pudo aplicar formato a la vista previa."
 
 [svg]
-checker = "Cuadrícula"
+checker = "Cuadros alternos"
 white = "Blanco"
 black = "Negro"
 background = "Fondo SVG"
-background_help = "Fondo para vistas previas SVG transparentes."
+background_help = "Fondo para vistas previas de SVG con transparencia."
 
 [pdf]
 failed = "No se pudo mostrar esta página."

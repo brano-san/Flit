@@ -1,7 +1,7 @@
 [column]
 name = "Nombre"
-modified = "Fecha de modificación"
-created = "Fecha de creación"
+modified = "Modificado"
+created = "Creado"
 type = "Tipo"
 size = "Tamaño"
 origin = "Ubicación original"
@@ -10,16 +10,16 @@ tag = "Etiquetas"
 items = "Total de elementos"
 folders = "Carpetas"
 files = "Archivos"
-accessed = "Fecha de acceso"
+accessed = "Último acceso"
 volume = "Uso del volumen"
 folder_usage = "Uso de la carpeta"
 free = "Espacio libre"
 file_system = "Sistema de archivos"
-percent = "Porcentaje lleno"
+percent = "Espacio ocupado (%)"
 attributes = "Atributos"
 dimensions = "Dimensiones"
 duration = "Duración"
-artist = "Intérpretes colaboradores"
+artist = "Intérpretes"
 version = "Versión del archivo"
 date_taken = "Fecha de captura"
 camera_model = "Modelo de cámara"
@@ -30,7 +30,7 @@ company = "Compañía"
 
 [type]
 drive = "Unidad"
-folder = "Carpeta de archivos"
+folder = "Carpeta"
 file = "Archivo"
 ext_file = "Archivo {ext}"
 
@@ -75,9 +75,9 @@ medium = "Medio (5 - 30 min)"
 short = "Corto (menos de 5 min)"
 
 [count]
-items = ["{n} elemento", "{n} de elementos", "{n} elementos"]
-folders = ["{n} carpeta", "{n} de carpetas", "{n} carpetas"]
-files = ["{n} archivo", "{n} de archivos", "{n} archivos"]
+items = ["{n} elemento", "{n} elementos", "{n} elementos"]
+folders = ["{n} carpeta", "{n} carpetas", "{n} carpetas"]
+files = ["{n} archivo", "{n} archivos", "{n} archivos"]
 
 [status]
 default_view = "Las carpetas nuevas se abrirán con esta vista"
@@ -86,5 +86,5 @@ default_view = "Las carpetas nuevas se abrirán con esta vista"
 saved = "Configuración de vista guardada"
 none = "Ninguna"
 folder = "Esta carpeta"
-subfolders = "Esta carpeta y subcarpetas"
+subfolders = "Esta carpeta y sus subcarpetas"
 default = "Establecer como predeterminada"

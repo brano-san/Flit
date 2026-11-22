@@ -1,5 +1,5 @@
 [size]
-b = "bytes"
+b = "B"
 kb = "KB"
 kb_decimal = "kB"
 mb = "MB"

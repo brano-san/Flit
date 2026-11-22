@@ -1,4 +1,4 @@
 default = "Predeterminado"
-system_font = "Predeterminada del sistema"
+system_font = "Fuente del sistema"
 not_installed = "{font} (no instalada)"
 backdrop_failed = "No se puede mostrar {path} como fondo"
