@@ -465,7 +465,9 @@ impl Shell for ShellCom {
     }
 
     fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
-        crate::network::server_path(uri).map_err(|scheme| PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineServerScheme, scheme = scheme)))
+        let path = crate::network::server_path(uri).map_err(|scheme| PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineServerScheme, scheme = scheme)))?;
+        crate::network::remember_ftp(&path, uri);
+        Ok(path)
     }
 
     fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {

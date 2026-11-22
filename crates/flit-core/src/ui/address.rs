@@ -277,6 +277,10 @@ impl App {
             return false;
         }
         self.remember_typed(&text);
+        if !self.caps.unix_paths && super::network::windows_ftp(&text) {
+            self.connect_server(&text);
+            return true;
+        }
         if is_url(&text) && !(self.caps.unix_paths && super::network::native_url(&text)) {
             self.launch(Launch::Run { program: text, args: String::new(), dir: None });
             return true;
@@ -464,12 +468,12 @@ impl App {
 
     fn places(&self) -> Vec<(String, bool)> {
         let mut out: Vec<(String, bool)> = self.addr.typed.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|t| (t.clone(), true)).collect();
-        let shown = |l: &Location| (l.display().into_owned(), false);
+        let shown = |l: &Location| (l.address_text().into_owned(), false);
         let sb = &self.nav.sidebar;
         let mut recent: Vec<_> = sb.places.recent.iter().filter(|r| r.dir).collect();
         recent.sort_by_key(|r| std::cmp::Reverse(r.at));
         out.extend(self.tab().history.back_list().iter().rev().map(shown));
-        out.extend(recent.into_iter().map(|r| (r.target.display().into_owned(), false)));
+        out.extend(recent.into_iter().map(|r| (r.target.ftp_uri().unwrap_or_else(|| r.target.display().into_owned()), false)));
         out.extend(sb.state.pinned.iter().map(shown));
         out.extend(sb.places.folders.iter().map(|(_, l)| shown(l)));
         out

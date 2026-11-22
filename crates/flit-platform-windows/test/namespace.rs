@@ -1,4 +1,36 @@
 use super::*;
+
+#[test]
+#[ignore]
+fn a_public_ftp_folder_lists_and_copies_a_file_through_windows_shell() {
+    use flit_core::provider::{FileOp, OpCtl};
+    use flit_platform::{FileOps, Job, Shell};
+
+    let mut shell = crate::shell::ShellCom::new().unwrap();
+    let root = shell.connect("ftp://ftp.gnu.org/").unwrap();
+    let source = root.join(b"MISSING-FILES.README");
+    let mut on_batch = |_: &ListingBuilder<'_>| true;
+    let mut listing = ListingBuilder::new(CaseMode::Insensitive, &mut on_batch);
+    read_dir(&root, &mut listing).unwrap();
+    assert!((0..listing.listing.len() as u32).any(|i| listing.listing.name(i) == source.file_name()));
+    let data = crate::context_menu::Pidls::parse_for_ui(std::slice::from_ref(&source)).unwrap();
+    let _: windows::Win32::System::Com::IDataObject = data.ui_object(Default::default()).unwrap();
+
+    let dir = crate::test_temp().join(format!("flit-ftp-probe-{}", std::process::id()));
+    std::fs::create_dir(&dir).unwrap();
+    let dest = FsPath::parse(&dir.to_string_lossy()).unwrap();
+    let expected = (source.clone(), dest.join(source.file_name()));
+    let job = Job::new(OpCtl::default(), Box::new(|_| {}), Box::new(|_| {}));
+    let out = shell.file_op(&FileOp::Copy { items: vec![source], dest }, &job);
+    assert!(out.error.is_none(), "{:?}", out.error);
+    assert_eq!(out.items, [expected]);
+    let file = dir.join("MISSING-FILES.README");
+    let bytes = std::fs::read(&file).unwrap();
+    assert!(!bytes.is_empty() && bytes.len() < 10 * 1024);
+    println!("{} entries listed; copied {} bytes to {}", listing.listing.len(), bytes.len(), file.display());
+    std::fs::remove_file(file).unwrap();
+    std::fs::remove_dir(dir).unwrap();
+}
 use flit_core::sort::CaseMode;
 use std::cell::Cell;
 
@@ -65,14 +97,14 @@ fn listing_streams_in_batches_and_stops_when_cancelled() {
         true
     };
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut on_batch);
-    list(&camera, &mut b).unwrap();
+    list(&camera, &mut b, |_, _| {}).unwrap();
     assert_eq!(b.listing.len(), 100);
     drop(b);
     assert_eq!(batches, 4);
     OPENED.set(0);
     let mut stop = |_: &ListingBuilder<'_>| false;
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut stop);
-    list(&camera, &mut b).unwrap();
+    list(&camera, &mut b, |_, _| {}).unwrap();
     assert_eq!((b.listing.len(), OPENED.get()), (BATCH, BATCH));
 }
 
@@ -82,14 +114,48 @@ fn enumeration_errors_reach_the_listing() {
     let locked = walk(storage, &[b"Locked"]).unwrap();
     let mut on_batch = |_: &ListingBuilder<'_>| true;
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut on_batch);
-    assert_eq!(list(&locked, &mut b).err().map(|e| e.kind), Some(FsErrorKind::AccessDenied));
+    assert_eq!(list(&locked, &mut b, |_, _| {}).err().map(|e| e.kind), Some(FsErrorKind::AccessDenied));
+}
+
+#[test]
+fn shell_next_errors_end_the_listing_and_ftp_next_errors_are_reported() {
+    let error = FsError { kind: FsErrorKind::Unavailable, code: 0x80004005 };
+    for first in [None, Some("server or device")] {
+        for ftp in [false, true] {
+            let mut row = first;
+            let mut shown = Vec::new();
+            let outcome = enumerate(ftp, || row.take().map_or(Err(error.clone()), |row| Ok(Some(row))), &mut |item| {
+                shown.push(item);
+                true
+            });
+            assert_eq!(shown, first.into_iter().collect::<Vec<_>>());
+            assert_eq!(outcome, if ftp { Err(error.clone()) } else { Ok(()) });
+        }
+    }
 }
 
 #[test]
 fn network_root_resolves_through_the_real_shell() {
-    let net = Item(item(&FsPath::network()).expect("the Network folder exists on every Windows"));
+    let net = Item { raw: item(&FsPath::network()).expect("the Network folder exists on every Windows"), ftp: false };
     assert!(net.meta().attrs & attr::DIR != 0);
     assert_eq!(item(&FsPath::device(b"No Such Phone 123").unwrap()).err(), Some(not_found()));
+}
+
+#[test]
+fn ftp_actions_use_the_listed_pidl_on_another_thread() {
+    let root = FsPath::parse("ftp://flit-cache.invalid/pub/").unwrap();
+    let selected = root.join(b"flit.exe");
+    let missing = root.join(b"unlisted.exe");
+    let expected = std::env::current_exe().unwrap();
+    let local = FsPath::parse(expected.to_str().unwrap()).unwrap();
+    let local = item(&local).unwrap();
+    remember_folder(&root, &local).remember(selected.file_name(), &local);
+    std::thread::spawn(move || {
+        use crate::context_menu::Pidls;
+        assert!(Pidls::parse_for_ui(&[selected]).is_ok());
+        assert!(Pidls::parse_for_ui(&[root]).is_ok());
+        assert_eq!(Pidls::parse_for_ui(&[missing]).err().unwrap().code, not_found().code);
+    }).join().unwrap();
 }
 
 #[test]

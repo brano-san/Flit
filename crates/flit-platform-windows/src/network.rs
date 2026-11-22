@@ -3,7 +3,7 @@ use crate::shell::owner_window;
 use flit_core::path::PathKind;
 use flit_core::{FsError, FsPath};
 use flit_platform::PlatformError;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use windows::core::{PCWSTR, PWSTR};
 use windows::Win32::Foundation::{ERROR_ACCESS_DENIED, ERROR_CANCELLED, ERROR_CONNECTION_UNAVAIL, ERROR_INVALID_PASSWORD, ERROR_LOGON_FAILURE, ERROR_NOT_AUTHENTICATED, HANDLE, NO_ERROR, WIN32_ERROR};
@@ -16,6 +16,8 @@ use windows::Win32::Storage::FileSystem::GetDriveTypeW;
 
 const DRIVE_REMOTE: u32 = 4;
 const CANCELLED_BY_USER: u32 = 0xFFFF_FFFF;
+static FTP_LOGINS: Mutex<Option<HashMap<Vec<u8>, flit_core::provider::Password>>> = Mutex::new(None);
+
 pub(crate) fn discovery_warning(enabled: impl FnOnce() -> Option<bool>) -> Option<flit_core::provider::NetworkWarning> {
     (enabled() == Some(false)).then_some(flit_core::provider::NetworkWarning::WindowsDisabled)
 }
@@ -79,6 +81,9 @@ pub(crate) fn server_path(uri: &str) -> Result<FsPath, String> {
     }
     let (scheme, rest) = uri.split_once("://").ok_or_else(|| uri.to_owned())?;
     let scheme = scheme.to_ascii_lowercase();
+    if scheme == "ftp" {
+        return flit_core::ui::saved_address(uri).and_then(|address| FsPath::parse(&address)).filter(FsPath::is_ftp).ok_or(scheme);
+    }
     let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
     let host_port = authority.rsplit('@').next().unwrap_or(authority);
     let (host, port) = match host_port.rsplit_once(':') {
@@ -100,6 +105,26 @@ pub(crate) fn server_path(uri: &str) -> Result<FsPath, String> {
         unc.push_str(p);
     }
     FsPath::parse(&unc).filter(|p| p.kind() == PathKind::Unc && !host.is_empty()).ok_or(scheme)
+}
+
+pub(crate) fn remember_ftp(path: &FsPath, address: &str) {
+    let Some(root) = path.shell_root().filter(|_| path.is_ftp()) else { return };
+    let Some((_, rest)) = address.trim().split_once("://") else { return };
+    let authority = rest.split('/').next().unwrap_or_default();
+    if authority.rsplit_once('@').is_some_and(|(login, _)| login.contains(':')) {
+        let login = flit_core::provider::Password::new(format!("ftp://{authority}/"));
+        FTP_LOGINS.lock().unwrap_or_else(|e| e.into_inner()).get_or_insert_with(HashMap::new).insert(root.to_vec(), login);
+    }
+}
+
+pub(crate) fn ftp_root(path: &FsPath) -> Option<flit_core::provider::Password> {
+    let root = path.shell_root().filter(|_| path.is_ftp())?;
+    let logins = FTP_LOGINS.lock().unwrap_or_else(|e| e.into_inner());
+    let uri = match logins.as_ref().and_then(|logins| logins.get(root)) {
+        Some(login) => login.as_str().to_owned(),
+        None => format!("{}/", std::str::from_utf8(root).ok()?),
+    };
+    Some(flit_core::provider::Password::new(uri))
 }
 
 pub(crate) fn share_root(dir: &FsPath) -> Option<String> {

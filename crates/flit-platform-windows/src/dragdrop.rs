@@ -109,7 +109,7 @@ fn seven_zip_extracts_itself(data: &IDataObject) -> bool {
 }
 
 pub(crate) fn file_target(hwnd: HWND, file: &FsPath) -> Option<IDropTarget> {
-    Pidls::parse(std::slice::from_ref(file)).ok()?.ui_object::<IDropTarget>(hwnd).ok()
+    Pidls::parse_for_ui(std::slice::from_ref(file)).ok()?.ui_object::<IDropTarget>(hwnd).ok()
 }
 
 pub(crate) fn data_paths(data: &IDataObject) -> Vec<FsPath> {
@@ -394,7 +394,7 @@ fn held_button() -> Option<bool> {
 pub(crate) fn start_drag(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
     let Some(right) = held_button() else { return Ok(()) };
     let started = Instant::now();
-    let data: IDataObject = Pidls::parse(paths)?.ui_object(hwnd)?;
+    let data: IDataObject = Pidls::parse_for_ui(paths)?.ui_object(hwnd)?;
     let ready = started.elapsed();
     let source: Option<IDropSource> = right.then(|| RightSource.into());
     let result = unsafe { SHDoDragDrop(Some(hwnd), &data, source.as_ref(), DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK) };

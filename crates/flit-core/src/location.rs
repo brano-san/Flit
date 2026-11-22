@@ -212,6 +212,10 @@ impl Location {
         }
     }
 
+    pub(crate) fn address_text(&self) -> Cow<'_, str> {
+        self.path().ftp_uri().map_or_else(|| self.display(), Cow::Owned)
+    }
+
     pub fn is_root(&self) -> bool {
         self.path().is_root()
     }

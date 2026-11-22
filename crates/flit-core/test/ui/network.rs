@@ -329,6 +329,33 @@ fn server_addresses_need_a_known_scheme_and_a_host() {
 }
 
 #[test]
+fn on_windows_ftp_from_the_address_bar_uses_the_file_manager() {
+    let mut a = app();
+    let now = Instant::now();
+    let ftp = "FTP://demo:test-password@ftp.example.test/pub";
+    a.submit_address(ftp, now);
+    assert_eq!(launches(&mut a), [Launch::ConnectServer(ftp.into())]);
+    a.submit_address("https://example.test/", now);
+    assert_eq!(launches(&mut a), [Launch::Run { program: "https://example.test/".into(), args: String::new(), dir: None }]);
+}
+
+#[test]
+#[cfg(windows)]
+fn an_ftp_folder_shows_decoded_crumbs_and_opens_an_encoded_address_for_editing() {
+    let mut a = app();
+    let now = Instant::now();
+    let uri = "ftp://ftp.example.test/space%20and%20%23/%D0%9F";
+    let folder = Location::Local(FsPath::parse(uri).unwrap());
+    a.dispatch(vec![Route { folder, select: None }], OpenTarget::CurrentTab, now);
+    let labels: Vec<_> = a.tab().crumbs.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(&labels[labels.len() - 2..], ["space and #", "П"]);
+    assert_eq!(a.tab().location().display(), "ftp://ftp.example.test/space and #/П");
+    a.drain_effects().for_each(drop);
+    a.open_address();
+    assert_eq!(a.nav.palette.as_ref().unwrap().field.text(), uri);
+}
+
+#[test]
 fn drive_actions_reach_the_shell_and_unix_hosts_hide_them() {
     let mut a = app();
     a.drain_effects().for_each(drop);

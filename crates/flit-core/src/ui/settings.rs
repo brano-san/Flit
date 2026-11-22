@@ -560,7 +560,7 @@ pub fn path_text(l: &Location) -> String {
         PathKind::Home => HOME_LABEL.to_owned(),
         PathKind::Computer => COMPUTER_LABEL.to_owned(),
         PathKind::RecycleBin => RECYCLE_BIN_LABEL.to_owned(),
-        _ => l.display().into_owned(),
+        _ => l.address_text().into_owned(),
     }
 }
 

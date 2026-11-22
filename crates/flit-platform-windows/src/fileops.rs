@@ -28,10 +28,20 @@ use windows_core::{implement, ComObject, Ref};
 struct Sink {
     done: RefCell<Vec<(FsPath, FsPath)>>,
     job: Job,
+    path: fn(&IShellItem) -> Option<FsPath>,
 }
 
 pub(crate) fn item_path(item: &IShellItem) -> Option<FsPath> {
     unsafe { take_pwstr(item.GetDisplayName(SIGDN_FILESYSPATH).ok()?) }.and_then(|w| FsPath::from_utf16(&w))
+}
+
+fn operation_item_path(item: &IShellItem) -> Option<FsPath> {
+    item_path(item).or_else(|| {
+        [SIGDN_URL, SIGDN_DESKTOPABSOLUTEPARSING].into_iter().find_map(|kind| {
+            let uri = unsafe { take_pwstr(item.GetDisplayName(kind).ok()?) }?;
+            crate::network::server_path(&String::from_utf16(&uri).ok()?).ok().filter(FsPath::is_ftp)
+        })
+    })
 }
 
 fn shell_item(p: &FsPath) -> Result<IShellItem, PlatformError> {
@@ -65,8 +75,8 @@ impl Sink_Impl {
         if hr.is_err() {
             return;
         }
-        if let Some(new) = created.as_ref().and_then(item_path) {
-            let src = source.as_ref().and_then(item_path).unwrap_or_else(|| new.clone());
+        if let Some(new) = created.as_ref().and_then(self.path) {
+            let src = source.as_ref().and_then(self.path).unwrap_or_else(|| new.clone());
             self.done.borrow_mut().push((src, new));
         }
     }
@@ -336,8 +346,9 @@ fn cancelled(op: &FileOp) -> PlatformError {
     PlatformError::new(-1, what.en())
 }
 
-unsafe fn operate(flags: FILEOPERATION_FLAGS, fill: impl FnOnce(&IFileOperation) -> Result<(), PlatformError>, cancelled: impl Fn() -> PlatformError, job: &Job) -> OpOutcome {
-    let sink = ComObject::new(Sink { done: RefCell::default(), job: job.clone() });
+unsafe fn operate(flags: FILEOPERATION_FLAGS, fill: impl FnOnce(&IFileOperation) -> Result<(), PlatformError>, cancelled: impl Fn() -> PlatformError, job: &Job, ftp: bool) -> OpOutcome {
+    let path: fn(&IShellItem) -> Option<FsPath> = if ftp { operation_item_path } else { item_path };
+    let sink = ComObject::new(Sink { done: RefCell::default(), job: job.clone(), path });
     let result = (|| {
         let fo: IFileOperation = CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(err)?;
         fo.SetOperationFlags(flags).map_err(err)?;
@@ -361,7 +372,8 @@ unsafe fn operate(flags: FILEOPERATION_FLAGS, fill: impl FnOnce(&IFileOperation)
 }
 
 unsafe fn perform(op: &FileOp, job: &Job) -> OpOutcome {
-    let mut out = operate(flags(op), |fo| queue(fo, op), || cancelled(op), job);
+    let ftp = !op.all_paths(|path| !path.is_ftp());
+    let mut out = operate(flags(op), |fo| queue(fo, op), || cancelled(op), job, ftp);
     if let Some(wanted) = sources(op) {
         out.items.retain(|(src, _)| wanted.iter().any(|w| same_path(w, src)));
     }
@@ -380,7 +392,7 @@ pub(crate) unsafe fn transfer_items(items: &[IShellItem], dest: &FsPath, moving:
         }
         Ok(())
     };
-    operate(FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR, fill, || PlatformError::new(-1, S::ErrorsEngineCancelled.en()), job)
+    operate(FOF_ALLOWUNDO | FOF_NOCONFIRMMKDIR, fill, || PlatformError::new(-1, S::ErrorsEngineCancelled.en()), job, dest.is_ftp())
 }
 
 pub(crate) fn exists(p: &FsPath) -> bool {

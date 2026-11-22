@@ -38,6 +38,10 @@ pub fn server_uri(text: &str) -> Option<String> {
     (SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !host.is_empty() && clean).then(|| text.to_owned())
 }
 
+pub(super) fn windows_ftp(text: &str) -> bool {
+    text.trim().get(..6).is_some_and(|scheme| scheme.eq_ignore_ascii_case("ftp://"))
+}
+
 pub fn saved_address(text: &str) -> Option<String> {
     let uri = server_uri(text)?;
     let (scheme, rest) = uri.split_once("://")?;
