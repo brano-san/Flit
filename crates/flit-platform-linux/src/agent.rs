@@ -172,7 +172,12 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
             Ok(op) => op,
             Err(error) => {
                 ctx.ops().remove(&id);
-                ctx.send(Event::OpDone { id, error: Some(error.into()), items: Vec::new() });
+                let error = if job.cancelled() {
+                    flit_core::provider::OpError::new(flit_platform::PlatformErrorKind::Cancelled, flit_platform::CANCELLED)
+                } else {
+                    error.into()
+                };
+                ctx.send(Event::OpDone { id, error: Some(error), items: Vec::new() });
                 return;
             }
         };

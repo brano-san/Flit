@@ -451,6 +451,7 @@ impl LocalProvider {
                                 match planned {
                                     Ok(op) if !reviewed || S::reviews_transfer_conflicts() || job.preflight_conflicts(|| crate::conflicts::collect(&*fs, &op, job.ctl())) => perform(&mut sh, op, cut, &job),
                                     Ok(op) => cancelled(op),
+                                    Err(_) if job.cancelled() => (Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), None, Vec::new()),
                                     Err(e) => (Some(e.into()), None, Vec::new()),
                                 }
                             }
