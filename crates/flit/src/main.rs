@@ -32,6 +32,7 @@ mod picker;
 #[cfg(any(test, target_os = "linux"))]
 mod portal_config;
 
+use flit_core::i18n::{self, Lang};
 #[cfg(not(target_os = "linux"))]
 use flit_core::open::parse_args;
 #[cfg(target_os = "linux")]
@@ -75,6 +76,7 @@ fn hand_to_explorer(open: &flit_core::open::Open) -> bool {
 
 fn main() {
     let started = Instant::now();
+    i18n::set_pseudo(std::env::var_os("FLIT_PSEUDO").is_some_and(|value| value == "1"));
     let mut args: Vec<Vec<u8>> = Vec::new();
     let mut metrics: Option<PathBuf> = None;
     let mut activated = false;
@@ -156,6 +158,8 @@ fn main() {
                 std::process::exit(1);
             }
             return;
+        } else if a == "--pseudo" {
+            i18n::set_pseudo(true);
         } else {
             args.push(wtf8(&a));
         }
@@ -168,9 +172,11 @@ fn main() {
     }
     update::on_start::<P>();
     let mut standalone = None;
-    let background = background && open.is_empty() && open.tag.is_none() && metrics.is_none() && !activated;
+    let pseudo = i18n::lang() == Lang::Pseudo;
+    let background = background && open.is_empty() && open.tag.is_none() && metrics.is_none() && !activated && !pseudo;
     let instance = match metrics {
         Some(_) => None,
+        None if pseudo => None,
         None => match if background { <P as Platform>::Instance::acquire_background() } else { <P as Platform>::Instance::acquire(&open) } {
             Instance::Forwarded => {
                 if std::env::var_os("FLIT_TIMING").is_some() {
@@ -194,7 +200,7 @@ fn main() {
     }
     logs::init(logs_dir, std::env::var_os("FLIT_LOG").is_some());
     #[cfg(windows)]
-    if metrics.is_none() {
+    if metrics.is_none() && !pseudo {
         flit_platform_windows::crash::register_restart(RESTARTED_BY_WINDOWS);
     }
     tracing::info!("Flit {} started, process {}", env!("CARGO_PKG_VERSION"), std::process::id());
@@ -220,7 +226,7 @@ fn main() {
     #[cfg(target_os = "linux")]
     flit_platform_linux_gui::prefetch_fonts();
     #[cfg(windows)]
-    if identity.is_ok() && !headless {
+    if identity.is_ok() && !headless && !pseudo {
         flit_platform_windows::aumid::fix_shortcuts_in_background();
     }
     let _ = std::thread::Builder::new().name("flit-sweep".into()).spawn(|| {

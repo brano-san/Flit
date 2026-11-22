@@ -985,7 +985,8 @@ impl App {
     }
 
     pub fn new_file(&mut self) {
-        self.create(|dir, name| FileOp::NewFile { dir, name, template: Template::Empty }, S::UiOpsNewFileName.t(), "");
+        let stem = S::UiOpsNewFileName.in_lang(crate::i18n::lang().catalogue());
+        self.create(|dir, name| FileOp::NewFile { dir, name, template: Template::Empty }, stem, "");
     }
 
     pub(super) fn duplicate_selection(&mut self) {
@@ -1019,7 +1020,8 @@ impl App {
     }
 
     pub fn new_folder(&mut self) {
-        self.create(|dir, name| FileOp::NewFolder { dir, name }, S::UiOpsNewFolderName.t(), "");
+        let stem = S::UiOpsNewFolderName.in_lang(crate::i18n::lang().catalogue());
+        self.create(|dir, name| FileOp::NewFolder { dir, name }, stem, "");
     }
 
     pub fn new_folder_with_selection(&mut self) {
@@ -1031,7 +1033,8 @@ impl App {
             (Ok(p), Ok(d)) => (p, d),
             (Err(e), _) | (_, Err(e)) => return self.status(e),
         };
-        let name = self.free_name(S::UiOpsNewFolderName.t(), "").into_bytes();
+        let stem = S::UiOpsNewFolderName.in_lang(crate::i18n::lang().catalogue());
+        let name = self.free_name(stem, "").into_bytes();
         self.start_op(FileOp::NewFolder { dir, name }, Origin::Fresh, Then::Fill(paths));
     }
 

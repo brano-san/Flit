@@ -70,3 +70,88 @@ A truly windowless mode (no `ShowWindow`, an offscreen render target or a compos
 | folder_search_key_max_ms | 153.83 | 167.05 |
 | private_listing_mb | 108 | 123 |
 | private_indexed_mb | 1265 | 1288 |
+
+`private_indexed_mb` is the private committed memory of the Flit process when the index reports ready. The table includes the open file window and other allocations of that process. The unit in these two memory rows is MiB.
+
+To collect a new Windows report, run `.\scripts\metrics.ps1` from the repository. The report is written to `target/metrics/windows.md`. Use `-Profile measure` for local A/B builds and record the profile with the results.
+
+## Linux (X11 and Wayland)
+
+### X11 under Xvfb in WSL2 (2026-11-22)
+
+Collected with `FLIT_SERVER=xvfb bash scripts/metrics.sh` (release profile, 3 runs per folder, medians) and `tools/measure/idle-pss.sh` on the development machine. These are WSL2 + Xvfb numbers, not a native Linux desktop. Wayland and a lower-end machine were not measured.
+
+| Component | Value |
+|---|---|
+| CPU (`/proc/cpuinfo`) | AMD Ryzen 7 9800X3D 8-Core Processor, 16 logical CPUs visible to WSL |
+| Memory visible to WSL | 30 GiB |
+| OS | Ubuntu 22.04.5 LTS on WSL2, kernel 6.6.87.2-microsoft-standard-WSL2 |
+| Display | Xvfb 21.1.4, 1600x1000x24 |
+| Renderer | Mesa 23.2.1, GL renderer `D3D12 (AMD Radeon(TM) Graphics)`: the Gallium D3D12 driver over the WSL GPU bridge, not llvmpipe; `software_frames` 0 |
+| Test data | `flit-gen --all` on the WSL ext4 virtual disk |
+| Build | ux/w3-docs on top of `0e7d6fb`, `[profile.release]`, binary 129,274,648 bytes |
+
+The machine was shared: other cargo builds were running during the runs. Xvfb has no vsync, so `refresh_from_display` is false, the frame period falls back to 16.67 ms and frames present unthrottled (frame interval p50 about 2.5 ms). Dropped frames and input-to-frame latency therefore say nothing about presentation pacing on a real X11 desktop.
+
+| Metric | flat_10k | flat_100k |
+|---|---|---|
+| Start -> first frame, ms | 270.45 | 279.20 |
+| First rows on screen, ms | 8.15 | 17.04 |
+| Full listing on screen, ms | 17.82 | 160.10 |
+| Frame CPU p50 / p99, ms | 2.47 / 3.62 | 2.47 / 3.67 |
+| Input -> frame p50 / max, ms | 2.50 / 4.01 | 2.46 / 3.96 |
+| Dropped frames (vs. 16.67 ms fallback) | 0 | 0 |
+| Sort, ms | 0.71 | 8.33 |
+
+In the same runs the in-process fallback index (`search_backend` `Fallback`) became ready after about 2.3–2.5 s with about 722,000 entries, and all-drives search keys took about 5–9 ms (p50). Search in the current folder took 12–14 ms per key for flat_10k and 125–145 ms for flat_100k (p50).
+
+Idle PSS: Flit opened the folder under a separate Xvfb with private XDG directories and was sampled 20 s after launch, three separate launches per folder (medians).
+
+| Folder | Process PSS | GPU driver library PSS | PSS excluding GPU driver libraries |
+|---|---|---|---|
+| flat_10k | 139.96 MiB | 7.74 MiB | 132.22 MiB |
+| flat_100k | 165.70 MiB | 7.74 MiB | 157.96 MiB |
+
+The subtraction covers the Mesa libraries the script matches by path and name. The WSL GPU bridge libraries from `/usr/lib/wsl/lib` stay in the adjusted total.
+
+### Procedure
+
+Run from the repository on a Linux host with EGL/OpenGL ES, coreutils, and either Xvfb or Weston installed. Each run creates a private test display, opens both generated folders, injects scroll, filter and sort actions, then writes the raw JSON and application logs to a new directory under `target/metrics/`.
+
+```bash
+FLIT_SERVER=xvfb bash scripts/metrics.sh
+FLIT_SERVER=weston bash scripts/metrics.sh
+```
+
+Xvfb measures Flit's X11 path under a virtual display. The Weston run uses the headless backend with its GL renderer and requires EGL to initialize. Record the compositor version, display mode, renderer and driver with each run. Use a native desktop session to evaluate hardware presentation, refresh and interaction under the actual compositor. [Weston backends and renderers](https://wayland.pages.freedesktop.org/weston/toc/running-weston.html).
+
+### Linux process memory
+
+Sample proportional set size from `/proc/<pid>/smaps` after the window finishes rendering and the scenario becomes idle. Pass the Flit application's PID. If measuring `flit-indexd`, sample its PID separately with the same tool. [Linux kernel documentation for smaps](https://docs.kernel.org/filesystems/proc.html).
+
+```bash
+flit_pid=$(pgrep -n -x flit)
+sh tools/measure/idle-pss.sh "$flit_pid"
+```
+
+Record the total and the value excluding GPU-driver shared libraries. The script identifies mapped Mesa DRI/Gallium, vendor EGL/GLX and Vulkan driver libraries by path and name. Anonymous memory, device mappings and generic libraries such as LLVM stay in the adjusted total. Keep the renderer and driver recorded so the subtraction can be interpreted across machines. Use separate launches and report the median of the successful samples at the same point in the scenario.
+
+## Lower-end machine or VM
+
+Use a physical machine with four cores or a VM limited to four vCPUs. Place the dataset on an HDD, or attach a virtual disk backed by a physical HDD and record the VM's disk cache mode. Record whether rendering is hardware-accelerated or software. No results have been collected for this configuration.
+
+```bash
+lscpu
+free -h
+lsblk -o NAME,TYPE,SIZE,ROTA,MODEL,MOUNTPOINT
+findmnt --target /mnt/hdd
+FLIT_DATA_DIR=/mnt/hdd/flit-testdata FLIT_RUNS=5 FLIT_SERVER=xvfb bash scripts/metrics.sh
+```
+
+Record the build revision, OS and kernel, memory assigned to the VM, filesystem, compositor, renderer and refresh rate. Collect medians for startup to first frame, first rows, completed listing, sort and input latency. Label first-run and repeated warm measurements separately. Use the same dataset, compositor and profile for both sides of an A/B comparison.
+
+Use the `measure` profile while iterating. It inherits release optimization, disables LTO and enables incremental compilation. Keep comparable output directories and run final comparisons with the profile used for the build being evaluated.
+
+```bash
+FLIT_PROFILE=measure FLIT_DATA_DIR=/mnt/hdd/flit-testdata FLIT_SERVER=xvfb bash scripts/metrics.sh
+```

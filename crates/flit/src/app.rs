@@ -534,7 +534,7 @@ impl<P: Platform> Handler<P> {
             }
         }
         self.settings.finish();
-        if self.picker_result.is_none() && self.background_startup.is_none() {
+        if self.picker_result.is_none() && self.background_startup.is_none() && flit_core::i18n::lang() != flit_core::i18n::Lang::Pseudo {
             state::save::<P>(&self.saved);
         }
         let snapshot = self.quit_session.take().or(self.closed_session.take());
@@ -2062,7 +2062,8 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let (shell, thumbs, sorter, previews, overlays, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
-    let integrate = !picking && metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
+    let pseudo = flit_core::i18n::lang() == flit_core::i18n::Lang::Pseudo;
+    let integrate = !picking && metrics.is_none() && !pseudo && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
     let about = About {
         file: settings_file.clone().and_then(fs_path),
         logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path),
@@ -2070,7 +2071,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
         system_integration_unavailable: !integrate,
         ..Default::default()
     };
-    let settings = Settings::start::<P>(settings_file.filter(|_| !picking && metrics.is_none()), settings_text, thumb_cache.clone(), integrate, wake.clone());
+    let settings = Settings::start::<P>(settings_file.filter(|_| !picking && metrics.is_none() && !pseudo), settings_text, thumb_cache.clone(), integrate, wake.clone());
     let search = SearchClient::start::<P>(wake.clone(), P::utc_offset_minutes(), local.tags().clone())?;
     let open = if activated { opens.recv_timeout(ACTIVATION_WAIT).unwrap_or(open) } else { open };
     let unix = P::caps().unix_paths;
@@ -2083,7 +2084,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     } else {
         open
     };
-    let files = if !picking && metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none() { Files::of::<P>() } else { None };
+    let files = if integrate { Files::of::<P>() } else { None };
     let crashed = files.as_ref().is_some_and(Files::crashed);
     let dump = files.as_ref().filter(|_| crashed).and_then(Files::marked_at).zip(P::state_dir()).and_then(|(t, d)| crate::logs::crash_report(&d.join("logs"), t)).and_then(fs_path);
     let previous = files.as_ref().and_then(|f| session::load(&f.session));
@@ -2097,7 +2098,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let restore = StartupRestore { previous, allowed: !picking && (!crashed || restore_crash), dump };
     let h_wake = wake.clone();
     let update_wake = wake.clone();
-    let headless = picking || metrics.is_some();
+    let headless = picking || metrics.is_some() || pseudo;
     let (pick_request, picker_result) = picker.map_or((None, None), |(request, result)| (Some(request), Some(result)));
     let tray = integrate.then(|| flit_platform::tray::Tray::new(wake.clone()));
     let mut h = Handler::<P> {

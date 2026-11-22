@@ -1,94 +1,40 @@
-# PROJECT ENGINEERING GUIDELINES
+# Работа над Flit
 
-## 1. PROJECT UNDERSTANDING
+Flit — нативный файловый менеджер на Rust для Windows и Linux. Начните с [архитектуры](ARCHITECTURE.md), затем откройте код и тесты затронутой подсистемы. Перед правкой проверьте `git status` и сохраните чужие изменения.
 
-Before making changes, understand the existing application.
+## Карта проекта
 
-- Inspect the repository structure and relevant documentation.
-- Identify the technology stack and framework versions.
-- Understand frontend, backend, database and integrations.
-- Inspect existing implementations similar to the requested feature.
-- Identify shared components, utilities and design conventions.
-- Check current Git changes before editing files.
+| Слой | Где искать |
+| --- | --- |
+| Ядро и интерфейс | `crates/flit-core`: имена и пути, список и сортировка, `ui::App`, действия, виджеты, локализация, раскладка и команды рисования. |
+| Обмен данными и поиск | `crates/flit-proto`: рукопожатие, транспорт, пакеты, протоколы экземпляра и агента. `crates/flit-search`: индекс, запросы, поисковая сессия и снимки. |
+| Общие платформенные службы | `crates/flit-platform`: трейты ОС, локальный и WSL-провайдеры, диспетчеризация операций, обход дерева, запуск индексатора. `crates/flit-archive`: архивы как папки, упаковка и распаковка. |
+| Windows | `crates/flit-platform-windows`: Win32, D3D11 и DirectComposition, DirectWrite, NT API, Shell COM. |
+| Linux | `crates/flit-platform-linux`: файловая система, inotify, корзина, индексатор и WSL-агент. `crates/flit-platform-linux-gui`: Wayland/X11, EGL/GLES, текст, D-Bus и интеграция рабочего стола. |
+| Точки входа | `crates/flit`: CLI, окна, эффекты, рабочие потоки, профиль и клиент поиска. `crates/flit-indexd`: служба индекса. |
+| Утилиты | `tools/flit-gen` генерирует наборы файлов для замеров. `tools/flit-sign` готовит подписи обновлений. |
 
-Do not assume the project uses a particular architecture or library.
-The actual codebase is the source of truth.
+`flit-core`, `flit-proto`, `flit-search` и `flit-platform` держите свободными от прямых и транзитивных зависимостей `windows*`. Выбирайте платформенный бэкенд по `cfg` в точке входа. Ядро получает события и выпускает эффекты, а вызовы ОС исполняет приложение через платформу.
 
-## 2. IMPLEMENTATION OWNERSHIP
+## Правила изменений
 
-My requests may be short and abstract. Treat them as requests to deliver the intended functionality. Independently determine affected files, placement, reuse, required layers and edge cases. Do not ask me to specify details discoverable from the project.
+- По [CLAUDE.md](CLAUDE.md) в исходниках запрещены комментарии, включая Rust doc comments и комментарии в HLSL, TOML, YAML, PowerShell и shell. Объясняйте решение именами и структурой, а проектные обоснования пишите в документах.
+- Тяжёлую работу запускайте по запросу, в фоне, с отменой там, где она нужна. UI-поток и подготовка кадра работают со снимками, кэшами и готовыми результатами. Повторяйте существующий путь от действия и состояния до эффекта и результата.
+- Пользовательские строки живут в `crates/flit-core/lang/<код>/*.toml`. Добавляйте новые ключи в конец раздела во всех семи каталогах. Сохраняйте имена подстановок и число форм языка. Для проверки интерфейса есть `flit --pseudo` и `FLIT_PSEUDO=1`.
+- Тесты размещайте в `crates/<крейт>/test/` рядом с тестами подсистемы. Подменяйте системные вызовы или используйте временные папки. Системные настройки пользователя, рабочий профиль и пользовательские файлы в автоматических тестах сохраняйте в исходном состоянии.
+- Пишите заметки по отдельным частям в отдельных файлах. Для проектных записок используйте `docs/design/`, для истории — `docs/history/`, для заметок параллельных задач — отдельный файл каждой задачи в согласованном месте. В справочнике поддерживайте актуальную схему и ссылки на детали.
 
-## 3. UI/UX AND DESIGN CONSISTENCY
+## Проверки
 
-The existing application defines its visual language. Inspect neighboring pages and similar components before UI changes. Reuse the established design system and follow its typography, colors, spacing, radii, iconography, visual hierarchy and responsive behavior. Place missing elements based on purpose, context and product conventions. Use relevant UI/UX skills when they materially help. Do not force a redesign when a focused improvement is sufficient.
+- Windows PowerShell — `.\scripts\check.ps1`.
+- Linux — `bash scripts/check.sh`. Графическим тестам, которым нужен дисплей, передайте тестовый Wayland/X11-сеанс.
+- Обе команды проверяют форматирование, Clippy со строгими предупреждениями и тесты рабочей области. Для узкой итерации используйте `cargo test -p flit-core i18n -- --test-threads=2` или `cargo clippy -p <крейт> --all-targets -- -D warnings`. Если для общей машины выданы обёртки сборки, запускайте проверки через них.
+- [Методика замеров](docs/metrics.md) описывает подготовку данных, графические бэкенды и учёт памяти.
 
-## 4. FULLSTACK IMPLEMENTATION
+## Чек-лист задачи
 
-A feature is not complete merely because its frontend exists. Consider frontend components, state, forms, validation, loading/success/empty/error states, responsiveness and accessibility; backend APIs, business logic, authentication, authorization, input validation, error handling and services; and database schema, migrations, indexes, constraints, integrity and compatibility. Implement every layer required by the outcome without modifying unrelated systems.
-
-## 5. EXISTING ARCHITECTURE
-
-- Follow established project patterns and reuse abstractions and utilities.
-- Respect module boundaries and avoid duplicated business logic.
-- Avoid unnecessary dependencies and competing design systems.
-- Do not replace working architecture without a strong reason.
-- Keep changes focused and maintainable.
-- For React and Next.js projects, use relevant React best practices when available.
-
-## 6. EXECUTION WORKFLOW
-
-For substantial tasks: investigate, decide, plan only as needed, implement the complete functionality, integrate affected layers, verify behavior and visual output, fix discovered issues, and report the result. Do not stop after presenting a plan. For small tasks, execute directly without unnecessary planning.
-
-## 7. VISUAL VERIFICATION
-
-For UI changes, use available browser automation or visual tools. When supported, inspect the actual page, placement, alignment, spacing, interactions, responsive layouts and relevant states; fix visible problems and inspect again. Do not claim visual verification without performing it. If browser tools are unavailable, use the strongest available alternative and report the limitation.
-
-## 8. TESTING
-
-- Run relevant targeted tests first.
-- Run type checking and linting when available.
-- Run the production build when appropriate.
-- Check important regression scenarios and actual user-facing functionality.
-- Use project-defined scripts and conventions; do not invent commands.
-- Run the full suite only when justified; do not repeat unchanged tests.
-- Report exactly what was tested and never claim checks without evidence.
-
-## 9. DOCUMENTATION AND PROJECT KNOWLEDGE
-
-Use existing documentation before creating new documentation. Read only relevant documents. Update documentation when architecture, important decisions, public interfaces or project status materially change. Do not document every minor code change.
-
-## 10. SAFETY
-
-- Preserve unrelated local changes and never expose secrets or credentials.
-- Never use fake data as a substitute for required functionality.
-- Never silently remove existing features.
-- Ask before destructive database operations, production deployments or irreversible changes.
-- Preserve existing security and permission checks.
-- Ask before large architectural changes; explain blockers instead of repeatedly retrying.
-
-## 11. COMPLETION CRITERIA
-
-A task is complete when the requested outcome is implemented, required layers are integrated, conventions are respected, relevant checks pass, UI changes are visually inspected when tools permit, and limitations are disclosed.
-
-Final response in Russian:
-
-1. What was implemented.
-2. Where it was placed and why.
-3. Important files changed.
-4. Tests and verification performed.
-5. Remaining limitations, if any.
-
-## CODEX USAGE OPTIMIZATION
-
-- Prefer minimal, targeted changes; avoid unnecessary refactoring.
-- Avoid reading unrelated files or repeatedly inspecting files already understood.
-- Reuse project patterns and utilities.
-- Use the simplest approach that solves the task; do not over-engineer.
-- Investigate only relevant dependencies and escalate complexity only when necessary.
-- Do not duplicate work across agents; delegate only when parallel work provides real value.
-- Ask before making large architectural changes.
-- Summarize modified files and important decisions.
-
-## FINAL RULE
-
-Do not make me manage the development process. Understand my intent, explore the relevant project context, make reasonable decisions, implement and integrate the complete solution, verify it, fix issues and report completion.
+- [ ] Изменение проходит через обычную точку входа и сохраняет контракты смежных слоёв.
+- [ ] Проверены пользовательский сценарий, отказ и граничные случаи. Для изменений интерфейса проверены окно и состояния на затронутых платформах, когда доступна среда.
+- [ ] Выполнены проверки затронутых крейтов и каталогов. Итог перечисляет результаты и всё, что осталось непроверенным.
+- [ ] Актуализированы нужные разделы справочника. Заметки частей лежат в отдельных файлах.
+- [ ] В рабочей копии остались только изменения задачи. Сборочные логи и временные данные вынесены за её пределы.

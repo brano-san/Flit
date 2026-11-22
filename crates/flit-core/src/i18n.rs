@@ -16,6 +16,7 @@ pub enum Lang {
     Es,
     Uk,
     ZhCn,
+    Pseudo,
 }
 
 impl Lang {
@@ -23,7 +24,7 @@ impl Lang {
 
     pub fn code(self) -> &'static str {
         match self {
-            Lang::En => "en",
+            Lang::En | Lang::Pseudo => "en",
             Lang::Ru => "ru",
             Lang::De => "de",
             Lang::Fr => "fr",
@@ -44,13 +45,23 @@ impl Lang {
     }
 
     fn from_u8(v: u8) -> Lang {
+        if v == Lang::Pseudo as u8 {
+            return Lang::Pseudo;
+        }
         Lang::ALL.get(usize::from(v)).copied().unwrap_or_default()
+    }
+
+    pub(crate) fn catalogue(self) -> Lang {
+        match self {
+            Lang::Pseudo => Lang::En,
+            l => l,
+        }
     }
 
     pub fn plural_forms(self) -> usize {
         match self {
             Lang::ZhCn => 1,
-            Lang::En | Lang::De => 2,
+            Lang::En | Lang::De | Lang::Pseudo => 2,
             Lang::Ru | Lang::Uk | Lang::Fr | Lang::Es => 3,
         }
     }
@@ -59,7 +70,7 @@ impl Lang {
         let million = n != 0 && n.is_multiple_of(1_000_000);
         match self {
             Lang::ZhCn => 0,
-            Lang::En | Lang::De => usize::from(n != 1),
+            Lang::En | Lang::De | Lang::Pseudo => usize::from(n != 1),
             Lang::Ru | Lang::Uk => match (n % 10, n % 100) {
                 (1, r) if r != 11 => 0,
                 (2..=4, r) if !(12..=14).contains(&r) => 1,
@@ -74,7 +85,7 @@ impl Lang {
 
     pub fn group_separator(self) -> &'static str {
         match self {
-            Lang::En | Lang::ZhCn => ",",
+            Lang::En | Lang::ZhCn | Lang::Pseudo => ",",
             Lang::Ru | Lang::Uk => "\u{A0}",
             Lang::Fr => "\u{202F}",
             Lang::De | Lang::Es => ".",
@@ -84,13 +95,13 @@ impl Lang {
     pub fn minimum_grouping_digits(self) -> usize {
         match self {
             Lang::Es => 2,
-            Lang::En | Lang::Ru | Lang::Uk | Lang::Fr | Lang::De | Lang::ZhCn => 1,
+            _ => 1,
         }
     }
 
     pub fn decimal_separator(self) -> char {
         match self {
-            Lang::En | Lang::ZhCn => '.',
+            Lang::En | Lang::ZhCn | Lang::Pseudo => '.',
             Lang::Ru | Lang::Uk | Lang::Fr | Lang::De | Lang::Es => ',',
         }
     }
@@ -98,28 +109,54 @@ impl Lang {
 
 static CURRENT: AtomicU8 = AtomicU8::new(Lang::En as u8);
 static SYSTEM: AtomicU8 = AtomicU8::new(Lang::En as u8);
+#[cfg(not(test))]
+static PSEUDO: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
 thread_local! {
     static LOCAL: std::cell::Cell<Lang> = const { std::cell::Cell::new(Lang::En) };
+    static PSEUDO: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+pub fn set_pseudo(on: bool) {
+    #[cfg(not(test))]
+    PSEUDO.store(on, Ordering::Relaxed);
+    #[cfg(test)]
+    PSEUDO.set(on);
+}
+
+fn pseudo_enabled() -> bool {
+    #[cfg(not(test))]
+    { PSEUDO.load(Ordering::Relaxed) }
+    #[cfg(test)]
+    { PSEUDO.get() }
+}
+
+#[inline]
+pub fn lang() -> Lang {
+    if pseudo_enabled() {
+        Lang::Pseudo
+    } else {
+        chosen_lang()
+    }
 }
 
 #[cfg(not(test))]
 #[inline]
-pub fn lang() -> Lang {
+fn chosen_lang() -> Lang {
     Lang::from_u8(CURRENT.load(Ordering::Relaxed))
 }
 
 #[cfg(test)]
 #[inline]
-pub fn lang() -> Lang {
+fn chosen_lang() -> Lang {
     LOCAL.with(|l| l.get())
 }
 
 pub fn set_lang(l: Lang) -> bool {
     #[cfg(test)]
     LOCAL.with(|c| c.set(l));
-    CURRENT.swap(l as u8, Ordering::Relaxed) != l as u8
+    CURRENT.swap(l as u8, Ordering::Relaxed) != l as u8 && !pseudo_enabled()
 }
 
 pub fn search_langs() -> &'static [Lang] {
@@ -131,6 +168,7 @@ pub fn search_langs() -> &'static [Lang] {
         Lang::Es => &[Lang::En, Lang::Es],
         Lang::Uk => &[Lang::En, Lang::Uk],
         Lang::ZhCn => &[Lang::En, Lang::ZhCn],
+        Lang::Pseudo => &[Lang::En, Lang::Pseudo],
     }
 }
 
@@ -150,7 +188,7 @@ pub fn set_unix_terms(on: bool) {
 
 pub fn unix_term(s: &'static str, l: Lang) -> &'static str {
     let pairs: &[(&str, &str)] = match l {
-        Lang::En => &[("Recycle Bin", "Trash"), ("This PC", "Computer")],
+        Lang::En | Lang::Pseudo => &[("Recycle Bin", "Trash"), ("This PC", "Computer")],
         Lang::Ru => &[("Этот компьютер", "Компьютер")],
         Lang::De => &[("Dieser PC", "Computer")],
         Lang::Fr => &[("Ce PC", "Ordinateur")],
@@ -195,20 +233,85 @@ pub fn unix_word(s: S) -> S {
 }
 
 fn s_row(l: Lang) -> &'static [&'static str] {
+    let unix = UNIX_TERMS.load(Ordering::Relaxed);
+    if l == Lang::Pseudo {
+        static PSEUDO: [OnceLock<Vec<&'static str>>; 2] = [const { OnceLock::new() }; 2];
+        return PSEUDO[usize::from(unix)]
+            .get_or_init(|| s_row_for(Lang::En, unix).iter().map(|s| cache_pseudo(s)).collect());
+    }
+    s_row_for(l, unix)
+}
+
+fn s_row_for(l: Lang, unix: bool) -> &'static [&'static str] {
     static UNIX: OnceLock<Vec<Vec<&'static str>>> = OnceLock::new();
-    if !UNIX_TERMS.load(Ordering::Relaxed) {
+    if !unix {
         return &S_TABLE[l as usize];
     }
     &UNIX.get_or_init(|| Lang::ALL.iter().map(|&l| S::ALL.iter().map(|&s| unix_term(S_TABLE[l as usize][unix_word(s) as usize], l)).collect()).collect())[l as usize]
 }
 
 fn p_row(l: Lang) -> &'static [&'static [&'static str]] {
+    let unix = UNIX_TERMS.load(Ordering::Relaxed);
+    if l == Lang::Pseudo {
+        static PSEUDO: [OnceLock<Vec<&'static [&'static str]>>; 2] = [const { OnceLock::new() }; 2];
+        return PSEUDO[usize::from(unix)].get_or_init(|| {
+            p_row_for(Lang::En, unix)
+                .iter()
+                .map(|forms| &*Box::leak(forms.iter().map(|s| cache_pseudo(s)).collect::<Box<[_]>>()))
+                .collect()
+        });
+    }
+    p_row_for(l, unix)
+}
+
+fn p_row_for(l: Lang, unix: bool) -> &'static [&'static [&'static str]] {
     static UNIX: OnceLock<Vec<Vec<&'static [&'static str]>>> = OnceLock::new();
-    if !UNIX_TERMS.load(Ordering::Relaxed) {
+    if !unix {
         return &P_TABLE[l as usize];
     }
     let build = || Lang::ALL.iter().map(|&l| P_TABLE[l as usize].iter().map(|f| &*Box::leak(f.iter().map(|s| unix_term(s, l)).collect::<Box<[_]>>())).collect()).collect();
     &UNIX.get_or_init(build)[l as usize]
+}
+
+fn accent(c: char) -> char {
+    const LOWER: [char; 26] = [
+        'á', 'ƀ', 'ç', 'ð', 'é', 'ƒ', 'ĝ', 'ĥ', 'ı', 'ĵ', 'ķ', 'ļ', 'ɱ', 'ñ', 'ö', 'þ', 'ɋ', 'ř',
+        'š', 'ţ', 'ü', 'ṽ', 'ŵ', 'ẋ', 'ý', 'ž',
+    ];
+    const UPPER: [char; 26] = [
+        'Á', 'Ƀ', 'Ç', 'Ð', 'É', 'Ƒ', 'Ĝ', 'Ĥ', 'İ', 'Ĵ', 'Ķ', 'Ļ', 'Ɱ', 'Ñ', 'Ö', 'Þ', 'Ɋ', 'Ř',
+        'Ŝ', 'Ţ', 'Ü', 'Ṽ', 'Ŵ', 'Ẋ', 'Ý', 'Ž',
+    ];
+    match c {
+        'a'..='z' => LOWER[c as usize - 'a' as usize],
+        'A'..='Z' => UPPER[c as usize - 'A' as usize],
+        _ => c,
+    }
+}
+
+fn cache_pseudo(template: &str) -> &'static str {
+    let mut out = String::with_capacity(template.len());
+    out.push('«');
+    let mut literals = 0;
+    let mut rest = template;
+    while let Some((prefix, tail)) = rest.split_once('{') {
+        let Some((name, suffix)) = tail.split_once('}') else {
+            break;
+        };
+        out.extend(prefix.chars().map(accent));
+        literals += prefix.chars().filter(|c| !c.is_control()).count();
+        let _ = write!(out, "{{{name}}}");
+        rest = suffix;
+    }
+    out.extend(rest.chars().map(accent));
+    literals += rest.chars().filter(|c| !c.is_control()).count();
+    let padding = (literals * 3 + 5) / 10;
+    if padding > 0 {
+        out.push(' ');
+        out.extend(std::iter::repeat_n('·', padding));
+    }
+    out.push('»');
+    Box::leak(out.into_boxed_str())
 }
 
 impl S {
@@ -554,7 +657,8 @@ struct Template {
 }
 
 fn templates(l: Lang) -> &'static [Template] {
-    static ALL: [std::sync::OnceLock<Vec<Template>>; Lang::ALL.len()] = [const { std::sync::OnceLock::new() }; Lang::ALL.len()];
+    static ALL: [OnceLock<Vec<Template>>; Lang::ALL.len() + 1] =
+        [const { OnceLock::new() }; Lang::ALL.len() + 1];
     ALL[l as usize].get_or_init(|| {
         let plain = S::ALL.into_iter().map(|s| Template { key: Key::S(s), text: s.in_lang(l) });
         let plural = P::ALL.into_iter().flat_map(|p| p.forms(l).iter().map(move |&text| Template { key: Key::P(p), text }));
