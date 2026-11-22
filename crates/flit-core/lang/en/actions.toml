@@ -165,7 +165,7 @@
 "quick.commands" = "Quick Commands"
 "bookmarks.clear" = "Clear Bookmarks"
 "home.clear_recent" = "Clear Recents"
-"views.clear" = "Clear Folders Views"
+"views.clear" = "Clear Folder Views"
 "layout.save" = "Save Layout"
 "layout.load" = "Load Layout"
 "window.minimize" = "Minimize Window"
