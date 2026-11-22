@@ -942,3 +942,14 @@ fn folder_review_defaults_to_merge_and_hides_children_when_the_folder_is_renamed
     app.form_submit(0);
     assert!(app.jobs.form.is_none());
 }
+
+#[test]
+fn a_git_transfer_never_offers_a_speed_limit() {
+    let mut app = app_at(r"C:\x");
+    let job = crate::git::GitJob { id: app.allocate_op_id(), ctl: Default::default() };
+    app.track_git_job(&job, &p(r"C:\x"), "Fetching".into());
+    job.ctl.set_copy_limit_available(true);
+    job.ctl.set_copy_limit(5);
+    assert!(!app.job_menu(0).contains(&S::UiJobCopyLimit));
+    assert!(!app.jobs.list[0].detail(false).contains('5'));
+}

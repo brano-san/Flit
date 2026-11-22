@@ -878,3 +878,18 @@ fn git_leftover_index_lock_requires_an_operations_action_and_confirmation() {
     app.jobs_click(Hit::OpsMenu(1), now);
     assert!(app.jobs.form.is_none());
 }
+
+#[test]
+fn a_failed_git_transfer_hides_the_password_in_its_address() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let ev = repo(&app);
+    app.on_git(ev);
+    app.git_run(GitOp::Fetch);
+    let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+    let [GitRequest::RunTracked { tab, job, .. }] = requests.as_slice() else { panic!("tracked fetch") };
+    let error = "fatal: unable to access 'https://ann:secret@example.test/r.git/'".to_owned();
+    app.on_git(GitEvent::TrackedDone { tab: *tab, id: job.id, op: GitOp::Fetch, result: GitResult::Failed { error, auth: None } });
+    let crate::ui::JobState::Failed(shown) = app.job_states()[0].1.clone() else { panic!("a failed job") };
+    assert!(shown.contains("ann:***@") && !shown.contains("secret"), "{shown}");
+    assert!(!app.tab().error.clone().unwrap_or_default().contains("secret"));
+}

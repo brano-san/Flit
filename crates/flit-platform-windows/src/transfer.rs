@@ -257,7 +257,7 @@ fn pump(stream: &IStream, target: &Path, job: &Job) -> Result<(), PlatformError>
             return Ok(());
         }
         if !job.pace_copy(u64::from(read)) {
-            return Err(PlatformError::new(-1, S::ErrorsEngineCancelled.en()));
+            return Err(PlatformError::cancelled(-1, S::ErrorsEngineCancelled.en()));
         }
         file.write_all(&buf[..read as usize]).map_err(io)?;
     }
@@ -287,7 +287,7 @@ unsafe fn save(data: &IDataObject, index: usize, d: &Described, path: &FsPath, j
                 if job.pace_copy(b.len() as u64) {
                     std::fs::File::create_new(&target).and_then(|mut f| f.write_all(&b)).map_err(io)
                 } else {
-                    Err(PlatformError::new(-1, S::ErrorsEngineCancelled.en()))
+                    Err(PlatformError::cancelled(-1, S::ErrorsEngineCancelled.en()))
                 }
             }
             None => Err(nothing()),

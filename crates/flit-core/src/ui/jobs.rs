@@ -133,7 +133,7 @@ enum JobKind {
 
 impl Job {
     fn can_limit_speed(&self) -> bool {
-        self.state == JobState::Running && self.ctl.copy_limit_available()
+        self.state == JobState::Running && matches!(self.kind, JobKind::File(_)) && self.ctl.copy_limit_available()
     }
 
     fn title(&self) -> String {

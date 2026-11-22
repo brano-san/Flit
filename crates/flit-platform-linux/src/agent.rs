@@ -137,7 +137,7 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
     let conflicts = flit_platform::conflicts::collect(&crate::LinuxFs, op, job.ctl());
     if !review_conflicts(id, conflicts, job.ctl(), |event| ctx.send(event)) {
         ctx.ops().remove(&id);
-        ctx.send(Event::OpDone { id, error: Some(flit_platform::CANCELLED.into()), items: Vec::new() });
+        ctx.send(Event::OpDone { id, error: Some(flit_core::provider::OpError::new(flit_platform::PlatformErrorKind::Cancelled, flit_platform::CANCELLED)), items: Vec::new() });
         return;
     }
     let out = ops::run_in(op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
