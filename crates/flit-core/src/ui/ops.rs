@@ -1259,8 +1259,10 @@ impl App {
         }
     }
 
-    pub(super) fn op_done(&mut self, tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport>, now: Instant) {
-        let cancelled = error.as_deref().is_some_and(super::jobs::cancelled_error);
+    pub(super) fn op_done(&mut self, tab: TabId, id: OpId, error: Option<crate::provider::OpError>, report: Option<OpReport>, now: Instant) {
+        let error_kind = error.as_ref().map(|e| e.kind);
+        let cancelled = error_kind == Some(crate::provider::PlatformErrorKind::Cancelled);
+        let error = error.map(|e| crate::i18n::localize(&e.message).into_owned());
         self.job_done(id, error.as_deref().filter(|_| !cancelled), cancelled, now);
         self.reload_released_preview();
         if report.is_some() {
@@ -1335,7 +1337,7 @@ impl App {
             }
         });
         self.compute_dir_sizes();
-        if self.archive_then(tab, &p.then, &report, error.as_deref(), now) {
+        if self.archive_then(tab, &p.then, &report, error_kind, now) {
             return;
         }
         if let (Then::Fill(items), Some((_, folder))) = (&p.then, report.items.first()) {

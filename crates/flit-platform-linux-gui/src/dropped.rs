@@ -133,8 +133,12 @@ pub fn private_dir(root: &Path, prefix: &str, id: u64, stop: impl Fn() -> bool) 
 }
 
 pub fn failed(e: &std::io::Error) -> OpOutcome {
-    let message = if e.raw_os_error() == Some(libc::ECANCELED) { flit_platform::CANCELLED.to_owned() } else { flit_core::fmt::io_reason(e) };
-    OpOutcome { items: Vec::new(), error: Some(PlatformError::new(e.raw_os_error().map_or(-1, i64::from), message)) }
+    let error = if e.raw_os_error() == Some(libc::ECANCELED) {
+        PlatformError::cancelled(i64::from(libc::ECANCELED), flit_platform::CANCELLED)
+    } else {
+        PlatformError::from_io(e, flit_core::fmt::io_reason(e))
+    };
+    OpOutcome { items: Vec::new(), error: Some(error) }
 }
 
 pub fn queued(dest: &FsPath, data: &DroppedFile, job: &Job) -> OpOutcome {

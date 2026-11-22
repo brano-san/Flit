@@ -139,7 +139,8 @@ fn retrying_job(asked: std::sync::Arc<std::sync::atomic::AtomicUsize>) -> Job {
     let ctl = flit_core::provider::OpCtl::new(Some(Resolve::KeepBoth));
     let answer = ctl.clone();
     Job::asking(ctl, Box::new(|_| {}), Box::new(|_| {}), Box::new(move |failure: Failure| {
-        assert_eq!(failure.error, S::ErrorsEngineSymlinkPrivilege.en());
+        assert_eq!(failure.error.kind, PlatformErrorKind::SymlinkPrivilege);
+        assert_eq!(failure.error.message, S::ErrorsEngineSymlinkPrivilege.en());
         asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         answer.answer_failure(Recover::Retry, false);
     }))
@@ -215,7 +216,10 @@ fn declining_the_retry_asks_once_and_never_launches_an_elevated_process() {
         engine.links(&items, &t.path("out"), LinkKind::Symbolic);
         assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert_eq!(job.cancelled(), cancel);
-        assert_eq!(engine.error().unwrap().code, if cancel { ERROR_CANCELLED.0 as i64 } else { ERROR_PRIVILEGE_NOT_HELD.0 as i64 });
+        let error = engine.error().unwrap();
+        let kind = if cancel { flit_platform::PlatformErrorKind::Cancelled } else { flit_platform::PlatformErrorKind::AccessDenied };
+        assert_eq!(error.kind, kind);
+        assert_eq!(error.code, if cancel { ERROR_CANCELLED.0 as i64 } else { ERROR_PRIVILEGE_NOT_HELD.0 as i64 });
         assert!(t.out().is_empty());
     }
 }

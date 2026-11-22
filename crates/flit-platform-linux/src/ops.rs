@@ -292,6 +292,7 @@ struct Engine<'a> {
     done: Pairs,
     failed: usize,
     first: Option<String>,
+    first_kind: flit_platform::PlatformErrorKind,
     fatal: bool,
     denied: bool,
     untrashable: Vec<FsPath>,
@@ -302,7 +303,7 @@ struct Engine<'a> {
 
 impl<'a> Engine<'a> {
     fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang(), free: free_space }
+        Self { job, done: Vec::new(), failed: 0, first: None, first_kind: Default::default(), fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang(), free: free_space }
     }
 
     fn stopped(&self) -> bool {
@@ -314,13 +315,24 @@ impl<'a> Engine<'a> {
         self.first.get_or_insert(msg);
     }
 
+    fn note_io(&mut self, path: &FsPath, e: &io::Error) {
+        if self.first.is_none() {
+            self.first_kind = if e.raw_os_error() == Some(libc::ECANCELED) {
+                flit_platform::PlatformErrorKind::Cancelled
+            } else {
+                PlatformError::from_io(e, "").kind
+            };
+        }
+        self.note(failed_at(path, e));
+    }
+
     fn fail(&mut self, path: &FsPath, e: &io::Error) {
         match e.raw_os_error() {
             Some(libc::ENOSPC | libc::EDQUOT) => self.fatal = true,
             Some(libc::EACCES | libc::EPERM) => self.denied = true,
             _ => {}
         }
-        self.note(failed_at(path, e));
+        self.note_io(path, e);
     }
 
     fn trouble(&mut self, path: &FsPath, e: &io::Error) -> bool {
@@ -332,11 +344,11 @@ impl<'a> Engine<'a> {
             return false;
         }
         let fatal = matches!(e.raw_os_error(), Some(libc::ENOSPC | libc::EDQUOT));
-        match self.job.fail(Failure { path: path.clone(), error: reason(path, e), fatal }) {
+        match self.job.fail(Failure { path: path.clone(), error: reason(path, e).into(), fatal }) {
             Some(Recover::Retry) => true,
             Some(Recover::Skip) => {
                 self.fatal |= fatal;
-                self.note(failed_at(path, e));
+                self.note_io(path, e);
                 false
             }
             None => false,
@@ -345,11 +357,11 @@ impl<'a> Engine<'a> {
 
     fn error(&self) -> Option<PlatformError> {
         if self.job.cancelled() {
-            return Some(PlatformError::new(libc::ECANCELED as i64, CANCELLED));
+            return Some(PlatformError::cancelled(libc::ECANCELED as i64, CANCELLED));
         }
         let first = self.first.clone()?;
         let code = if self.denied { libc::EACCES as i64 } else { -1 };
-        Some(PlatformError::new(code, if self.failed > 1 { format!("{} items failed. {first}", self.failed) } else { first }))
+        Some(PlatformError::new(code, if self.failed > 1 { format!("{} items failed. {first}", self.failed) } else { first }).with_kind(self.first_kind))
     }
 
     fn preparing(&self) {

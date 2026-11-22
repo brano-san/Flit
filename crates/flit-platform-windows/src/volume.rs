@@ -108,7 +108,7 @@ fn grant(dir: &FsPath) -> Result<(), PlatformError> {
     };
     if let Err(e) = unsafe { ShellExecuteExW(&mut info) } {
         return Err(match WIN32_ERROR::from_error(&e) {
-            Some(ERROR_CANCELLED) => PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()),
+            Some(ERROR_CANCELLED) => PlatformError::cancelled(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()),
             _ => crate::err(e),
         });
     }
@@ -123,7 +123,7 @@ fn grant(dir: &FsPath) -> Result<(), PlatformError> {
     }
     match code {
         0 => Ok(()),
-        c => Err(PlatformError::new(i64::from(c), format!("icacls {}: {}", dir.display(), crate::error_reason(&windows::core::Error::from_hresult(WIN32_ERROR(c).to_hresult()))))),
+        c => Err(crate::win_error(i64::from(c), format!("icacls {}: {}", dir.display(), crate::error_reason(&windows::core::Error::from_hresult(WIN32_ERROR(c).to_hresult()))))),
     }
 }
 

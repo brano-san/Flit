@@ -2,12 +2,12 @@ use crate::listing::{check_meta, check_name, EntryBatch};
 use crate::transport::ProtoError;
 use flit_core::listing::{DirChange, DirStats};
 use flit_core::path::PathKind;
-use flit_core::provider::{Conflict, Failure, FileOp, OpProgress, Recover, Resolve};
+use flit_core::provider::{Conflict, Failure, FileOp, OpError, OpProgress, Recover, Resolve};
 use flit_core::{FsError, FsPath, Meta};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const MAX_FAILURE_TEXT: usize = 4096;
 
 pub type ReqId = u64;
@@ -37,7 +37,7 @@ pub enum Event {
     DirSize { id: ReqId, idx: u32, stats: DirStats },
     OpProgress { id: ReqId, progress: OpProgress },
     OpConflict { id: ReqId, conflict: Conflict },
-    OpDone { id: ReqId, error: Option<String>, items: Vec<(FsPath, FsPath)> },
+    OpDone { id: ReqId, error: Option<OpError>, items: Vec<(FsPath, FsPath)> },
     OpFailure { id: ReqId, failure: Failure },
     OpPerformed { id: ReqId, op: FileOp },
 }
@@ -52,7 +52,7 @@ impl Event {
             }),
             Event::Stat { result: Ok(meta), .. } => check_meta(meta),
             Event::OpConflict { conflict, .. } => check_meta(&conflict.from).and_then(|()| check_meta(&conflict.to)),
-            Event::OpFailure { failure, .. } if failure.error.len() > MAX_FAILURE_TEXT => Err(ProtoError::Invalid("a failure message is too long")),
+            Event::OpFailure { failure, .. } if failure.error.message.len() > MAX_FAILURE_TEXT => Err(ProtoError::Invalid("a failure message is too long")),
             _ => Ok(()),
         }
     }

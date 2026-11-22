@@ -342,9 +342,9 @@ pub fn unmounted_from(lsblk: &str) -> Vec<Drive> {
 
 pub fn drive_error(key: S, drive: &Path, e: &std::io::Error) -> PlatformError {
     if e.kind() == std::io::ErrorKind::Interrupted {
-        return PlatformError::new(-1, flit_platform::CANCELLED);
+        return PlatformError::cancelled(-1, flit_platform::CANCELLED);
     }
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(key, drive = drive.display(), why = flit_core::fmt::io_reason(e)))
+    PlatformError::from_io(e, flit_core::tr_en!(key, drive = drive.display(), why = flit_core::fmt::io_reason(e)))
 }
 
 pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
@@ -424,7 +424,7 @@ pub fn list_trash(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
 }
 
 fn failure(p: &Path, e: std::io::Error) -> PlatformError {
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{}: {}", p.display(), flit_core::fmt::io_reason(&e)))
+    PlatformError::from_io(&e, format!("{}: {}", p.display(), flit_core::fmt::io_reason(&e)))
 }
 
 pub fn purge(trash: &Trash, pairs: &[(flit_core::FsPath, flit_core::FsPath)]) -> OpOutcome {
@@ -449,7 +449,7 @@ pub fn empty(trash: &Trash, tops: &[PathBuf]) -> OpOutcome {
         return OpOutcome { items: Vec::new(), error: Some(PlatformError::new(-1, flit_core::tr_en!(S::ErrorsOpsTrashAlreadyEmpty))) };
     }
     let items = removed.iter().filter_map(|p| crate::xdg::fs_path(p)).map(|p| (p.clone(), p)).collect();
-    OpOutcome { items, error: error.map(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, flit_core::tr_en!(S::ErrorsOpsTrashPartial, error = flit_core::fmt::io_reason(&e)))) }
+    OpOutcome { items, error: error.map(|e| PlatformError::from_io(&e, flit_core::tr_en!(S::ErrorsOpsTrashPartial, error = flit_core::fmt::io_reason(&e)))) }
 }
 
 fn attribute_range(tag: &[u8], name: &[u8]) -> Option<std::ops::Range<usize>> {

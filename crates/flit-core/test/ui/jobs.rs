@@ -31,7 +31,7 @@ fn symbolic_link_privilege_retry_is_explicit_and_its_translations_fit_the_first_
         app.on_event(&Event::Resized { width: 400, height: 400 }, t0());
         let (id, ctl) = paste(&mut app);
         let tab = app.tab().id;
-        app.on_provider_event(ProviderEvent::OpFailure { tab, id, failure: Failure { path: p(r"C:\source.txt"), error: S::ErrorsEngineSymlinkPrivilege.en().into(), fatal: false } }, t0());
+        app.on_provider_event(ProviderEvent::OpFailure { tab, id, failure: Failure { path: p(r"C:\source.txt"), error: crate::provider::OpError::new(PlatformErrorKind::SymlinkPrivilege, S::ErrorsEngineSymlinkPrivilege.t()), fatal: false } }, t0());
         let mut gfx = Gfx::new(Mono, 1024);
         app.frame(&mut gfx, t0());
         assert_eq!(app.dialog_buttons()[0], S::MenuLinksRetryAdmin.t());
@@ -88,7 +88,7 @@ fn letter(app: &mut App, vk: char, typed: char, mods: Mods) {
 fn finish(app: &mut App, id: OpId, error: Option<&str>) {
     let tab = app.tab().id;
     let report = OpReport { op: FileOp::Paste { dest: p(r"C:\x") }, items: Vec::new() };
-    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(str::to_owned), report: Some(report) }, t0());
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(Into::into), report: Some(report) }, t0());
 }
 
 fn sizes(from: u64, to: u64) -> Conflict {
@@ -398,18 +398,17 @@ fn operations_longer_than_half_a_second_show_their_duration_in_the_status_block(
 
 #[test]
 fn user_cancelled_operations_are_shown_as_cancelled_without_a_code() {
-    for e in ["(0x80270000)", "Cancelled by the user (0x800704C7)", "(0x80004004)", "The operation was cancelled (0xFFFFFFFF)", "Deletion was cancelled"] {
-        assert!(cancelled_error(e), "{e}");
-    }
-    assert!(!cancelled_error("Access is denied (0x80070005)"));
     let mut app = app_at(r"C:\x");
     let (id, _) = paste(&mut app);
-    finish(&mut app, id, Some("(0x80270000)"));
+    let tab = app.tab().id;
+    let error = crate::provider::OpError::new(crate::provider::PlatformErrorKind::Cancelled, "Отменено");
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: Some(error), report: None }, t0());
+    assert!(app.tab().error.is_none());
     let (other, _) = paste(&mut app);
-    finish(&mut app, other, Some("Access is denied (0x80070005)"));
-    assert_eq!(states(&app), [JobState::Cancelled, JobState::Failed("Access is denied (0x80070005)".into())]);
+    finish(&mut app, other, Some("Access is denied (0x800704C7)"));
+    assert_eq!(states(&app), [JobState::Cancelled, JobState::Failed("Access is denied (0x800704C7)".into())]);
     assert_eq!(app.jobs.list[0].status(), "Cancelled");
-    assert_eq!(app.tab().error.as_deref(), Some("Access is denied (0x80070005)"), "only the real failure reaches the status bar");
+    assert_eq!(app.tab().error.as_deref(), Some("Access is denied (0x800704C7)"), "only the real failure reaches the status bar");
 }
 
 #[test]
@@ -773,4 +772,16 @@ fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
     let r = Jobs::pause_rect(app.jobs.r.rows[done], unscaled);
     assert_ne!(app.jobs_hit(r.x + 2.0, r.y + 2.0), Some(Hit::OpsPause(done)), "a finished operation has nothing to pause");
     assert!(!app.job_menu_items(done).contains(&"Resume"));
+}
+
+#[test]
+fn symlink_privilege_text_alone_keeps_the_regular_retry_button() {
+    let mut app = app_at(r"C:\x");
+    let (id, _) = paste(&mut app);
+    app.on_provider_event(ProviderEvent::OpFailure {
+        tab: app.tab().id,
+        id,
+        failure: Failure { path: p(r"C:\source.txt"), error: S::ErrorsEngineSymlinkPrivilege.en().into(), fatal: false },
+    }, t0());
+    assert_eq!(app.dialog_buttons()[0], S::UiButtonRetry.t());
 }

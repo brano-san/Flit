@@ -123,6 +123,9 @@ impl From<Failure> for io::Error {
     fn from(f: Failure) -> io::Error {
         let kind = match () {
             _ if f.cancelled() => io::ErrorKind::Interrupted,
+            _ if f.busy() => io::ErrorKind::ResourceBusy,
+            _ if f.name.ends_with(".NotAuthorized") || f.name.ends_with(".NotAuthorizedCanObtain") => io::ErrorKind::PermissionDenied,
+            _ if f.name.ends_with(".FileNotFound") || f.name.ends_with(".UnknownObject") => io::ErrorKind::NotFound,
             _ => io::ErrorKind::Other,
         };
         io::Error::new(kind, f.reason())

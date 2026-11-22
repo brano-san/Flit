@@ -60,7 +60,7 @@ fn wide(s: &str) -> Vec<u16> {
 }
 
 fn fail(e: WIN32_ERROR, what: &str) -> PlatformError {
-    PlatformError::new(i64::from(e.0), format!("{what}: {}", crate::error_reason(&windows::core::Error::from(e.to_hresult()))))
+    crate::win_error(i64::from(e.0), format!("{what}: {}", crate::error_reason(&windows::core::Error::from(e.to_hresult()))))
 }
 
 pub fn read(hive: HKEY, key: &str, name: &str) -> Option<(u32, Vec<u8>)> {

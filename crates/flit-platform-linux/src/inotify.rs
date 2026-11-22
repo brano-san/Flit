@@ -197,7 +197,7 @@ impl Watcher for Inotify {
             });
             wake();
         })
-        .map_err(|e| PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("inotify: {e}")))?;
+        .map_err(|e| PlatformError::from_io(&e, format!("inotify: {e}")))?;
         Ok(Self { notify, current: HashMap::new() })
     }
 

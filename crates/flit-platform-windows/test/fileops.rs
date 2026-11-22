@@ -794,7 +794,7 @@ fn a_failing_item_asks_to_retry_skip_or_skip_all_and_the_rest_carries_on() {
     drop(held);
     let seen = failed.lock().unwrap().clone();
     assert_eq!(seen.iter().map(|f| f.path.clone()).collect::<Vec<_>>(), [items[0].clone(), items[2].clone(), items[3].clone()], "e.txt is not asked about after Skip all");
-    assert!(seen.iter().all(|f| !f.fatal && !f.error.is_empty() && !f.error.ends_with('\n')), "{seen:?}");
+    assert!(seen.iter().all(|f| !f.fatal && !f.error.message.is_empty() && !f.error.message.ends_with('\n')), "{seen:?}");
     assert_eq!(out.items, vec![(items[0].clone(), t.path(r"dst\a.txt")), (items[1].clone(), t.path(r"dst\b.txt"))], "Retry copies the item once its cause is gone");
     let summary = out.error.expect("skipped items are summed up at the end").message;
     assert!(summary.starts_with('3') && summary.contains("c.txt"), "{summary}");
@@ -837,7 +837,7 @@ fn a_file_in_use_names_the_program_in_the_question_and_the_summary() {
     let out = engine::run(&FileOp::Delete(vec![f.clone()]), &job);
     let quiet = engine::run(&FileOp::Delete(vec![f]), &Job::detached(Resolve::Skip));
     drop(hold);
-    let asked = failed.lock().unwrap()[0].error.clone();
+    let asked = failed.lock().unwrap()[0].error.message.clone();
     assert!(asked.contains(". It is open in "), "{asked}");
     assert!(out.error.unwrap().message.contains(". It is open in ") && quiet.error.unwrap().message.contains(". It is open in "));
     let missing = engine::run(&FileOp::Delete(vec![t.path("nothing.txt")]), &Job::detached(Resolve::Skip));

@@ -50,7 +50,7 @@ pub(crate) fn download(url: &str, out: &mut dyn Write, progress: &mut dyn FnMut(
         received += n as u64;
         let total = Some(length.load(Ordering::Acquire)).filter(|&t| t > 0);
         if !progress(received, total) {
-            break Err(failed("cancelled"));
+            break Err(PlatformError::cancelled(-1, "cancelled"));
         }
     };
     if outcome.is_err() {

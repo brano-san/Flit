@@ -34,7 +34,7 @@ impl Drop for Handle {
 
 fn last(what: &str) -> PlatformError {
     let e = windows::core::Error::from_thread();
-    PlatformError::new(e.code().0 as i64, format!("{what}: {}", crate::error_reason(&e)))
+    crate::win_error(e.code().0 as i64, format!("{what}: {}", crate::error_reason(&e)))
 }
 
 fn context(what: &str) -> impl Fn(windows::core::Error) -> PlatformError + '_ {
@@ -73,7 +73,7 @@ pub(crate) fn download(url: &str, out: &mut dyn Write, progress: &mut dyn FnMut(
     let mut buf = vec![0u8; CHUNK];
     let mut received = 0u64;
     if !progress(0, total) {
-        return Err(PlatformError::new(-1, "cancelled"));
+        return Err(PlatformError::cancelled(-1, "cancelled"));
     }
     loop {
         let mut read = 0u32;
@@ -84,7 +84,7 @@ pub(crate) fn download(url: &str, out: &mut dyn Write, progress: &mut dyn FnMut(
         out.write_all(&buf[..read as usize]).map_err(|e| PlatformError::new(-1, e.to_string()))?;
         received += u64::from(read);
         if !progress(received, total) {
-            return Err(PlatformError::new(-1, "cancelled"));
+            return Err(PlatformError::cancelled(-1, "cancelled"));
         }
     }
     if total.is_some_and(|t| t != received) {
@@ -146,7 +146,7 @@ pub fn run_elevated(args: &[String]) -> Result<u32, PlatformError> {
     };
     if let Err(e) = unsafe { ShellExecuteExW(&mut info) } {
         return Err(match WIN32_ERROR::from_error(&e) {
-            Some(ERROR_CANCELLED) => PlatformError::new(i64::from(ERROR_CANCELLED.0), "cancelled"),
+            Some(ERROR_CANCELLED) => PlatformError::cancelled(i64::from(ERROR_CANCELLED.0), "cancelled"),
             _ => err(e),
         });
     }

@@ -31,7 +31,7 @@ fn spawn_error(what: &str, e: &io::Error) -> PlatformError {
     if e.kind() == io::ErrorKind::NotFound && crate::tools::package_for(what, "").is_some() && on_path(OsStr::new(what)).is_none() {
         return tool_missing(what);
     }
-    PlatformError::new(e.raw_os_error().unwrap_or(-1) as i64, format!("{what}: {e}"))
+    PlatformError::from_io(e, format!("{what}: {e}"))
 }
 
 pub fn detach(mut cmd: Command) -> io::Result<()> {

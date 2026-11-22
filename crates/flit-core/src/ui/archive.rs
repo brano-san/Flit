@@ -8,7 +8,7 @@ use crate::listing::attr;
 use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::path::{FsPath, PathKind};
-use crate::provider::{FileOp, Launch, OpCtl, OpId, OpProgress, OpReport, ProviderRequest, TabId};
+use crate::provider::{FileOp, Launch, OpCtl, OpId, OpProgress, OpReport, PlatformErrorKind, ProviderRequest, TabId};
 use crate::undo::Origin;
 use crate::i18n::{self, Lang, S};
 use std::time::Instant;
@@ -508,7 +508,7 @@ impl App {
         None
     }
 
-    pub(super) fn archive_then(&mut self, tab: TabId, then: &Then, report: &OpReport, error: Option<&str>, now: Instant) -> bool {
+    pub(super) fn archive_then(&mut self, tab: TabId, then: &Then, report: &OpReport, error: Option<PlatformErrorKind>, now: Instant) -> bool {
         if error.is_some_and(archive::needs_password) {
             if let Some((archive, retry)) = Self::password_retry(&report.op, &report.items, then) {
                 self.ask_password(archive, retry);

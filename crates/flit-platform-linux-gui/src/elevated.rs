@@ -151,7 +151,7 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
                     break Err(e);
                 }
             }
-            Event::OpDone { error, items, .. } => break Ok(OpOutcome { items, error: error.map(|m| PlatformError::new(-1, m)) }),
+            Event::OpDone { error, items, .. } => break Ok(OpOutcome { items, error: error.map(|e| PlatformError::new(-1, e.message).with_kind(e.kind)) }),
             Event::OpPerformed { op: done, .. } => {
                 if let Err(e) = check_performed(op, &done) {
                     break Err(e);
@@ -170,7 +170,7 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
 }
 
 fn unelevated(why: impl Into<String>) -> PlatformError {
-    PlatformError::new(libc::EACCES as i64, why)
+    PlatformError::new(libc::EACCES as i64, why).with_kind(flit_platform::PlatformErrorKind::AccessDenied)
 }
 
 pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
@@ -205,7 +205,7 @@ pub fn run(op: &FileOp, job: &Job) -> Result<OpOutcome, PlatformError> {
 
 fn only_elevated(e: PlatformError) -> OpOutcome {
     let error = match e.code == libc::EACCES as i64 {
-        true => PlatformError::new(e.code, flit_core::tr_en!(S::ErrorsOpsExtraNeedsAdmin, why = e.message)),
+        true => PlatformError::new(e.code, flit_core::tr_en!(S::ErrorsOpsExtraNeedsAdmin, why = e.message)).with_kind(e.kind),
         false => e,
     };
     OpOutcome { items: Vec::new(), error: Some(error) }
@@ -214,7 +214,7 @@ fn only_elevated(e: PlatformError) -> OpOutcome {
 fn retried(first: OpOutcome, again: Result<OpOutcome, PlatformError>) -> OpOutcome {
     match (again, first.error) {
         (Ok(more), _) => OpOutcome { items: first.items.into_iter().chain(more.items).collect(), error: more.error },
-        (Err(e), Some(denied)) => OpOutcome { items: first.items, error: Some(PlatformError::new(denied.code, flit_core::tr_en!(S::ErrorsOpsExtraNotElevated, error = denied.message, why = e.message))) },
+        (Err(e), Some(denied)) => OpOutcome { items: first.items, error: Some(PlatformError::new(denied.code, flit_core::tr_en!(S::ErrorsOpsExtraNotElevated, error = denied.message, why = e.message)).with_kind(denied.kind)) },
         (Err(e), None) => OpOutcome { items: first.items, error: Some(e) },
     }
 }

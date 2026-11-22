@@ -11,6 +11,51 @@ use std::sync::{Arc, Condvar, Mutex};
 
 pub type TabId = u64;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum PlatformErrorKind {
+    Cancelled,
+    NotFound,
+    AccessDenied,
+    Exists,
+    NoSpace,
+    Busy,
+    #[default]
+    Other,
+    PasswordNeeded,
+    WrongPassword,
+    SymlinkPrivilege,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OpError {
+    pub kind: PlatformErrorKind,
+    pub message: String,
+}
+
+impl OpError {
+    pub fn new(kind: PlatformErrorKind, message: impl Into<String>) -> Self {
+        Self { kind, message: message.into() }
+    }
+}
+
+impl From<String> for OpError {
+    fn from(message: String) -> Self {
+        Self::new(PlatformErrorKind::Other, message)
+    }
+}
+
+impl From<&str> for OpError {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
+impl fmt::Display for OpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
 const KIND_ASKED: u64 = 0xFF;
 
 #[derive(Default)]
@@ -368,7 +413,7 @@ pub enum Recover {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Failure {
     pub path: FsPath,
-    pub error: String,
+    pub error: OpError,
     pub fatal: bool,
 }
 
@@ -665,7 +710,7 @@ pub enum ProviderEvent {
     Rescan { tab: TabId, gen: u64 },
     DirSize { tab: TabId, gen: u64, idx: u32, stats: DirStats },
     SizesSkipped { tab: TabId, gen: u64, items: Vec<u32> },
-    OpDone { tab: TabId, id: OpId, error: Option<String>, report: Option<OpReport> },
+    OpDone { tab: TabId, id: OpId, error: Option<OpError>, report: Option<OpReport> },
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     OpFailure { tab: TabId, id: OpId, failure: Failure },

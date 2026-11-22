@@ -58,7 +58,7 @@ pub(crate) fn run(body: fn() -> Result<(), PlatformError>) -> Result<(), Platfor
     let mut name: Vec<u16> = unsafe { SERVICE_NAME.as_wide() }.iter().copied().chain(Some(0)).collect();
     let table = [SERVICE_TABLE_ENTRYW { lpServiceName: PWSTR(name.as_mut_ptr()), lpServiceProc: Some(service_main) }, SERVICE_TABLE_ENTRYW::default()];
     unsafe { StartServiceCtrlDispatcherW(table.as_ptr()) }.map_err(|e| match WIN32_ERROR::from_error(&e) {
-        Some(ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) => PlatformError::new(e.code().0 as i64, "this process was not started by the service control manager; run flit-indexd --console in a terminal"),
+        Some(ERROR_FAILED_SERVICE_CONTROLLER_CONNECT) => crate::win_error(e.code().0 as i64, "this process was not started by the service control manager; run flit-indexd --console in a terminal"),
         _ => err(e),
     })
 }

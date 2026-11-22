@@ -1,7 +1,7 @@
 use super::*;
 use crate::input::{Event, Key, Mods, MouseButton};
 use crate::listing::{DirSnapshot, Listing, Meta};
-use crate::provider::{Conflict, ProviderEvent, Resolve};
+use crate::provider::{Conflict, OpError, ProviderEvent, Resolve};
 use crate::render::Rect;
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
 use crate::ui::{drop_effect, DragEvent, Persisted};
@@ -90,7 +90,7 @@ fn extract_delete_keeps_the_archive_on_failure_and_trashes_it_only_on_success() 
         let (id, op) = only(&mut app);
         assert!(matches!(&op, FileOp::Archive(ArchiveOp::Extract { place: Place::Smart, .. })));
         let tab = app.tab().id;
-        app.op_done(tab, id, error.clone(), Some(OpReport { op, items: vec![(p(r"C:\x\a.zip"), p(r"C:\x\a"))] }), t0());
+        app.op_done(tab, id, error.clone().map(Into::into), Some(OpReport { op, items: vec![(p(r"C:\x\a.zip"), p(r"C:\x\a"))] }), t0());
         let next = ops(&mut app);
         if error.is_none() {
             assert!(matches!(next.as_slice(), [(_, FileOp::Trash(paths))] if paths == &[p(r"C:\x\a.zip")]));
@@ -104,10 +104,10 @@ fn form(app: &App) -> &Form {
     app.jobs.form.as_ref().unwrap()
 }
 
-fn finish(app: &mut App, id: OpId, op: FileOp, items: &[(&str, &str)], error: Option<&str>) {
+fn finish(app: &mut App, id: OpId, op: FileOp, items: &[(&str, &str)], error: Option<OpError>) {
     let tab = app.tab().id;
     let items = items.iter().map(|(a, b)| (p(a), p(b))).collect();
-    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(str::to_owned), report: Some(OpReport { op, items }) }, t0());
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error, report: Some(OpReport { op, items }) }, t0());
 }
 
 #[test]
@@ -211,7 +211,7 @@ fn an_encrypted_archive_asks_for_its_password_and_retries_only_what_is_left() {
     select(&mut app, &["a.zip", "b.zip"]);
     app.run_action("archive.extract_here", t0());
     let (id, op) = only(&mut app);
-    finish(&mut app, id, op, &[(r"C:\locked\a.zip", r"C:\locked\a.txt")], Some(crate::i18n::S::ErrorsArchivePasswordNeeded.en()));
+    finish(&mut app, id, op, &[(r"C:\locked\a.zip", r"C:\locked\a.txt")], Some(OpError::new(PlatformErrorKind::PasswordNeeded, "The archive is locked")));
     assert_eq!(app.asking(), Some("password"));
     assert_eq!(form(&app).controls.len(), 2);
     typed(&mut app, "secret");
@@ -220,7 +220,7 @@ fn an_encrypted_archive_asks_for_its_password_and_retries_only_what_is_left() {
     assert_eq!(archive::password(&p(r"C:\locked\a.zip")), None);
     let (id, op) = only(&mut app);
     assert_eq!(op, FileOp::Archive(ArchiveOp::Extract { archives: vec![p(r"C:\locked\b.zip")], dest: None, place: Place::Here }));
-    finish(&mut app, id, op, &[], Some(crate::i18n::S::ErrorsArchiveWrongPassword.en()));
+    finish(&mut app, id, op, &[], Some(OpError::new(PlatformErrorKind::WrongPassword, "El archivo no se pudo abrir")));
     assert_eq!(app.asking(), Some("password"));
     assert!(form(&app).error);
     key(&mut app, Key::Escape, NO);
@@ -648,7 +648,7 @@ fn unpacked_to(app: &mut App, then: &str) -> (OpId, Vec<FsPath>, FsPath) {
 fn unpacked(app: &mut App, id: OpId, items: Vec<FsPath>, dest: &FsPath, error: Option<&str>) {
     let tab = app.tab().id;
     let made = items.iter().map(|i| (i.clone(), dest.join(i.file_name()))).collect();
-    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(str::to_owned), report: Some(OpReport { op: FileOp::Copy { items, dest: dest.clone() }, items: made }) }, t0());
+    app.on_provider_event(ProviderEvent::OpDone { tab, id, error: error.map(Into::into), report: Some(OpReport { op: FileOp::Copy { items, dest: dest.clone() }, items: made }) }, t0());
 }
 
 #[test]
@@ -705,4 +705,20 @@ fn dragging_out_of_an_archive_unpacks_first_and_starts_the_drag_only_while_the_b
         let dragged = app.drain_effects().find_map(|e| if let Effect::StartDrag(paths) = e { Some(paths) } else { None });
         assert_eq!(dragged, held.then(|| vec![dest.join(b"x.txt")]), "held: {held}");
     }
+}
+
+#[test]
+fn a_password_message_alone_does_not_open_the_archive_password_dialog() {
+    let original = i18n::lang();
+    for lang in Lang::ALL {
+        i18n::set_lang(lang);
+        let mut app = app_at(r"C:\unreadable");
+        deliver(&mut app, &[("a.zip", FILE)]);
+        select(&mut app, &["a.zip"]);
+        app.run_action("archive.extract_here", t0());
+        let (id, op) = only(&mut app);
+        finish(&mut app, id, op, &[], Some(S::ErrorsArchivePasswordNeeded.t().into()));
+        assert_eq!(app.asking(), None, "{lang:?}");
+    }
+    i18n::set_lang(original);
 }

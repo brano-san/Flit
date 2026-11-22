@@ -5,6 +5,7 @@ pub mod walk;
 mod wsl;
 
 pub use digest::hash_file;
+pub use flit_core::provider::PlatformErrorKind;
 pub use indexer::{root_of, start_indexer};
 pub use local::{measure, read_deep, via_unc, LocalProvider, CANCELLED};
 pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Clipboard, Timing, WslProvider, UNMAPPABLE};
@@ -74,6 +75,7 @@ pub enum Resolved {
 
 #[derive(Debug, Clone)]
 pub struct PlatformError {
+    pub kind: PlatformErrorKind,
     pub code: i64,
     pub message: String,
     pub untrashable: Vec<FsPath>,
@@ -82,7 +84,34 @@ pub struct PlatformError {
 
 impl PlatformError {
     pub fn new(code: i64, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), untrashable: Vec::new(), wrong_passphrase: false }
+        Self { kind: PlatformErrorKind::Other, code, message: message.into(), untrashable: Vec::new(), wrong_passphrase: false }
+    }
+    pub fn with_kind(mut self, kind: PlatformErrorKind) -> Self {
+        self.kind = kind;
+        self
+    }
+    pub fn cancelled(code: i64, message: impl Into<String>) -> Self {
+        Self::new(code, message).with_kind(PlatformErrorKind::Cancelled)
+    }
+    pub fn from_io(e: &std::io::Error, message: impl Into<String>) -> Self {
+        use std::io::ErrorKind;
+        let code = e.raw_os_error().map_or(-1, i64::from);
+        #[cfg(windows)]
+        if matches!(code, 995 | 1223) {
+            return Self::cancelled(code, message);
+        }
+        let kind = match e.kind() {
+            ErrorKind::NotFound | ErrorKind::NotADirectory => PlatformErrorKind::NotFound,
+            ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem => PlatformErrorKind::AccessDenied,
+            ErrorKind::AlreadyExists => PlatformErrorKind::Exists,
+            ErrorKind::StorageFull | ErrorKind::QuotaExceeded => PlatformErrorKind::NoSpace,
+            ErrorKind::ResourceBusy | ErrorKind::ExecutableFileBusy => PlatformErrorKind::Busy,
+            _ => PlatformErrorKind::Other,
+        };
+        Self::new(code, message).with_kind(kind)
+    }
+    pub fn operation_error(&self) -> flit_core::provider::OpError {
+        flit_core::provider::OpError::new(self.kind, self.to_string())
     }
     pub fn wrong_passphrase(mut self) -> Self {
         self.wrong_passphrase = true;

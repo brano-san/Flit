@@ -1,11 +1,11 @@
 use crate::fs::{map_attrs, NtFs};
 use flit_core::listing::{attr, Listing, ListingBuilder, Meta};
-use flit_core::provider::{Conflict, Failure, FileOp, LinkKind, Recover, Resolve, Stage};
+use flit_core::provider::{Conflict, Failure, FileOp, LinkKind, OpError, Recover, Resolve, Stage};
 use flit_core::sort::CaseMode;
 use flit_core::{limits, FsPath};
 use flit_core::i18n::S;
 use flit_core::tr_en;
-use flit_platform::{Fs, Job, PlatformError};
+use flit_platform::{Fs, Job, PlatformError, PlatformErrorKind};
 use std::ffi::c_void;
 use windows::core::PCWSTR;
 use windows::Win32::Foundation::*;
@@ -349,7 +349,7 @@ impl<'a> Engine<'a> {
         if matches!(c, ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL) {
             self.fatal = true;
         }
-        self.note(format!("{}: {}", path.display(), reason(path, e)));
+        self.noted(Some(i64::from(e.code().0)), format!("{}: {}", path.display(), reason(path, e)));
     }
 
     fn note(&mut self, msg: String) {
@@ -375,11 +375,11 @@ impl<'a> Engine<'a> {
         }
         let fatal = matches!(c, ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL);
         let error = reason(path, e);
-        match self.job.fail(Failure { path: path.clone(), error: error.clone(), fatal }) {
+        match self.job.fail(Failure { path: path.clone(), error: error.clone().into(), fatal }) {
             Some(Recover::Retry) => true,
             Some(Recover::Skip) => {
                 self.fatal |= fatal;
-                self.note(format!("{}: {}", path.display(), error));
+                self.noted(Some(i64::from(e.code().0)), format!("{}: {}", path.display(), error));
                 false
             }
             None => false,
@@ -388,10 +388,10 @@ impl<'a> Engine<'a> {
 
     fn error(&self) -> Option<PlatformError> {
         if self.job.cancelled() {
-            return Some(PlatformError::new(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
+            return Some(PlatformError::cancelled(ERROR_CANCELLED.0 as i64, S::ErrorsEngineCancelled.en()));
         }
         let first = self.first.clone()?;
-        Some(PlatformError::new(self.first_code.unwrap_or(-1), if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, error = first) } else { first }))
+        Some(crate::win_error(self.first_code.unwrap_or(-1), if self.failed > 1 { tr_en!(S::ErrorsEngineFailed, count = self.failed, error = first) } else { first }))
     }
 
     fn running(&self, total: Tally) {
@@ -665,7 +665,7 @@ impl<'a> Engine<'a> {
         if !self.job.asks_failures() || self.job.cancelled() {
             return false;
         }
-        match self.job.fail(Failure { path: item.clone(), error: S::ErrorsEngineSymlinkPrivilege.en().to_owned(), fatal: false }) {
+        match self.job.fail(Failure { path: item.clone(), error: OpError::new(PlatformErrorKind::SymlinkPrivilege, S::ErrorsEngineSymlinkPrivilege.en()), fatal: false }) {
             Some(Recover::Retry) => !self.job.cancelled(),
             Some(_) => false,
             None => {

@@ -76,7 +76,24 @@ use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromParsingName, SIGDN_F
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, SystemParametersInfoW, MB_ICONERROR, MB_OK, SPI_GETWHEELSCROLLLINES, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
 
 pub(crate) fn err(e: windows::core::Error) -> PlatformError {
-    PlatformError::new(e.code().0 as i64, error_reason(&e))
+    win_error(e.code().0 as i64, error_reason(&e))
+}
+
+pub(crate) fn win_error(code: i64, message: impl Into<String>) -> PlatformError {
+    use flit_platform::PlatformErrorKind;
+    use windows::Win32::Foundation::*;
+    let raw = code as u32;
+    let win32 = WIN32_ERROR(if raw >> 16 == 0x8007 { raw & 0xFFFF } else { raw });
+    let kind = match win32 {
+        ERROR_CANCELLED | ERROR_OPERATION_ABORTED | WIN32_ERROR(0x8027_0000) | WIN32_ERROR(0x8000_4004) => PlatformErrorKind::Cancelled,
+        ERROR_FILE_NOT_FOUND | ERROR_PATH_NOT_FOUND | ERROR_INVALID_NAME | ERROR_BAD_PATHNAME | ERROR_BAD_NETPATH | ERROR_BAD_NET_NAME => PlatformErrorKind::NotFound,
+        ERROR_ACCESS_DENIED | ERROR_PRIVILEGE_NOT_HELD | ERROR_WRITE_PROTECT => PlatformErrorKind::AccessDenied,
+        ERROR_ALREADY_EXISTS | ERROR_FILE_EXISTS => PlatformErrorKind::Exists,
+        ERROR_DISK_FULL | ERROR_HANDLE_DISK_FULL | ERROR_DISK_QUOTA_EXCEEDED => PlatformErrorKind::NoSpace,
+        ERROR_BUSY | ERROR_SHARING_VIOLATION | ERROR_LOCK_VIOLATION => PlatformErrorKind::Busy,
+        _ => PlatformErrorKind::Other,
+    };
+    PlatformError::new(code, message).with_kind(kind)
 }
 
 pub(crate) fn error_reason(e: &windows::core::Error) -> String {

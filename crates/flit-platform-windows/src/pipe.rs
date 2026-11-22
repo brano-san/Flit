@@ -242,7 +242,7 @@ pub fn listen_at(name: &str, max_clients: usize, on_client: OnClient<PipeConn>) 
         let h = unsafe { CreateNamedPipeW(PCWSTR(name.as_ptr()), mode, PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS, PIPE_UNLIMITED_INSTANCES, PIPE_BUFFER, PIPE_BUFFER, 0, Some(&attrs)) };
         if h.is_invalid() {
             let e = windows::core::Error::from_thread();
-            return Err(PlatformError::new(e.code().0 as i64, format!("cannot create the index pipe (another process may own its name): {}", crate::error_reason(&e))));
+            return Err(crate::win_error(e.code().0 as i64, format!("cannot create the index pipe (another process may own its name): {}", crate::error_reason(&e))));
         }
         first = false;
         let owned = Owned(h);

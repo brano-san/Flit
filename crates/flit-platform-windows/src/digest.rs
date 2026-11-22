@@ -89,7 +89,7 @@ fn fill(f: &mut File, buf: &mut [u8]) -> std::io::Result<usize> {
 }
 
 pub fn hash_file(file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<String>, PlatformError> {
-    let io = |e: std::io::Error| PlatformError::new(e.raw_os_error().map_or(-1, i64::from), flit_core::fmt::io_reason(&e));
+    let io = |e: std::io::Error| PlatformError::from_io(&e, flit_core::fmt::io_reason(&e));
     let mut f = File::open(std_path(file)).map_err(io)?;
     let total = f.metadata().map_err(io)?.len();
     job.update(|p| {
@@ -114,7 +114,7 @@ pub fn hash_file(file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<Str
     let mut read = Ok(());
     loop {
         if job.cancelled() {
-            read = Err(PlatformError::new(-1, CANCELLED));
+            read = Err(PlatformError::cancelled(-1, CANCELLED));
             break;
         }
         let mut buf = vec![0u8; CHUNK];

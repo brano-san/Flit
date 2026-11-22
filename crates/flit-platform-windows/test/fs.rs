@@ -255,3 +255,13 @@ fn link_targets_lose_their_verbatim_prefixes() {
     assert_eq!(shown_target(Path::new(r"\\?\UNC\server\share\dir")), FsPath::parse(r"\\server\share\dir"));
     assert_eq!(shown_target(Path::new(r"C:\plain")), FsPath::parse(r"C:\plain"));
 }
+
+#[test]
+fn a_failed_size_query_returns_its_ntstatus() {
+    let mut counts = (0, 0);
+    let invalid = Handle(HANDLE::default());
+    let error = scan(&invalid, &|| true, &mut counts, |_| panic!("invalid directory produced an entry")).unwrap_err();
+    assert_eq!(error.code, STATUS_INVALID_HANDLE.0 as u32 as i64);
+    assert_eq!(counts, (0, 0));
+    assert!(scan(&invalid, &|| false, &mut counts, |_| unreachable!()).is_ok());
+}

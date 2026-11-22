@@ -64,7 +64,7 @@ struct Progress<'a, R> {
 impl<R: Read> Read for Progress<'_, R> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.job.cancelled() {
-            return Err(io::Error::other(CANCELLED));
+            return Err(io::Error::other(Cancelled));
         }
         let n = self.inner.read(buf)?;
         self.job.update(|p| p.bytes += n as u64);
@@ -81,7 +81,7 @@ struct Lazy<'a> {
 impl Read for Lazy<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.job.cancelled() {
-            return Err(io::Error::other(CANCELLED));
+            return Err(io::Error::other(Cancelled));
         }
         let f = match &mut self.file {
             Some(f) => f,
@@ -111,8 +111,19 @@ pub(crate) fn unreadable(s: &Source, job: &Job) -> Result<(), PlatformError> {
     }
 }
 
+#[derive(Debug)]
+struct Cancelled;
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(CANCELLED)
+    }
+}
+
+impl std::error::Error for Cancelled {}
+
 pub(crate) fn write_error(e: io::Error) -> PlatformError {
-    if e.to_string() == CANCELLED { cancelled() } else { io_error(e) }
+    if e.get_ref().is_some_and(|e| e.is::<Cancelled>()) { cancelled() } else { io_error(e) }
 }
 
 struct Split {
@@ -251,7 +262,6 @@ fn write_7z<W: Write + Seek>(w: W, sources: Vec<Source>, options: &Compression, 
     use sevenz_rust2::{encoder_options::Lzma2Options, ArchiveEntry, ArchiveWriter, Password, SourceReader};
     let err = |e: sevenz_rust2::Error| match e {
         sevenz_rust2::Error::Io(e, _) => write_error(e),
-        e if e.to_string().contains(CANCELLED) => cancelled(),
         e => corrupt(&e.to_string()),
     };
     let mut kept = Vec::with_capacity(sources.len());
@@ -567,7 +577,7 @@ struct Counted<'a> {
 impl Read for Counted<'_> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         if self.job.cancelled() {
-            return Err(io::Error::other(CANCELLED));
+            return Err(io::Error::other(Cancelled));
         }
         let count = self.inner.read(buf)?;
         self.position.set(self.position.get().checked_add(count as u64).ok_or(io::ErrorKind::InvalidData)?);
@@ -583,7 +593,6 @@ fn sevenz_write_error(e: sevenz_rust2::Error) -> PlatformError {
     match e {
         sevenz_rust2::Error::PasswordRequired | sevenz_rust2::Error::MaybeBadPassword(_) => encrypted_add(),
         sevenz_rust2::Error::Io(e, _) => write_error(e),
-        e if e.to_string().contains(CANCELLED) => cancelled(),
         e => corrupt(&e.to_string()),
     }
 }
@@ -598,7 +607,7 @@ fn rewrite_7z<W: Write + Seek>(w: W, path: &Path, sources: &[Source], dropped: &
     reader
         .for_each_entries(|entry, data| {
             if job.cancelled() {
-                return Err(io::Error::other(CANCELLED).into());
+                return Err(io::Error::other(Cancelled).into());
             }
             if crate::names::safe_path(&entry.name).is_some_and(|name| dropped(&fold(&name))) {
                 io::copy(&mut Progress { inner: data, job }, &mut io::sink())?;

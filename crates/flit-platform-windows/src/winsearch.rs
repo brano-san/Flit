@@ -50,7 +50,7 @@ pub(crate) fn search(folder: Option<&FsPath>, query: &str, keep_going: &dyn Fn()
         factory.SetDisplayName(w!("Flit")).map_err(err)?;
         if let Some(f) = folder {
             let wide = f.to_wide(false);
-            let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None).map_err(|e| PlatformError::new(e.code().0 as i64, format!("{}: {}", f.display(), crate::error_reason(&e))))?;
+            let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None).map_err(|e| crate::win_error(e.code().0 as i64, format!("{}: {}", f.display(), crate::error_reason(&e))))?;
             let scope: IShellItemArray = SHCreateShellItemArrayFromShellItem(&item).map_err(err)?;
             factory.SetScope(&scope).map_err(err)?;
         }

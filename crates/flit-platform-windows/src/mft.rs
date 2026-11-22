@@ -363,7 +363,7 @@ struct Meta {
 }
 
 fn cancelled() -> PlatformError {
-    PlatformError::new(-1, "cancelled")
+    PlatformError::cancelled(-1, "cancelled")
 }
 
 fn read_mft<S: IndexSink>(volume: HANDLE, sink: &mut S) -> Result<Vec<Meta>, PlatformError> {
