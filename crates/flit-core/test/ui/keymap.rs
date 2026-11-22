@@ -119,7 +119,13 @@ fn shortcuts_live_in_the_settings_file_and_travel_with_export_import_and_reset()
     b.apply_doc(&doc);
     assert_eq!(b.keymap(), a.keymap());
     let mut c = app();
-    c.import_settings(&a.export_text());
+    c.preview_settings_import(settings::parse(&a.export_text()));
+    c.form_submit(0);
+    let plan = c.drain_effects().find_map(|e| match e {
+        Effect::Settings(crate::ui::SettingsCmd::ConfirmImport(plan)) => Some(plan),
+        _ => None,
+    }).unwrap();
+    c.apply_confirmed_settings_import(*plan, "before.json".into());
     assert_eq!(c.keymap().keys(at("view.hidden")), [ctrl(Key::Char('H')), ctrl(Key::Char('G'))]);
     a.reset_settings();
     assert_eq!(a.keymap(), &defaults());

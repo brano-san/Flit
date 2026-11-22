@@ -25,6 +25,7 @@ mod jumplist;
 mod library;
 mod links;
 mod mft;
+pub mod disk_changes;
 mod namespace;
 mod network;
 mod pipe;
@@ -393,3 +394,7 @@ fn test_temp() -> std::path::PathBuf {
     let long = std::fs::canonicalize(&temp).ok().and_then(|p| p.to_str().and_then(|s| s.strip_prefix(r"\\?\")).map(std::path::PathBuf::from));
     long.unwrap_or(temp)
 }
+
+#[cfg(test)]
+#[path = "../test/dedup.rs"]
+mod dedup_tests;

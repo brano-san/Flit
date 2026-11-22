@@ -689,6 +689,9 @@ impl App {
                 m.action("file.flatten", S::MenuFlattenFolder.t());
             }
             self.media_entries(m);
+            if count > 1 && folders == 0 && self.archive_view().is_none() && self.tab().view_loc.provider() == crate::location::ProviderId::Local {
+                m.action("file.dedup", S::DedupTitle.t());
+            }
             m.separator();
             if m.shown("archive.menu") {
                 self.archive_menu(m);
@@ -696,6 +699,11 @@ impl App {
             if count == 1 && folders == 0 {
                 m.action("search.similar", S::SearchExploreSimilar.t());
                 m.action("file.hashes", S::MenuHashes.t());
+                self.segments_menu(m);
+                if self.metadata_enabled() && self.tab().view_loc.provider() == crate::location::ProviderId::Local
+                    && !self.tab().view_loc.is_recycle_bin() && self.archive_view().is_none() {
+                    m.action("file.metadata", S::PortableMetaTitle.t());
+                }
             }
         }
         m.separator();

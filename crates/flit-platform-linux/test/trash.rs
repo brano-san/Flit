@@ -165,3 +165,18 @@ fn forcing_a_delete_never_follows_links_out_of_the_trash() {
     assert_eq!(std::fs::metadata(outside.join("keep")).unwrap().mode() & 0o777, 0o555, "its permissions too");
     std::fs::set_permissions(outside.join("keep"), std::fs::Permissions::from_mode(0o755)).unwrap();
 }
+
+#[test]
+fn a_staged_duplicate_records_its_original_path_for_restore() {
+    let temp = Temp::new("trash-staged-dedup");
+    let trash = home(&temp);
+    std::fs::create_dir(temp.path().join("staging")).unwrap();
+    let backup = temp.file("staging/original", 7);
+    let original = temp.file("photo space.jpg", 9);
+    let recycled = trash.trash_from(&backup, &original).unwrap();
+    assert!(!backup.exists());
+    assert_eq!(recycled.file_name().unwrap(), "photo space.jpg");
+    assert_eq!(trash.entry(&recycled).unwrap().1, original);
+    assert_eq!(std::fs::metadata(&original).unwrap().len(), 9);
+    assert_eq!(std::fs::metadata(&recycled).unwrap().len(), 7);
+}

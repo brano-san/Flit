@@ -526,12 +526,25 @@ impl<'a> Engine<'a> {
                 return Res::Nothing;
             }
         }
+        let group = top && self.job.has_companions(src);
         let (mut replace, mut retried) = (false, false);
         loop {
-            let tried = match mode {
-                Mode::Move => move_file(src, &dst, if replace { MOVEFILE_REPLACE_EXISTING } else { MOVE_FILE_FLAGS(0) }),
-                _ if dir => create_dir(&dst, src),
-                _ => self.copy_file(src, &dst, m.size, replace),
+            let occupied = group && !replace && !same(src, &dst) && exists(&dst);
+            if !occupied && group {
+                if let Some(error) = self.job.companion_collision(src, &dst) {
+                    self.note(error);
+                    return Res::Nothing;
+                }
+            }
+            let tried = if occupied {
+                Err(ERROR_ALREADY_EXISTS.into())
+            } else {
+                let _group = self.job.defer_companion_cancellation(src);
+                match mode {
+                    Mode::Move => move_file(src, &dst, if replace { MOVEFILE_REPLACE_EXISTING } else { MOVE_FILE_FLAGS(0) }),
+                    _ if dir => create_dir(&dst, src),
+                    _ => self.copy_file(src, &dst, m.size, replace),
+                }
             };
             let Err(e) = tried else { break };
             if self.job.cancelled() {
@@ -562,11 +575,12 @@ impl<'a> Engine<'a> {
                 }
                 continue;
             }
-            if self.trouble(src, &e, top) {
+            if self.trouble(src, &e, top && !group) {
                 continue;
             }
             return Res::Nothing;
         }
+        let _group = self.job.defer_companion_cancellation(src);
         match (mode, dir) {
             (Mode::Move, _) => {
                 self.job.update(|p| p.items += 1);
@@ -575,7 +589,7 @@ impl<'a> Engine<'a> {
             (Mode::Across, false) => loop {
                 match delete_file(src) {
                     Ok(()) => break Res::Whole(dst),
-                    Err(e) if self.trouble(src, &e, top) => {}
+                    Err(e) if self.trouble(src, &e, top && !group) => {}
                     Err(_) => {
                         let _ = delete_file(&dst);
                         break Res::Nothing;
@@ -806,6 +820,35 @@ impl<'a> Engine<'a> {
         None
     }
 
+    fn keep_group(&mut self, source: &FsPath, result: Res, mode: Mode) {
+        let companions = match &result {
+            Res::Whole(target) => self.job.companion_targets(source, target),
+            _ => Vec::new(),
+        };
+        self.keep(source, result);
+        if companions.is_empty() { return; }
+        let job = Job::detached(Resolve::Skip);
+        let mut engine = Engine::new(&job);
+        for (from, to) in companions {
+            engine.touch(from.parent());
+            engine.touch(to.parent());
+            let Some(meta) = stat(&from) else {
+                engine.fail(&from, &ERROR_FILE_NOT_FOUND.into(), false);
+                continue;
+            };
+            let result = engine.transfer(&from, to.clone(), meta, mode, false);
+            if matches!(result, Res::Nothing) && exists(&to) {
+                engine.note(flit_platform::companion_collision(&to));
+            }
+            engine.keep(&from, result);
+        }
+        engine.notify();
+        if let Some(error) = engine.error() {
+            self.note(error.to_string());
+        }
+        self.done.extend(engine.done);
+    }
+
     fn copy(&mut self, items: &[FsPath], dest: &FsPath) -> Option<FileOp> {
         self.job.update(|p| p.stage = Stage::Preparing);
         let metas = self.stat_all(items);
@@ -824,7 +867,12 @@ impl<'a> Engine<'a> {
         self.running(total);
         self.touch(Some(dest.clone()));
         let mut shell = Vec::new();
-        let small: Vec<usize> = (0..items.len()).filter(|&k| native[k] && metas[k].is_some_and(|m| !is_dir(&m) && m.size <= QUICK_MAX) && !items[k].parent().is_some_and(|p| same(&p, dest))).collect();
+        let small: Vec<usize> = if self.job.has_companion_groups() {
+            Vec::new()
+        } else {
+            (0..items.len()).filter(|&k| native[k] && metas[k].is_some_and(|m| !is_dir(&m) && m.size <= QUICK_MAX)
+                && !items[k].parent().is_some_and(|p| same(&p, dest))).collect()
+        };
         let files: Vec<(FsPath, FsPath, u64)> = small.iter().map(|&k| (items[k].clone(), dest.join(items[k].file_name()), metas[k].map_or(0, |m| m.size))).collect();
         let mut copied = vec![false; items.len()];
         for (&k, ok) in small.iter().zip(quick(self.job, &files, false)) {
@@ -846,11 +894,15 @@ impl<'a> Engine<'a> {
             let dup = item.parent().is_some_and(|p| same(&p, dest));
             let dst = if dup { copy_name(item, dest, is_dir(&m)) } else { dest.join(item.file_name()) };
             let r = self.transfer(item, dst, m, Mode::Copy, true);
-            self.keep(item, r);
+            self.keep_group(item, r, Mode::Copy);
             if self.elevate {
-                shell.extend(items[k..].iter().cloned());
                 self.elevate = false;
-                break;
+                if self.job.has_companion_groups() {
+                    shell.push(item.clone());
+                } else {
+                    shell.extend(items[k..].iter().cloned());
+                    break;
+                }
             }
         }
         (!shell.is_empty()).then(|| FileOp::Copy { items: shell, dest: dest.clone() })
@@ -891,11 +943,15 @@ impl<'a> Engine<'a> {
                 continue;
             }
             let r = self.transfer(from, to.clone(), m, Mode::Move, true);
-            self.keep(from, r);
+            self.keep_group(from, r, Mode::Move);
             if self.elevate {
-                shell.extend(pairs[k..].iter().cloned());
                 self.elevate = false;
-                break;
+                if self.job.has_companion_groups() {
+                    shell.push((from.clone(), to.clone()));
+                } else {
+                    shell.extend(pairs[k..].iter().cloned());
+                    break;
+                }
             }
         }
         (!shell.is_empty()).then_some(FileOp::MoveTo(shell))

@@ -409,7 +409,7 @@ impl<'q> Prepared<'q> {
                 Filter::Ext(list) => !v.is_dir(i) && has_ext(v.lower_name(i), list),
                 Filter::Size(lo, hi) => !v.is_dir(i) && (*lo..*hi).contains(&v.sizes[k_]),
                 Filter::Modified(lo, hi) => (*lo..*hi).contains(&v.modified[k_]),
-                Filter::Tag(_) => false,
+                Filter::Tag(_) | Filter::Rating(..) | Filter::Comment(_) | Filter::PortableTag(_) => false,
                 Filter::Directory(dir) => v.is_dir(i) == *dir,
                 Filter::Attributes(mask) => v.attrs[k_] & mask == *mask,
                 Filter::Children(lo, hi) => v.is_dir(i) && memo.children.get(k_).is_some_and(|&n| (*lo..*hi).contains(&u64::from(n))),
@@ -430,7 +430,7 @@ impl<'q> Prepared<'q> {
                     }
                     let plain = crate::query::Plain { name: v.name(i), lower_name: v.lower_name(i), path: &sc.path, lower_path: &sc.lower_path, size: v.sizes[k_], modified: v.modified[k_], dir: v.is_dir(i) };
                     let facts = crate::query::Facts { attrs: v.attrs[k_], children: memo.children.get(k_).copied(), depth: memo.depth.then(|| depth(v, i)), ..Default::default() };
-                    queries.iter().any(|q| q.matches_with(&plain, facts, &|_| false))
+                    queries.iter().any(|q| q.matches_with(&plain, facts, &|_| false, &|_| false))
                 }
             };
             if ok == t.negate {

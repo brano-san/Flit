@@ -452,6 +452,16 @@ fn starting_note_replaces_loading_until_the_listing_arrives() {
 }
 
 #[test]
+fn joining_without_a_manifest_shows_a_warning_in_the_initiating_tab() {
+    let mut app = app_at(r"C:\Downloads");
+    deliver(&mut app, &[("movie.mp4", false)]);
+    let tab = app.tab().id;
+    let warning = S::SegmentsNoCrc.en();
+    app.on_provider_event(ProviderEvent::OpNotice { tab, text: warning.into() }, t0());
+    assert_eq!(app.tab().error.as_deref(), Some(S::SegmentsNoCrc.t()));
+}
+
+#[test]
 fn new_folder_picks_a_free_name_and_starts_renaming_it() {
     let mut app = app_at(r"C:\x");
     deliver(&mut app, &[("New folder", true), ("new folder (2)", true), ("a.txt", false)]);

@@ -2,6 +2,10 @@ mod digest;
 mod indexer;
 mod local;
 pub mod parse_process;
+mod segments;
+pub mod dedup;
+mod companions;
+pub use companions::companion_collision;
 pub mod walk;
 mod wsl;
 mod pace;
@@ -476,22 +480,33 @@ struct JobState {
     now: std::sync::Mutex<Shown>,
     performed: std::sync::Mutex<Option<FileOp>>,
     copy_bucket: std::sync::Mutex<pace::Bucket>,
+    notice: std::sync::Mutex<Option<flit_core::i18n::S>>,
+    companions: std::sync::OnceLock<companions::Groups>,
+    defer_cancel: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone)]
 pub struct Job(Arc<JobState>);
 
+pub struct DeferCancellation<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for DeferCancellation<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
 impl Job {
     pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, conflicts: None, now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, conflicts: None, now: Default::default(), performed: Default::default(), copy_bucket: Default::default(), notice: Default::default(), companions: Default::default(), defer_cancel: Default::default() }))
     }
 
     pub fn asking(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), conflicts: None, now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), conflicts: None, now: Default::default(), performed: Default::default(), copy_bucket: Default::default(), notice: Default::default(), companions: Default::default(), defer_cancel: Default::default() }))
     }
 
     pub fn asking_with_conflicts(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>, conflicts: Sink<Vec<Conflict>>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), conflicts: Some(conflicts), now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), conflicts: Some(conflicts), now: Default::default(), performed: Default::default(), copy_bucket: Default::default(), notice: Default::default(), companions: Default::default(), defer_cancel: Default::default() }))
     }
 
     pub fn preflight_conflicts(&self, collect: impl FnOnce() -> Vec<Conflict>) -> bool {
@@ -528,6 +543,14 @@ impl Job {
         *self.0.performed.lock().unwrap_or_else(|e| e.into_inner()) = Some(op);
     }
 
+    fn notice(&self, message: flit_core::i18n::S) {
+        *self.0.notice.lock().unwrap_or_else(|e| e.into_inner()) = Some(message);
+    }
+
+    fn take_notice(&self) -> Option<flit_core::i18n::S> {
+        self.0.notice.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
     pub fn take_performed(&self) -> Option<FileOp> {
         self.0.performed.lock().unwrap_or_else(|e| e.into_inner()).take()
     }
@@ -541,7 +564,13 @@ impl Job {
     }
 
     pub fn cancelled(&self) -> bool {
-        self.0.ctl.is_cancelled()
+        self.0.ctl.is_cancelled() && !self.0.defer_cancel.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub fn defer_companion_cancellation(&self, source: &FsPath) -> Option<DeferCancellation<'_>> {
+        let flag = &self.0.defer_cancel;
+        (self.has_companions(source) && !flag.swap(true, std::sync::atomic::Ordering::AcqRel))
+            .then(|| DeferCancellation(flag))
     }
 
     pub fn set_copy_limit_available(&self, available: bool) {
@@ -653,6 +682,17 @@ impl Pasted {
 pub trait FileOps {
     fn reviews_transfer_conflicts() -> bool where Self: Sized {
         false
+    }
+    fn file_identity(&mut self, _path: &FsPath) -> Option<flit_core::tags::FileKey> { None }
+    fn keep_dedup_backup(&mut self, _path: &FsPath, _original: &FsPath) -> Option<FsPath> { None }
+    fn rename_local_replace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
+        std::fs::rename(std_path(from), std_path(to))
+            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))
+    }
+    fn verify_dedup_data(&mut self, _path: &FsPath) -> Result<(), PlatformError> { Ok(()) }
+    fn decode_local_ansi(&self, _bytes: &[u8]) -> Option<String> { None }
+    fn rename_local_noreplace(&mut self, _from: &FsPath, _to: &FsPath) -> Result<(), PlatformError> {
+        Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineBadName.en()))
     }
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;

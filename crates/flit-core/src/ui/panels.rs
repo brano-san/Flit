@@ -336,7 +336,7 @@ fn sizes(s: &Shape, out: &mut Vec<(usize, usize)>) {
 fn event_tab(ev: &ProviderEvent) -> Option<TabId> {
     match ev {
         ProviderEvent::NetworkDiscovery { tab, .. } => Some(*tab),
-        ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } | ProviderEvent::OpDone { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::Denied { tab, .. } => Some(*tab),
+        ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } | ProviderEvent::OpDone { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::OpNotice { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::Denied { tab, .. } => Some(*tab),
         _ => None,
     }
 }

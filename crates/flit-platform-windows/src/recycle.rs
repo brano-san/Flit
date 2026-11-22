@@ -176,11 +176,15 @@ fn next_id(seed: &mut u64, ext: &[u8]) -> Vec<u8> {
 }
 
 pub(crate) fn recycle_into(root: &FsPath, p: &FsPath, budget: &mut u64, seed: &mut u64) -> Option<FsPath> {
+    recycle_from(root, p, p, budget, seed)
+}
+
+fn recycle_from(root: &FsPath, p: &FsPath, original: &FsPath, budget: &mut u64, seed: &mut u64) -> Option<FsPath> {
     let meta = std::fs::symlink_metadata(std_path(p)).ok().filter(|m| m.file_attributes() & FILE_ATTRIBUTE_DIRECTORY.0 == 0)?;
     *budget = budget.checked_sub(meta.len())?;
-    let name = p.file_name();
+    let name = original.file_name();
     let ext = name.iter().rposition(|&c| c == b'.').map_or(&b""[..], |i| &name[i..]);
-    let record = info_record(meta.len(), now_filetime(), &p.to_wide(false));
+    let record = info_record(meta.len(), now_filetime(), &original.to_wide(false));
     for _ in 0..8 {
         let id = next_id(seed, ext);
         let (info, payload) = (root.join(&[&b"$I"[..], &id].concat()), root.join(&[&b"$R"[..], &id].concat()));
@@ -199,6 +203,13 @@ pub(crate) fn recycle_into(root: &FsPath, p: &FsPath, budget: &mut u64, seed: &m
         return None;
     }
     None
+}
+
+pub(crate) fn keep_dedup_backup(path: &FsPath, original: &FsPath) -> Option<FsPath> {
+    let root = roots().into_iter().find(|r| same_drive(r, path))?;
+    let mut budget = u64::MAX;
+    let mut seed = now_filetime() as u64 | 1;
+    recycle_from(&root, path, original, &mut budget, &mut seed)
 }
 
 pub(crate) fn trash(paths: &[FsPath]) -> (Vec<(FsPath, FsPath)>, Vec<FsPath>) {

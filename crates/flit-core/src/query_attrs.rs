@@ -45,7 +45,7 @@ pub fn number_range(value: &str) -> Option<(u64, u64)> {
     Some((lo.max(0) as u64, hi.clamp(0, u64::MAX as i128) as u64))
 }
 
-fn interval(v: &str, value: &dyn Fn(&str) -> Option<(i128, i128)>) -> Option<(i128, i128)> {
+pub fn interval(v: &str, value: &dyn Fn(&str) -> Option<(i128, i128)>) -> Option<(i128, i128)> {
     let (open_lo, open_hi) = (i128::MIN, i128::MAX);
     if let Some(x) = v.strip_prefix(">=") {
         return Some((value(x)?.0, open_hi));

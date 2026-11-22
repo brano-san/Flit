@@ -254,6 +254,7 @@ pub enum TagRequest {
     Delete(usize),
     Moved { pairs: Vec<(FsPath, FsPath)>, copy: bool },
     Command { name: String, items: Vec<FsPath> },
+    ChangeImport { before: Vec<Tag>, after: Vec<Tag> },
 }
 
 #[derive(Clone, Debug)]

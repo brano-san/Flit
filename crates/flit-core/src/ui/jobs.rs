@@ -411,6 +411,9 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::Archive(ArchiveOp::Compress { items, archive, .. }) => crate::tr!(S::UiJobTitleCompressing, what = count(items), dest = quoted(archive)),
         FileOp::Archive(ArchiveOp::Extract { archives, .. }) => crate::tr!(S::UiJobTitleExtracting, what = count(archives)),
         FileOp::Archive(ArchiveOp::Open { item }) => crate::tr!(S::UiJobTitleOpening, what = quoted(item)),
+        FileOp::Segments { source, part_size, .. } => crate::tr!(if part_size.is_some() { S::SegmentsSplitting } else { S::SegmentsJoining }, what = quoted(source)),
+        FileOp::Dedup { keep, .. } => crate::tr!(S::DedupReplacing, what = quoted(keep)),
+        FileOp::RestoreDedup { keep, .. } => crate::tr!(S::DedupRestoring, what = quoted(keep)),
         FileOp::InstallFonts(fonts) => crate::tr!(S::OpsExtraInstallingFonts, what = count(fonts)),
         FileOp::SetAccess { items, .. } => crate::tr!(S::PermissionsChanging, what = count(items)),
         FileOp::SetAttributes { items, .. } => crate::tr!(S::PropertiesChanging, what = count(items)),
@@ -424,6 +427,7 @@ fn job_dest(provider: &ProviderId, op: &FileOp) -> Option<Location> {
     let path = match op {
         FileOp::Copy { dest, .. } | FileOp::Move { dest, .. } | FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteLinkAs { dest, .. } | FileOp::Link { dest, .. } | FileOp::LinkAs { dest, .. } | FileOp::PasteDropped { dest, .. } => dest.clone(),
         FileOp::MoveTo(pairs) => pairs.first()?.1.parent()?,
+        FileOp::Segments { dest, .. } => dest.clone(),
         FileOp::Restore(pairs) => pairs.first()?.1.parent()?,
         FileOp::Flatten(dirs) => dirs.first()?.clone(),
         FileOp::Trash(_) if provider == &ProviderId::Local => return Some(Location::recycle_bin()),

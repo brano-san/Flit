@@ -152,3 +152,17 @@ link_disabled = "Das Öffnen von flit:-Links ist deaktiviert"
 
 unavailable = "Die Systemintegration ist in diesem Modus nicht verfügbar."
 archive_no_handlers = "Für keines der unterstützten Archivformate ist bereits ein anderes Programm zum Öffnen eingerichtet."
+
+[import]
+preview = "Einstellungsimport prüfen"
+apply = "Import anwenden"
+undo = "Import rückgängig machen"
+programs = "Diese Einstellungen können Programme starten: {keys}. Prüfen Sie die Befehle vor dem Import."
+change = "{before} → {after}"
+backup = "Sicherung gespeichert unter {path}"
+newer = "Diese Datei verwendet ein neueres Einstellungsformat."
+no_changes = "Der Import enthält keine Änderungen."
+stale = "Einstellungen oder Tags wurden geändert. Öffnen Sie den Import erneut, um die aktuellen Werte zu prüfen."
+undone = "Der Einstellungsimport wurde rückgängig gemacht."
+unavailable = "Die Einstellungsdatei oder der Sicherungsort ist nicht verfügbar."
+too_large = "Die Importdatei ist größer als 4 MiB."

@@ -82,6 +82,13 @@ pub(super) enum Kind {
     GitRemoveIndexLock { id: crate::provider::OpId, lock: crate::git::GitIndexLock },
     CopyLimit(OpId),
     ConflictTable { id: OpId, review: super::jobs::ConflictReview },
+    SettingsImport(super::settings::ImportPlan),
+    SettingsImportDone(super::settings_import::AppliedImport),
+    Segments { source: FsPath, split: bool },
+    Dedup { keep: FsPath, candidates: Vec<FsPath> },
+    PortableMetaWait { id: u64, path: FsPath, sidecar: FsPath },
+    PortableMeta { path: FsPath, sidecar: FsPath, value: crate::portable_meta::Metadata },
+    DiskChanges(super::disk_changes::DiskForm),
 }
 
 impl Kind {
@@ -112,6 +119,12 @@ impl Kind {
             Kind::GitRemoveIndexLock { .. } => "git_remove_index_lock",
             Kind::CopyLimit(_) => "copy_limit",
             Kind::ConflictTable { .. } => "conflict_table",
+            Kind::SettingsImport(_) => "settings_import",
+            Kind::SettingsImportDone(_) => "settings_import_done",
+            Kind::Segments { .. } => "segments",
+            Kind::Dedup { .. } => "dedup",
+            Kind::PortableMetaWait { .. } | Kind::PortableMeta { .. } => "portable_metadata",
+            Kind::DiskChanges(_) => "disk_changes",
         }
     }
 }
@@ -787,6 +800,22 @@ impl App {
             Kind::GitRemoveIndexLock { .. } => self.submit_git_remove_index_lock(f),
             Kind::CopyLimit(id) => self.submit_copy_limit(f, id),
             Kind::ConflictTable { id, .. } => self.submit_conflict_table(f, id),
+            Kind::Segments { .. } => self.submit_segments(f),
+            Kind::PortableMeta { .. } => self.submit_portable_metadata(f, b),
+            Kind::PortableMetaWait { .. } => None,
+            Kind::DiskChanges(_) => self.submit_disk_changes(f),
+            Kind::Dedup { keep, candidates } => {
+                self.submit_dedup(keep, candidates);
+                None
+            }
+            Kind::SettingsImport(plan) => {
+                self.approve_settings_import(plan);
+                None
+            }
+            Kind::SettingsImportDone(undo) => {
+                self.undo_settings_import(undo);
+                None
+            }
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
@@ -804,6 +833,7 @@ impl App {
                     ctl.cancel();
                 }
             }
+            Kind::DiskChanges(form) => form.cancel(),
             _ => {}
         }
         super::network::mount_form_closed(f);

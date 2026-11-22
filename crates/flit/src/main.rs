@@ -7,6 +7,8 @@ mod git;
 mod jumps;
 mod layouts;
 mod logs;
+mod portable_meta;
+mod disk_changes;
 mod metrics;
 mod overlays;
 mod parser;
@@ -109,13 +111,21 @@ fn main() {
             return;
         } else if a == "--elevated-agent" {
             #[cfg(target_os = "linux")]
-            std::process::exit(flit_platform_linux_gui::elevated::serve(it.next().as_deref()));
+            {
+                use flit_platform_linux_gui::elevated;
+                let lang = it.next();
+                let companions = it.next().is_some_and(|arg| arg == elevated::COMPANIONS_FLAG);
+                std::process::exit(elevated::serve(lang.as_deref(), companions));
+            }
         } else if a == "--create-symbolic-link" {
             #[cfg(windows)]
             std::process::exit(flit_platform_windows::symbolic_from_command_line(it));
         } else if a == "--label-volume" {
             #[cfg(windows)]
             std::process::exit(flit_platform_windows::label_from_command_line(it.next(), it.next()));
+        } else if a == flit_core::disk_changes::ELEVATED_FLAG {
+            #[cfg(windows)]
+            std::process::exit(flit_platform_windows::disk_changes::from_command_line(it));
         } else if a == update::INSTALL_ELEVATED {
             std::process::exit(update::install_from_command_line(it.next(), it.next()));
         } else if a == "--dbus-activated" {

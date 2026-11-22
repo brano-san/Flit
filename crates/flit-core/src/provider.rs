@@ -253,6 +253,23 @@ pub enum FileOp {
     GrantAccess(FsPath),
     LinkAs { items: Vec<FsPath>, dest: FsPath, kind: LinkKind },
     PasteLinkAs { dest: FsPath, kind: LinkKind },
+    Segments { source: FsPath, dest: FsPath, part_size: Option<u64> },
+    Dedup { keep: FsPath, candidates: Vec<FsPath>, backups: Vec<DedupBackup> },
+    RestoreDedup { keep: FsPath, backups: Vec<DedupBackup> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DedupBackup {
+    pub target: FsPath,
+    pub trash: FsPath,
+    pub linked: crate::tags::FileKey,
+    pub saved: crate::tags::FileKey,
+}
+
+impl DedupBackup {
+    fn map(&self, f: &impl Fn(&FsPath) -> Option<FsPath>) -> Option<Self> {
+        Some(Self { target: f(&self.target)?, trash: f(&self.trash)?, ..self.clone() })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -367,6 +384,9 @@ impl FileOp {
             FileOp::GrantAccess(dir) => FileOp::GrantAccess(f(dir)?),
             FileOp::LinkAs { items, dest, kind } => FileOp::LinkAs { items: all(items)?, dest: f(dest)?, kind: *kind },
             FileOp::PasteLinkAs { dest, kind } => FileOp::PasteLinkAs { dest: f(dest)?, kind: *kind },
+            FileOp::Segments { source, dest, part_size } => FileOp::Segments { source: f(source)?, dest: f(dest)?, part_size: *part_size },
+            FileOp::Dedup { keep, candidates, backups } => FileOp::Dedup { keep: f(keep)?, candidates: all(candidates)?, backups: backups.iter().map(|b| b.map(&f)).collect::<Option<_>>()? },
+            FileOp::RestoreDedup { keep, backups } => FileOp::RestoreDedup { keep: f(keep)?, backups: backups.iter().map(|b| b.map(&f)).collect::<Option<_>>()? },
         })
     }
 }
@@ -477,6 +497,7 @@ struct Control {
     paused: AtomicBool,
     copy_limit: AtomicU32,
     copy_limit_available: AtomicBool,
+    attach_companions: AtomicBool,
     answer: Mutex<Answer>,
     changed: Condvar,
 }
@@ -503,6 +524,14 @@ impl OpCtl {
 
     pub fn is_cancelled(&self) -> bool {
         self.0.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn attach_companions(&self) {
+        self.0.attach_companions.store(true, Ordering::Release);
+    }
+
+    pub fn includes_companions(&self) -> bool {
+        self.0.attach_companions.load(Ordering::Acquire)
     }
 
     pub fn pause(&self, paused: bool) {
@@ -819,6 +848,7 @@ pub enum ProviderEvent {
     SizesSkipped { tab: TabId, gen: u64, items: Vec<u32> },
     OpDone { tab: TabId, id: OpId, error: Option<OpError>, report: Option<OpReport> },
     OpProgress { tab: TabId, id: OpId, progress: OpProgress },
+    OpNotice { tab: TabId, text: String },
     OpConflict { tab: TabId, id: OpId, conflict: Conflict },
     OpConflicts { tab: TabId, id: OpId, conflicts: Vec<Conflict> },
     OpFailure { tab: TabId, id: OpId, failure: Failure },

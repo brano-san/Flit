@@ -892,6 +892,29 @@ impl Shell for LinuxShell {
 }
 
 impl FileOps for LinuxShell {
+    fn rename_local_noreplace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
+        flit_platform_linux::rename_local_noreplace(from, to)
+            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))
+    }
+
+    fn verify_dedup_data(&mut self, path: &FsPath) -> Result<(), PlatformError> {
+        let attribute = flit_platform_linux::portable_metadata::other_user_attribute(path)
+            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))?;
+        if let Some(name) = attribute {
+            return Err(PlatformError::new(-1, flit_core::tr_en!(S::DedupRichDataNamed, name = flit_core::name::display(&name))));
+        }
+        Ok(())
+    }
+
+    fn file_identity(&mut self, path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        flit_platform_linux::file_key(path)
+    }
+
+    fn keep_dedup_backup(&mut self, path: &FsPath, original: &FsPath) -> Option<FsPath> {
+        let trash = places::trash().ok()?;
+        let moved = trash.trash_from(host(path)?, host(original)?).ok()?;
+        crate::xdg::fs_path(&moved)
+    }
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         let free_space = |p: &Path| p.ancestors().find_map(flit_platform_linux::mounts::space).map(|s| s.1);
         let env = flit_archive::Env { utc_offset: <crate::Linux as flit_platform::Platform>::utc_offset_minutes(), free_space: &free_space };

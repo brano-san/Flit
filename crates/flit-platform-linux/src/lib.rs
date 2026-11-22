@@ -9,6 +9,7 @@ pub mod mounts;
 mod ops;
 pub mod sock;
 mod tags;
+pub mod portable_metadata;
 mod trash;
 mod walk;
 mod io_priority;
@@ -17,7 +18,7 @@ mod io_priority;
 #[path = "../test/temp.rs"]
 mod temp;
 
-pub use fs::{host, stat_path, xattr, xattr_names, LinuxFs};
+pub use fs::{host, rename_local_noreplace, stat_path, xattr, xattr_names, LinuxFs};
 pub use inotify::{Inotify, Notice, Notify};
 pub use ops::run as run_op;
 pub use tags::{file_key, merged_tag_names, resolve_files, sync_tag_names};

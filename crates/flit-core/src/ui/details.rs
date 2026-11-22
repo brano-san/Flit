@@ -67,10 +67,10 @@ pub struct Columns {
 }
 
 pub const GIT_WIDTHS: [f32; 5] = [100.0, 260.0, 140.0, 150.0, 130.0];
-pub const EXTRA: usize = 19;
-pub const ORDERED: usize = 27;
+pub const EXTRA: usize = 22;
+pub const ORDERED: usize = 30;
 const FIRST_EXTRA: u8 = Column::Folders as u8;
-pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0, 110.0, 100.0, 160.0, 110.0, 140.0, 140.0, 160.0, 160.0, 140.0, 140.0];
+pub const EXTRA_WIDTHS: [f32; EXTRA] = [90.0, 150.0, 110.0, 110.0, 110.0, 90.0, 110.0, 90.0, 90.0, 110.0, 100.0, 160.0, 110.0, 140.0, 140.0, 160.0, 160.0, 140.0, 140.0, 96.0, 200.0, 150.0];
 const DEFAULT_HIDDEN: u8 = 1 << Column::Created as u8;
 const DEFAULT_EXTRA: u32 = 1 << (Column::Folders as u8 - FIRST_EXTRA) | 1 << (Column::Free as u8 - FIRST_EXTRA) | 1 << (Column::FileSystem as u8 - FIRST_EXTRA) | 1 << (Column::Percent as u8 - FIRST_EXTRA) | 1 << (Column::Files as u8 - FIRST_EXTRA);
 const DEFAULT_WIDTHS: [f32; 7] = [0.0, 150.0, 140.0, 90.0, 220.0, 150.0, 150.0];
@@ -102,6 +102,9 @@ pub const DEFAULT_ORDER: [Column; ORDERED] = [
     Column::Title,
     Column::Authors,
     Column::Company,
+    Column::Rating,
+    Column::Comment,
+    Column::PortableTags,
 ];
 const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Name,
@@ -131,6 +134,9 @@ const ALL_COLUMNS: [Column; ORDERED] = [
     Column::Title,
     Column::Authors,
     Column::Company,
+    Column::Rating,
+    Column::Comment,
+    Column::PortableTags,
 ];
 
 fn git_widths() -> [f32; 5] {
@@ -168,7 +174,10 @@ fn git_slot(c: Column) -> usize {
 }
 
 fn extra_slot(c: Column) -> Option<usize> {
-    (c as u8 >= FIRST_EXTRA && !c.is_git()).then(|| (c as u8 - FIRST_EXTRA) as usize)
+    (c as u8 >= FIRST_EXTRA && !c.is_git()).then(|| {
+        let slot = (c as u8 - FIRST_EXTRA) as usize;
+        if c as u8 > Column::GitHash as u8 { slot - super::GIT_COLUMNS.len() } else { slot }
+    })
 }
 
 impl Columns {
@@ -621,7 +630,7 @@ fn bucket_label(s: &mut impl std::fmt::Write, table: &[S], bucket: u64) {
 
 const NO_ITEMS: &str = "--";
 const G_CALENDAR: &str = "\u{E787}";
-const WINDOWS_COLUMNS: [Column; 22] = [
+const WINDOWS_COLUMNS: [Column; 25] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -644,8 +653,11 @@ const WINDOWS_COLUMNS: [Column; 22] = [
     Column::Title,
     Column::Authors,
     Column::Company,
+    Column::Rating,
+    Column::Comment,
+    Column::PortableTags,
 ];
-const WINDOWS_REPO_COLUMNS: [Column; 27] = [
+const WINDOWS_REPO_COLUMNS: [Column; 30] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -673,6 +685,9 @@ const WINDOWS_REPO_COLUMNS: [Column; 27] = [
     Column::GitAuthor,
     Column::GitDate,
     Column::GitHash,
+    Column::Rating,
+    Column::Comment,
+    Column::PortableTags,
 ];
 
 pub(super) fn attribute_letters(s: &mut impl std::fmt::Write, attrs: u32) {
@@ -705,17 +720,16 @@ fn percent_label(s: &mut impl std::fmt::Write, bucket: u64) {
 impl App {
     pub(super) fn column_kinds(&self) -> &'static [Column] {
         let t = self.tab();
-        if t.view_loc.is_recycle_bin() {
-            &BIN_COLUMNS
-        } else if t.view_loc.path().kind() == PathKind::Computer {
-            &COMPUTER_COLUMNS
-        } else if t.git.as_ref().is_some_and(|g| g.root.is_some()) {
-            if self.caps.unix_paths { &REPO_COLUMNS } else { &WINDOWS_REPO_COLUMNS }
-        } else if self.caps.unix_paths {
-            &COLUMNS
-        } else {
-            &WINDOWS_COLUMNS
-        }
+        if t.view_loc.is_recycle_bin() { return &BIN_COLUMNS; }
+        if t.view_loc.path().kind() == PathKind::Computer { return &COMPUTER_COLUMNS; }
+        let repo = t.git.as_ref().is_some_and(|g| g.root.is_some());
+        let columns: &[Column] = match (self.caps.unix_paths, repo) {
+            (true, true) => &REPO_COLUMNS,
+            (true, false) => &COLUMNS,
+            (false, true) => &WINDOWS_REPO_COLUMNS,
+            (false, false) => &WINDOWS_COLUMNS,
+        };
+        if self.metadata_enabled() { columns } else { &columns[..columns.len() - super::PORTABLE_COLUMNS.len()] }
     }
 
     pub fn columns(&self) -> Vec<Column> {
@@ -807,8 +821,10 @@ impl App {
         let (p, tz) = (&self.prefs, self.utc_offset_min);
         let t = &mut self.tabs[k];
         let (deep, tree) = (t.subfolders, t.mode == LayoutMode::Tree);
+        let hide_companions = self.hide_companions && t.location().provider() == crate::location::ProviderId::Local;
         let v = &mut t.view_spec;
         v.hide_dotfiles = !p.show_dotfiles;
+        v.hide_companions = hide_companions;
         v.show_system = p.show_system;
         v.show_streams = p.show_streams;
         v.deep = deep;
@@ -1247,7 +1263,7 @@ impl App {
             Column::Origin => s.push_str(&name::display(recycle::origin(l, i))),
             Column::Tag => self.tag_text(&mut s, e.tags),
             Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate | Column::GitHash => self.git_text(&mut s, l.name(i), col),
-            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company => self.shell_prop_text(&mut s, l.name(i), col),
+            Column::ImageSize | Column::Duration | Column::Artist | Column::Version | Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::Rating | Column::Comment | Column::PortableTags => self.shell_prop_text(&mut s, l.name(i), col),
             Column::Type => return self.type_text(arena, l, i),
             Column::Size => {
                 if !e.is_dir() || e.attrs & attr::SIZE_KNOWN != 0 && (self.prefs.auto_sizes || e.attrs & attr::VOLUME != 0) {

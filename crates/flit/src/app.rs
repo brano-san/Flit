@@ -185,7 +185,7 @@ enum PreviewJob {
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
-    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
+    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>>, system: bool, portable: bool },
 }
 
 enum Done {
@@ -252,7 +252,20 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         Done::PdfPage { window, gen: req.gen, page, image }
                     }
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
-                    PreviewJob::ColumnProps { window, tab, gen, ask, dir, names } => Done::ColumnProps { window, tab, gen, ask, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
+                    PreviewJob::ColumnProps { window, tab, gen, ask, dir, names, system, portable } => {
+                        let rows = names.into_iter().map(|n| {
+                            let item = dir.join(&n);
+                            let mut values = if system { shell.column_props(&item) } else { flit_core::listing::ColumnValues::default() };
+                            if portable {
+                                values.text.resize(flit_core::listing::SHELL_PROPS.len(), String::new());
+                                if let Ok(meta) = crate::portable_meta::read(&item) {
+                                    values.text.extend([meta.display_rating(), meta.comment, meta.tags.join(", ")]);
+                                }
+                            }
+                            (n, values)
+                        }).collect();
+                        Done::ColumnProps { window, tab, gen, ask, rows }
+                    }
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
                     PreviewJob::Browse { window, exts, folder, start } => Done::Browsed { window, path: shell.browse(exts, folder, start.as_ref()) },
                 };
@@ -935,7 +948,10 @@ impl<P: Platform> Handler<P> {
                         st.app.open(&cmd, &P::known_folder, Instant::now());
                     }
                 }
-                Effect::Search(req) => self.search.submit(id, req),
+                Effect::Search(req) => {
+                    self.search.enable_metadata(self.windows.get(&id).is_some_and(|st| st.app.metadata_enabled()));
+                    self.search.submit(id, req);
+                }
                 Effect::Preview(req) => {
                     let _ = self.previews.send(PreviewJob::Load { window: id, req });
                 }
@@ -987,9 +1003,11 @@ impl<P: Platform> Handler<P> {
                 Effect::Share(paths) => window.share(paths),
                 Effect::SetVolumeLabel { drive, label } => window.set_volume_label(drive, label),
                 Effect::StartDrag(paths) => window.start_drag(paths),
-                Effect::ShellProps { tab, gen, ask, dir, names } => {
-                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names });
+                Effect::ShellProps { tab, gen, ask, dir, names, shell, portable } => {
+                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names, system: shell, portable });
                 }
+                Effect::PortableMetadata { id: request, req } => self.settings.send(Job::Portable(id, request, req)),
+                Effect::DiskChanges { id: request, request: req } => self.settings.send(Job::DiskChanges(id, request, req)),
                 effect @ (Effect::Pinned(_) | Effect::PinnedCleared | Effect::PinnedFiles(_)) => {
                     let wake = !matches!(&effect, Effect::PinnedFiles(_));
                     let windows = self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app);
@@ -1023,7 +1041,15 @@ impl<P: Platform> Handler<P> {
                 Effect::Tags(req) => self.tags.submit(Some(id), req),
                 Effect::Git(req) => self.git.submit(req),
                 Effect::Settings(SettingsCmd::Export { path, text, replace }) => self.settings.send(Job::Export(crate::preview::std_path(&path), text, replace)),
-                Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(crate::preview::std_path(&path))),
+                Effect::Settings(SettingsCmd::Import(path)) => self.settings.send(Job::Import(id, crate::preview::std_path(&path))),
+                Effect::Settings(SettingsCmd::ConfirmImport(plan)) => {
+                    if self.settings.read_only {
+                        self.status(id, S::SettingsPageImportNewer.t().to_owned());
+                    } else {
+                        let text = plan.backup(&self.settings.unknown);
+                        self.settings.send(Job::BackupImport(id, plan, text));
+                    }
+                }
                 Effect::Settings(SettingsCmd::CacheSize) => self.settings.send(Job::CacheSize),
                 Effect::Settings(SettingsCmd::RaiseWatchLimit) => self.settings.send(Job::RaiseWatchLimit(P::raise_watch_limit)),
                 Effect::Settings(SettingsCmd::RefreshSystemChanges) => self.settings.send(Job::SystemChanges(crate::system_changes::Action::Refresh)),
@@ -1246,14 +1272,32 @@ impl<P: Platform> Handler<P> {
                     }
                     self.settings.save();
                 }
-                settings::Reply::Imported(Ok(text)) => {
-                    if let Some(st) = self.windows.get_mut(&id) {
-                        st.app.import_settings(&text);
+                settings::Reply::Imported(target, Ok(doc)) => {
+                    if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.preview_settings_import(doc);
                     }
                 }
-                settings::Reply::Imported(Err(e)) => {
+                settings::Reply::Imported(target, Err(e)) | settings::Reply::ImportBackedUp(target, _, Err(e)) => {
                     tracing::warn!("cannot import settings: {e}");
-                    self.status(id, flit_core::tr!(S::UiAppImportFailed, error = flit_core::i18n::localize(&e.to_string())));
+                    self.status(target, flit_core::tr!(S::UiAppImportFailed, error = flit_core::i18n::localize(&e)));
+                }
+                settings::Reply::ImportBackedUp(target, plan, Ok(path)) => {
+                    if self.settings.read_only {
+                        self.status(target, S::SettingsPageImportNewer.t().to_owned());
+                    } else if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.apply_confirmed_settings_import(*plan, path.to_string_lossy().into_owned());
+                        self.sync_settings(target);
+                    }
+                }
+                settings::Reply::Portable(target, request, result) => {
+                    if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.on_portable_metadata(request, result);
+                    }
+                }
+                settings::Reply::DiskChanges(target, request, result) => {
+                    if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.on_disk_changes(request, result);
+                    }
                 }
                 settings::Reply::Exported(Ok(path)) => self.status(id, flit_core::tr!(S::UiAppExported, path = path.display())),
                 settings::Reply::Exported(Err(e)) => {
@@ -1335,7 +1379,7 @@ impl<P: Platform> Handler<P> {
                 ProviderEvent::NetworkDiscovery { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } | ProviderEvent::Denied { tab, .. } => self.window_of_tab(*tab).or(self.active),
-                ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::WrongPassphrase { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpConflicts { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
+                ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::WrongPassphrase { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpConflicts { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::OpNotice { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),
             };
             if let Some(st) = target.and_then(|id| self.windows.get_mut(&id)) {
                 st.app.on_provider_event(ev, now);

@@ -723,6 +723,7 @@ impl<'a> Engine<'a> {
         if mode != Mode::Move && !self.fits(ddir, src, &dst, node) {
             return Res::Nothing;
         }
+        let group = self.job.has_companions(src);
         let mut replace = false;
         let dname = loop {
             let dname = match cstring(dst.file_name()) {
@@ -732,9 +733,21 @@ impl<'a> Engine<'a> {
                     return Res::Nothing;
                 }
             };
-            let tried = match mode {
-                Mode::Move => rename_at(sdir, sname, ddir, &dname, replace),
-                _ => self.create(sdir, sname, node, ddir, &dname, replace, mode, &dst),
+            let occupied = group && !replace && node_at(ddir, &dname, false).is_ok();
+            if !occupied && group {
+                if let Some(error) = self.job.companion_collision(src, &dst) {
+                    self.note(error);
+                    return Res::Nothing;
+                }
+            }
+            let tried = if occupied {
+                Err(errno(libc::EEXIST))
+            } else {
+                let _group = self.job.defer_companion_cancellation(src);
+                match mode {
+                    Mode::Move => rename_at(sdir, sname, ddir, &dname, replace),
+                    _ => self.create(sdir, sname, node, ddir, &dname, replace, mode, &dst),
+                }
             };
             let Err(e) = tried else { break dname };
             if self.job.cancelled() {
@@ -759,6 +772,7 @@ impl<'a> Engine<'a> {
                 None => return Res::Nothing,
             }
         };
+        let _group = self.job.defer_companion_cancellation(src);
         match (mode, node.is_dir()) {
             (Mode::Move, _) => {
                 self.job.update(|p| p.items += 1);
@@ -856,6 +870,36 @@ impl<'a> Engine<'a> {
         }
     }
 
+    fn keep_group(&mut self, source: &FsPath, result: Res, mode: Mode) {
+        let companions = match &result {
+            Res::Whole(target) => self.job.companion_targets(source, target),
+            _ => Vec::new(),
+        };
+        self.keep(source, result);
+        if companions.is_empty() { return; }
+        let job = Job::detached(Resolve::Skip);
+        let mut engine = Engine::new(&job);
+        for (from, to) in companions {
+            let item = top(&from).and_then(|item| open_parent(&to, false).map(|dest| (item, dest)));
+            let (item, dest) = match item {
+                Ok(opened) => opened,
+                Err(error) => {
+                    engine.fail(&from, &error);
+                    continue;
+                }
+            };
+            let result = engine.transfer(item.dir.as_raw_fd(), &item.name, &from, dest.as_raw_fd(), to.clone(), &item.node, mode);
+            if matches!(result, Res::Nothing) && host(&to).is_some_and(|p| std::fs::symlink_metadata(p).is_ok()) {
+                engine.note(flit_platform::companion_collision(&to));
+            }
+            engine.keep(&from, result);
+        }
+        if let Some(error) = engine.error() {
+            self.note(error.to_string());
+        }
+        self.done.extend(engine.done);
+    }
+
     fn copy(&mut self, items: &[FsPath], dest: &FsPath) {
         self.preparing();
         let dest_fd = loop {
@@ -882,7 +926,7 @@ impl<'a> Engine<'a> {
             let dup = item.parent().as_ref() == Some(dest);
             let dst = if dup { dest.join(&numbered(dest_fd.as_raw_fd(), item.file_name(), t.node.is_dir(), flit_core::name::copy_suffix_in(self.lang).as_bytes(), true)) } else { dest.join(item.file_name()) };
             let r = self.transfer(t.dir.as_raw_fd(), &t.name, item, dest_fd.as_raw_fd(), dst, &t.node, Mode::Copy);
-            self.keep(item, r);
+            self.keep_group(item, r, Mode::Copy);
         }
     }
 
@@ -938,7 +982,7 @@ impl<'a> Engine<'a> {
             if let Res::Whole(to) = &r {
                 placed[k] = Some(to.clone());
             }
-            self.keep(from, r);
+            self.keep_group(from, r, Mode::Move);
         }
         placed
     }

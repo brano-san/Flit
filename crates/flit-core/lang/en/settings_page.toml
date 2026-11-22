@@ -152,3 +152,17 @@ link_disabled = "Opening flit: links is turned off"
 
 unavailable = "System integration is unavailable in this mode."
 archive_no_handlers = "None of the supported archive formats has another app set up to open it."
+
+[import]
+preview = "Review settings import"
+apply = "Apply import"
+undo = "Undo import"
+programs = "These settings can launch external programs: {keys}. Review their commands before applying."
+change = "{before} → {after}"
+backup = "Backup saved to {path}"
+newer = "This file uses a newer settings format."
+no_changes = "The import contains no changes."
+stale = "Settings or tags changed. Open the import again to review the current values."
+undone = "The settings import was undone."
+unavailable = "The settings file or backup location is unavailable."
+too_large = "The import file exceeds 4 MiB."

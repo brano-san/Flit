@@ -73,19 +73,19 @@ fn edits_from_outside_are_reported_once_and_broken_files_are_backed_up() {
     let (jobs, replies, thread) = worker(&file, "{}");
     jobs.send(Job::Check).unwrap();
     jobs.send(Job::Check).unwrap();
-    jobs.send(Job::Import(d.0.join("missing.json"))).unwrap();
+    jobs.send(Job::Import(7, d.0.join("missing.json"))).unwrap();
     assert!(matches!(reply(&replies), Reply::Changed(t) if t.contains("show_hidden")));
-    assert!(matches!(reply(&replies), Reply::Imported(Err(_))), "both checks ran before the file changes again");
+    assert!(matches!(reply(&replies), Reply::Imported(7, Err(_))), "both checks ran before the file changes again");
     std::fs::write(&file, "{ broken").unwrap();
     jobs.send(Job::Backup).unwrap();
     jobs.send(Job::Write("{\"fresh\": 1}".into())).unwrap();
     let export = d.0.join("out").join("flit-settings.json");
     jobs.send(Job::Export(export.clone(), "{\"tags\": []}".into(), false)).unwrap();
-    jobs.send(Job::Import(export.clone())).unwrap();
-    jobs.send(Job::Import(d.0.join("missing.json"))).unwrap();
+    jobs.send(Job::Import(7, export.clone())).unwrap();
+    jobs.send(Job::Import(7, d.0.join("missing.json"))).unwrap();
     assert!(matches!(reply(&replies), Reply::Exported(Ok(p)) if p == export));
-    assert!(matches!(reply(&replies), Reply::Imported(Ok(t)) if t == "{\"tags\": []}"));
-    assert!(matches!(reply(&replies), Reply::Imported(Err(_))));
+    assert!(matches!(reply(&replies), Reply::Imported(7, Ok(doc)) if !doc.broken && doc.values.is_empty() && doc.tags.is_empty()));
+    assert!(matches!(reply(&replies), Reply::Imported(7, Err(_))));
     drop(jobs);
     thread.join().unwrap();
     assert!(replies.try_recv().is_err(), "the second check saw nothing new");
@@ -245,4 +245,22 @@ fn autostart_follows_background_mode_while_it_is_on() {
     assert!(autostart_change(&both(false, false), &both(false, true)).is_none());
     assert!(autostart_change(&both(true, true), &both(true, true)).is_none());
     assert!(matches!(autostart_change(&both(false, true), &both(true, true)), Some(Action::Autostart { on: true, startup: false, background: true })));
+}
+
+#[test]
+fn backup_preserves_the_reviewed_settings_and_refuses_an_external_edit() {
+    let d = temp("import-backup");
+    let file = d.0.join("settings.json");
+    let original = "{\"files.show_hidden\": false}";
+    write_atomic(&file, original.as_bytes()).unwrap();
+    let reviewed = "{\"files.show_hidden\": false, \"tags\": []}";
+    let copy = backup_import(Some(&file), original, reviewed).unwrap();
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), reviewed);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    assert_ne!(copy, file);
+
+    write_atomic(&file, b"{}").unwrap();
+    assert!(backup_import(Some(&file), original, reviewed).is_err());
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "{}");
+    assert_eq!(std::fs::read_dir(file.parent().unwrap()).unwrap().count(), 2);
 }

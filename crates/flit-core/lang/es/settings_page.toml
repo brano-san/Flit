@@ -152,3 +152,17 @@ link_disabled = "La apertura de enlaces flit: está desactivada"
 
 unavailable = "La integración con el sistema no está disponible en este modo."
 archive_no_handlers = "Ninguno de los formatos de archivo comprimido compatibles tiene otra aplicación configurada para abrirlo."
+
+[import]
+preview = "Revisar la importación de ajustes"
+apply = "Aplicar importación"
+undo = "Deshacer importación"
+programs = "Estos ajustes pueden iniciar programas externos: {keys}. Revisa sus comandos antes de aplicarlos."
+change = "{before} → {after}"
+backup = "Copia guardada en {path}"
+newer = "Este archivo usa un formato de ajustes más reciente."
+no_changes = "La importación no incluye cambios."
+stale = "Los ajustes o las etiquetas han cambiado. Abre la importación de nuevo para revisar los valores actuales."
+undone = "Se deshizo la importación de ajustes."
+unavailable = "El archivo de ajustes o la ubicación de la copia no están disponibles."
+too_large = "El archivo de importación supera los 4 MiB."

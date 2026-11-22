@@ -2,7 +2,7 @@ use crate::thumbs::ThumbCache;
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use flit_core::ui::settings::{self, Doc};
 use flit_core::ui::{Value, WatchLimit, SETTINGS};
-use flit_platform::{Platform, PlatformError, Wake};
+use flit_platform::{Platform, PlatformError, Wake, WindowId};
 use serde_json::{Map, Value as Json};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -16,7 +16,10 @@ pub enum Job {
     #[cfg(target_os = "linux")]
     CheckTray,
     Export(PathBuf, String, bool),
-    Import(PathBuf),
+    Import(WindowId, PathBuf),
+    Portable(WindowId, u64, flit_core::portable_meta::Request),
+    DiskChanges(WindowId, u64, flit_core::disk_changes::Request),
+    BackupImport(WindowId, Box<settings::ImportPlan>, String),
     CacheSize,
     CacheLimit(u32),
     Integrate(bool),
@@ -33,7 +36,10 @@ pub enum Reply {
     #[cfg(target_os = "linux")]
     TrayAvailable(bool),
     SaveFailed(String),
-    Imported(Result<String, String>),
+    Imported(WindowId, Result<Doc, String>),
+    Portable(WindowId, u64, Result<flit_core::portable_meta::Metadata, String>),
+    DiskChanges(WindowId, u64, flit_core::disk_changes::Reply),
+    ImportBackedUp(WindowId, Box<settings::ImportPlan>, Result<PathBuf, String>),
     Exported(Result<PathBuf, String>),
     ExportExists { path: PathBuf, size: u64, modified: i64 },
     CacheUsed(u64),
@@ -76,6 +82,36 @@ fn export(to: PathBuf, text: &str, replace: bool) -> Reply {
         }
         _ => Reply::Exported(write_atomic(&to, text.as_bytes()).map(|_| to).map_err(|e| e.to_string())),
     }
+}
+
+fn read_import(from: &Path) -> Result<Doc, String> {
+    use std::io::Read;
+    const MAX_IMPORT: u64 = 4 * 1024 * 1024;
+    let mut text = String::new();
+    let file = std::fs::File::open(from).map_err(|e| e.to_string())?;
+    if !file.metadata().map_err(|e| e.to_string())?.is_file() {
+        return Err(flit_core::i18n::S::SettingsPageImportUnavailable.en().into());
+    }
+    let count = file.take(MAX_IMPORT + 1).read_to_string(&mut text).map_err(|e| e.to_string())?;
+    if count as u64 > MAX_IMPORT {
+        return Err(flit_core::i18n::S::SettingsPageImportTooLarge.en().into());
+    }
+    Ok(settings::parse(&text))
+}
+
+fn backup_import(path: Option<&Path>, last: &str, text: &str) -> Result<PathBuf, String> {
+    use flit_core::i18n::S;
+    let path = path.ok_or_else(|| S::SettingsPageImportUnavailable.en().to_owned())?;
+    match std::fs::read_to_string(path) {
+        Ok(current) if current == last => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound && last.is_empty() => {}
+        Ok(_) => return Err(S::SettingsPageImportStale.en().into()),
+        Err(e) => return Err(e.to_string()),
+    }
+    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_err(|e| e.to_string())?;
+    let backup = path.with_file_name(format!("settings.before-import-{}-{}.json", std::process::id(), stamp.as_nanos()));
+    write_atomic(&backup, text.as_bytes()).map_err(|e| e.to_string())?;
+    Ok(backup)
 }
 
 fn backup_path(path: &Path) -> PathBuf {
@@ -125,7 +161,23 @@ fn work<P: Platform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>
                 #[cfg(target_os = "linux")]
                 Job::CheckTray => reply(Reply::TrayAvailable(flit_platform_linux_gui::tray_host_available())),
                 Job::Export(to, text, replace) => reply(export(to, &text, replace)),
-                Job::Import(from) => reply(Reply::Imported(std::fs::read_to_string(&from).map_err(|e| e.to_string()))),
+                Job::Import(id, from) => reply(Reply::Imported(id, read_import(&from))),
+                Job::Portable(id, request, req) => reply(Reply::Portable(id, request, crate::portable_meta::request(req).map_err(|e| e.to_string()))),
+                Job::DiskChanges(id, request, req) => {
+                    let exporting = matches!(req, flit_core::disk_changes::Request::Export { .. });
+                    let (tx, wake) = (replies.clone(), wake.clone());
+                    let started = std::thread::Builder::new().name("flit-disk-changes".into()).spawn(move || {
+                        let _ = tx.send(Reply::DiskChanges(id, request, crate::disk_changes::run(req)));
+                        wake();
+                    });
+                    if let Err(e) = started {
+                        use flit_core::disk_changes::{Error, Reply as DiskReply};
+                        let failed = Error::Failed(e.to_string());
+                        let outcome = if exporting { DiskReply::Exported(Err(failed)) } else { DiskReply::Read(Err(failed)) };
+                        reply(Reply::DiskChanges(id, request, outcome));
+                    }
+                }
+                Job::BackupImport(id, plan, text) => reply(Reply::ImportBackedUp(id, plan, backup_import(path.as_deref(), &last, &text))),
                 Job::CacheSize => {
                     if let Some(c) = &cache {
                         let used = locked(c).used();

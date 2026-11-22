@@ -42,6 +42,7 @@ enum Cmd {
     Lost(WindowId, String),
     Forget(WindowId),
     Finished(WindowId, u64),
+    Portable(bool),
 }
 
 pub struct SearchClient {
@@ -49,6 +50,7 @@ pub struct SearchClient {
     latest: HashMap<WindowId, Arc<AtomicU64>>,
     facets: FacetTokens,
     pub events: Receiver<(WindowId, SearchEvent)>,
+    portable: bool,
 }
 
 impl SearchClient {
@@ -61,7 +63,14 @@ impl SearchClient {
             .name("flit-search".into())
             .spawn(move || worker.run())
             .map_err(|e| PlatformError::new(-1, format!("cannot start flit-search: {e}")))?;
-        Ok(Self { tx, latest: HashMap::new(), facets, events })
+        Ok(Self { tx, latest: HashMap::new(), facets, events, portable: false })
+    }
+
+    pub fn enable_metadata(&mut self, on: bool) {
+        if self.portable != on {
+            self.portable = on;
+            let _ = self.tx.send(Cmd::Portable(on));
+        }
     }
 
     pub fn submit(&mut self, window: WindowId, req: SearchRequest) {
@@ -216,6 +225,7 @@ struct Worker<P: Platform> {
     failed_at: Option<Instant>,
     retry: Duration,
     indexing: bool,
+    portable: bool,
     local: Option<Arc<SharedIndex>>,
     links: HashMap<WindowId, Link<Conn<P>>>,
     last_query: HashMap<WindowId, SearchRequest>,
@@ -273,7 +283,7 @@ fn reader<C: Duplex>(mut conn: C, window: WindowId, alive: Arc<AtomicBool>, out:
 
 impl<P: Platform> Worker<P> {
     fn new(rx: Receiver<Cmd>, me: Sender<Cmd>, out: Out, wake: Wake, utc_offset_min: i32, tags: TagCell) -> Self {
-        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, failed_at: None, retry: SERVICE_RETRY, indexing: true, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), facets: Arc::default(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
+        Self { rx, me, out, wake, utc_offset_min, remote_failed: None, failed_at: None, retry: SERVICE_RETRY, indexing: true, portable: false, local: None, links: HashMap::new(), last_query: HashMap::new(), latests: HashMap::new(), tags, hits: HashMap::new(), facets: Arc::default(), connect: Box::new(P::Service::connect), fallback: Box::new(|| Ok((P::FallbackIndex::new()?, P::cache_dir().map(|d| d.join("search"))))) }
     }
 
     fn run(mut self) {
@@ -283,6 +293,7 @@ impl<P: Platform> Worker<P> {
                 Ok(Cmd::Req(window, latest, req)) => self.request(window, latest, req),
                 Ok(Cmd::Lost(window, why)) => self.lost(window, why),
                 Ok(Cmd::Finished(window, gen)) => self.publish(window, gen),
+                Ok(Cmd::Portable(on)) => self.portable = on,
                 Ok(Cmd::Forget(window)) => {
                     self.drop_link(window);
                     self.hits.remove(&window);
@@ -463,6 +474,23 @@ impl<P: Platform> Worker<P> {
                     q.paths = paths.clone();
                     q
                 }) {
+                    Ok(q) if q.has_metadata() => {
+                        if !self.portable {
+                            self.send(window, SearchEvent::Error { message: S::PortableMetaDisabled.t().to_owned() });
+                        } else if let Some(root) = folder {
+                            let tags = self.tags.get();
+                            self.start_live(window, latest, *gen, *sort, SearchSource::Walk, move |keep_going, found| {
+                                let find_tag = |path: &FsPath, tag: &str| {
+                                    flit_core::tags::find(&tags.defs, tag).zip(P::file_key(path))
+                                        .is_some_and(|(index, key)| tags.mask(key) & (1 << index) != 0)
+                                };
+                                find::walk_with_tags(&P::fs(), &root, &q, keep_going, found, &find_tag);
+                            });
+                        } else {
+                            self.send(window, SearchEvent::Error { message: S::PortableMetaSearchFolder.t().to_owned() });
+                        }
+                        true
+                    }
                     Ok(q) if q.has_tags() => {
                         let folder = folder.map(|f| lowercase(f.as_bytes()));
                         self.run_tags(window, *gen, q, *sort, folder);

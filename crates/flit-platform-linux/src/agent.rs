@@ -134,13 +134,27 @@ fn op(ctx: &Ctx, id: ReqId, op: &FileOp, ctl: OpCtl) {
             let _ = failure.send(Event::OpFailure { id, failure: f });
         }),
     );
-    let conflicts = flit_platform::conflicts::collect(&crate::LinuxFs, op, job.ctl());
+    let reviewed = !matches!(op, FileOp::Rename { .. });
+    let prepared = if job.ctl().includes_companions() {
+        job.prepare_companions(&crate::LinuxFs, op.clone())
+    } else {
+        Ok(op.clone())
+    };
+    let op = match prepared {
+        Ok(op) => op,
+        Err(error) => {
+            ctx.ops().remove(&id);
+            ctx.send(Event::OpDone { id, error: Some(error.into()), items: Vec::new() });
+            return;
+        }
+    };
+    let conflicts = if reviewed { flit_platform::conflicts::collect(&crate::LinuxFs, &op, job.ctl()) } else { Vec::new() };
     if !review_conflicts(id, conflicts, job.ctl(), |event| ctx.send(event)) {
         ctx.ops().remove(&id);
         ctx.send(Event::OpDone { id, error: Some(flit_core::provider::OpError::new(flit_platform::PlatformErrorKind::Cancelled, flit_platform::CANCELLED)), items: Vec::new() });
         return;
     }
-    let out = ops::run_in(op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
+    let out = ops::run_in(&op, &job, ctx.trash.as_ref().as_ref(), ctx.lang());
     ctx.ops().remove(&id);
     if let Some(done) = job.take_performed() {
         ctx.send(Event::OpPerformed { id, op: done });
@@ -183,7 +197,11 @@ fn watch(notify: Option<&Notify<ReqId>>, id: ReqId, path: &FsPath) {
     }
 }
 
-pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: String, trash: Option<Trash>) -> Result<(), ProtoError> {
+pub fn serve(input: impl Read, output: impl Write + Send + 'static, build: String, trash: Option<Trash>) -> Result<(), ProtoError> {
+    serve_with_companions(input, output, build, trash, false)
+}
+
+pub fn serve_with_companions(mut input: impl Read, output: impl Write + Send + 'static, build: String, trash: Option<Trash>, companions: bool) -> Result<(), ProtoError> {
     let (events, rx) = unbounded();
     let ours = hello(build);
     let theirs = ours.clone();
@@ -257,6 +275,7 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
             }
             Request::Op { id, op: o, policy } => {
                 let ctl = OpCtl::new(policy);
+                if companions { ctl.attach_companions(); }
                 ctx.ops().insert(id, ctl.clone());
                 if !spawn("flit-agent-op", move || op(&c, id, &o, ctl)) {
                     ctx.ops().remove(&id);

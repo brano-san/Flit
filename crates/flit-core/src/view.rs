@@ -98,6 +98,7 @@ pub struct DirView {
     shown: Option<Vec<u32>>,
     tree: Option<FxHashSet<Vec<u8>>>,
     hidden_types: FxHashSet<u64>,
+    hidden_companions: Option<FxHashSet<u32>>,
     shaped: Option<Vec<u32>>,
     roots: Vec<u32>,
     pos: Vec<u32>,
@@ -125,6 +126,7 @@ impl DirView {
             shown: None,
             tree: None,
             hidden_types: FxHashSet::default(),
+            hidden_companions: None,
             shaped: None,
             roots: Vec::new(),
             pos: Vec::new(),
@@ -196,12 +198,17 @@ impl DirView {
         self.pos.clear();
         let l = &self.snap.listing;
         let tree = self.tree.as_ref().filter(|_| l.nested > 0 && self.snap.view.tree);
-        if tree.is_none() && self.hidden_types.is_empty() && self.pick.is_none() {
+        if self.snap.view.hide_companions && self.hidden_companions.is_none() {
+            self.hidden_companions = Some(crate::companions::hidden(l, self.snap.path.case_sensitive()));
+        }
+        let companions = self.hidden_companions.as_ref().filter(|_| self.snap.view.hide_companions);
+        if tree.is_none() && self.hidden_types.is_empty() && self.pick.is_none() && companions.is_none_or(FxHashSet::is_empty) {
             return;
         }
         let keep = |i: u32| {
             self.filter.as_ref().is_none_or(|f| f.matched(i))
                 && (self.hidden_types.is_empty() || !self.hidden_types.contains(&type_key(l, i)))
+                && !companions.is_some_and(|hidden| hidden.contains(&i))
                 && self.pick.as_ref().is_none_or(|(directories, filter)| {
                     l.entries[i as usize].is_dir() || (!directories && filter.as_ref().is_none_or(|f| {
                         f.matches_with_mime(l.name(i), l.picker_mime.get(&i).map(AsRef::as_ref))
@@ -256,6 +263,7 @@ impl DirView {
     pub fn replace(&mut self, snap: Arc<DirSnapshot>) {
         self.snap = snap;
         self.names = None;
+        self.hidden_companions = None;
         self.rows_changed();
         self.prune();
     }
@@ -525,6 +533,7 @@ impl DirView {
     pub(crate) fn apply_all<C: Borrow<DirChange>>(&mut self, changes: impl IntoIterator<Item = C>) -> bool {
         let mut touched = Vec::new();
         let mut relabeled = false;
+        let mut companions_changed = false;
         let (mut lost_sel, mut lost_focus) = (false, false);
         for c in changes {
             let c = c.borrow();
@@ -540,13 +549,17 @@ impl DirView {
             let i = match existing {
                 Some(i) if c.kind == ChangeKind::Removed => {
                     snap.listing.mark_deleted(i);
+                    companions_changed = true;
                     if let Some(v) = self.names.as_mut().and_then(|m| m.get_mut(&hash::hash(c.name.as_slice()))) {
                         v.retain(|&mut x| x != i);
                     }
                     i
                 }
                 Some(i) => {
-                    snap.listing.set_meta(i, c.meta.unwrap_or_default());
+                    let meta = c.meta.unwrap_or_default();
+                    let relevant = attr::DIR | attr::DELETED | attr::STREAM;
+                    companions_changed |= (snap.listing.entries[i as usize].attrs ^ meta.attrs) & relevant != 0;
+                    snap.listing.set_meta(i, meta);
                     relabeled |= match &c.label {
                         Label::Keep => false,
                         Label::Set(label) if snap.listing.labeled(i) == Some(label.as_str()) => false,
@@ -559,6 +572,7 @@ impl DirView {
                     i
                 }
                 None => {
+                    companions_changed = true;
                     let i = snap.listing.push(&c.name, c.meta.unwrap_or_default());
                     if let Label::Set(label) = &c.label {
                         snap.listing.set_label(i, label);
@@ -578,6 +592,9 @@ impl DirView {
         }
         let l = &self.snap.listing;
         let gone = (lost_sel || lost_focus).then(|| self.rows().iter().position(|&i| l.entries[i as usize].attrs & attr::DELETED != 0 && (self.is_selected(i) || self.focus == Some(i)))).flatten();
+        if companions_changed {
+            self.hidden_companions = None;
+        }
         if !touched.is_empty() {
             if let Some(f) = &mut self.filter {
                 f.refresh_entries(&self.snap.listing, &touched, relabeled);
@@ -693,6 +710,7 @@ impl DirView {
         }
         let added = snap.listing.len() as u32 - start;
         if added > 0 {
+            self.hidden_companions = None;
             self.reorder((start..start + added).collect());
             self.rows_changed();
             self.prune();

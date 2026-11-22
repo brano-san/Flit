@@ -170,7 +170,7 @@ fn with_attributes(mut v: FolderView, (extra, widths, order): Attributed) -> Fol
     let c = &mut v.columns;
     c.extra = (c.extra & !ATTRIBUTED_MASK) | (u32::from(extra) & ATTRIBUTED_MASK);
     c.extra_widths[..ATTRIBUTED_EXTRA].copy_from_slice(&widths);
-    for (slot, id) in c.order.iter_mut().zip(order.into_iter().chain(ATTRIBUTED_ORDER as u8..ORDERED as u8)) {
+    for (slot, id) in c.order.iter_mut().zip(order.into_iter().chain(ATTRIBUTED_ORDER as u8..Column::GitStatus as u8).chain(Column::Rating as u8..=Column::PortableTags as u8)) {
         *slot = id;
     }
     v.sanitized()
@@ -200,6 +200,8 @@ fn with_shell(mut v: FolderView, (extra, widths, order, sort, group): Shelled) -
     }
     if order.len() == ORDERED {
         c.order.copy_from_slice(&order);
+    } else if order.len() == Column::GitStatus as usize {
+        c.order[..order.len()].copy_from_slice(&order);
     }
     if let Some(&f) = SortField::ALL.get(usize::from(sort)) {
         v.sort.field = f;

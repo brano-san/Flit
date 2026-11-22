@@ -1,3 +1,4 @@
+pub use super::settings_import::ImportPlan;
 use super::home::Widget;
 use super::user_menu::{self, UserEntry};
 use super::layouts::{LayoutMode, LAYOUTS};
@@ -12,7 +13,7 @@ use crate::path::{is_label, PathKind, COMPUTER_LABEL, HOME_LABEL, RECYCLE_BIN_LA
 use crate::open::OpenTarget;
 use crate::provider::Resolve;
 use crate::sort::{Folders, GroupField, SortField};
-use crate::tags::{self, Tag, TagRequest, MAX_TAGS};
+use crate::tags::Tag;
 use super::keymap::{self, Keymap};
 use crate::theme::{Area, Mode};
 use serde_json::{Map, Value as Json};
@@ -39,7 +40,7 @@ pub const AUTOSTART: &str = "advanced.autostart";
 pub const QUICK_ACCESS_SYNC: &str = "advanced.quick_access_sync";
 pub const BACKGROUND: &str = "windows.background";
 pub const PORTAL_PICKER: &str = "advanced.portal_file_chooser";
-pub const WINDOWS_ONLY: [&str; 6] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
+pub const WINDOWS_ONLY: [&str; 7] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu", "files.portable_ads"];
 pub const WINDOW_TITLE: &str = "appearance.window_title";
 pub const LINUX_ONLY: [&str; 2] = [WINDOW_TITLE, PORTAL_PICKER];
 
@@ -502,6 +503,8 @@ pub static SETTINGS: &[Setting] = &[
     menu_list("menu.seen_file", |a| a.opts.menu.seen[0].clone(), |a, v| a.opts.menu.seen[0] = v),
     menu_list("menu.seen_folder", |a| a.opts.menu.seen[1].clone(), |a, v| a.opts.menu.seen[1] = v),
     menu_list("menu.seen_background", |a| a.opts.menu.seen[2].clone(), |a, v| a.opts.menu.seen[2] = v),
+    toggle("files.hide_companions", Page::Files, S::CompanionsHide, S::CompanionsHelp, |a| a.hide_companions, |a, on| a.set_companions(on)),
+    toggle("files.portable_ads", Page::Files, S::PortableMetaAds, S::PortableMetaAdsHelp, |a| a.metadata_ads, |a, on| a.set_metadata_ads(on)),
     Setting { id: "menu.custom", page: Page::Menu, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
     toggle(AUTOSTART, Page::Advanced, S::SettingsPageSystemAutostart, S::SettingsPageSystemAutostartHelp, |a| a.autostart, |a, on| a.autostart = on),
     toggle(PROTOCOL_LINKS, Page::Advanced, S::SettingsPageSystemProtocol, S::SettingsPageSystemProtocolHelp, |a| a.protocol_links, |a, on| a.protocol_links = on),
@@ -783,7 +786,7 @@ impl App {
         self.report_problems(&doc.problems);
     }
 
-    fn report_problems(&mut self, problems: &[String]) {
+    pub(super) fn report_problems(&mut self, problems: &[String]) {
         match problems {
             [] => {}
             [one] => self.status(i18n::localize(one).into_owned()),
@@ -801,37 +804,7 @@ impl App {
         render(&self.setting_values(), &Map::new(), Some(self.tag_defs()))
     }
 
-    pub fn import_settings(&mut self, text: &str) {
-        let doc = parse(text);
-        if doc.broken {
-            return self.report_problems(&doc.problems);
-        }
-        let applied = self.apply_settings(&doc.values);
-        let mut defs = self.tag_defs().to_vec();
-        let mut tagged = 0;
-        for t in &doc.tags {
-            match tags::find(&defs, &t.name) {
-                Some(k) if defs[k].color != t.color => {
-                    self.effects.push(Effect::Tags(TagRequest::Recolor { tag: k, color: t.color }));
-                    defs[k].color = t.color;
-                    tagged += 1;
-                }
-                Some(_) => {}
-                None if defs.len() < MAX_TAGS && tags::validate_name(&defs, &t.name, None).is_ok() => {
-                    self.effects.push(Effect::Tags(TagRequest::Create { name: t.name.clone(), color: t.color, assign: Vec::new() }));
-                    defs.push(t.clone());
-                    tagged += 1;
-                }
-                None => {}
-            }
-        }
-        match doc.problems.first() {
-            Some(p) => self.status(format!("{}; {}", self.imported(applied, tagged), i18n::localize(p))),
-            None => self.status(self.imported(applied, tagged)),
-        }
-    }
-
-    fn imported(&self, applied: usize, tagged: usize) -> String {
+    pub(super) fn imported(&self, applied: usize, tagged: usize) -> String {
         crate::tr!(S::SettingsStatusImported, settings = crate::trn!(P::SettingsCountSettings, applied), tags = crate::trn!(P::SettingsCountTags, tagged))
     }
 
@@ -893,6 +866,15 @@ impl App {
         if self.style.today != today {
             self.style.today = today;
             self.dirty |= self.style.dates == DateFormat::Application;
+        }
+    }
+
+    fn set_companions(&mut self, on: bool) {
+        if self.hide_companions == on { return; }
+        self.hide_companions = on;
+        for k in 0..self.tabs.len() {
+            self.sync_spec(k);
+            self.resort(k);
         }
     }
 

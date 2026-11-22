@@ -152,3 +152,17 @@ link_disabled = "L’ouverture des liens flit: est désactivée"
 
 unavailable = "L'intégration système est indisponible dans ce mode."
 archive_no_handlers = "Aucun format d'archive pris en charge n'a déjà une autre application configurée pour l'ouvrir."
+
+[import]
+preview = "Vérifier l’importation des réglages"
+apply = "Appliquer l’importation"
+undo = "Annuler l’importation"
+programs = "Ces réglages peuvent lancer des programmes externes : {keys}. Vérifiez les commandes avant de les appliquer."
+change = "{before} → {after}"
+backup = "Sauvegarde enregistrée dans {path}"
+newer = "Ce fichier utilise un format de réglages plus récent."
+no_changes = "L’importation ne contient aucune modification."
+stale = "Les réglages ou les étiquettes ont changé. Rouvrez l’importation pour vérifier les valeurs actuelles."
+undone = "L’importation des réglages a été annulée."
+unavailable = "Le fichier de réglages ou l’emplacement de sauvegarde est indisponible."
+too_large = "Le fichier à importer dépasse 4 Mio."

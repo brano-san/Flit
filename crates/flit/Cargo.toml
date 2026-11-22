@@ -20,6 +20,7 @@ rayon.workspace = true
 serde.workspace = true
 postcard.workspace = true
 serde_json.workspace = true
+quick-xml = { version = "0.41", default-features = false }
 ed25519-compact.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
