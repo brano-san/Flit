@@ -31,7 +31,7 @@ fn answering(listener: Bound, owner: u32, reached: Arc<AtomicBool>) {
                 }
                 let mut buf = Vec::new();
                 while let Ok(Message::Query { gen, .. }) = read_frame::<_, Message>(&mut conn, &mut buf) {
-                    let _ = write_frame(&mut conn, &Message::QueryDone { gen, total: 7 });
+                    let _ = write_frame(&mut conn, &Message::QueryDone { gen, total: 7, version: 0 });
                 }
             }),
         )
@@ -39,7 +39,7 @@ fn answering(listener: Bound, owner: u32, reached: Arc<AtomicBool>) {
 }
 
 fn query(gen: u64) -> Message {
-    Message::Query { gen, text: "report".into(), sort: Sort { key: SortKey::Name, descending: false } }
+    Message::Query { gen, text: "report".into(), conditions: Vec::new(), sort: Sort { key: SortKey::Name, descending: false }, paths: Default::default() }
 }
 
 #[test]
@@ -57,7 +57,7 @@ fn a_client_and_the_service_talk_the_index_protocol_through_a_private_socket() {
     handshake(&mut conn, &hello()).unwrap();
     for gen in [1, 2] {
         write_frame(&mut conn, &query(gen)).unwrap();
-        assert_eq!(read_frame::<_, Message>(&mut conn, &mut Vec::new()).unwrap(), Message::QueryDone { gen, total: 7 });
+        assert_eq!(read_frame::<_, Message>(&mut conn, &mut Vec::new()).unwrap(), Message::QueryDone { gen, total: 7, version: 0 });
     }
     assert!(reached.load(Ordering::Acquire));
 }

@@ -115,8 +115,8 @@ fn search_inside_a_library_is_limited_to_its_folders() {
     let mut app = library_app();
     app.open_search();
     let fx: Vec<Effect> = app.drain_effects().collect();
-    let text = fx.iter().find_map(|e| if let Effect::Search(SearchRequest::Query { text, .. }) = e { Some(text.clone()) } else { None }).unwrap();
-    assert!(text.starts_with(r"path:regex:^(?:C\:\\Users\\u\\Documents|D\:\\Docs)\\"), "{text}");
+    let conditions = fx.iter().find_map(|e| if let Effect::Search(SearchRequest::Query { conditions, .. }) = e { Some(conditions) } else { None }).unwrap();
+    assert_eq!(conditions, &[r"path:regex:^(?:C\:\\Users\\u\\Documents|D\:\\Docs)\\"]);
     assert!(fx.iter().any(|e| matches!(e, Effect::Title(t) if t == "Search in Documents — Flit")));
 }
 

@@ -1,13 +1,13 @@
 use crate::index::lowercase;
 use regex::bytes::{Regex, RegexBuilder};
 
-const TICKS_PER_SEC: i64 = 10_000_000;
-const UNIX_EPOCH_SECS: i64 = 11_644_473_600;
-const DAY: i64 = 86_400;
+use flit_core::query_attrs;
+#[cfg(test)]
+use flit_core::query_attrs::{DAY, TICKS_PER_SEC, UNIX_EPOCH_SECS};
+pub use flit_core::query_attrs::{days_from_civil, Clock, MAX_EXTS};
 const REGEX_SIZE_LIMIT: usize = 1 << 22;
 pub const MAX_TERMS: usize = 32;
 pub const MAX_REGEXES: usize = 4;
-pub const MAX_EXTS: usize = 64;
 pub const MAX_PATTERN: usize = 1024;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -30,6 +30,13 @@ pub enum Filter {
     Size(u64, u64),
     Modified(i64, i64),
     Tag(String),
+    Any(Vec<Query>),
+    Directory(bool),
+    Created(i64, i64),
+    Accessed(i64, i64),
+    Attributes(u32),
+    Children(u64, u64),
+    Depth(u64, u64),
 }
 
 #[derive(Debug, Clone)]
@@ -41,27 +48,7 @@ pub struct Term {
 #[derive(Debug, Clone, Default)]
 pub struct Query {
     pub terms: Vec<Term>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Clock {
-    pub now: i64,
-    pub utc_offset_min: i32,
-}
-
-impl Clock {
-    pub fn system(utc_offset_min: i32) -> Self {
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-        Self { now: (secs + UNIX_EPOCH_SECS) * TICKS_PER_SEC, utc_offset_min }
-    }
-
-    fn today(&self) -> i64 {
-        (self.now / TICKS_PER_SEC - UNIX_EPOCH_SECS + self.utc_offset_min as i64 * 60).div_euclid(DAY)
-    }
-
-    fn day_start(&self, unix_day: i64) -> i64 {
-        (unix_day * DAY - self.utc_offset_min as i64 * 60 + UNIX_EPOCH_SECS) * TICKS_PER_SEC
-    }
+    pub paths: query_attrs::SearchPaths,
 }
 
 impl Term {
@@ -83,20 +70,39 @@ impl Query {
     }
 
     pub fn needs_path(&self) -> bool {
-        self.terms.iter().any(|t| matches!(t.filter, Filter::Match(Scope::Path, _)))
+        !self.paths.is_empty() || self.uses(&|f| matches!(f, Filter::Match(Scope::Path, _)))
     }
 
     pub fn has_tags(&self) -> bool {
-        self.terms.iter().any(|t| matches!(t.filter, Filter::Tag(_)))
+        self.uses(&|f| matches!(f, Filter::Tag(_)))
+    }
+
+    pub fn uses(&self, predicate: &dyn Fn(&Filter) -> bool) -> bool {
+        self.terms.iter().any(|t| predicate(&t.filter) || matches!(&t.filter, Filter::Any(queries) if queries.iter().any(|q| q.uses(predicate))))
+    }
+
+    pub fn visit_filters(&self, visit: &mut dyn FnMut(&Filter)) {
+        for t in &self.terms {
+            visit(&t.filter);
+            if let Filter::Any(queries) = &t.filter {
+                for query in queries {
+                    query.visit_filters(visit);
+                }
+            }
+        }
     }
 
     pub fn matches(&self, e: &Plain<'_>, has_tag: &dyn Fn(&str) -> bool) -> bool {
+        self.matches_with(e, Facts::default(), has_tag)
+    }
+
+    pub fn matches_with(&self, e: &Plain<'_>, facts: Facts, has_tag: &dyn Fn(&str) -> bool) -> bool {
         let text = |p: &Pattern, lower: &[u8], original: &[u8]| match p {
             Pattern::Text(t) => memchr::memmem::find(lower, t).is_some(),
             Pattern::Glob(g) => glob(g, lower),
             Pattern::Regex(re) => re.is_match(original),
         };
-        self.terms.iter().all(|t| {
+        !self.paths.rejects(e.path) && self.terms.iter().all(|t| {
             let ok = match &t.filter {
                 Filter::Match(Scope::Name, p) => text(p, e.lower_name, e.name),
                 Filter::Match(Scope::Path, p) => text(p, e.lower_path, e.path),
@@ -104,10 +110,26 @@ impl Query {
                 Filter::Size(lo, hi) => !e.dir && (*lo..*hi).contains(&e.size),
                 Filter::Modified(lo, hi) => (*lo..*hi).contains(&e.modified),
                 Filter::Tag(name) => has_tag(name),
+                Filter::Any(queries) => queries.iter().any(|q| q.matches_with(e, facts, has_tag)),
+                Filter::Directory(dir) => e.dir == *dir,
+                Filter::Created(lo, hi) => facts.created > 0 && (*lo..*hi).contains(&facts.created),
+                Filter::Accessed(lo, hi) => facts.accessed > 0 && (*lo..*hi).contains(&facts.accessed),
+                Filter::Attributes(mask) => facts.attrs & mask == *mask,
+                Filter::Children(lo, hi) => e.dir && facts.children.is_some_and(|n| (*lo..*hi).contains(&u64::from(n))),
+                Filter::Depth(lo, hi) => facts.depth.is_some_and(|n| (*lo..*hi).contains(&u64::from(n))),
             };
             ok != t.negate
         })
     }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Facts {
+    pub attrs: u32,
+    pub created: i64,
+    pub accessed: i64,
+    pub children: Option<u32>,
+    pub depth: Option<u32>,
 }
 
 pub struct Plain<'a> {
@@ -157,7 +179,7 @@ fn strip_ci<'a>(s: &'a str, prefix: &str) -> Option<&'a str> {
     head.eq_ignore_ascii_case(prefix).then(|| &s[prefix.len()..])
 }
 
-const OWN_PROPERTIES: [&str; 6] = ["path", "regex", "ext", "size", "dm", "tag"];
+const OWN_PROPERTIES: &[&str] = &["path", "regex", "ext", "size", "dm", "tag", "file", "folder", "dc", "da", "attrib", "empty", "child-count", "depth"];
 
 pub fn shell_query(text: &str, windows: bool) -> Option<String> {
     let text = text.trim();
@@ -175,28 +197,259 @@ pub fn shell_query(text: &str, windows: bool) -> Option<String> {
     tokens(text).iter().any(|(tok, literal)| !literal && foreign(tok)).then(|| text.to_owned())
 }
 
-pub fn parse(text: &str, clock: Clock) -> Result<Query, String> {
-    let mut terms = Vec::new();
-    let mut not = false;
-    for (tok, literal) in tokens(text) {
-        match tok.as_str() {
-            "AND" if !literal => continue,
-            "NOT" if !literal => not = !not,
-            _ => {
-                if let Some(mut t) = term(&tok, literal, clock)? {
-                    t.negate ^= std::mem::take(&mut not);
-                    terms.push(t);
-                    if terms.len() > MAX_TERMS {
-                        return Err(format!("the query has more than {MAX_TERMS} terms"));
-                    }
-                    if terms.iter().filter(|t| matches!(t.filter, Filter::Match(_, Pattern::Regex(_)))).count() > MAX_REGEXES {
-                        return Err(format!("the query has more than {MAX_REGEXES} regular expressions"));
-                    }
+#[derive(Debug)]
+enum Token {
+    Word(String, bool),
+    Or,
+    And,
+    Open,
+    Close,
+}
+
+fn normalize_operators(lexed: Vec<(usize, usize, Token)>) -> Vec<(usize, Token)> {
+    let mut groups = vec![false; lexed.len()];
+    let mut stack = Vec::new();
+    let mut last_word = None;
+    for (i, (_, _, token)) in lexed.iter().enumerate() {
+        match token {
+            Token::Open => stack.push(i),
+            Token::Close => {
+                if let Some(open) = stack.pop().filter(|open| last_word.is_some_and(|word| word > *open)) {
+                    groups[open] = true;
+                    groups[i] = true;
                 }
             }
+            Token::Word(..) => last_word = Some(i),
+            _ => {}
         }
     }
-    Ok(Query { terms })
+    let operand = |i: usize, before: bool| {
+        lexed.get(i).is_some_and(|(_, _, token)| match token {
+            Token::Word(word, false) => !matches!(word.as_str(), "OR" | "AND") && (!before || !matches!(word.as_str(), "NOT" | "!")),
+            Token::Word(..) => true,
+            Token::Close if before => groups[i],
+            Token::Open if !before => groups[i],
+            _ => false,
+        })
+    };
+    let binary: Vec<_> = (0..lexed.len()).map(|i| i > 0 && operand(i - 1, true) && operand(i + 1, false)).collect();
+    let mut out = Vec::new();
+    let (mut previous_end, mut previous_literal_symbol) = (0, false);
+    for (i, (at, end, token)) in lexed.into_iter().enumerate() {
+        let symbol = |word: &str| Token::Word(word.to_owned(), false);
+        let (token, literal_symbol) = match token {
+            Token::Open if !groups[i] => (symbol("<"), true),
+            Token::Close if !groups[i] => (symbol(">"), true),
+            Token::Or if !binary[i] => (symbol("|"), true),
+            Token::Word(word, false) if binary[i] && word == "OR" => (Token::Or, false),
+            Token::Word(word, false) if binary[i] && word == "AND" => (Token::And, false),
+            token => (token, false),
+        };
+        if at == previous_end && (literal_symbol || previous_literal_symbol) {
+            if let (Some((_, Token::Word(previous, _))), Token::Word(word, _)) = (out.last_mut(), &token) {
+                previous.push_str(word);
+                previous_end = end;
+                previous_literal_symbol = literal_symbol;
+                continue;
+            }
+        }
+        out.push((at, token));
+        previous_end = end;
+        previous_literal_symbol = literal_symbol;
+    }
+    out
+}
+
+fn lex(text: &str) -> Result<Vec<(usize, Token)>, usize> {
+    let mut out = Vec::new();
+    let (mut start, mut value, mut quoted, mut literal) = (None, String::new(), false, false);
+    let flush = |out: &mut Vec<_>, start: &mut Option<usize>, value: &mut String, literal: &mut bool, end| {
+        if let Some(at) = start.take().filter(|_| !value.is_empty()) {
+            out.push((at, end, Token::Word(std::mem::take(value), *literal)));
+        }
+        *literal = false;
+    };
+    for (at, c) in text.char_indices() {
+        if c == '"' {
+            if start.is_none() {
+                start = Some(at);
+                literal = true;
+            }
+            quoted = !quoted;
+            continue;
+        }
+        if !quoted && (c.is_whitespace() || matches!(c, '<' | '>' | '|')) {
+            let prefixed = value.trim_start_matches('!').to_ascii_lowercase();
+            let regex = prefixed.starts_with("regex:") || prefixed.starts_with("path:regex:") || prefixed.starts_with("regex:path:");
+            let comparison = matches!(prefixed.as_str(), "size:" | "dm:" | "dc:" | "da:" | "depth:" | "child-count:");
+            let operator = match c {
+                '|' if !regex => Some(Token::Or),
+                '<' if !regex && !comparison => Some(Token::Open),
+                '>' if !regex && !comparison => Some(Token::Close),
+                _ => None,
+            };
+            if let Some(t) = operator {
+                flush(&mut out, &mut start, &mut value, &mut literal, at);
+                out.push((at, at + 1, t));
+                continue;
+            }
+            if c.is_whitespace() {
+                flush(&mut out, &mut start, &mut value, &mut literal, at);
+                continue;
+            }
+        }
+        if !c.is_control() {
+            start.get_or_insert(at);
+            value.push(c);
+        }
+    }
+    if quoted {
+        return Err(start.unwrap_or(text.len()));
+    }
+    flush(&mut out, &mut start, &mut value, &mut literal, text.len());
+    Ok(normalize_operators(out))
+}
+
+#[derive(Default)]
+struct ParseBudget {
+    terms: usize,
+    regexes: usize,
+}
+
+struct Parser<'a> {
+    tokens: std::iter::Peekable<std::vec::IntoIter<(usize, Token)>>,
+    clock: Clock,
+    end: usize,
+    budget: &'a mut ParseBudget,
+}
+
+type ParseResult<T> = Result<T, (usize, String)>;
+
+impl Parser<'_> {
+    fn expression(&mut self, depth: usize) -> ParseResult<Query> {
+        let mut branches = Vec::new();
+        let mut terms = self.conjunction(depth)?;
+        while matches!(self.tokens.peek(), Some((_, Token::Or))) {
+            let (at, _) = self.tokens.next().unwrap();
+            if terms.is_empty() {
+                return Err((at, "missing expression before |".into()));
+            }
+            branches.push(Query { terms, ..Query::default() });
+            terms = self.conjunction(depth)?;
+            if terms.is_empty() {
+                return Err((at, "missing expression after |".into()));
+            }
+        }
+        if !branches.is_empty() {
+            branches.push(Query { terms, ..Query::default() });
+            terms = vec![Term { negate: false, filter: Filter::Any(branches) }];
+        }
+        Ok(Query { terms, ..Query::default() })
+    }
+
+    fn conjunction(&mut self, depth: usize) -> ParseResult<Vec<Term>> {
+        let mut terms = Vec::new();
+        let mut negate = false;
+        let mut unary = None;
+        let mut conjunction = None;
+        while self.tokens.peek().is_some_and(|(_, t)| !matches!(t, Token::Or | Token::Close)) {
+            let (at, token) = self.tokens.next().unwrap();
+            let parsed = match token {
+                Token::Word(w, false) if w == "NOT" || w == "!" => {
+                    negate = !negate;
+                    unary = Some(at);
+                    continue;
+                }
+                Token::And => {
+                    if terms.is_empty() || conjunction.is_some() || unary.is_some() {
+                        return Err((at, "missing expression before AND".into()));
+                    }
+                    conjunction = Some(at);
+                    continue;
+                }
+                Token::Word(w, literal) => {
+                    self.budget.terms += 1;
+                    if self.budget.terms > MAX_TERMS {
+                        return Err((at, format!("the query has more than {MAX_TERMS} terms")));
+                    }
+                    if !literal && w.trim_start_matches('!').split(':').take(3).any(|s| s.eq_ignore_ascii_case("regex")) {
+                        self.budget.regexes += 1;
+                        if self.budget.regexes > MAX_REGEXES {
+                            return Err((at, format!("the query has more than {MAX_REGEXES} regular expressions")));
+                        }
+                    }
+                    term(&w, literal, self.clock).map_err(|e| (at, e))?
+                }
+                Token::Open => {
+                    if depth >= MAX_TERMS {
+                        return Err((at, "groups are nested too deeply".into()));
+                    }
+                    let group = self.expression(depth + 1)?;
+                    if group.terms.is_empty() {
+                        return Err((at, "empty group".into()));
+                    }
+                    if !matches!(self.tokens.next(), Some((_, Token::Close))) {
+                        return Err((at, "group is missing >".into()));
+                    }
+                    Some(Term { negate: false, filter: Filter::Any(vec![group]) })
+                }
+                _ => unreachable!(),
+            };
+            if let Some(mut t) = parsed {
+                t.negate ^= std::mem::take(&mut negate);
+                terms.push(t);
+                (unary, conjunction) = (None, None);
+            }
+        }
+        if let Some(at) = unary.or(conjunction) {
+            return Err((at, "missing expression after operator".into()));
+        }
+        Ok(terms)
+    }
+
+    fn finish(mut self) -> ParseResult<Query> {
+        let query = self.expression(0)?;
+        if let Some((at, _)) = self.tokens.next() {
+            return Err((at.min(self.end), "unexpected >".into()));
+        }
+        Ok(query)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ParseError {
+    pub position: usize,
+    detail: String,
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} (position {})", self.detail, self.position)
+    }
+}
+
+pub fn parse_with_position(text: &str, clock: Clock) -> Result<Query, ParseError> {
+    parse_part(text, clock, &mut ParseBudget::default())
+}
+
+fn parse_part(text: &str, clock: Clock, budget: &mut ParseBudget) -> Result<Query, ParseError> {
+    let err = |at, detail| ParseError { position: text[..at].chars().count() + 1, detail };
+    let tokens = lex(text).map_err(|at| err(at, "unterminated quote".into()))?;
+    Parser { tokens: tokens.into_iter().peekable(), clock, end: text.len(), budget }
+        .finish().map_err(|(at, message)| err(at, message))
+}
+
+pub fn parse(text: &str, clock: Clock) -> Result<Query, String> {
+    parse_with_position(text, clock).map_err(|e| e.to_string())
+}
+
+pub fn parse_with_conditions(text: &str, conditions: &[String], clock: Clock) -> Result<Query, ParseError> {
+    let mut budget = ParseBudget::default();
+    let mut query = parse_part(text, clock, &mut budget)?;
+    for condition in conditions {
+        query.terms.extend(parse_part(condition, clock, &mut budget)?.terms);
+    }
+    Ok(query)
 }
 
 fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> {
@@ -218,16 +471,52 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
         }
         if !regex {
             let filter = if let Some(v) = strip_ci(s, "ext:") {
-                if v.split(';').count() > MAX_EXTS {
-                    return Err(format!("ext: lists at most {MAX_EXTS} extensions"));
-                }
-                Some(Filter::Ext(v.split(';').map(|e| lowercase(e.trim_start_matches('.').as_bytes())).collect()))
+                Some(Filter::Ext(query_attrs::extensions(v).ok_or_else(|| format!("ext: lists at most {MAX_EXTS} extensions"))?))
             } else if let Some(v) = strip_ci(s, "size:") {
-                let (lo, hi) = interval(v, &|x| size_value(x).map(|n| (n as i128, n as i128 + 1))).ok_or_else(|| format!("invalid size: {v}"))?;
-                Some(Filter::Size(lo.clamp(0, u64::MAX as i128) as u64, hi.clamp(0, u64::MAX as i128) as u64))
+                let (lo, hi) = query_attrs::size_range(v).ok_or_else(|| format!("invalid size: {v}"))?;
+                Some(Filter::Size(lo, hi))
             } else if let Some(v) = strip_ci(s, "dm:") {
-                let (lo, hi) = interval(v, &|x| date_value(x, clock)).ok_or_else(|| format!("invalid date: {v}"))?;
-                Some(Filter::Modified(lo.clamp(i64::MIN as i128, i64::MAX as i128) as i64, hi.clamp(i64::MIN as i128, i64::MAX as i128) as i64))
+                let (lo, hi) = query_attrs::date_range(v, clock).ok_or_else(|| format!("invalid date: {v}"))?;
+                Some(Filter::Modified(lo, hi))
+            } else if let Some(v) = strip_ci(s, "dc:").or_else(|| strip_ci(s, "da:")) {
+                let (lo, hi) = query_attrs::date_range(v, clock).ok_or_else(|| format!("invalid date: {v}"))?;
+                Some(if strip_ci(s, "dc:").is_some() { Filter::Created(lo, hi) } else { Filter::Accessed(lo, hi) })
+            } else if let Some(v) = strip_ci(s, "child-count:").or_else(|| strip_ci(s, "depth:")) {
+                let (lo, hi) = query_attrs::number_range(v).ok_or_else(|| format!("invalid count: {v}"))?;
+                Some(if strip_ci(s, "depth:").is_some() { Filter::Depth(lo, hi) } else { Filter::Children(lo, hi) })
+            } else if let Some(v) = strip_ci(s, "empty:") {
+                match v.to_ascii_lowercase().as_str() {
+                    "true" | "yes" | "1" => Some(Filter::Children(0, 1)),
+                    "false" | "no" | "0" => Some(Filter::Children(1, u64::MAX)),
+                    _ => return Err(format!("invalid boolean: {v}")),
+                }
+            } else if let Some(v) = strip_ci(s, "attrib:") {
+                let mut mask = 0;
+                for name in v.split([';', ',']) {
+                    mask |= match name.to_ascii_lowercase().as_str() {
+                        "hidden" => flit_core::attr::HIDDEN,
+                        "system" => flit_core::attr::SYSTEM,
+                        "readonly" | "read-only" => flit_core::attr::READONLY,
+                        "link" => flit_core::attr::LINK,
+                        "folder" | "directory" => flit_core::attr::DIR,
+                        _ => return Err(format!("unknown attribute: {name}")),
+                    };
+                }
+                Some(Filter::Attributes(mask))
+            } else if let Some((dir, rest)) = strip_ci(s, "file:").map(|s| (false, s)).or_else(|| strip_ci(s, "folder:").map(|s| (true, s))) {
+                let filter = Filter::Directory(dir);
+                if rest.len() > MAX_PATTERN {
+                    return Err(format!("a search term is longer than {MAX_PATTERN} bytes"));
+                }
+                if rest.is_empty() {
+                    Some(filter)
+                } else {
+                    let pattern = if rest.contains(['*', '?']) { Pattern::Glob(lowercase(rest.as_bytes())) } else { Pattern::Text(lowercase(rest.as_bytes())) };
+                    Some(Filter::Any(vec![Query { terms: vec![
+                        Term { negate: false, filter },
+                        Term { negate: false, filter: Filter::Match(Scope::Name, pattern) },
+                    ], ..Query::default() }]))
+                }
             } else {
                 strip_ci(s, "tag:").map(|v| Filter::Tag(v.trim().to_owned()))
             };
@@ -257,92 +546,6 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
         }
     };
     Ok(Some(Term { negate, filter: Filter::Match(scope, pattern) }))
-}
-
-fn interval(v: &str, value: &dyn Fn(&str) -> Option<(i128, i128)>) -> Option<(i128, i128)> {
-    let (open_lo, open_hi) = (i128::MIN, i128::MAX);
-    if let Some(x) = v.strip_prefix(">=") {
-        return Some((value(x)?.0, open_hi));
-    }
-    if let Some(x) = v.strip_prefix("<=") {
-        return Some((open_lo, value(x)?.1));
-    }
-    if let Some(x) = v.strip_prefix('>') {
-        return Some((value(x)?.1, open_hi));
-    }
-    if let Some(x) = v.strip_prefix('<') {
-        return Some((open_lo, value(x)?.0));
-    }
-    let v = v.strip_prefix('=').unwrap_or(v);
-    if let Some((a, b)) = v.split_once("..") {
-        let lo = if a.is_empty() { open_lo } else { value(a)?.0 };
-        let hi = if b.is_empty() { open_hi } else { value(b)?.1 };
-        return Some((lo, hi));
-    }
-    value(v)
-}
-
-fn size_value(x: &str) -> Option<u64> {
-    let x = x.trim().to_ascii_lowercase();
-    let split = x.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(x.len());
-    let (num, unit) = x.split_at(split);
-    let mult: u64 = match unit {
-        "" | "b" => 1,
-        "k" | "kb" => 1 << 10,
-        "m" | "mb" => 1 << 20,
-        "g" | "gb" => 1 << 30,
-        "t" | "tb" => 1 << 40,
-        _ => return None,
-    };
-    let n: f64 = num.parse().ok().filter(|n: &f64| n.is_finite() && *n >= 0.0)?;
-    Some((n * mult as f64).round().min(u64::MAX as f64) as u64)
-}
-
-pub fn days_from_civil(y: i64, m: u32, d: u32) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let mp = (m as i64 + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + d as i64 - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
-fn date_value(x: &str, clock: Clock) -> Option<(i128, i128)> {
-    let x = x.trim().to_ascii_lowercase();
-    let today = clock.today();
-    let (first, last) = match x.as_str() {
-        "today" => (today, today + 1),
-        "yesterday" => (today - 1, today),
-        _ => {
-            let parts: Vec<&str> = x.split(['-', '/']).collect();
-            let num = |s: &str| s.parse::<i64>().ok().filter(|_| !s.is_empty() && s.len() <= 4);
-            match parts.as_slice() {
-                [y] if y.len() == 4 => {
-                    let y = num(y)?;
-                    (days_from_civil(y, 1, 1), days_from_civil(y + 1, 1, 1))
-                }
-                [y, m] if y.len() == 4 => {
-                    let (y, m) = (num(y)?, num(m)?);
-                    if !(1..=12).contains(&m) {
-                        return None;
-                    }
-                    let (ny, nm) = if m == 12 { (y + 1, 1) } else { (y, m + 1) };
-                    (days_from_civil(y, m as u32, 1), days_from_civil(ny, nm as u32, 1))
-                }
-                [y, m, d] if y.len() == 4 => {
-                    let (y, m, d) = (num(y)?, num(m)?, num(d)?);
-                    if !(1..=12).contains(&m) || !(1..=31).contains(&d) {
-                        return None;
-                    }
-                    let start = days_from_civil(y, m as u32, d as u32);
-                    (start, start + 1)
-                }
-                _ => return None,
-            }
-        }
-    };
-    Some((clock.day_start(first) as i128, clock.day_start(last) as i128))
 }
 
 #[inline]

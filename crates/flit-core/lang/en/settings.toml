@@ -76,6 +76,7 @@ about = "About"
 "advanced.indexing" = "Index files for search"
 "keys" = "Keyboard shortcuts"
 "general.mru_tabs" = "Ctrl+Tab in most recently used order"
+"advanced.search_exclusions" = "Paths excluded from search"
 
 [help]
 "general.language" = "The language of menus, dialogs, messages and dates; logs stay in English"
@@ -152,6 +153,7 @@ about = "About"
 "keys" = "Shortcuts that differ from the defaults, by command id"
 "area_color" = "Default follows the background color; text on a custom color adjusts to stay readable"
 "general.mru_tabs" = "Cycle through tabs by last use with Ctrl+Tab. Turn this off to cycle in tab strip order."
+"advanced.search_exclusions" = "Hide these paths and their contents from search results."
 
 [choice]
 "language.system" = "As in system"

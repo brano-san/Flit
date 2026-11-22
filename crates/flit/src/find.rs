@@ -4,7 +4,7 @@ use flit_core::ui::{SearchKey, SearchRow, SearchSort};
 use flit_core::{attr, FsPath};
 use flit_platform::Fs;
 use flit_search::index::lowercase;
-use flit_search::query::{Plain, Query};
+use flit_search::query::{Facts, Filter, Plain, Query};
 use std::cmp::Ordering;
 use std::sync::Mutex;
 
@@ -63,6 +63,9 @@ pub fn groups(hits: &[Hit]) -> Vec<u64> {
 }
 
 fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, found: &Mutex<Found>) -> Vec<FsPath> {
+    if query.paths.excludes_branch(dir.as_bytes()) {
+        return Vec::new();
+    }
     let mut on_batch = |_: &ListingBuilder<'_>| keep_going();
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut on_batch);
     let read = fs.read_dir(dir, &mut b);
@@ -72,6 +75,8 @@ fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, 
         return Vec::new();
     }
     let needs_path = query.needs_path();
+    let needs_children = query.uses(&|f| matches!(f, Filter::Children(..)));
+    let depth = dir.components().count() as u32 + 1;
     let (mut subdirs, mut hits) = (Vec::new(), Vec::new());
     let mut path = Vec::new();
     for i in 0..l.len() as u32 {
@@ -86,7 +91,14 @@ fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, 
             Vec::new()
         };
         let plain = Plain { name, lower_name: &lower_name, path: &path, lower_path: &lower_path, size: e.size, modified: e.modified, dir: e.is_dir() };
-        if query.matches(&plain, &|_| false) {
+        let children = if needs_children && e.is_dir() && e.attrs & attr::LINK == 0 && keep_going() {
+            let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut on_batch);
+            fs.read_dir(&dir.join(name), &mut b).ok().map(|_| b.listing.len() as u32)
+        } else {
+            None
+        };
+        let facts = Facts { attrs: e.attrs, created: e.created, accessed: e.accessed, children, depth: Some(depth) };
+        if query.matches_with(&plain, facts, &|_| false) {
             let row = SearchRow { name: name.to_vec(), dir: dir.as_bytes().to_vec(), meta: e.meta() };
             hits.push(Hit { lower_name, lower_dir: lowercase(dir.as_bytes()), row });
         }

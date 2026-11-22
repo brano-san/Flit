@@ -6,15 +6,16 @@ use flit_core::tags::TagCell;
 
 #[test]
 fn requests_map_to_protocol_messages() {
-    let q = SearchRequest::Query { gen: 3, text: "a b".into(), sort: SearchSort { key: SearchKey::Folder, descending: true }, scope: SearchScope::All };
-    assert_eq!(to_message(&q), Some(Message::Query { gen: 3, text: "a b".into(), sort: Sort { key: SortKey::Path, descending: true } }));
+    let q = SearchRequest::Query { gen: 3, text: "a b".into(), conditions: Vec::new(), sort: SearchSort { key: SearchKey::Folder, descending: true }, scope: SearchScope::All, paths: Default::default() };
+    assert_eq!(to_message(&q), Some(Message::Query { gen: 3, text: "a b".into(), conditions: Vec::new(), sort: Sort { key: SortKey::Path, descending: true }, paths: Default::default() }));
     let docs = flit_core::Location::parse(r"C:\Users\Jo Doe").unwrap();
-    let q = SearchRequest::Query { gen: 4, text: "x".into(), sort: SearchSort::default(), scope: SearchScope::Indexed(docs) };
-    assert!(matches!(to_message(&q), Some(Message::Query { text, .. }) if text == r#"x path:"C:\Users\Jo Doe\""#));
+    let q = SearchRequest::Query { gen: 4, text: "x".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::Indexed(docs), paths: Default::default() };
+    assert!(matches!(to_message(&q), Some(Message::Query { text, conditions, paths, .. })
+        if text == "x" && conditions.is_empty() && paths.under.as_ref().unwrap().as_bytes() == br"C:\Users\Jo Doe"));
     let root = flit_core::Location::parse(r"D:\").unwrap();
-    let q = SearchRequest::Query { gen: 5, text: String::new(), sort: SearchSort::default(), scope: SearchScope::Indexed(root) };
-    assert!(matches!(to_message(&q), Some(Message::Query { text, .. }) if text == r#" path:"D:\""#));
-    assert_eq!(query::parse(r#"x path:"C:\Users\Jo Doe\""#, Clock::system(0)).unwrap().terms.len(), 2);
+    let q = SearchRequest::Query { gen: 5, text: String::new(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::Indexed(root), paths: Default::default() };
+    assert!(matches!(to_message(&q), Some(Message::Query { text, conditions, paths, .. })
+        if text.is_empty() && conditions.is_empty() && paths.under.as_ref().unwrap().as_bytes() == br"D:\"));
     assert_eq!(to_message(&SearchRequest::Rows { gen: 3, from: 64, to: 128 }), Some(Message::GetRows { gen: 3, from: 64, to: 128 }));
     assert_eq!(to_message(&SearchRequest::Close), None);
 }
@@ -48,7 +49,7 @@ fn status_and_errors_translate() {
     assert_eq!(n, note);
     assert_eq!(volumes[0], IndexVolume { id: "C:".into(), files: 9, state: IndexState::Scanning(0.25) });
     assert!(matches!(volumes[1].state, IndexState::Error(_)));
-    assert_eq!(to_event(Message::QueryDone { gen: 2, total: 7 }, SearchBackend::Service, &None), Some(SearchEvent::Done { gen: 2, total: 7 }));
+    assert_eq!(to_event(Message::QueryDone { gen: 2, total: 7, version: 0 }, SearchBackend::Service, &None), Some(SearchEvent::Done { gen: 2, total: 7, version: 0 }));
     assert_eq!(to_event(Message::GetRows { gen: 1, from: 0, to: 1 }, SearchBackend::Service, &None), None);
 }
 
@@ -73,18 +74,18 @@ fn tag_queries_are_answered_from_the_tag_store_and_follow_its_changes() {
     let mut w = Worker::<crate::P>::new(rx, me, out, Arc::new(|| {}), 0, cell.clone());
     let latest = Arc::new(AtomicU64::new(1));
     let got = |events: &Receiver<(WindowId, SearchEvent)>| events.try_iter().map(|(_, e)| e).collect::<Vec<_>>();
-    w.request(7, latest.clone(), SearchRequest::Query { gen: 1, text: "tag:important".into(), sort: SearchSort::default(), scope: SearchScope::All });
+    w.request(7, latest.clone(), SearchRequest::Query { gen: 1, text: "tag:important".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::All, paths: Default::default() });
     let row = SearchRow { name: b"a.txt".to_vec(), dir: br"C:\".to_vec(), meta: Meta::default() };
-    assert_eq!(got(&events), [SearchEvent::Done { gen: 1, total: 1 }, SearchEvent::Rows { gen: 1, from: 0, rows: vec![row.clone()] }]);
+    assert_eq!(got(&events), [SearchEvent::Done { gen: 1, total: 1, version: 1 }, SearchEvent::Rows { gen: 1, from: 0, rows: vec![row.clone()] }]);
     w.request(7, latest.clone(), SearchRequest::Rows { gen: 1, from: 0, to: 64 });
     assert_eq!(got(&events), [SearchEvent::Rows { gen: 1, from: 0, rows: vec![row] }]);
     assert!(w.links.is_empty(), "tag queries never reach the index service");
     cell.set(tag_cell(&[r"C:\a.txt", r"C:\b.txt"]).get());
     w.tick();
-    assert_eq!(got(&events)[0], SearchEvent::Done { gen: 1, total: 2 });
+    assert_eq!(got(&events)[0], SearchEvent::Done { gen: 1, total: 2, version: 2 });
     latest.store(2, Ordering::Release);
-    w.request(7, latest.clone(), SearchRequest::Query { gen: 2, text: "tag:Nope".into(), sort: SearchSort::default(), scope: SearchScope::All });
-    assert_eq!(got(&events), [SearchEvent::Error { message: "No tag named \"Nope\"".into() }, SearchEvent::Done { gen: 2, total: 0 }]);
+    w.request(7, latest.clone(), SearchRequest::Query { gen: 2, text: "tag:Nope".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::All, paths: Default::default() });
+    assert_eq!(got(&events), [SearchEvent::Error { message: "No tag named \"Nope\"".into() }, SearchEvent::Done { gen: 2, total: 0, version: 0 }]);
     w.request(7, latest, SearchRequest::Close);
     assert!(w.hits.is_empty() && w.links.is_empty());
 }
@@ -97,9 +98,9 @@ fn tag_queries_in_a_folder_keep_only_its_files() {
     let mut w = Worker::<crate::P>::new(rx, me, out, Arc::new(|| {}), 0, cell);
     let docs = flit_core::Location::parse(r"C:\Docs").unwrap();
     let by_folder = SearchSort { key: SearchKey::Folder, descending: false };
-    w.request(1, Arc::new(AtomicU64::new(1)), SearchRequest::Query { gen: 1, text: "tag:".into(), sort: by_folder, scope: SearchScope::Indexed(docs) });
+    w.request(1, Arc::new(AtomicU64::new(1)), SearchRequest::Query { gen: 1, text: "tag:".into(), conditions: Vec::new(), sort: by_folder, scope: SearchScope::Indexed(docs), paths: Default::default() });
     let got: Vec<SearchEvent> = events.try_iter().map(|(_, e)| e).collect();
-    assert_eq!(got[0], SearchEvent::Done { gen: 1, total: 2 });
+    assert_eq!(got[0], SearchEvent::Done { gen: 1, total: 2, version: 3 });
     assert_eq!(got[1], SearchEvent::Groups { gen: 1, starts: vec![0, 1] });
     assert!(matches!(&got[2], SearchEvent::Rows { rows, .. } if rows.len() == 2));
 }
@@ -112,8 +113,8 @@ fn indexing_off_answers_without_an_index() {
     let latest = Arc::new(AtomicU64::new(1));
     w.request(2, latest.clone(), SearchRequest::Indexing(false));
     assert_eq!(events.try_iter().map(|(_, e)| e).collect::<Vec<_>>(), [SearchEvent::Status { backend: SearchBackend::Off, volumes: Vec::new(), note: None }]);
-    w.request(2, latest.clone(), SearchRequest::Query { gen: 1, text: "report".into(), sort: SearchSort::default(), scope: SearchScope::All });
-    assert_eq!(events.try_iter().map(|(_, e)| e).collect::<Vec<_>>().last(), Some(&SearchEvent::Done { gen: 1, total: 0 }));
+    w.request(2, latest.clone(), SearchRequest::Query { gen: 1, text: "report".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::All, paths: Default::default() });
+    assert_eq!(events.try_iter().map(|(_, e)| e).collect::<Vec<_>>().last(), Some(&SearchEvent::Done { gen: 1, total: 0, version: 0 }));
     assert!(w.links.is_empty() && w.local.is_none(), "no service connection and no in-process indexer");
     w.request(2, latest, SearchRequest::Indexing(false));
     assert!(events.try_iter().next().is_none(), "repeating the same setting does nothing");
@@ -127,7 +128,7 @@ fn walk_scopes_stream_found_events_and_serve_rows() {
     let mut w = Worker::<crate::P>::new(rx, me, out, Arc::new(|| {}), 0, TagCell::default());
     let folder = flit_core::Location::from_local(dir.path());
     let latest = Arc::new(AtomicU64::new(1));
-    w.request(3, latest.clone(), SearchRequest::Query { gen: 1, text: "ext:txt".into(), sort: SearchSort::default(), scope: SearchScope::Walk(folder) });
+    w.request(3, latest.clone(), SearchRequest::Query { gen: 1, text: "ext:txt".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::Walk(folder), paths: Default::default() });
     assert!(w.links.is_empty(), "walks never reach the index");
     let Ok(Cmd::Finished(3, 1)) = w.rx.recv_timeout(Duration::from_secs(10)) else { panic!("the walk did not finish") };
     w.publish(3, 1);
@@ -143,14 +144,39 @@ fn walk_scopes_stream_found_events_and_serve_rows() {
 #[test]
 fn unix_folders_scope_queries_with_slashes() {
     let scoped = |folder: &str| {
-        let q = SearchRequest::Query { gen: 1, text: "x".into(), sort: SearchSort::default(), scope: SearchScope::Indexed(flit_core::Location::parse(folder).unwrap()) };
+        let q = SearchRequest::Query { gen: 1, text: "x".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::Indexed(flit_core::Location::parse(folder).unwrap()), paths: Default::default() };
         match to_message(&q) {
-            Some(Message::Query { text, .. }) => text,
+            Some(Message::Query { text, paths, .. }) if text == "x" => paths.under.unwrap(),
             other => panic!("{other:?}"),
         }
     };
-    assert_eq!(scoped("/home/jo doe"), r#"x path:"/home/jo doe/""#);
-    assert_eq!(scoped("/"), r#"x path:"/""#);
+    assert_eq!(scoped("/home/jo doe").as_bytes(), b"/home/jo doe");
+    assert_eq!(scoped("/").as_bytes(), b"/");
+    assert_eq!(scoped(r#"/home/has"quotes"#).as_bytes(), br#"/home/has"quotes"#);
+}
+
+#[test]
+fn w3_review_regex_at_the_end_of_an_or_query_keeps_the_indexed_folder_scope() {
+    let dir = flit_core::Location::parse(r"C:\Docs").unwrap();
+    let q = SearchRequest::Query {
+        gen: 1, text: "other OR regex:^a.*b$".into(), conditions: vec!["size:>4".into()],
+        sort: SearchSort::default(), scope: SearchScope::Indexed(dir), paths: Default::default(),
+    };
+    let Some(Message::Query { text, conditions, paths, .. }) = to_message(&q) else { panic!() };
+    let mut q = query::parse_with_conditions(&text, &conditions, Clock::system(0)).unwrap();
+    q.paths = paths;
+    for (name, path, size, matches) in [
+        ("axb", r"C:\Docs\axb", 5, true),
+        ("other", r"C:\Docs\Other", 5, true),
+        ("axb", r"C:\Docs2\axb", 5, false),
+        ("other", r"D:\Docs\Other", 5, false),
+        ("axb", r"C:\Docs\axb", 4, false),
+    ] {
+        let entry = query::Plain { name: name.as_bytes(), lower_name: name.as_bytes(), path: path.as_bytes(),
+            lower_path: &lowercase(path.as_bytes()), size, modified: 0, dir: false };
+        assert_eq!(q.matches(&entry, &|_| false), matches, "{path} ({size})");
+    }
+    assert_eq!(query::parse_with_conditions(" é regex:(", &conditions, Clock::system(0)).unwrap_err().position, 4);
 }
 
 #[cfg(target_os = "linux")]
@@ -205,7 +231,7 @@ mod service {
                     while let Ok(Message::Query { gen, .. }) = read_frame::<_, Message>(&mut conn, &mut buf) {
                         match *mode {
                             Mode::Answer => {
-                                let _ = write_frame(&mut conn, &Message::QueryDone { gen, total: 42 });
+                                let _ = write_frame(&mut conn, &Message::QueryDone { gen, total: 42, version: 0 });
                             }
                             Mode::CrashAfterQuery => return,
                         }
@@ -227,7 +253,7 @@ mod service {
     }
 
     fn query(w: &mut Worker<crate::P>, latest: &Arc<AtomicU64>) {
-        w.request(1, latest.clone(), SearchRequest::Query { gen: 1, text: "report".into(), sort: SearchSort::default(), scope: SearchScope::All });
+        w.request(1, latest.clone(), SearchRequest::Query { gen: 1, text: "report".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::All, paths: Default::default() });
     }
 
     fn status(got: &[SearchEvent]) -> Option<(SearchBackend, Option<String>)> {
@@ -242,7 +268,7 @@ mod service {
         while Instant::now() < deadline {
             w.tick();
             got.extend(events.try_iter().map(|(_, e)| e));
-            if got.iter().any(|e| matches!(e, SearchEvent::Done { gen: 1, total: 1 })) {
+            if got.iter().any(|e| matches!(e, SearchEvent::Done { gen: 1, total: 1, .. })) {
                 return true;
             }
             std::thread::sleep(Duration::from_millis(50));
@@ -259,13 +285,13 @@ mod service {
         query(&mut w, &latest);
         let mut got: Vec<SearchEvent> = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !got.contains(&SearchEvent::Done { gen: 1, total: 42 }) && Instant::now() < deadline {
+        while !got.contains(&SearchEvent::Done { gen: 1, total: 42, version: 0 }) && Instant::now() < deadline {
             if let Ok((_, e)) = events.recv_timeout(Duration::from_millis(100)) {
                 got.push(e);
             }
         }
         assert_eq!(status(&got), Some((SearchBackend::Service, None)), "{got:?}");
-        assert!(got.contains(&SearchEvent::Done { gen: 1, total: 42 }), "{got:?}");
+        assert!(got.contains(&SearchEvent::Done { gen: 1, total: 42, version: 0 }), "{got:?}");
         assert!(w.local.is_none(), "no second index runs inside Flit");
     }
 
@@ -331,7 +357,7 @@ mod service {
 
     fn query_gen(w: &mut Worker<crate::P>, latest: &Arc<AtomicU64>, gen: u64) {
         latest.store(gen, Ordering::Release);
-        w.request(1, latest.clone(), SearchRequest::Query { gen, text: "report".into(), sort: SearchSort::default(), scope: SearchScope::All });
+        w.request(1, latest.clone(), SearchRequest::Query { gen, text: "report".into(), conditions: Vec::new(), sort: SearchSort::default(), scope: SearchScope::All, paths: Default::default() });
     }
 
     fn counted(w: &mut Worker<crate::P>, dir: &Dir) -> Arc<std::sync::atomic::AtomicUsize> {
@@ -356,13 +382,13 @@ mod service {
         query_gen(&mut w, &latest, 2);
         let mut got: Vec<SearchEvent> = Vec::new();
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !got.contains(&SearchEvent::Done { gen: 2, total: 42 }) && Instant::now() < deadline {
+        while !got.contains(&SearchEvent::Done { gen: 2, total: 42, version: 0 }) && Instant::now() < deadline {
             if let Ok((_, e)) = events.recv_timeout(Duration::from_millis(100)) {
                 got.push(e);
             }
         }
         assert_eq!(status(&got), Some((SearchBackend::Service, None)), "{got:?}");
-        assert!(got.contains(&SearchEvent::Done { gen: 2, total: 42 }), "{got:?}");
+        assert!(got.contains(&SearchEvent::Done { gen: 2, total: 42, version: 0 }), "{got:?}");
         assert!(w.remote_failed.is_none());
     }
 

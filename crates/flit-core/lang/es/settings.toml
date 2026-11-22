@@ -76,6 +76,7 @@ about = "Acerca de"
 "advanced.indexing" = "Indexar archivos para la búsqueda"
 "keys" = "Métodos abreviados de teclado"
 "general.mru_tabs" = "Ctrl+Tab por orden de uso reciente"
+"advanced.search_exclusions" = "Rutas excluidas de la búsqueda"
 
 [help]
 "general.language" = "El idioma de los menús, cuadros de diálogo, mensajes y fechas; los registros siguen en inglés"
@@ -152,6 +153,7 @@ about = "Acerca de"
 "keys" = "Métodos abreviados distintos de los predeterminados, por id de comando"
 "area_color" = "Predeterminado sigue el color de fondo; el texto sobre un color personalizado se ajusta para seguir siendo legible"
 "general.mru_tabs" = "Recorre las pestañas por su último uso con Ctrl+Tab. Desactívalo para seguir el orden de la barra."
+"advanced.search_exclusions" = "Oculta estas rutas y su contenido de los resultados."
 
 [choice]
 "language.system" = "Como en el sistema"

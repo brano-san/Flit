@@ -337,8 +337,14 @@ impl TagWorker {
 
 pub fn search(t: &Tags, q: &Query, sort: SearchSort) -> Result<Vec<SearchRow>, String> {
     let mut wanted: FxHashMap<&str, u32> = FxHashMap::default();
-    for term in &q.terms {
-        if let Filter::Tag(name) = &term.filter {
+    let mut names = Vec::new();
+    q.visit_filters(&mut |f| {
+        if let Filter::Tag(name) = f {
+            names.push(name.clone());
+        }
+    });
+    for name in &names {
+        {
             let bits = match tags::find(&t.defs, name) {
                 _ if name.is_empty() => u32::MAX,
                 Some(k) => 1 << k,
@@ -352,7 +358,8 @@ pub fn search(t: &Tags, q: &Query, sort: SearchSort) -> Result<Vec<SearchRow>, S
         let (path, name) = (f.path.as_bytes(), f.path.file_name());
         let (lower_path, lower_name) = (lowercase(path), lowercase(name));
         let plain = Plain { name, lower_name: &lower_name, path, lower_path: &lower_path, size: f.meta.size, modified: f.meta.modified, dir: f.meta.attrs & flit_core::attr::DIR != 0 };
-        if q.matches(&plain, &|n| wanted.get(n).is_some_and(|&b| f.mask & b != 0)) {
+        let facts = flit_search::query::Facts { attrs: f.meta.attrs, created: f.meta.created, depth: Some(f.path.components().count() as u32), ..Default::default() };
+        if q.matches_with(&plain, facts, &|n| wanted.get(n).is_some_and(|&b| f.mask & b != 0)) {
             let dir = f.path.parent().map(|p| p.as_bytes().to_vec()).unwrap_or_default();
             rows.push((lower_name, lowercase(&dir), SearchRow { name: name.to_vec(), dir, meta: f.meta }));
         }

@@ -17,6 +17,36 @@ fn one(text: &str) -> Term {
 }
 
 #[test]
+fn w3_search_or_and_groups_respect_precedence_and_negation() {
+    let q = parse("file: <alpha|beta> !draft", clock()).unwrap();
+    for (name, dir, matched) in [("alpha.txt", false, true), ("beta.txt", false, true), ("beta-draft.txt", false, false), ("alpha", true, false), ("gamma.txt", false, false)] {
+        let e = Plain { name: name.as_bytes(), lower_name: name.as_bytes(), path: b"", lower_path: b"", size: 1, modified: 1, dir };
+        assert_eq!(q.matches(&e, &|_| false), matched, "{name}");
+    }
+}
+
+#[test]
+fn w3_review_search_uses_unpaired_operators_as_name_text() {
+    for (text, matched, rejected) in [
+        ("foo >", "foo >", "foo"),
+        ("foo|", "foo|", "foo"),
+        ("|foo", "|foo", "foo"),
+        ("left||right", "left||right", "left"),
+        ("<foo", "<foo", "foo"),
+        ("x<>y", "x<>y", "xy"),
+        ("OR foo", "or foo", "foo"),
+        ("foo OR", "foo or", "foo"),
+        ("AND foo", "and foo", "foo"),
+        ("foo AND", "foo and", "foo"),
+    ] {
+        let q = parse(text, clock()).unwrap();
+        let matches = |name: &str| q.matches(&Plain { name: name.as_bytes(), lower_name: name.as_bytes(), path: b"", lower_path: b"", size: 0, modified: 0, dir: false }, &|_| false);
+        assert!(matches(matched) && !matches(rejected), "{text}");
+    }
+    assert_eq!(parse_with_position("é regex:(", clock()).unwrap_err().position, 3);
+}
+
+#[test]
 fn tokens_quotes_and_modifiers() {
     let q = parse("Foo \"bar baz\" !qux path:src \"ext:rs\" path:\"Program Files\" C:\\Win", clock()).unwrap();
     let shapes: Vec<String> = q
@@ -146,6 +176,8 @@ fn hostile_queries_are_refused_before_they_cost_much() {
     assert_eq!(parse(&ok, clock()).unwrap().terms.len(), MAX_TERMS);
     let regexes = (0..=MAX_REGEXES).map(|k| format!("regex:a{k}")).collect::<Vec<_>>().join(" ");
     assert!(parse(&regexes, clock()).is_err());
+    assert!(parse_with_conditions("regex:a", &vec!["regex:b".into(); MAX_REGEXES], clock()).is_err());
+    assert!(parse_with_conditions("regex:a", &vec!["regex:b".into(); MAX_REGEXES - 1], clock()).is_ok());
     let started = std::time::Instant::now();
     let flood = vec!["regex:(a|b){1,200}"; 5000].join(" ");
     assert!(parse(&flood, clock()).is_err());

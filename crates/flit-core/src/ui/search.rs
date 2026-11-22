@@ -27,6 +27,7 @@ const KEEP_AROUND: u64 = 2048;
 const MAX_RECENT: usize = 8;
 const G_SEARCH: &str = "\u{E721}";
 const G_HISTORY: &str = "\u{E81C}";
+const G_FACETS: &str = "\u{E71C}";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SearchKey {
@@ -62,8 +63,10 @@ impl SearchScope {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SearchRequest {
-    Query { gen: u64, text: String, sort: SearchSort, scope: SearchScope },
+    Query { gen: u64, text: String, conditions: Vec<String>, sort: SearchSort, scope: SearchScope, paths: crate::query_attrs::SearchPaths },
     Rows { gen: u64, from: u64, to: u64 },
+    Folders { gen: u64 },
+    Facets { gen: u64, open: bool },
     Close,
     Indexing(bool),
 }
@@ -106,12 +109,16 @@ pub enum SearchSource {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SearchEvent {
-    Done { gen: u64, total: u64 },
+    Done { gen: u64, total: u64, version: u64 },
     Found { gen: u64, total: u64, folders: u64, done: bool, source: SearchSource },
     Rows { gen: u64, from: u64, rows: Vec<SearchRow> },
     Groups { gen: u64, starts: Vec<u64> },
+    Folders { gen: u64, counts: crate::query_attrs::FolderCounts },
+    Facets { gen: u64, counts: crate::query_attrs::Facets },
+    FacetTags { gen: u64, counts: Vec<(String, u64)> },
     Status { backend: SearchBackend, volumes: Vec<IndexVolume>, note: Option<String> },
     Error { message: String },
+    QueryError { gen: u64, message: String },
 }
 
 const COLUMNS: [(S, SearchKey); 4] = [(S::DetailsColumnName, SearchKey::Name), (S::SearchColumnFolder, SearchKey::Folder), (S::DetailsColumnSize, SearchKey::Size), (S::DetailsColumnModified, SearchKey::Modified)];
@@ -133,6 +140,14 @@ enum SHit {
     Thumb,
     HTrack,
     HThumb,
+    Folders,
+    WithinResults,
+    ResultFolder(usize),
+    FolderBackground,
+    SimilarChip(usize, bool),
+    Facets,
+    Facet(usize),
+    Date(usize),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -206,6 +221,21 @@ pub(super) struct SearchView {
     fit: Option<usize>,
     elided: Vec<u64>,
     scroll_x: f32,
+    folders_open: bool,
+    folders_summary: crate::query_attrs::FolderCounts,
+    folders_scroll: usize,
+    result_folder: Option<crate::FsPath>,
+    within_results: Option<String>,
+    within_native: bool,
+    similar: bool,
+    similar_chips: Vec<(std::ops::Range<usize>, Rect)>,
+    facets_open: bool,
+    requery_on_open: bool,
+    summary_stamp: Option<(u64, Option<u64>)>,
+    facets: crate::query_attrs::Facets,
+    facet_tags: Vec<(String, u64)>,
+    facet_filter: [Option<String>; 4],
+    date_filter: Option<(i64, i64)>,
 }
 
 struct SLayout {
@@ -219,6 +249,11 @@ struct SLayout {
     hthumb: Rect,
     max_x: f32,
     row_h: f32,
+    folders: Rect,
+    tools: [Rect; 3],
+    chips: Rect,
+    facets: Rect,
+    timeline: Rect,
 }
 
 pub fn thousands(n: u64) -> String {
@@ -231,6 +266,11 @@ pub fn thousands(n: u64) -> String {
         out.push(c);
     }
     out
+}
+
+fn day_query(day: i64) -> String {
+    let (y, m, d) = crate::fmt::civil_from_days(day);
+    format!("{y:04}-{m:02}-{d:02}")
 }
 
 fn drive_id(loc: &Location) -> Option<String> {
@@ -291,6 +331,17 @@ impl SearchView {
         self.rows.get(&r).or_else(|| self.stale.get(&r))
     }
 
+    fn has_facet_filters(&self) -> bool {
+        self.date_filter.is_some() || self.facet_filter.iter().any(Option::is_some)
+    }
+
+    fn clear_facet_filters(&mut self) -> bool {
+        let active = self.has_facet_filters();
+        self.facet_filter = Default::default();
+        self.date_filter = None;
+        active
+    }
+
     fn recent(&self) -> Vec<usize> {
         if !self.recent_open || !self.edit.text.is_empty() {
             return Vec::new();
@@ -306,13 +357,13 @@ impl App {
     }
 
     pub fn open_folder_search(&mut self) {
+        self.open_scoped(self.folder_search_within());
+    }
+
+    fn folder_search_within(&self) -> Option<Within> {
         let loc = self.current_location().clone();
         let usable = matches!(loc.path().kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim | PathKind::Unix);
-        let within = self.library_within().or_else(|| usable.then_some(Within::Folder(loc)));
-        if within.is_some() {
-            self.search.home = within.clone();
-        }
-        self.open_scoped(within);
+        self.library_within().or_else(|| usable.then_some(Within::Folder(loc)))
     }
 
     fn library_within(&self) -> Option<Within> {
@@ -326,9 +377,10 @@ impl App {
             self.search.home = within.clone();
         }
         let s = &mut self.search;
-        let requery = s.gen == 0 || s.within != within;
+        let requery = s.gen == 0 || s.within != within || s.requery_on_open;
         s.within = within;
-        if !s.active {
+        let reopening = !s.active;
+        if reopening {
             s.active = true;
             s.drag = SDrag::None;
             s.recent_open = true;
@@ -336,6 +388,14 @@ impl App {
             self.marquee = None;
         }
         self.effects.push(Effect::Title(self.search_title()));
+        if reopening && !requery && self.search.done {
+            if self.search.facets_open {
+                self.effects.push(Effect::Search(SearchRequest::Facets { gen: self.search.gen, open: true }));
+            }
+            if self.search.folders_open {
+                self.effects.push(Effect::Search(SearchRequest::Folders { gen: self.search.gen }));
+            }
+        }
         if requery {
             self.search_query(Instant::now());
         }
@@ -353,6 +413,10 @@ impl App {
     pub fn close_search(&mut self) {
         if self.search.active {
             self.remember_query();
+            if self.search.facets_open {
+                self.effects.push(Effect::Search(SearchRequest::Facets { gen: self.search.gen, open: false }));
+            }
+            self.search.requery_on_open = self.search.clear_facet_filters();
             self.search.active = false;
             self.search.edit.primary_id = 0;
             self.search.drag = SDrag::None;
@@ -425,8 +489,17 @@ impl App {
 
     pub fn on_search_event(&mut self, ev: SearchEvent, now: Instant) {
         let s = &mut self.search;
+        let stamp = match &ev {
+            SearchEvent::Done { gen, total, version } if *gen == s.gen => Some((*total, Some(*version))),
+            SearchEvent::Found { gen, total, done: true, .. } if *gen == s.gen => Some((*total, None)),
+            _ => None,
+        };
+        let summary_due = stamp.is_some_and(|stamp| s.summary_stamp.replace(stamp) != Some(stamp));
         match ev {
-            SearchEvent::Done { gen, total } if gen == s.gen => {
+            SearchEvent::Done { gen, total, .. } if gen == s.gen => {
+                if !summary_due {
+                    return;
+                }
                 s.total = total;
                 s.done = true;
                 s.walking = false;
@@ -463,25 +536,50 @@ impl App {
                     }
                 }
             }
+            SearchEvent::Facets { gen, counts } if gen == s.gen && s.facets_open => s.facets = counts,
+            SearchEvent::FacetTags { gen, counts } if gen == s.gen && s.facets_open => s.facet_tags = counts,
+            SearchEvent::Folders { gen, counts } if gen == s.gen && s.folders_open => {
+                s.folders_summary = counts;
+                s.folders_scroll = s.folders_scroll.min(s.folders_summary.len().saturating_sub(1));
+            }
             SearchEvent::Groups { gen, starts } if gen == s.gen => {
                 let ordered = starts.first() == Some(&0) && starts.windows(2).all(|w| w[0] < w[1]) && starts.last().is_some_and(|&l| l < s.total);
                 s.groups = if ordered { starts } else { Vec::new() };
             }
             SearchEvent::Status { backend, volumes, note } => {
+                if s.backend != backend {
+                    s.summary_stamp = None;
+                }
                 s.backend = backend;
                 s.volumes = volumes;
                 s.note = note;
             }
             SearchEvent::Error { message } => s.error = Some(message),
+            SearchEvent::QueryError { gen, message } if gen == s.gen => s.error = Some(message),
             _ => return,
+        }
+        if self.search.active && self.search.folders_open && summary_due {
+            self.effects.push(Effect::Search(SearchRequest::Folders { gen: self.search.gen }));
+        }
+        if self.search.active && self.search.facets_open && summary_due {
+            self.effects.push(Effect::Search(SearchRequest::Facets { gen: self.search.gen, open: true }));
         }
         self.dirty |= self.search.active;
     }
 
     pub(super) fn search_for(&mut self, text: &str) {
+        self.search_for_in(text, self.library_within());
+    }
+
+    fn search_for_in(&mut self, text: &str, within: Option<Within>) {
+        self.search.clear_facet_filters();
+        self.search.similar = false;
+        self.search.within_results = None;
+        self.search.within_native = false;
+        self.search.result_folder = None;
         self.search.edit.set(text);
-        let fresh = self.search.gen == 0 || self.search.within != self.library_within();
-        self.open_search();
+        let fresh = self.search.gen == 0 || self.search.within != within || self.search.requery_on_open;
+        self.open_scoped(within);
         if !fresh {
             self.search_query(Instant::now());
         }
@@ -503,10 +601,164 @@ impl App {
         }
     }
 
+    pub(super) fn similar_item(&self) -> Option<(Vec<u8>, Meta, u32)> {
+        let view = self.tab().view.as_ref()?;
+        if view.selected_count() != 1 {
+            return None;
+        }
+        let i = view.selected().next()?;
+        let entry = &view.listing().entries[i as usize];
+        (!entry.is_dir()).then(|| (view.listing().name(i).to_vec(), entry.meta(), entry.tags))
+    }
+
+    pub(super) fn find_similar(&mut self) {
+        let Some((name, meta, tags)) = self.similar_item() else { return };
+        self.search_similar(&name, meta, tags);
+    }
+
+    fn search_similar(&mut self, name: &[u8], meta: Meta, tags: u32) {
+        let mut parts = vec![String::from("file:")];
+        let ext = &name[name.len() - crate::name::ext_len(name)..];
+        if !ext.is_empty() {
+            let ext = name::display(ext);
+            if !ext.contains(['"', ';']) {
+                parts[0] = format!("ext:\"{ext}\"");
+            }
+        }
+        if meta.modified > 0 {
+            let day = crate::fmt::local_days(meta.modified, self.utc_offset_min);
+            parts.push(format!("dm:{}", day_query(day)));
+        }
+        let margin = (meta.size / 5).max(1);
+        parts.push(format!("size:{}..{}", meta.size.saturating_sub(margin), meta.size.saturating_add(margin)));
+        for k in crate::tags::bits(tags).take(8) {
+            if let Some(tag) = self.tag_defs().get(k).filter(|t| !t.name.contains('"')) {
+                parts.push(format!("tag:\"{}\"", tag.name));
+            }
+        }
+        let within = if self.indexing { self.library_within() } else { self.folder_search_within() };
+        self.search_for_in(&parts.join(" "), within);
+        self.search.similar = true;
+        self.search.recent_open = false;
+        self.search.edit.move_to(self.search.edit.text.len(), false);
+    }
+
+    pub(super) fn toggle_facets(&mut self) {
+        if !self.search.active || (!self.search.facets_open && self.search.source == Some(SearchSource::Shell)) {
+            return;
+        }
+        self.search.facets_open = !self.search.facets_open;
+        if !self.search.facets_open || self.search.done {
+            self.effects.push(Effect::Search(SearchRequest::Facets { gen: self.search.gen, open: self.search.facets_open }));
+        }
+        if !self.search.facets_open && self.search.clear_facet_filters() {
+            self.search_query(Instant::now());
+        }
+        self.dirty = true;
+    }
+
+    pub(super) fn choose_search_facet(&mut self, category: usize, expression: Option<String>, now: Instant) {
+        let Some(selected) = self.search.facet_filter.get_mut(category) else { return };
+        if category == 1 && expression.is_none() {
+            self.search.date_filter = None;
+        }
+        *selected = if *selected == expression { None } else { expression };
+        self.search_query(now);
+    }
+
+    fn facet_menu(&mut self, category: usize) {
+        use super::menu::Cmd;
+        let s = &self.search;
+        let entries: Vec<(String, String, u64)> = match category {
+            0 => s.facets.extensions.iter().map(|(ext, n)| {
+                let (title, expression) = match ext.as_str() {
+                    "/" => (S::SearchExploreFolders.t().into(), "folder:".to_owned()),
+                    "" => (S::SearchExploreNoExtension.t().into(), "ext:".to_owned()),
+                    ext => (ext.to_owned(), format!("ext:\"{ext}\"")),
+                };
+                (title, expression, *n)
+            }).collect(),
+            1 => s.facets.years.iter().map(|(y, n)| (y.to_string(), format!("dm:{y:04}"), *n)).collect(),
+            2 => crate::query_attrs::SIZE_STARTS.iter().enumerate().map(|(i, start)| {
+                let end = crate::query_attrs::SIZE_STARTS.get(i + 1).copied();
+                let mut title = String::new();
+                format::size_in(&mut title, *start, self.style.decimal);
+                if let Some(end) = end {
+                    title.push_str(" – ");
+                    format::size_in(&mut title, end, self.style.decimal);
+                } else {
+                    title.push('+');
+                }
+                let expr = end.map_or_else(|| format!("size:>={start}"), |end| format!("size:{start}..{}", end - 1));
+                (title, expr, s.facets.sizes[i])
+            }).collect(),
+            3 => s.facet_tags.iter().filter(|(tag, _)| !tag.contains('"')).map(|(tag, n)| (tag.clone(), format!("tag:\"{tag}\""), *n)).collect(),
+            _ => return,
+        };
+        let selected = s.facet_filter[category].clone();
+        let no_selection = selected.is_none() && (category != 1 || s.date_filter.is_none());
+        let r = self.search_layout().facets;
+        let menu = self.collect(|_, m| {
+            m.entry(Cmd::SearchFacet { category, expression: None }, S::SearchExploreAll.t(), String::new(), super::Mark::None, false, no_selection);
+            for (label, expression, count) in entries {
+                let checked = selected.as_ref() == Some(&expression);
+                m.entry(Cmd::SearchFacet { category, expression: Some(expression) }, &label, thousands(count), super::Mark::None, checked, count == 0 && !checked);
+            }
+        });
+        self.flit_menu(r.x + r.w * category as f32 / 4.0, r.bottom(), menu);
+    }
+
+    fn select_dates(&mut self, first: usize, last: usize) {
+        let dates = &self.search.facets.dates;
+        if let Some((start, end)) = dates.get(first.min(last)).zip(dates.get(first.max(last))) {
+            let selected = (start.from, end.to);
+            self.search.date_filter = (self.search.date_filter != Some(selected)).then_some(selected);
+            self.search_query(Instant::now());
+        }
+    }
+
+    pub(super) fn toggle_search_folders(&mut self) {
+        if self.search.active {
+            self.search.folders_open = !self.search.folders_open;
+            if self.search.folders_open && self.search.done {
+                self.effects.push(Effect::Search(SearchRequest::Folders { gen: self.search.gen }));
+            }
+            if !self.search.folders_open && self.search.result_folder.take().is_some() {
+                self.search_query(Instant::now());
+            }
+            self.dirty = true;
+        }
+    }
+
+    pub(super) fn toggle_within_results(&mut self, now: Instant) {
+        if !self.search.active {
+            return;
+        }
+        if let Some(base) = self.search.within_results.take() {
+            self.search.edit.set(&base);
+            self.search.within_native = false;
+        } else if !self.search.edit.text.trim().is_empty() && !(self.caps.unix_paths && self.search.source == Some(SearchSource::Shell)) {
+            self.search.within_native = !self.caps.unix_paths && !matches!(self.search.within, Some(Within::Library { .. }))
+                && (self.search.source == Some(SearchSource::Shell) || self.search.edit.text.trim_start().starts_with('$'));
+            self.search.within_results = Some(self.search.edit.text.clone());
+            self.search.edit.set("");
+        } else {
+            return;
+        }
+        self.search_query(now);
+        self.search.recent_open = false;
+    }
+
+    fn choose_result_folder(&mut self, k: usize, now: Instant) {
+        let Some(path) = self.search.folders_summary.get(k).and_then(|(p, _)| crate::FsPath::parse_exact(p)) else { return };
+        self.search.result_folder = if self.search.result_folder.as_ref().is_some_and(|p| p.same(&path)) { None } else { Some(path) };
+        self.search_query(now);
+    }
+
     fn search_scope(&self) -> SearchScope {
         let Some(Within::Folder(folder)) = self.search.within.clone() else { return SearchScope::All };
         let archived = crate::archive::split(folder.path()).is_some();
-        let ready = !archived && drive_id(&folder).is_some_and(|d| self.search.volumes.iter().any(|v| v.id.eq_ignore_ascii_case(&d) && v.state == IndexState::Ready));
+        let ready = self.indexing && !archived && drive_id(&folder).is_some_and(|d| self.search.volumes.iter().any(|v| v.id.eq_ignore_ascii_case(&d) && v.state == IndexState::Ready));
         if ready {
             SearchScope::Indexed(folder)
         } else {
@@ -517,6 +769,8 @@ impl App {
     fn search_query(&mut self, now: Instant) {
         let scope = self.search_scope();
         let s = &mut self.search;
+        s.requery_on_open = false;
+        s.summary_stamp = None;
         s.gen += 1;
         s.total = 0;
         s.done = false;
@@ -536,11 +790,37 @@ impl App {
             s.recent_open = true;
         }
         s.recent_sel = None;
-        let text = match &s.within {
-            Some(Within::Library { filter, .. }) => format!("{filter} {}", s.edit.text),
-            _ => s.edit.text.clone(),
+        let extra = s.edit.text.trim();
+        let mut conditions = Vec::new();
+        let text = match &s.within_results {
+            Some(base) if s.within_native && !extra.is_empty() => {
+                let base = base.trim_start();
+                let base = base.strip_prefix('$').unwrap_or(base).trim();
+                let extra = extra.strip_prefix('$').unwrap_or(extra).trim();
+                format!("$ ({base}) AND ({extra})")
+            }
+            Some(base) if !extra.is_empty() => {
+                conditions.push(base.clone());
+                s.edit.text.clone()
+            }
+            Some(base) => base.clone(),
+            None => s.edit.text.clone(),
         };
-        self.effects.push(Effect::Search(SearchRequest::Query { gen: s.gen, text, sort: s.sort, scope }));
+        if let Some(Within::Library { filter, .. }) = &s.within {
+            conditions.push(filter.clone());
+        }
+        if !s.within_native && !text.trim_start().starts_with('$') {
+            conditions.extend(s.facet_filter.iter().flatten().cloned());
+            if let Some((a, b)) = s.date_filter {
+                conditions.push(format!("dm:{}..{}", day_query(a), day_query(b)));
+            }
+        }
+        let paths = crate::query_attrs::SearchPaths {
+            exclude: self.search_exclusions.iter().filter_map(Location::to_windows).collect(),
+            parent: s.result_folder.clone(),
+            under: None,
+        };
+        self.effects.push(Effect::Search(SearchRequest::Query { gen: s.gen, text, conditions, sort: s.sort, scope, paths }));
         self.dirty = true;
     }
 
@@ -559,8 +839,26 @@ impl App {
 
     fn search_layout(&self) -> SLayout {
         let l = &self.layout;
-        let field = Rect::new(l.nav[1].x, l.address.y, (l.address.right() - l.nav[1].x).max(self.s(40.0)), l.address.h);
+        let w = (l.address.right() - l.nav[1].x).max(self.s(40.0));
+        let button = self.s(30.0).min(w / 6.0);
+        let field = Rect::new(l.nav[1].x, l.address.y, w - button * 3.0, l.address.h);
+        let tools = std::array::from_fn(|i| Rect::new(field.right() + button * i as f32, field.y, button, field.h));
         let mut list = l.list;
+        let fw = if self.search.folders_open { self.s(255.0).min(list.w * 0.38) } else { 0.0 };
+        let folder_y = l.header.y;
+        let chip_h = if self.search.similar && !self.search.edit.text.trim().is_empty() { self.s(29.0) } else { 0.0 };
+        let chips = Rect::new(list.x, folder_y, list.w, chip_h);
+        let facet_h = if self.search.facets_open { self.s(29.0) } else { 0.0 };
+        let facets = Rect::new(list.x, chips.bottom(), list.w, facet_h);
+        let timeline = Rect::new(list.x, facets.bottom(), list.w, facet_h);
+        let top = chip_h + 2.0 * facet_h;
+        let folders = Rect::new(list.x, folder_y + top, fw, (list.bottom() - folder_y - top).max(0.0));
+        list.y += top;
+        list.h = (list.h - top).max(0.0);
+        let track = Rect::new(l.track.x, l.track.y + top, l.track.w, (l.track.h - top).max(0.0));
+        list.x += fw;
+        list.w = (list.w - fw).max(0.0);
+        let header = Rect::new(list.x, l.header.y + top, (l.header.w - fw).max(0.0), l.header.h);
         let size_w = self.s(90.0).min(list.w / 4.0);
         let date_w = self.s(140.0).min(list.w / 4.0);
         let name_w = (list.w * 0.32).max(self.s(140.0)).min(list.w - size_w - date_w);
@@ -577,20 +875,20 @@ impl App {
             Rect::new(htrack.x + (htrack.w - width) * self.search.scroll_x.clamp(0.0, max_x) / max_x, htrack.y + self.s(4.0), width, self.s(6.0))
         } else { Rect::default() };
         for (c, w) in cols.iter_mut().zip(widths) {
-            *c = Rect::new(x, l.header.y, w, l.header.h);
+            *c = Rect::new(x, header.y, w, header.h);
             x += w;
         }
         let rh = l.row_h.max(1.0);
         let content = self.search.lines() as f64 * rh as f64;
         let lh = list.h as f64;
         let thumb = if content > lh {
-            let th = (l.track.h as f64 * lh / content).max(self.s(24.0) as f64).min(l.track.h as f64) as f32;
+            let th = (track.h as f64 * lh / content).max(self.s(24.0) as f64).min(track.h as f64) as f32;
             let frac = (self.search.scroll / (content - lh)).clamp(0.0, 1.0) as f32;
-            Rect::new(l.track.x + self.s(3.0), l.track.y + (l.track.h - th) * frac, l.track.w - self.s(6.0), th)
+            Rect::new(track.x + self.s(3.0), track.y + (track.h - th) * frac, track.w - self.s(6.0), th)
         } else {
             Rect::default()
         };
-        SLayout { field, header: l.header, cols, list, track: l.track, thumb, htrack, hthumb, max_x, row_h: rh }
+        SLayout { field, header, cols, list, track, thumb, htrack, hthumb, max_x, row_h: rh, folders, tools, chips, facets, timeline }
     }
 
     pub(super) fn search_pans_at(&self, x: f32, y: f32) -> bool {
@@ -648,6 +946,40 @@ impl App {
         if let Some(k) = self.search.recent_rects.iter().position(|r| r.contains(x, y)) {
             return SHit::Recent(k);
         }
+        if sl.chips.h > 0.0 && sl.chips.contains(x, y) {
+            if let Some((i, (_, r))) = self.search.similar_chips.iter().enumerate().find(|(_, (_, r))| r.contains(x, y)) {
+                return SHit::SimilarChip(i, x >= r.right() - self.s(20.0));
+            }
+        }
+        if self.search.facets_open {
+            if sl.facets.contains(x, y) {
+                return SHit::Facet((((x - sl.facets.x) / sl.facets.w.max(1.0)) * 4.0) as usize);
+            }
+            let n = self.search.facets.dates.len();
+            if n > 0 && sl.timeline.contains(x, y) {
+                let i = (((x - sl.timeline.x) / sl.timeline.w.max(1.0)) * n as f32) as usize;
+                return SHit::Date(i.min(n - 1));
+            }
+        }
+        if sl.tools[2].contains(x, y) {
+            return SHit::Facets;
+        }
+        if sl.tools[0].contains(x, y) {
+            return SHit::Folders;
+        }
+        if sl.tools[1].contains(x, y) {
+            return SHit::WithinResults;
+        }
+        if sl.folders.w > 0.0 && sl.folders.contains(x, y) {
+            let at = y - sl.folders.y - self.layout.header.h;
+            if at >= 0.0 {
+                let i = self.search.folders_scroll + (at / sl.row_h).floor() as usize;
+                if i < self.search.folders_summary.len() {
+                    return SHit::ResultFolder(i);
+                }
+            }
+            return SHit::FolderBackground;
+        }
         if self.layout.nav[0].contains(x, y) {
             return SHit::Back;
         }
@@ -701,6 +1033,14 @@ impl App {
             Event::MouseUp { x, y, button } => self.search_mouse_up(*x, *y, *button),
             Event::MouseMove { x, y } => self.search_mouse_move(*x, *y, now),
             Event::Wheel { dx, dy } => {
+                if matches!(self.search.hover, SHit::ResultFolder(_) | SHit::FolderBackground) {
+                    let sl = self.search_layout();
+                    let shown = ((sl.folders.h - self.layout.header.h).max(0.0) / sl.row_h) as usize;
+                    let max = self.search.folders_summary.len().saturating_sub(shown.max(1));
+                    self.search.folders_scroll = self.search.folders_scroll.saturating_add_signed((-dy * 3.0).round() as isize).min(max);
+                    self.dirty = true;
+                    return true;
+                }
                 if *dx != 0.0 || self.mods.shift {
                     let delta = if *dx != 0.0 { *dx } else { -*dy };
                     self.search.scroll_x = (self.search.scroll_x + delta * self.s(48.0)).clamp(0.0, self.search_layout().max_x);
@@ -869,6 +1209,24 @@ impl App {
         Some((self.search_row_location(row)?, self.search.row(row)?.meta.attrs & attr::DIR != 0))
     }
 
+    pub(super) fn set_search_exclusions(&mut self, paths: Vec<Location>) {
+        let mut unique: Vec<Location> = Vec::new();
+        for location in paths.into_iter().take(256) {
+            let Some(path) = location.to_windows() else { continue };
+            if matches!(path.kind(), PathKind::Drive | PathKind::Unix | PathKind::Unc | PathKind::Verbatim)
+                && !unique.iter().filter_map(Location::to_windows).any(|p| p.same(&path))
+            {
+                unique.push(location);
+            }
+        }
+        if self.search_exclusions != unique {
+            self.search_exclusions = unique;
+            if self.search.active {
+                self.search_query(Instant::now());
+            }
+        }
+    }
+
     pub(super) fn search_command(&mut self, action: &str, location: Location, folder: bool, now: Instant) {
         match action {
             "open" if !folder => self.effects.push(Effect::Provider { provider: location.provider(), req: ProviderRequest::Open { tab: self.tab().id, path: location.path().clone() } }),
@@ -880,6 +1238,11 @@ impl App {
                 self.remember_query();
                 self.close_search();
                 self.dispatch(vec![Route { folder, select }], if action == "reveal_tab" { OpenTarget::NewTab } else { OpenTarget::CurrentTab }, now);
+            }
+            "exclude" => {
+                let mut paths = self.search_exclusions.clone();
+                paths.insert(0, location);
+                self.set_search_exclusions(paths);
             }
             "path" => {
                 let text = self.as_path_text(&location);
@@ -1017,12 +1380,31 @@ impl App {
         if button != MouseButton::Left || matches!(was, SDrag::Thumb(_) | SDrag::HThumb(_) | SDrag::ColSep { .. }) {
             return true;
         }
+        if let (SHit::Date(a), SHit::Date(b)) = (pressed, h) {
+            self.select_dates(a, b);
+            return true;
+        }
         if h != pressed {
             return true;
         }
         match h {
             SHit::Back => self.close_search(),
             SHit::Scope => self.toggle_scope(),
+            SHit::Folders => self.toggle_search_folders(),
+            SHit::Facets => self.toggle_facets(),
+            SHit::Facet(k) => self.facet_menu(k),
+            SHit::WithinResults => self.toggle_within_results(Instant::now()),
+            SHit::ResultFolder(k) => self.choose_result_folder(k, Instant::now()),
+            SHit::SimilarChip(i, remove) => {
+                if let Some((range, _)) = self.search.similar_chips.get(i).cloned() {
+                    self.search.edit.move_to(range.start, false);
+                    self.search.edit.move_to(range.end, true);
+                    if remove {
+                        self.search.edit.key(Key::Backspace, Mods::default());
+                        self.search_query(Instant::now());
+                    }
+                }
+            }
             SHit::Recent(k) => self.apply_recent(k, Instant::now()),
             SHit::Header(c) => {
                 let key = COLUMNS[c].1;
@@ -1180,6 +1562,134 @@ impl App {
         self.search.widths = Some(widths);
     }
 
+    fn draw_result_folders<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, sl: &SLayout) {
+        let r = sl.folders;
+        if r.w <= 0.0 {
+            return;
+        }
+        let font = self.ui_font(12.0);
+        let m = g.metrics(font);
+        let pad = self.s(8.0);
+        let title_y = r.y + (self.layout.header.h + m.ascent - m.descent) / 2.0;
+        g.dl.set_clip(Some(r));
+        g.dl.rect(r, t.chrome);
+        g.text(r.x + pad, title_y, S::SearchExploreFolders.t(), font, t.text, (r.w - 2.0 * pad).max(0.0));
+        let scroll = self.search.folders_scroll;
+        let shown = ((r.h - self.layout.header.h).max(0.0) / sl.row_h).ceil() as usize;
+        for (i, (path, count)) in self.search.folders_summary.iter().enumerate().skip(scroll).take(shown) {
+            let y = r.y + self.layout.header.h + (i - scroll) as f32 * sl.row_h;
+            let row = Rect::new(r.x + self.s(2.0), y, (r.w - self.s(4.0)).max(0.0), sl.row_h);
+            let selected = self.search.result_folder.as_ref().is_some_and(|p| p.as_bytes() == path);
+            if selected || self.search.hover == SHit::ResultFolder(i) {
+                g.dl.round_rect(row, if selected { t.selection_inactive } else { t.button_hover }, self.s(4.0));
+            }
+            let y = row.y + (row.h + m.ascent - m.descent) / 2.0;
+            let count = thousands(*count);
+            let cw = g.measure(&count, font);
+            g.text(r.right() - pad - cw, y, &count, font, t.text_dim, cw);
+            let width = (r.w - cw - 3.0 * pad).max(0.0);
+            let mut label = name::display(path);
+            if g.measure(&label, font) > width {
+                let sep = if self.caps.unix_paths { '/' } else { '\\' };
+                let mut suffixes = label.trim_end_matches(sep).rmatch_indices(sep).map(|(start, _)| &label[start..]);
+                if let Some(mut tail) = suffixes.next() {
+                    let available = width - g.measure("…", font);
+                    for suffix in suffixes.take_while(|suffix| g.measure(suffix, font) <= available) {
+                        tail = suffix;
+                    }
+                    label = format!("…{tail}").into();
+                }
+            }
+            g.text(r.x + pad, y, &label, font, t.text, width);
+        }
+        g.dl.set_clip(None);
+    }
+
+    fn draw_facets<B: TextBackend>(&self, g: &mut Gfx<B>, t: &Theme, sl: &SLayout) {
+        if sl.facets.h <= 0.0 {
+            return;
+        }
+        let font = self.ui_font(12.0);
+        let m = g.metrics(font);
+        let pad = self.s(6.0);
+        let row = sl.facets;
+        let timeline = sl.timeline;
+        let captions = [S::DetailsColumnType, S::SearchExploreYear, S::DetailsColumnSize, S::DetailsColumnTag];
+        g.dl.rect(row, t.chrome);
+        g.dl.rect(timeline, t.chrome);
+        for (i, label) in captions.into_iter().enumerate() {
+            let r = Rect::new(row.x + i as f32 * row.w / 4.0, row.y, row.w / 4.0, row.h);
+            let active = self.search.facet_filter[i].as_deref();
+            if active.is_some() || self.search.hover == SHit::Facet(i) {
+                g.dl.round_rect(r.inset(self.s(1.0), self.s(2.0)), if active.is_some() { t.selection_inactive } else { t.button_hover }, self.s(4.0));
+            }
+            let y = r.y + (r.h + m.ascent - m.descent) / 2.0;
+            let text = active.map_or_else(|| label.t().to_owned(), |a| format!("{} · {a}", label.t()));
+            g.text(r.x + pad, y, &text, font, t.text, (r.w - 2.0 * pad).max(0.0));
+        }
+        let dates = &self.search.facets.dates;
+        if dates.is_empty() {
+            return;
+        }
+        let total = dates.iter().map(|d| d.count).max().unwrap_or(1).max(1) as f32;
+        let w = timeline.w / dates.len() as f32;
+        for (i, b) in dates.iter().enumerate() {
+            let h = (timeline.h - self.s(4.0)) * (b.count as f32 / total);
+            let x = timeline.x + i as f32 * w;
+            let dragging = matches!((self.search.pressed, self.search.hover), (SHit::Date(a), SHit::Date(z)) if (a.min(z)..=a.max(z)).contains(&i));
+            let chosen = self.search.date_filter.is_some_and(|(a, z)| b.from <= z && b.to >= a);
+            if dragging || chosen || self.search.hover == SHit::Date(i) {
+                g.dl.rect(Rect::new(x, timeline.y, w, timeline.h), t.selection_inactive);
+            }
+            if h > 0.0 {
+                g.dl.rect(Rect::new(x, timeline.bottom() - h, (w - self.s(2.0)).max(1.0), h), t.accent.alpha(0xB0));
+            }
+        }
+        let range = if let SHit::Date(i) = self.search.hover {
+            dates.get(i).map(|b| (b.from, b.to))
+        } else {
+            self.search.date_filter
+        };
+        if let Some((a, z)) = range {
+            let text = if a == z { day_query(a) } else { format!("{} – {}", day_query(a), day_query(z)) };
+            let w = g.measure(&text, font) + 2.0 * pad;
+            let r = Rect::new(timeline.right() - w, timeline.y, w, timeline.h);
+            g.dl.round_rect(r, t.chrome, self.s(4.0));
+            g.text(r.x + pad, r.y + (r.h + m.ascent - m.descent) / 2.0, &text, font, t.text, w);
+        }
+    }
+
+    fn draw_similar_chips<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme, r: Rect) {
+        self.search.similar_chips.clear();
+        if r.h <= 0.0 {
+            return;
+        }
+        let font = self.ui_font(12.0);
+        let metrics = g.metrics(font);
+        let (pad, close) = (self.s(7.0), self.s(20.0));
+        let mut x = r.x + pad;
+        g.dl.set_clip(Some(r));
+        g.dl.rect(r, t.chrome);
+        for range in crate::filter::token_ranges(&self.search.edit.text) {
+            let label = &self.search.edit.text[range.clone()];
+            let remaining = r.right() - x - pad;
+            if remaining < self.s(50.0) {
+                break;
+            }
+            let w = (g.measure(label, font) + 2.0 * pad + close).min(remaining);
+            let chip = Rect::new(x, r.y + self.s(3.0), w, (r.h - self.s(6.0)).max(0.0));
+            let i = self.search.similar_chips.len();
+            let hot = matches!(self.search.hover, SHit::SimilarChip(k, _) if k == i);
+            g.dl.round_rect(chip, if hot { t.button_hover } else { t.selection_inactive }, self.s(4.0));
+            let y = chip.y + (chip.h + metrics.ascent - metrics.descent) / 2.0;
+            g.text(chip.x + pad, y, label, font, t.text, (w - 2.0 * pad - close).max(0.0));
+            centered(g, Rect::new(chip.right() - close, chip.y, close, chip.h), super::G_CLOSE, self.icon_font(8.0), t.text_dim);
+            self.search.similar_chips.push((range, chip));
+            x = chip.right() + pad;
+        }
+        g.dl.set_clip(None);
+    }
+
     pub(super) fn draw_search<B: TextBackend>(&mut self, g: &mut Gfx<B>, arena: &Bump, t: &Theme) {
         if let Some(col) = self.search.fit.take() {
             self.fit_search_column(g, arena, col);
@@ -1188,6 +1698,8 @@ impl App {
         self.search.scroll = self.search.scroll.clamp(0.0, self.search_max_scroll());
         self.request_visible_pages();
         let sl = self.search_layout();
+        self.draw_similar_chips(g, t, sl.chips);
+        self.draw_facets(g, t, &sl);
         let font = self.ui_font(13.0);
         let m = g.metrics(font);
         let rh = sl.row_h;
@@ -1201,6 +1713,8 @@ impl App {
         let mut elided: Vec<u64> = Vec::new();
         let mut type_requests: Vec<Vec<u8>> = Vec::new();
         let s = &self.search;
+        self.draw_result_folders(g, t, &sl);
+        g.dl.set_clip(Some(sl.list));
         let headers = s.grouped();
         if s.done && s.total == 0 && !s.walking {
             let msg = if s.error.is_some() { S::SearchInvalid.t() } else { S::SearchNoMatch.t() };
@@ -1349,6 +1863,15 @@ impl App {
         }
         centered(g, back, G_BACK, self.icon_font(12.0), t.text);
         self.draw_search_field(g, t);
+        let tools = self.search_layout().tools;
+        for (i, (hit, icon, selected)) in [(SHit::Folders, "\u{E8B7}", self.search.folders_open), (SHit::WithinResults, G_SEARCH, self.search.within_results.is_some()), (SHit::Facets, G_FACETS, self.search.facets_open)].into_iter().enumerate() {
+            let r = tools[i];
+            if selected || self.search.hover == hit {
+                g.dl.round_rect(r.inset(self.s(1.0), self.s(1.0)), if selected { t.selection_inactive } else { t.button_hover }, self.s(4.0));
+            }
+            let color = if hit == SHit::Facets && self.search.facets_open && self.search.has_facet_filters() { t.accent } else { t.text };
+            centered(g, r, icon, self.icon_font(12.0), color);
+        }
 
         g.dl.rect(status, t.chrome);
         let font = self.ui_font(12.0);
@@ -1383,6 +1906,16 @@ impl App {
             }
         } else {
             left.push_str(S::SearchSearching.t());
+        }
+        if let Some(label) = match s.hover {
+            SHit::Folders => Some(S::SearchExploreFolders),
+            SHit::WithinResults => Some(S::SearchExploreWithin),
+            SHit::Facets => Some(S::SearchExploreFacets),
+            _ => None,
+        } {
+            left.clear();
+            left.push_str(label.t());
+            color = t.text_dim;
         }
         g.text(status.x + pad, baseline, &left, font, color, status.w / 2.0 - pad);
         let mut right = bumpalo::collections::String::new_in(arena);
@@ -1453,7 +1986,7 @@ impl App {
         let preedit = Some(&self.preedit).filter(|p| !p.is_empty());
         if s.edit.text.is_empty() && preedit.is_none() {
             s.edit_scroll = 0.0;
-            g.text(inner.x, baseline, if self.caps.unix_paths { S::SearchPlaceholderUnix } else { S::SearchPlaceholder }.t(), font, t.text_dim.alpha(0xA0), inner.w);
+            g.text(inner.x, baseline, if s.within_results.is_some() { S::SearchExploreWithin } else if self.caps.unix_paths { S::SearchPlaceholderUnix } else { S::SearchPlaceholder }.t(), font, t.text_dim.alpha(0xA0), inner.w);
             g.dl.rect(Rect::new(inner.x, look.line_y, look.stroke, caret_h), t.text);
         } else {
             let line = super::field::EditLine { text: &s.edit.text, caret: s.edit.caret, selection: s.edit.selection() };

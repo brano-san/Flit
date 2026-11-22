@@ -48,6 +48,34 @@ fn w3_review_filter_tab_cycles_focus_unless_a_key_can_be_completed() {
     }
 }
 
+#[test]
+fn w3_review_new_search_and_closing_facets_drop_the_conditions() {
+    let mut a = app();
+    a.search_for("first");
+    for next in [None, Some("second"), Some("third")] {
+        if !a.search.facets_open {
+            a.toggle_facets();
+        }
+        a.choose_search_facet(0, Some("ext:txt".into()), t0());
+        a.search.date_filter = Some((20_000, 20_001));
+        requests(&mut a);
+        match next {
+            None => a.toggle_facets(),
+            Some("second") => a.search_for("second"),
+            Some(text) => {
+                a.close_search();
+                a.open_search();
+                assert!(a.search.facet_filter.iter().all(Option::is_none));
+                assert!(a.search.date_filter.is_none());
+                a.search_for(text);
+            }
+        }
+        assert!(a.search.facet_filter.iter().all(Option::is_none));
+        assert!(a.search.date_filter.is_none());
+        assert!(requests(&mut a).iter().any(|r| matches!(r, SearchRequest::Query { text, .. } if text == next.unwrap_or("first"))));
+    }
+}
+
 fn gen_of(app: &App) -> u64 {
     app.search.gen
 }
@@ -63,6 +91,154 @@ fn page(from: u64, n: u64) -> Vec<SearchRow> {
 fn frame(app: &mut App) {
     let mut g = Gfx::new(Mono, 2048);
     app.frame(&mut g, t0());
+}
+
+#[test]
+fn w3_search_result_menu_excludes_a_path_and_reruns_the_query() {
+    let mut a = app();
+    a.search_for("document");
+    requests(&mut a);
+    let gen = gen_of(&a);
+    a.on_search_event(SearchEvent::Done { gen, total: 1, version: 0 }, t0());
+    a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row("document.txt", r"C:\x\cache", false)] }, t0());
+    a.search.focus = Some(0);
+    let labels = |menu: Vec<super::super::MenuItem>| menu.into_iter().filter_map(|m| match m {
+        super::super::MenuItem::Command { label, .. } => Some(label),
+        _ => None,
+    }).collect::<Vec<_>>();
+    assert!(!labels(a.build_search_menu(false)).iter().any(|s| s == "Exclude from search"));
+    let items = labels(a.build_search_menu(true));
+    let i = items.iter().position(|s| s == "Exclude from search").unwrap();
+    a.on_event(&Event::MenuCommand(i), t0());
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { gen: next, text, paths, .. }]
+        if *next > gen && text == "document" && paths.rejects(br"c:\x\cache\document.txt")
+            && !paths.rejects(br"C:\x\cache\document.txt.bak") && !paths.rejects(br"C:\x\cache2\document.txt")));
+}
+
+#[test]
+fn w3_folders_panel_requests_counts_and_clicking_a_folder_refines_the_results() {
+    let mut a = app();
+    a.search_for("alpha|beta");
+    requests(&mut a);
+    let gen = gen_of(&a);
+    a.on_search_event(SearchEvent::Done { gen, total: 3, version: 0 }, t0());
+    assert!(requests(&mut a).is_empty());
+    a.toggle_search_folders();
+    assert_eq!(requests(&mut a), [SearchRequest::Folders { gen }]);
+    a.on_search_event(SearchEvent::Folders { gen, counts: vec![(br"C:\x\docs".to_vec(), 3)] }, t0());
+    let sl = a.search_layout();
+    let (x, y) = (sl.folders.x + 10.0, sl.folders.y + sl.header.h + 8.0);
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t0());
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { paths, .. }] if paths.parent.as_ref().unwrap().as_bytes() == br"C:\x\docs"));
+    a.toggle_within_results(t0());
+    requests(&mut a);
+    a.search_paste("ext:txt");
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { text, conditions, .. }] if text == "ext:txt" && conditions == &["alpha|beta"]));
+}
+
+#[test]
+fn w3_windows_search_refinement_preserves_each_native_expression() {
+    let mut a = app();
+    a.set_caps(crate::caps::Caps { unix_paths: false });
+    a.search_for("$ alpha OR beta");
+    requests(&mut a);
+    a.toggle_within_results(t0());
+    requests(&mut a);
+    a.search_paste("gamma");
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { text, .. }] if text == "$ (alpha OR beta) AND (gamma)"));
+    a.on_search_event(SearchEvent::QueryError { gen: gen_of(&a) - 1, message: "old parse error".into() }, t0());
+    assert!(a.search.error.is_none());
+}
+
+#[test]
+fn w3_find_similar_uses_the_selected_file_and_ignores_empty_selection() {
+    let mut a = crate::ui::harness::app(&["alpha.JPG", "beta.pdf"]);
+    a.run_action("search.similar", t0());
+    assert!(!a.search.active);
+    let view = a.tab_mut().view.as_mut().unwrap();
+    view.set_selected(0, true);
+    a.set_indexing(false);
+    requests(&mut a);
+    a.run_action("search.similar", t0());
+    assert!(a.search.active);
+    assert_eq!(a.search.edit.text, r#"ext:"JPG" size:1639..2457"#);
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { scope: SearchScope::Walk(folder), .. }] if folder == a.current_location()));
+    frame(&mut a);
+    let r = a.search.similar_chips[0].1;
+    let (x, y) = (r.right() - 5.0, r.y + r.h / 2.0);
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, t0());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, t0());
+    assert_eq!(a.search.edit.text.trim(), "size:1639..2457");
+}
+
+#[test]
+fn w3_facets_are_requested_only_while_open_and_the_histogram_refines_a_range() {
+    let mut a = app();
+    a.search_for("photo");
+    requests(&mut a);
+    let gen = gen_of(&a);
+    a.on_search_event(SearchEvent::Done { gen, total: 3, version: 0 }, t0());
+    assert!(requests(&mut a).is_empty());
+    a.toggle_facets();
+    assert_eq!(requests(&mut a), [SearchRequest::Facets { gen, open: true }]);
+    a.on_search_event(SearchEvent::Facets {
+        gen,
+        counts: crate::query_attrs::Facets {
+            dates: vec![
+                crate::query_attrs::DateBucket { from: 20_000, to: 20_000, count: 1 },
+                crate::query_attrs::DateBucket { from: 20_001, to: 20_001, count: 2 },
+            ],
+            ..Default::default()
+        }
+    }, t0());
+    let r = a.search_layout().timeline;
+    let y = r.y + r.h / 2.0;
+    a.on_event(&Event::MouseDown { x: r.x + r.w / 4.0, y, button: MouseButton::Left, clicks: 1 }, t0());
+    a.on_event(&Event::MouseUp { x: r.x + r.w * 0.75, y, button: MouseButton::Left }, t0());
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { text, conditions, .. }] if text == "photo" && conditions == &["dm:2024-10-04..2024-10-05"]));
+    let gen = gen_of(&a);
+    a.toggle_facets();
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Facets { gen: old, open: false }, SearchRequest::Query { text, conditions, .. }]
+        if *old == gen && text == "photo" && conditions.is_empty()));
+}
+
+#[test]
+fn w3_review_regex_refinement_keeps_the_edited_text_and_each_condition_separate() {
+    let mut a = app();
+    a.search_for("regex:^a.*b$");
+    requests(&mut a);
+    a.toggle_facets();
+    a.choose_search_facet(2, Some("size:>4".into()), t0());
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { text, conditions, .. }]
+        if text == "regex:^a.*b$" && conditions == &["size:>4"]));
+    a.toggle_within_results(t0());
+    requests(&mut a);
+    a.search_paste("  ORANGE");
+    assert!(matches!(requests(&mut a).as_slice(), [SearchRequest::Query { text, conditions, .. }]
+        if text == "  ORANGE" && conditions == &["regex:^a.*b$", "size:>4"]));
+}
+
+#[test]
+fn w3_review_duplicate_done_keeps_rows_and_requests_summaries_only_for_changed_results() {
+    let mut a = app();
+    a.search_for("photo");
+    a.toggle_facets();
+    a.toggle_search_folders();
+    requests(&mut a);
+    let gen = gen_of(&a);
+    let done = |total, version| SearchEvent::Done { gen, total, version };
+    let summaries = [SearchRequest::Folders { gen }, SearchRequest::Facets { gen, open: true }];
+    a.on_search_event(done(1, 11), t0());
+    assert_eq!(requests(&mut a), summaries);
+    a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row("photo.jpg", r"C:\x", false)] }, t0());
+    a.on_search_event(done(1, 11), t0());
+    assert!(requests(&mut a).is_empty());
+    assert!(a.search.rows.contains_key(&0));
+    a.on_search_event(done(1, 12), t0());
+    assert_eq!(requests(&mut a), summaries);
+    a.on_search_event(done(2, 12), t0());
+    assert_eq!(requests(&mut a), summaries);
 }
 
 #[test]
@@ -109,7 +285,7 @@ fn double_clicking_a_column_edge_fits_the_column_to_the_visible_results() {
     requests(&mut a);
     let gen = gen_of(&a);
     let (name, dir) = ("a_much_longer_file_name.txt", r"C:\some\rather\deep\folder\path");
-    a.on_search_event(SearchEvent::Done { gen, total: 2 }, t0());
+    a.on_search_event(SearchEvent::Done { gen, total: 2, version: 0 }, t0());
     a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row(name, dir, false), row("b.txt", r"C:\x", false)] }, t0());
     frame(&mut a);
     let before = a.search_layout().cols;
@@ -139,7 +315,7 @@ fn result_rows_tip_the_full_name_when_cut_off_and_otherwise_type_folder_and_size
     requests(&mut a);
     let gen = gen_of(&a);
     let long = format!("a-{}.txt", "wide-".repeat(60));
-    a.on_search_event(SearchEvent::Done { gen, total: 2 }, t0());
+    a.on_search_event(SearchEvent::Done { gen, total: 2, version: 0 }, t0());
     a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row(&long, r"C:\data", false), row("b.txt", r"C:\data", false)] }, t0());
     frame(&mut a);
     assert_eq!(a.search.elided, [0], "only the wide name is cut off");
@@ -177,7 +353,7 @@ fn search_menu_actions_use_the_result_not_the_background_folder() {
     a.search.focus = Some(0);
     a.build_search_menu(true);
     let actions: Vec<_> = a.menu.iter().filter_map(|c| if let Cmd::Search { action, .. } = c { Some(*action) } else { None }).collect();
-    assert_eq!(actions, ["open", "reveal", "reveal_tab", "copy", "path", "quoted"]);
+    assert_eq!(actions, ["open", "reveal", "reveal_tab", "copy", "path", "quoted", "exclude"]);
     let path = a.menu.iter().position(|c| matches!(c, Cmd::Search { action: "path", .. })).unwrap();
     a.search.focus = None;
     a.menu_command(path, t0());
@@ -213,11 +389,11 @@ fn only_visible_pages_are_fetched_and_stale_results_are_dropped() {
     app.on_event(&Event::Char('f'), t0());
     requests(&mut app);
     let gen = gen_of(&app);
-    app.on_search_event(SearchEvent::Done { gen: gen - 1, total: 5 }, t0());
+    app.on_search_event(SearchEvent::Done { gen: gen - 1, total: 5, version: 0 }, t0());
     assert_eq!(app.search.total, 0, "an older query does not count");
     frame(&mut app);
     assert!(requests(&mut app).is_empty(), "no rows before the total is known");
-    app.on_search_event(SearchEvent::Done { gen, total: 1_000_000 }, t0());
+    app.on_search_event(SearchEvent::Done { gen, total: 1_000_000, version: 0 }, t0());
     frame(&mut app);
     let first = requests(&mut app);
     assert_eq!(first, [SearchRequest::Rows { gen, from: 0, to: 2 * PAGE }]);
@@ -245,7 +421,7 @@ fn enter_opens_and_ctrl_enter_reveals_in_the_folder() {
     app.open_search();
     requests(&mut app);
     let gen = gen_of(&app);
-    app.on_search_event(SearchEvent::Done { gen, total: 2 }, t0());
+    app.on_search_event(SearchEvent::Done { gen, total: 2, version: 0 }, t0());
     app.on_search_event(SearchEvent::Rows { gen, from: 0, rows: vec![row("a.txt", r"C:\data", false), row("sub", r"C:\data", true)] }, t0());
     key(&mut app, Key::Down, NO);
     key(&mut app, Key::Enter, NO);
@@ -369,7 +545,7 @@ fn grouped_results_get_a_header_line_per_folder() {
     app.run_action("search.group_folder", t0());
     requests(&mut app);
     let gen = gen_of(&app);
-    app.on_search_event(SearchEvent::Done { gen, total: 4 }, t0());
+    app.on_search_event(SearchEvent::Done { gen, total: 4, version: 0 }, t0());
     app.on_search_event(SearchEvent::Groups { gen, starts: vec![0, 2] }, t0());
     let rows = vec![row("a.txt", r"C:\one", false), row("b.txt", r"C:\one", false), row("c.txt", r"C:\two", false), row("d.txt", r"C:\two", false)];
     app.on_search_event(SearchEvent::Rows { gen, from: 0, rows }, t0());
@@ -431,7 +607,7 @@ fn bench_grouped_search_frames() {
     app.run_action("search.group_folder", t0());
     let gen = gen_of(&app);
     let total = 100_000u64;
-    app.on_search_event(SearchEvent::Done { gen, total }, t0());
+    app.on_search_event(SearchEvent::Done { gen, total, version: 0 }, t0());
     app.on_search_event(SearchEvent::Groups { gen, starts: (0..total).step_by(7).collect() }, t0());
     let rows = |from: u64| (from..from + 64).map(|k| row(&format!("f{k}.txt"), &format!(r"C:\data\d{}", k / 7), false)).collect::<Vec<_>>();
     let mut times = Vec::new();
@@ -455,7 +631,7 @@ fn results_ask_the_system_for_their_icons_and_folder_headers_for_folder_icons() 
     app.run_action("search.group_folder", t0());
     requests(&mut app);
     let gen = gen_of(&app);
-    app.on_search_event(SearchEvent::Done { gen, total: 3 }, t0());
+    app.on_search_event(SearchEvent::Done { gen, total: 3, version: 0 }, t0());
     app.on_search_event(SearchEvent::Groups { gen, starts: vec![0] }, t0());
     let rows = vec![row("a.txt", r"C:\one", false), row("b.txt", r"C:\one", false), row("sub", r"C:\one", true)];
     app.on_search_event(SearchEvent::Rows { gen, from: 0, rows }, t0());
@@ -522,7 +698,7 @@ fn a_finger_scrolls_search_results_both_ways_and_a_flick_glides_on() {
     a.on_event(&Event::Char('f'), t0());
     requests(&mut a);
     let gen = gen_of(&a);
-    a.on_search_event(SearchEvent::Done { gen, total: 2 * PAGE }, t0());
+    a.on_search_event(SearchEvent::Done { gen, total: 2 * PAGE, version: 0 }, t0());
     a.on_search_event(SearchEvent::Rows { gen, from: 0, rows: page(0, 2 * PAGE) }, t0());
     a.search.widths = Some([500.0, 500.0, 200.0, 200.0]);
     let start = t0();

@@ -9,8 +9,8 @@ fn all_messages() -> Vec<Message> {
     entries.push(b"a.txt", Meta { size: 5, modified: 133_000_000_000_000_000, ..Default::default() });
     entries.push(&[0xED, 0xA0, 0x80, b'x'], Meta { size: u64::MAX, modified: -1, created: i64::MIN, attrs: u32::MAX });
     vec![
-        Message::Query { gen: 7, text: "ext:rs отчёт 🎉".into(), sort },
-        Message::QueryDone { gen: 7, total: 1_234_567 },
+        Message::Query { gen: 7, text: "ext:rs отчёт 🎉".into(), conditions: vec!["regex:^a.*b$".into()], sort, paths: Default::default() },
+        Message::QueryDone { gen: 7, total: 1_234_567, version: 8 },
         Message::Groups { gen: 7, starts: vec![0, 3, 1_000_000] },
         Message::GetRows { gen: 7, from: 100, to: 160 },
         Message::Rows { gen: 7, from: 100, entries, dirs: vec![br"C:\".to_vec(), b"/tmp/\xFF\xFE".to_vec()] },

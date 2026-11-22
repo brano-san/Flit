@@ -87,14 +87,14 @@ const SORT: Sort = Sort { key: SortKey::Name, descending: false };
 fn query_and_rows_round_trip() {
     let (mut c, server) = start();
     handshake(&mut c, &Hello::new(Protocol::Index, VERSION)).unwrap();
-    write_frame(&mut c, &Message::Query { gen: 1, text: "report ext:txt".into(), sort: SORT }).unwrap();
+    write_frame(&mut c, &Message::Query { gen: 1, text: r"regex:^report\d\.txt$".into(), conditions: vec!["ext:txt".into()], sort: SORT, paths: Default::default() }).unwrap();
     let mut buf = Vec::new();
     let mut next = || read_frame::<_, Message>(&mut c, &mut buf).unwrap();
     let mut got = next();
     while matches!(got, Message::IndexStatus { .. }) {
         got = next();
     }
-    assert_eq!(got, Message::QueryDone { gen: 1, total: 10 });
+    assert_eq!(got, Message::QueryDone { gen: 1, total: 10, version: 1 });
     assert!(matches!(next(), Message::Rows { gen: 1, from: 0, entries, .. } if entries.len() == 10));
     write_frame(&mut c, &Message::GetRows { gen: 1, from: 8, to: 20 }).unwrap();
     let mut got = read_frame::<_, Message>(&mut c, &mut buf).unwrap();
@@ -130,7 +130,7 @@ fn hostile_frames_drop_the_connection() {
     assert!(matches!(after_hello(&((MAX_REQUEST + 1) as u32).to_le_bytes()), Err(ProtoError::TooLarge(_))));
     assert!(matches!(after_hello(&[3, 0, 0, 0, 0xFF, 0xFF, 0xFF]), Err(ProtoError::Decode(_))));
     let mut bad = Vec::new();
-    encode(&Message::QueryDone { gen: 1, total: 5 }, &mut bad).unwrap();
+    encode(&Message::QueryDone { gen: 1, total: 5, version: 0 }, &mut bad).unwrap();
     assert!(matches!(after_hello(&bad), Err(ProtoError::Invalid(_))));
     let started = Instant::now();
     assert!(matches!(after_hello(&[200, 0, 0, 0, 1]), Err(ProtoError::Io(e)) if e.kind() == io::ErrorKind::TimedOut), "a stalled frame times out");
@@ -158,7 +158,7 @@ fn a_client_that_stops_reading_cannot_grow_the_request_queue() {
     let sh = shared();
     let handle = std::thread::spawn(move || serve(server, sh, 0));
     handshake(&mut c, &Hello::new(Protocol::Index, VERSION)).unwrap();
-    write_frame(&mut c, &Message::Query { gen: 1, text: "report".into(), sort: SORT }).unwrap();
+    write_frame(&mut c, &Message::Query { gen: 1, text: "report".into(), conditions: Vec::new(), sort: SORT, paths: Default::default() }).unwrap();
     const FLOOD: usize = 200;
     for _ in 0..FLOOD {
         write_frame(&mut c, &Message::GetRows { gen: 1, from: 0, to: 10 }).unwrap();

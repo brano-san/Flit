@@ -402,6 +402,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.sizes_network", Page::Data, S::OptionsTitleSizesNetwork, S::OptionsHelpSizesNetwork, |a| a.opts.sizes_network, |a, on| a.set_sizes_allowed(2, on)),
     toggle("files.git_integration", Page::Data, S::GitCloneIntegration, S::GitCloneIntegrationHelp, |a| a.prefs.git_integration, |a, on| a.set_git_integration(on)),
     toggle("advanced.indexing", Page::Data, S::SettingsTitleAdvancedIndexing, S::SettingsHelpAdvancedIndexing, |a| a.indexing, |a, on| a.set_indexing(on)),
+    Setting { id: "advanced.search_exclusions", page: Page::Data, title: S::SettingsTitleAdvancedSearchExclusions, help: S::SettingsHelpAdvancedSearchExclusions, kind: Kind::Paths(|a| a.search_exclusions.clone(), |a, paths| a.set_search_exclusions(paths)) },
     toggle("input.act_on_press", Page::Input, S::OptionsTitleActOnPress, S::OptionsHelpActOnPress, |a| a.opts.act_on_press, |a, on| a.opts.act_on_press = on),
     toggle(CHECKBOXES, Page::Input, S::OptionsTitleSelectionBoxes, S::OptionsHelpSelectionBoxes, |a| a.prefs.checkboxes, |a, on| a.set_pref(|p| &mut p.checkboxes, on)),
     toggle("input.single_click", Page::Input, S::OptionsTitleSingleClick, S::OptionsHelpSingleClick, |a| a.single_click_files == ClickOpen::Always && a.single_click_folders == ClickOpen::Always, |a, on| {

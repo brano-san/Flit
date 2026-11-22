@@ -6,6 +6,7 @@ use hashbrown::HashTable;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, Clone, Copy)]
 pub struct IndexRecord<'a> {
@@ -120,6 +121,12 @@ pub struct VolumeIndex {
     dead_bytes: usize,
     removed_dirs: usize,
     live: usize,
+    child_counts: Arc<ChildCounts>,
+}
+
+#[derive(Default)]
+struct ChildCounts {
+    values: Mutex<Option<Arc<Vec<u32>>>>,
 }
 
 impl VolumeIndex {
@@ -309,6 +316,28 @@ impl VolumeIndex {
             NONE => out.extend_from_slice(&self.root),
             p => self.path_into(p, false, chain, out),
         }
+    }
+
+    pub(crate) fn child_counts(&self, cancel: crate::engine::Cancel<'_>) -> Option<Arc<Vec<u32>>> {
+        let mut cache = self.child_counts.values.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(counts) = cache.as_ref() {
+            return Some(counts.clone());
+        }
+        if cancel() {
+            return None;
+        }
+        let mut counts = vec![0u32; self.len()];
+        for (i, &parent) in self.parents.iter().enumerate() {
+            if i.is_multiple_of(4096) && cancel() {
+                return None;
+            }
+            if self.listed(i as u32) {
+                if let Some(n) = counts.get_mut(parent as usize) {
+                    *n = n.saturating_add(1);
+                }
+            }
+        }
+        Some(cache.insert(Arc::new(counts)).clone())
     }
 
     fn touch(&mut self, i: u32) {
@@ -644,6 +673,7 @@ impl VolumeIndex {
         if self.changed.is_empty() {
             return false;
         }
+        self.child_counts = Default::default();
         if self.dead_bytes > (self.lower.len() / 4).max(1 << 20) {
             self.compact();
         }

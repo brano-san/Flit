@@ -76,6 +76,7 @@ about = "Info"
 "advanced.indexing" = "Dateien für die Suche indizieren"
 "keys" = "Tastenkombinationen"
 "general.mru_tabs" = "Strg+Tab nach letzter Verwendung"
+"advanced.search_exclusions" = "Von der Suche ausgeschlossene Pfade"
 
 [help]
 "general.language" = "Die Sprache von Menüs, Dialogen, Meldungen und Datumsangaben; Protokolle bleiben auf Englisch"
@@ -152,6 +153,7 @@ about = "Info"
 "keys" = "Tastenkombinationen, die vom Standard abweichen, nach Befehls-ID"
 "area_color" = "„Standard“ folgt der Hintergrundfarbe; Text auf einer benutzerdefinierten Farbe passt sich an, um lesbar zu bleiben"
 "general.mru_tabs" = "Mit Strg+Tab durch zuletzt verwendete Tabs wechseln. Ohne diese Option gilt die Reihenfolge der Tableiste."
+"advanced.search_exclusions" = "Blendet diese Pfade und ihre Inhalte in Suchergebnissen aus."
 
 [choice]
 "language.system" = "Wie im System"

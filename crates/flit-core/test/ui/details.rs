@@ -468,9 +468,9 @@ fn search_results_can_be_grouped_by_folder() {
     let query = app.drain_effects().find_map(|e| if let Effect::Search(SearchRequest::Query { sort, .. }) = e { Some(sort) } else { None });
     assert_eq!(query.map(|s| s.key), Some(SearchKey::Folder));
     let menu = app.build_search_menu(false);
-    assert_eq!(commands(&menu), [("Group by folder".to_owned(), true)]);
+    assert!(commands(&menu).contains(&("Group by folder".to_owned(), true)));
     let menu = app.build_search_menu(true);
-    assert_eq!(commands(&menu), [("Group by folder".to_owned(), true)]);
+    assert!(commands(&menu).contains(&("Group by folder".to_owned(), true)));
 }
 
 #[test]

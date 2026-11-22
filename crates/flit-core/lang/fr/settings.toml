@@ -76,6 +76,7 @@ about = "À propos"
 "advanced.indexing" = "Indexer les fichiers pour la recherche"
 "keys" = "Raccourcis clavier"
 "general.mru_tabs" = "Ctrl+Tab par ordre de dernière utilisation"
+"advanced.search_exclusions" = "Chemins exclus de la recherche"
 
 [help]
 "general.language" = "La langue des menus, boîtes de dialogue, messages et dates ; les journaux restent en anglais"
@@ -152,6 +153,7 @@ about = "À propos"
 "keys" = "Raccourcis qui diffèrent des valeurs par défaut, par identifiant de commande"
 "area_color" = "Par défaut suit la couleur d’arrière-plan ; le texte sur une couleur personnalisée s’ajuste pour rester lisible"
 "general.mru_tabs" = "Parcourt les onglets selon leur dernière utilisation. Désactivez cette option pour suivre l’ordre de la barre."
+"advanced.search_exclusions" = "Masque ces chemins et leur contenu dans les résultats."
 
 [choice]
 "language.system" = "Comme dans le système"

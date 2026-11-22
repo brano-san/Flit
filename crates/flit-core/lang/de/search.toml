@@ -20,6 +20,8 @@ invalid_rows = "Der Index hat ungültige Zeilen gesendet: {error}"
 unavailable = "Die Suche ist nicht verfügbar: {error}"
 cannot_start = "Die Suche kann nicht gestartet werden: {error}"
 shell = "Windows Search: {error}"
+syntax_position = "Ungültige Suchanfrage an Position {position}"
+timestamps_need_folder = "Erstellungs- und Zugriffszeit sind nur bei der Ordnersuche verfügbar."
 
 [column]
 folder = "Ordner"
@@ -40,3 +42,19 @@ default = "Index"
 ready = ["{label} {n} Datei", "{label} {n} Dateien"]
 scanning = ["{label} Indizierung {percent} % ({n} Datei)", "{label} Indizierung {percent} % ({n} Dateien)"]
 error = "{label} Fehler: {error}"
+
+[exclude]
+action = "Von der Suche ausschließen"
+
+[explore]
+folders = "Ordner"
+within = "In aktuellen Ergebnissen suchen"
+folders_help = "Zeigt Ordner und die Anzahl ihrer Ergebnisse."
+within_help = "Schränkt die aktuelle Ergebnismenge weiter ein."
+similar = "Ähnliche Dateien finden"
+similar_help = "Sucht nach Dateityp, Änderungstag, Größe und Tags der gewählten Datei."
+facets = "Facetten"
+facets_help = "Zeigt Filter und ein Histogramm der Änderungsdaten."
+year = "Jahr"
+no_extension = "Ohne Erweiterung"
+all = "Alle"

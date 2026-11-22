@@ -20,6 +20,8 @@ invalid_rows = "索引发送了无效的行：{error}"
 unavailable = "搜索不可用：{error}"
 cannot_start = "无法开始搜索：{error}"
 shell = "Windows Search：{error}"
+syntax_position = "搜索查询在第 {position} 个字符处有误"
+timestamps_need_folder = "创建和访问时间可在文件夹搜索中使用。"
 
 [column]
 folder = "文件夹"
@@ -40,3 +42,19 @@ default = "索引"
 ready = ["{label} {n} 个文件"]
 scanning = ["{label} 正在编制索引 {percent}%（{n} 个文件）"]
 error = "{label} 错误：{error}"
+
+[exclude]
+action = "从搜索中排除"
+
+[explore]
+folders = "文件夹"
+within = "在当前结果中搜索"
+folders_help = "显示文件夹及其结果数量。"
+within_help = "进一步缩小当前搜索结果的范围。"
+similar = "查找相似文件"
+similar_help = "按所选文件的类型、修改日期、大小和标签搜索。"
+facets = "分类筛选"
+facets_help = "显示筛选条件和修改日期直方图。"
+year = "年份"
+no_extension = "无扩展名"
+all = "全部"
