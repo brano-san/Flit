@@ -223,6 +223,12 @@ impl LocalProvider {
                     let started = spawn("flit-connect".into(), move || {
                         let prompt = MountPrompt::new(tab, events.clone(), wake.clone()).at_generation(gen);
                         let done = S::new().and_then(|mut sh| sh.connect_asking(&uri, &prompt));
+                        if let Err(error) = &done {
+                            let address = flit_core::redact::passwords(&uri);
+                            let message = error.to_string();
+                            let message = flit_core::redact::passwords(&message);
+                            tracing::error!(%address, %message, "cannot connect to server");
+                        }
                         let event = match gen {
                             Some(gen) => Some(ProviderEvent::NetworkConnected { tab, gen, result: done.map_err(|e| e.to_string()) }),
                             None => shell_event(tab, done.map(|p| p.map(|path| {

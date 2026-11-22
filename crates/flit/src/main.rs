@@ -149,19 +149,14 @@ fn main() {
     #[cfg(windows)]
     let identity = flit_platform_windows::aumid::adopt();
     let logs_dir = <P as Platform>::state_dir().map(|d| d.join("logs"));
-    logs::init(logs_dir.clone(), std::env::var_os("FLIT_LOG").is_some());
-    #[cfg(windows)]
-    if metrics.is_none() {
-        flit_platform_windows::crash::register_restart(RESTARTED_BY_WINDOWS);
-    }
     #[cfg(windows)]
     if let Some(dir) = &logs_dir {
         flit_platform_windows::crash::install(dir);
-        let previous = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |info| {
-            previous(info);
-            flit_platform_windows::crash::dump_now();
-        }));
+    }
+    logs::init(logs_dir, std::env::var_os("FLIT_LOG").is_some());
+    #[cfg(windows)]
+    if metrics.is_none() {
+        flit_platform_windows::crash::register_restart(RESTARTED_BY_WINDOWS);
     }
     tracing::info!("Flit {} started, process {}", env!("CARGO_PKG_VERSION"), std::process::id());
     #[cfg(windows)]

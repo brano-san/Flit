@@ -296,6 +296,10 @@ impl Platform for Windows {
         places::os_version()
     }
 
+    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
+        network::discovery_warning(network::discovery_enabled)
+    }
+
     fn ui_language() -> String {
         places::ui_language()
     }

@@ -785,6 +785,7 @@ dependencies = [
  "postcard",
  "pulldown-cmark",
  "rayon",
+ "regex",
  "serde",
  "serde_json",
  "smallvec",

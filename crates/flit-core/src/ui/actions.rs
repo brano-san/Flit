@@ -869,9 +869,9 @@ impl App {
     fn copy_paths(&mut self, quote: Quote) {
         let t = self.tab();
         let text = |l: &Location| match quote {
-            Quote::Never => l.display().into_owned(),
-            Quote::Needed => smart_quote(&l.display()),
-            Quote::Always => format!("\"{}\"", l.display()),
+            Quote::Never => l.address_text().into_owned(),
+            Quote::Needed => smart_quote(&l.address_text()),
+            Quote::Always => format!("\"{}\"", l.address_text()),
         };
         let sel: Vec<u32> = t.view.as_ref().map(|v| v.selected().collect()).unwrap_or_default();
         let line_break = if self.caps.unix_paths { "\n" } else { "\r\n" };
@@ -888,8 +888,8 @@ impl App {
 
     pub(super) fn as_path_text(&self, l: &Location) -> String {
         match self.as_path_quote() {
-            Quote::Always => format!("\"{}\"", l.display()),
-            _ => l.display().into_owned(),
+            Quote::Always => format!("\"{}\"", l.address_text()),
+            _ => l.address_text().into_owned(),
         }
     }
 

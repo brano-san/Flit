@@ -716,6 +716,9 @@ pub trait Platform: 'static {
     fn missing_tools() -> Vec<flit_core::ui::MissingTool> {
         Vec::new()
     }
+    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
+        None
+    }
     fn ui_language() -> String {
         String::new()
     }

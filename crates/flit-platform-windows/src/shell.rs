@@ -452,7 +452,7 @@ impl Shell for ShellCom {
             Launch::Wallpaper(image) => return crate::install::wallpaper(image),
             Launch::Command { runs, dir } => {
                 let owner = owner_window().unwrap_or_default();
-                return launch_commands(runs, dir.as_ref(), |text| crate::toast::notify(owner, text));
+                return launch_commands(runs, dir.as_ref(), |text| crate::toast::notify(owner, &flit_core::redact::passwords(text)));
             }
             Launch::Run { program, args, .. } if program.eq_ignore_ascii_case("explorer.exe") && crate::shellwin::explorer_place(args).is_some_and(crate::shellwin::raise_explorer) => return Ok(()),
             _ => {}
@@ -465,7 +465,9 @@ impl Shell for ShellCom {
     }
 
     fn connect(&mut self, uri: &str) -> Result<FsPath, PlatformError> {
-        crate::network::server_path(uri).map_err(|scheme| PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineServerScheme, scheme = scheme)))
+        let path = crate::network::server_path(uri).map_err(|scheme| PlatformError::new(-1, flit_core::tr_en!(flit_core::i18n::S::ErrorsEngineServerScheme, scheme = scheme)))?;
+        crate::network::remember_ftp(&path, uri);
+        Ok(path)
     }
 
     fn shortcut_folder(&mut self, link: &FsPath) -> Option<FsPath> {

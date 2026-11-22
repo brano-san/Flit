@@ -47,7 +47,7 @@ const NO_ROOM_BUTTONS: [S; 3] = [S::OpsExtraCopyAnyway, S::UiButtonRetry, S::UiB
 const CONFIRM_BUTTONS: [S; 2] = [S::UiButtonDelete, S::UiButtonCancel];
 const RESTORE_ALL_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonCancel];
 const RESTORE_BUTTONS: [S; 2] = [S::UiButtonRestore, S::UiButtonNotNow];
-const CRASH_RESTORE_BUTTONS: [S; 3] = [S::UiButtonRestore, S::UiButtonOpenFolder, S::UiButtonNotNow];
+const CRASH_RESTORE_BUTTONS: [S; 3] = [S::UiButtonOpenFolder, S::UiButtonRestore, S::UiButtonNotNow];
 const CRASH_BUTTONS: [S; 2] = [S::UiButtonOpenFolder, S::UiButtonNotNow];
 const REPLACE_BUTTONS: [S; 2] = [S::UiButtonReplace, S::UiButtonCancel];
 const FAILURE_BUTTONS: [S; 4] = [S::UiButtonRetry, S::UiButtonSkip, S::UiButtonSkipAll, S::UiButtonCancel];
@@ -319,7 +319,7 @@ fn restore_buttons(session: bool, dump: bool) -> &'static [S] {
 }
 
 fn quoted(p: &FsPath) -> String {
-    crate::tr!(S::UiQuoted, name = name::display(p.file_name()))
+    crate::tr!(S::UiQuoted, name = crate::redact::passwords(&name::display(p.file_name())))
 }
 
 fn count(items: &[FsPath]) -> String {
@@ -1283,7 +1283,7 @@ impl App {
                 let folder = f.path.parent().map(|p| p.display().into_owned()).unwrap_or_default();
                 let hint = if f.fatal { S::UiFailureFullHint.t().to_owned() } else { crate::tr!(S::UiFailureWhere, folder = folder) };
                 let title = if f.fatal { S::UiFailureFullTitle.t().to_owned() } else { failure_title(op, quoted(&f.path)) };
-                (title, vec![crate::i18n::localize(&f.error.message).into_owned(), hint])
+                (title, vec![crate::redact::passwords(&crate::i18n::localize(&f.error.message)).into_owned(), hint])
             }
             Some(Ask::Confirm(op, provider)) => {
                 let (title, text) = confirm_text(op);

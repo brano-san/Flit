@@ -90,9 +90,9 @@ pub(super) fn with_sep(loc: &Location) -> String {
     if matches!(loc.path().kind(), PathKind::Computer | PathKind::Home) {
         return String::new();
     }
-    let mut s = loc.display().into_owned();
+    let mut s = loc.address_text().into_owned();
     if !s.ends_with(SEPS) {
-        s.push(if s.contains('\\') || !s.starts_with('/') { '\\' } else { '/' });
+        s.push(if loc.path().is_ftp() || !s.contains('\\') && s.starts_with('/') { '/' } else { '\\' });
     }
     s
 }
@@ -115,9 +115,10 @@ fn entry_rows(dir: &Location, entries: &Entries) -> Vec<Row> {
     entries
         .iter()
         .map(|(n, d)| {
-            let (label, raw) = match name::display(n) {
-                Cow::Borrowed(s) => (s.to_owned(), None),
-                Cow::Owned(s) => (s, Some(n.to_vec())),
+            let shown = name::display(n);
+            let (label, raw) = match crate::redact::passwords(&shown) {
+                Cow::Borrowed(s) if matches!(shown, Cow::Borrowed(_)) => (s.to_owned(), None),
+                label => (label.into_owned(), Some(n.to_vec())),
             };
             Row { label, path: String::new(), kind: Kind::Entry { parent: parent.clone(), raw, dir: d } }
         })
@@ -146,6 +147,8 @@ impl App {
         let path = self.current_location().path();
         let text = if self.caps.unix_paths && path.is_network() {
             if path.is_root() { crate::path::NETWORK_URI.to_owned() } else { crate::name::display(path.file_name()).into_owned() }
+        } else if let Some(uri) = path.ftp_uri() {
+            uri
         } else {
             with_sep(self.current_location())
         };
@@ -238,7 +241,7 @@ impl App {
         if suggested.is_empty() {
             return (rows, lines, listed);
         }
-        let known: Vec<String> = lines.iter().filter_map(|l| if let Line::Row(k, _) = l { rows[*k].loc().map(|l| place_key(&l.display())) } else { None }).collect();
+        let known: Vec<String> = lines.iter().filter_map(|l| if let Line::Row(k, _) = l { rows[*k].loc().map(|l| place_key(&l.address_text())) } else { None }).collect();
         for (t, typed) in suggested {
             if known.contains(&place_key(&t)) {
                 continue;

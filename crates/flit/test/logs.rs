@@ -24,6 +24,20 @@ fn read(dir: &Path, name: &str) -> String {
 }
 
 #[test]
+fn tracing_connection_errors_reach_disk_with_masked_passwords() {
+    let d = temp("connection");
+    let sink = Sink::start(Some(d.0.clone()), false).unwrap();
+    let subscriber = tracing_subscriber::registry().with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(sink.clone()));
+    tracing::subscriber::with_default(subscriber, || {
+        tracing::error!(address = %"ftp://demo:private@ftp.example.test", "connection failed: password='another secret'");
+    });
+    assert!(sink.flush(Duration::from_secs(5)));
+    let log = read(&d.0, FILE);
+    assert!(log.contains("ftp://demo:***@ftp.example.test") && log.contains("password=***"));
+    assert!(!log.contains("private") && !log.contains("another secret"));
+}
+
+#[test]
 fn lines_reach_the_file_in_order_without_a_shutdown() {
     let d = temp("order");
     let sink = Sink::start(Some(d.0.clone()), false).unwrap();
@@ -133,7 +147,7 @@ fn bench_the_cost_of_a_log_line() {
 }
 
 #[test]
-fn the_crash_report_is_the_newest_dump_since_the_marker() {
+fn the_crash_dialog_selects_the_newest_anonymized_text_since_the_marker() {
     let d = Temp(std::env::temp_dir().join(format!("flit-crash-report-{}", std::process::id())));
     std::fs::create_dir_all(&d.0).unwrap();
     let now = std::time::SystemTime::now();
@@ -145,7 +159,35 @@ fn the_crash_report_is_the_newest_dump_since_the_marker() {
     put("flit-crash-old.dmp", 600);
     put("flit-crash-a.dmp", 20);
     put("flit-crash-b.dmp", 10);
+    put("flit-crash-a.report.txt", 19);
+    put("flit-crash-b.report.txt", 9);
     put("flit-crash-b.txt", 5);
-    assert_eq!(crash_report(&d.0, now - Duration::from_secs(60)), Some(d.0.join("flit-crash-b.dmp")));
+    put("flit-crash-latest.dmp", 4);
+    put("other.report.txt", 3);
+    assert_eq!(crash_report(&d.0, now - Duration::from_secs(60)), Some(d.0.join("flit-crash-b.report.txt")));
+    assert_eq!(crash_report(&d.0, now - Duration::from_secs(8)), Some(d.0.join("flit-crash-latest.dmp")));
     assert_eq!(crash_report(&d.0, now), None);
+}
+
+#[test]
+fn the_panic_hook_keeps_the_previous_hook_and_masks_its_own_log() {
+    const CHILD: &str = "FLIT_TEST_PANIC_HOOK_DIR";
+    if let Some(dir) = std::env::var_os(CHILD) {
+        let dir = PathBuf::from(dir);
+        let marker = dir.join("previous-hook");
+        std::panic::set_hook(Box::new(move |_| std::fs::write(&marker, b"called").unwrap()));
+        init(Some(dir), false);
+        let _ = std::panic::catch_unwind(|| panic!("cannot open ftp://demo:private-test-secret@host/"));
+        return;
+    }
+    let d = temp("hook-chain");
+    std::fs::create_dir_all(&d.0).unwrap();
+    let child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "logs::tests::the_panic_hook_keeps_the_previous_hook_and_masks_its_own_log"])
+        .env(CHILD, &d.0)
+        .output().unwrap();
+    assert!(child.status.success(), "{}", String::from_utf8_lossy(&child.stderr));
+    let log = read(&d.0, FILE);
+    assert!(log.contains("ftp://demo:***@host/") && !log.contains("private-test-secret"));
+    assert_eq!(read(&d.0, "previous-hook"), "called");
 }

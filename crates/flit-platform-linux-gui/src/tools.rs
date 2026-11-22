@@ -99,9 +99,17 @@ fn library_dirs() -> Vec<std::path::PathBuf> {
     dirs
 }
 
+pub(crate) fn gvfs_network_present() -> bool {
+    ["/usr/libexec", "/usr/lib", "/usr/lib/gvfs", "/usr/lib64/gvfs", "/usr/lib/gvfs-daemons"].iter().any(|dir| std::path::Path::new(dir).join("gvfsd-network").is_file())
+}
+
+pub(crate) fn avahi_daemon_package(os_release: &str) -> &'static str {
+    ["avahi-daemon", "avahi", "avahi", "avahi"][family(os_release)]
+}
+
 fn found(tool: &str, cache: &dyn Fn() -> Vec<u8>) -> bool {
     if tool == "gvfsd-network" {
-        return ["/usr/libexec", "/usr/lib", "/usr/lib/gvfs", "/usr/lib64/gvfs", "/usr/lib/gvfs-daemons"].iter().any(|dir| std::path::Path::new(dir).join(tool).is_file());
+        return gvfs_network_present();
     }
     match LIBRARIES.iter().find(|(name, _)| *name == tool) {
         Some((_, files)) => crate::mpv::loaded() || library_present(files, &cache(), &library_dirs()),

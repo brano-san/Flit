@@ -18,6 +18,9 @@ bin = "回收站为空。"
 folder = "此文件夹为空。"
 network = "网络上未找到计算机或共享文件夹。按 F5 重新搜索。"
 network_connect = "按 F5 连接。"
+network_discovery_disabled = "网络发现已关闭。"
+network_start_avahi = "请启动 {package} 软件包中的 avahi-daemon。"
+network_install_gvfs = "请安装 {package} 软件包。"
 
 [status]
 selected = ["已选择 {n} 个"]
@@ -39,6 +42,7 @@ restore = "还原"
 not_now = "以后再说"
 open_folder = "打开文件夹"
 no = "否"
+open_network_settings = "打开设置"
 
 [job]
 operations = "操作"
@@ -131,7 +135,7 @@ replace = "导出设置将覆盖 {folder} 中的此文件。"
 restore_title = "还原上一个会话？"
 crashed = "Flit 上次未正常关闭。"
 crash_title = "Flit 上次崩溃了"
-crash_report = "Flit 上次崩溃了。崩溃报告已保存：{name}。"
+crash_report = "Flit 上次崩溃了。您可以将匿名文本报告 {name} 附加到问题报告中。"
 restore = "“还原”会重新打开之前打开的窗口和标签页。"
 
 [ops]

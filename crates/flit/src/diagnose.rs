@@ -50,13 +50,13 @@ pub fn report<P: Platform>() -> String {
         for d in &files_with(dir, "dmp") {
             let _ = writeln!(out, "  {}", d.display());
         }
-        for note in files_with(dir, "txt").iter().filter(|p| p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("flit-crash-"))) {
+        for note in files_with(dir, "txt").iter().filter(|p| p.file_name().is_some_and(crate::logs::is_crash_report)) {
             let _ = writeln!(out, "  {}: {}", note.display(), std::fs::read_to_string(note).unwrap_or_default().replace('\n', "; "));
         }
         let log = std::fs::read_to_string(dir.join(crate::logs::FILE)).unwrap_or_default();
         let _ = writeln!(out, "\nLast {LOG_LINES} log lines:\n{}", tail(&log, LOG_LINES));
     }
-    out
+    flit_core::redact::passwords(&out).into_owned()
 }
 
 pub fn run<P: Platform>() -> std::io::Result<PathBuf> {

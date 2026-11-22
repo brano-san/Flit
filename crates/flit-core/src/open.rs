@@ -155,7 +155,7 @@ pub fn resolve_for(raw: &[u8], cwd: Option<&[u8]>, shell_folder: &dyn Fn(&str) -
         return shell_folder(&text).ok_or_else(|| ResolveError::UnknownShellLocation(text.into_owned()));
     }
     let path = match strip_prefix_ci(raw, b"file://") {
-        Some(url) => file_url_path(&percent_decode(url)),
+        Some(url) => file_url_path(&name::percent_decode(url)),
         None => Some(raw.to_vec()),
     };
     path.and_then(|p| resolve_path(&p, cwd.and_then(FsPath::parse_bytes))).ok_or_else(|| ResolveError::Invalid(text.into_owned()))
@@ -269,24 +269,6 @@ fn resolve_path(raw: &[u8], cwd: Option<FsPath>) -> Option<Location> {
     }
     let base = cwd.filter(|_| !raw.get(..2).is_some_and(|p| p.iter().all(is_sep)))?;
     Location::parse_bytes(&[base.as_bytes(), &[base.sep()], raw].concat())
-}
-
-fn percent_decode(b: &[u8]) -> Vec<u8> {
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        let hex = |c: u8| (c as char).to_digit(16);
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
-                out.push((h * 16 + l) as u8);
-                i += 3;
-                continue;
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    out
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -472,7 +472,7 @@ fn removal_count(op: &FileOp) -> usize {
 impl App {
     pub fn status(&mut self, msg: impl Into<String>) {
         let msg = msg.into();
-        self.tab_mut().error = Some(crate::i18n::localize(&msg).into_owned());
+        self.tab_mut().error = Some(crate::redact::passwords(&crate::i18n::localize(&msg)).into_owned());
         self.dirty = true;
     }
 
@@ -1268,7 +1268,7 @@ impl App {
     pub(super) fn op_done(&mut self, tab: TabId, id: OpId, error: Option<crate::provider::OpError>, report: Option<OpReport>, now: Instant) {
         let error_kind = error.as_ref().map(|e| e.kind);
         let cancelled = error_kind == Some(crate::provider::PlatformErrorKind::Cancelled);
-        let error = error.map(|e| crate::i18n::localize(&e.message).into_owned());
+        let error = error.map(|e| crate::redact::passwords(&crate::i18n::localize(&e.message)).into_owned());
         self.job_done(id, error.as_deref().filter(|_| !cancelled), cancelled, now);
         self.reload_released_preview();
         if report.is_some() {

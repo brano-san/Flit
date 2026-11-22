@@ -85,6 +85,62 @@ impl FsPath {
         self.shell_root_is(SHELL_COMPUTER)
     }
 
+    pub fn is_ftp(&self) -> bool {
+        self.shell_root().is_some_and(|root| root.starts_with(b"ftp://"))
+    }
+
+    pub fn ftp_uri(&self) -> Option<String> {
+        let root = self.shell_root().filter(|root| root.starts_with(b"ftp://"))?;
+        let mut uri = std::str::from_utf8(root).ok()?.to_owned();
+        uri.push('/');
+        for (i, segment) in self.components().enumerate() {
+            if i > 0 {
+                uri.push('/');
+            }
+            for &b in segment {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    uri.push(b as char);
+                } else {
+                    use std::fmt::Write as _;
+                    let _ = write!(uri, "%{b:02X}");
+                }
+            }
+        }
+        Some(uri)
+    }
+
+    fn parse_ftp(input: &[u8]) -> Option<Self> {
+        let raw = std::str::from_utf8(input.get(6..)?).ok()?;
+        let delim = raw.find(['/', '\\']).unwrap_or(raw.len());
+        let (authority, rest) = raw.split_at(delim);
+        if authority.is_empty() || authority.chars().any(|c| c.is_whitespace() || c.is_control()) || authority.contains(['?', '#', '"', '<', '>']) {
+            return None;
+        }
+        if let Some((user, host)) = authority.rsplit_once('@') {
+            if user.contains([':', '@']) || host.is_empty() {
+                return None;
+            }
+        }
+        let base = format!("ftp://{authority}");
+        if let Some(rest) = rest.strip_prefix('\\') {
+            return Self::shell(base.as_bytes(), rest.as_bytes());
+        }
+        if rest.contains(['?', '#', '\\']) {
+            return None;
+        }
+        let mut path = Self::shell(base.as_bytes(), b"")?;
+        for part in rest.split('/').filter(|part| !part.is_empty()) {
+            let name = crate::name::percent_decode(part.as_bytes());
+            match name.as_slice() {
+                b"." => {}
+                b".." => path = path.parent_in_root().unwrap_or(path),
+                name if name.contains(&0) || name.contains(&b'/') || name.contains(&b'\\') => return None,
+                name => path.push(name),
+            }
+        }
+        Some(path)
+    }
+
     fn normalized(self) -> Self {
         if self.is_device() && self.is_root() {
             return Self::computer();
@@ -138,6 +194,9 @@ impl FsPath {
             }
         }
         if !unix_host {
+            if input.get(..6).is_some_and(|scheme| scheme.eq_ignore_ascii_case(b"ftp://")) {
+                return Self::parse_ftp(input);
+            }
             if input.len() > 9 && input[..9].eq_ignore_ascii_case(b"shell:::{") {
                 let end = input.iter().position(|&c| c == b'}')? + 1;
                 let rest = &input[end..];
@@ -250,13 +309,24 @@ impl FsPath {
             PathKind::Computer => Cow::Borrowed(S::PathComputer.t()),
             PathKind::RecycleBin => Cow::Borrowed(S::PathRecycleBin.t()),
             PathKind::Home => Cow::Borrowed(S::PathHome.t()),
+            PathKind::Shell if self.is_ftp() => {
+                let mut shown = name::display(self.shell_root().unwrap_or_default()).into_owned();
+                shown.push('/');
+                for (i, segment) in self.components().enumerate() {
+                    if i != 0 {
+                        shown.push('/');
+                    }
+                    shown.push_str(&name::display(segment));
+                }
+                Cow::Owned(shown)
+            }
             PathKind::Shell => {
                 let mut b = self.root_label().to_vec();
                 for c in self.components() {
                     b.push(b'\\');
                     b.extend_from_slice(c);
                 }
-                Cow::Owned(name::display(&b).into_owned())
+                Cow::Owned(crate::redact::passwords(&name::display(&b)).into_owned())
             }
             _ => name::display(&self.s),
         }

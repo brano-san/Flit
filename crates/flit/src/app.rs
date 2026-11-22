@@ -711,7 +711,7 @@ impl<P: Platform> Handler<P> {
                 Effect::Window(WindowCmd::Compact(on)) => window.set_compact(on),
                 Effect::Window(WindowCmd::Attention) => window.request_attention(),
                 Effect::Window(WindowCmd::ServerDecorations(on)) => window.set_server_decorations(on),
-                Effect::Notify(text) => window.notify(&text),
+                Effect::Notify(text) => window.notify(&flit_core::redact::passwords(&text)),
                 Effect::MoveTab { tab, at, last } => self.move_tab(window, tab, at, last),
                 Effect::TabOver(at) => self.tab_over(window, at),
                 Effect::RestoreSession => {
@@ -819,6 +819,15 @@ impl<P: Platform> Handler<P> {
                     }
                 }
                 Effect::RefreshPlaces => self.places.refresh(),
+                Effect::NetworkDiscovery { tab, gen } => {
+                    let (events, wake) = (self.events_tx.clone(), self.wake.clone());
+                    if let Err(error) = spawn("flit-network-discovery", move || {
+                        let _ = events.send(ProviderEvent::NetworkDiscovery { tab, gen, warning: P::network_warning() });
+                        wake();
+                    }) {
+                        tracing::warn!("cannot check network discovery: {error}");
+                    }
+                }
                 Effect::SavedServer(change) => {
                     change.apply(&mut self.saved.side.saved_servers);
                     for app in self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app).chain(self.pending.iter_mut()) {
@@ -1105,12 +1114,13 @@ impl<P: Platform> Handler<P> {
         let now = Instant::now();
         while let Ok(ev) = self.events.try_recv() {
             match &ev {
-                ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {e}"),
-                ProviderEvent::Hashed { result: Err(e), .. } => tracing::warn!("hashing failed: {e}"),
-                ProviderEvent::Denied { error, .. } => tracing::warn!("{error}"),
+                ProviderEvent::OpDone { error: Some(e), .. } => tracing::warn!("operation failed: {}", flit_core::redact::passwords(e)),
+                ProviderEvent::Hashed { result: Err(e), .. } => tracing::warn!("hashing failed: {}", flit_core::redact::passwords(e)),
+                ProviderEvent::Denied { error, .. } => tracing::warn!("{}", flit_core::redact::passwords(error)),
                 _ => {}
             }
             let target = match &ev {
+                ProviderEvent::NetworkDiscovery { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::Changes { tab, .. } | ProviderEvent::Rescan { tab, .. } | ProviderEvent::DirSize { tab, .. } | ProviderEvent::SizesSkipped { tab, .. } => self.window_of_tab(*tab),
                 ProviderEvent::OpDone { tab, .. } | ProviderEvent::Untrashable { tab, .. } | ProviderEvent::Denied { tab, .. } => self.window_of_tab(*tab).or(self.active),
                 ProviderEvent::Navigate { tab, .. } | ProviderEvent::SavedServerConnected { tab, .. } | ProviderEvent::WrongPassphrase { tab, .. } | ProviderEvent::NetworkConnected { tab, .. } | ProviderEvent::Reveal { tab, .. } | ProviderEvent::OpProgress { tab, .. } | ProviderEvent::OpConflict { tab, .. } | ProviderEvent::OpFailure { tab, .. } | ProviderEvent::Hashed { tab, .. } | ProviderEvent::Measured { tab, .. } | ProviderEvent::Status { tab, .. } | ProviderEvent::Access { tab, .. } | ProviderEvent::NotExecutable { tab, .. } | ProviderEvent::OpenAsk { tab, .. } | ProviderEvent::Unwatched { tab, .. } | ProviderEvent::MountAsk { tab, .. } | ProviderEvent::MountAskDone { tab, .. } => self.window_of_tab(*tab),

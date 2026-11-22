@@ -8,6 +8,33 @@ use std::sync::mpsc::{Receiver, TryRecvError};
 use std::time::Instant;
 
 #[test]
+fn connection_failure_hides_passwords_from_the_status_line() {
+    let mut a = linux();
+    let tab = a.tab().id;
+    a.on_provider_event(ProviderEvent::OpDone {
+        tab, id: 0,
+        error: Some("Cannot connect to sftp://ann:secret@nas/docs (password=also-secret&port=22)".into()),
+        report: None,
+    }, Instant::now());
+    assert_eq!(a.tab().error.as_deref(), Some("Cannot connect to sftp://ann:***@nas/docs (password=***&port=22)"));
+}
+
+#[test]
+fn connection_history_masks_the_address_but_the_request_uses_the_password() {
+    let mut a = linux();
+    let now = Instant::now();
+    let uri = "smb://ann:secret@nas/";
+    a.submit_address(uri, now);
+    assert_eq!(a.addr.typed.lock().unwrap().as_slice(), ["smb://ann@nas"]);
+    a.connect_server(uri);
+    assert_eq!(launches(&mut a), [Launch::ConnectServer(uri.into())]);
+    let loc = Location::from_local(FsPath::network_server(uri.as_bytes()).unwrap());
+    assert!(loc.display().contains("smb://ann:***@nas/"));
+    assert_eq!(loc.crumbs().last().unwrap().0, "smb://ann:***@nas/");
+    assert!(loc.to_bytes().ends_with(uri.as_bytes()));
+}
+
+#[test]
 fn connect_dialog_offers_an_unchecked_network_checkbox_only_on_linux() {
     let mut a = linux();
     a.run_action("drive.connect_server", Instant::now());
@@ -302,6 +329,33 @@ fn server_addresses_need_a_known_scheme_and_a_host() {
 }
 
 #[test]
+fn on_windows_ftp_from_the_address_bar_uses_the_file_manager() {
+    let mut a = app();
+    let now = Instant::now();
+    let ftp = "FTP://demo:test-password@ftp.example.test/pub";
+    a.submit_address(ftp, now);
+    assert_eq!(launches(&mut a), [Launch::ConnectServer(ftp.into())]);
+    a.submit_address("https://example.test/", now);
+    assert_eq!(launches(&mut a), [Launch::Run { program: "https://example.test/".into(), args: String::new(), dir: None }]);
+}
+
+#[test]
+#[cfg(windows)]
+fn an_ftp_folder_shows_decoded_crumbs_and_opens_an_encoded_address_for_editing() {
+    let mut a = app();
+    let now = Instant::now();
+    let uri = "ftp://ftp.example.test/space%20and%20%23/%D0%9F";
+    let folder = Location::Local(FsPath::parse(uri).unwrap());
+    a.dispatch(vec![Route { folder, select: None }], OpenTarget::CurrentTab, now);
+    let labels: Vec<_> = a.tab().crumbs.iter().map(|(label, _)| label.as_str()).collect();
+    assert_eq!(&labels[labels.len() - 2..], ["space and #", "П"]);
+    assert_eq!(a.tab().location().display(), "ftp://ftp.example.test/space and #/П");
+    a.drain_effects().for_each(drop);
+    a.open_address();
+    assert_eq!(a.nav.palette.as_ref().unwrap().field.text(), uri);
+}
+
+#[test]
 fn drive_actions_reach_the_shell_and_unix_hosts_hide_them() {
     let mut a = app();
     a.drain_effects().for_each(drop);
@@ -326,6 +380,73 @@ fn network_goes_to_the_network_place() {
     let mut a = app();
     assert!(a.run_action("nav.network", Instant::now()));
     assert_eq!(a.tab().location(), &Location::Local(FsPath::network()));
+}
+
+#[test]
+fn an_empty_network_place_checks_once_and_the_banner_opens_sharing_settings() {
+    let mut a = app();
+    let now = Instant::now();
+    assert!(a.run_action("nav.network", now));
+    a.drain_effects().for_each(drop);
+    publish(&mut a, false, &[], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+    publish(&mut a, true, &[], None);
+    let checks: Vec<_> = a.drain_effects().filter_map(|e| match e {
+        Effect::NetworkDiscovery { tab, gen } => Some((tab, gen)),
+        _ => None,
+    }).collect();
+    assert_eq!(checks, [(a.tab().id, a.tab().gen)]);
+    let (tab, gen) = checks[0];
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen: gen + 1, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    assert!(a.network_settings_rect().is_none());
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    let r = a.network_settings_rect().unwrap();
+    let (x, y) = (r.x + r.w * 0.5, r.y + r.h * 0.5);
+    assert_eq!(a.hit(x, y), crate::ui::Hit::NetworkSettings);
+    a.activate(crate::ui::Hit::NetworkSettings, now);
+    assert_eq!(launches(&mut a), [Launch::Run { program: "ms-settings:network-advancedsharing".into(), args: String::new(), dir: None }]);
+    publish(&mut a, true, &[], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+}
+
+#[test]
+fn a_nonempty_network_and_an_enabled_firewall_do_not_show_the_banner() {
+    let mut a = app();
+    let now = Instant::now();
+    a.run_action("nav.network", now);
+    a.drain_effects().for_each(drop);
+    publish(&mut a, true, &[("server", "Server")], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+    publish(&mut a, true, &[], None);
+    let (tab, gen) = (a.tab().id, a.tab().gen);
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: None }, now);
+    assert!(a.discovery_warning().is_none());
+    assert!(a.network_settings_rect().is_none());
+}
+
+#[test]
+fn refresh_rechecks_discovery_and_drops_a_warning_from_an_earlier_load() {
+    let mut a = app();
+    let now = Instant::now();
+    assert!(a.run_action("nav.network", now));
+    publish(&mut a, true, &[], None);
+    let (tab, gen) = (a.tab().id, a.tab().gen);
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    assert!(a.network_settings_rect().is_some());
+    a.activate(crate::ui::Hit::NetworkSettings, now);
+    launches(&mut a);
+
+    assert!(a.run_action("nav.refresh", now));
+    publish(&mut a, false, &[], None);
+    assert!(!a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { .. })));
+    publish(&mut a, true, &[], None);
+    let current = a.tab().gen;
+    assert_ne!(gen, current);
+    assert!(a.drain_effects().any(|e| matches!(e, Effect::NetworkDiscovery { tab: t, gen: g } if (t, g) == (tab, current))));
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen, warning: Some(NetworkWarning::WindowsDisabled) }, now);
+    assert!(a.network_settings_rect().is_none());
+    a.on_provider_event(ProviderEvent::NetworkDiscovery { tab, gen: current, warning: None }, now);
+    assert!(a.network_settings_rect().is_none());
 }
 
 #[test]

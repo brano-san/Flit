@@ -397,7 +397,7 @@ impl App {
                     g.text(r.right() - s8 - dw, mid(*r, ms), &text, small, t.text_dim, f32::INFINITY);
                     let x = r.x + self.s(36.0);
                     let avail = r.right() - s8 - dw - s12 - x;
-                    let nw = g.text(x, mid(*r, m), &e.name, font, t.text, avail * 0.6);
+                    let nw = g.text(x, mid(*r, m), &crate::redact::passwords(&e.name), font, t.text, avail * 0.6);
                     let folder = e.target.parent().map(|p| p.display().into_owned()).unwrap_or_default();
                     g.text(x + nw + s12, mid(*r, ms), &folder, small, t.text_dim, avail - nw - s12);
                 }

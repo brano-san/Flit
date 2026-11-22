@@ -11,8 +11,24 @@ use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, LoginAsk, MountAnswer, MountAsk, MountReply, Password, ProviderRequest, ASK_ANONYMOUS, ASK_DOMAIN, ASK_PASSWORD, ASK_SAVING, ASK_USER};
 use crate::render::{Color, Rect};
 use crate::text::{FontStyle, Gfx, TextBackend};
+use crate::provider::NetworkWarning;
+use crate::theme::Theme;
 
 const SCHEMES: [&str; 11] = ["smb", "sftp", "ssh", "ftp", "ftps", "dav", "davs", "dav+sd", "davs+sd", "afp", "nfs"];
+const SHARING_SETTINGS: &str = "ms-settings:network-advancedsharing";
+
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum DiscoveryCheck {
+    #[default]
+    Unchecked,
+    Pending(u64),
+    Checked(Option<NetworkWarning>),
+}
+
+fn empty_network(snap: &crate::listing::DirSnapshot) -> bool {
+    snap.path.is_network() && snap.path.is_root() && snap.done && snap.listing.is_empty()
+        && snap.error.as_ref().is_none_or(|error| error.code == crate::listing::NO_NETWORK_BROWSER_CODE)
+}
 
 pub fn server_uri(text: &str) -> Option<String> {
     let text = text.trim();
@@ -20,6 +36,10 @@ pub fn server_uri(text: &str) -> Option<String> {
     let host = rest.split('/').next()?.rsplit('@').next()?;
     let clean = !text.contains('\\') && !text.chars().any(|c| c.is_whitespace() || c.is_control());
     (SCHEMES.contains(&scheme.to_ascii_lowercase().as_str()) && !host.is_empty() && clean).then(|| text.to_owned())
+}
+
+pub(super) fn windows_ftp(text: &str) -> bool {
+    text.trim().get(..6).is_some_and(|scheme| scheme.eq_ignore_ascii_case("ftp://"))
 }
 
 pub fn saved_address(text: &str) -> Option<String> {
@@ -41,7 +61,7 @@ pub fn saved_address(text: &str) -> Option<String> {
     }
     address.push_str(&host.to_lowercase());
     address.push_str(path.trim_end_matches('/'));
-    Some(address)
+    matches!(crate::redact::passwords(&address), std::borrow::Cow::Borrowed(_)).then_some(address)
 }
 
 pub(super) fn server_label(uri: &str) -> &str {
@@ -110,6 +130,55 @@ pub(super) fn split_remote(cmd: &Open) -> Option<(Vec<String>, Open)> {
 }
 
 impl App {
+    pub(super) fn check_discovery(&mut self, k: usize, snap: &crate::listing::DirSnapshot) {
+        let tab = &mut self.tabs[k];
+        if tab.discovery == DiscoveryCheck::Unchecked && empty_network(snap) {
+            tab.discovery = DiscoveryCheck::Pending(snap.gen);
+            self.effects.push(Effect::NetworkDiscovery { tab: tab.id, gen: snap.gen });
+        }
+    }
+
+    pub(super) fn discovery_warning(&self) -> Option<NetworkWarning> {
+        let tab = self.tab();
+        let DiscoveryCheck::Checked(warning) = tab.discovery else { return None };
+        let path = tab.location().path();
+        let view = tab.view.as_ref().filter(|view| view.snap().gen == tab.gen && &view.snap().path == path && empty_network(view.snap()));
+        view.and(warning)
+    }
+
+    pub(super) fn network_settings_rect(&self) -> Option<Rect> {
+        let r = self.layout.list;
+        let width = self.cs(190.0).min(r.w - self.cs(24.0));
+        (self.discovery_warning() == Some(NetworkWarning::WindowsDisabled) && width > 0.0 && r.h >= self.cs(106.0))
+            .then(|| Rect::new(r.x + (r.w - width) * 0.5, r.y + self.cs(62.0), width, self.cs(28.0)))
+    }
+
+    pub(super) fn open_network_settings(&mut self) {
+        if self.network_settings_rect().is_some() {
+            self.launch(Launch::Run { program: SHARING_SETTINGS.into(), args: String::new(), dir: None });
+        }
+    }
+
+    pub(super) fn draw_discovery_warning<B: TextBackend>(&self, g: &mut Gfx<B>, theme: &Theme, list: Rect, warning: NetworkWarning) {
+        let font = self.content_font(13.0);
+        let banner = list.inset(self.cs(8.0), self.cs(8.0));
+        let banner = Rect { h: self.cs(90.0).min(banner.h), ..banner };
+        g.dl.round_rect(banner, theme.button_hover, self.cs(4.0));
+        let message = match warning {
+            NetworkWarning::WindowsDisabled => S::UiEmptyNetworkDiscoveryDisabled.t().to_owned(),
+            NetworkWarning::LinuxMissing { avahi, gvfs } => [
+                avahi.map(|package| crate::tr!(S::UiEmptyNetworkStartAvahi, package = package)),
+                gvfs.map(|package| crate::tr!(S::UiEmptyNetworkInstallGvfs, package = package)),
+            ].into_iter().flatten().collect::<Vec<_>>().join(" "),
+        };
+        self.draw_network_notice(g, Rect { y: banner.y + self.cs(20.0), ..banner }, &message, font, theme.text);
+        if let Some(button) = self.network_settings_rect() {
+            let color = if self.hover == super::Hit::NetworkSettings { theme.button_pressed } else { theme.bg };
+            g.dl.round_rect(button, color, self.cs(4.0));
+            super::centered(g, button, S::UiButtonOpenNetworkSettings.t(), font, theme.text);
+        }
+    }
+
     pub(super) fn draw_network_notice<B: TextBackend>(&self, g: &mut Gfx<B>, area: Rect, text: &str, font: FontStyle, color: Color) {
         let width = (area.w - self.cs(24.0)).max(1.0);
         for (line, text) in super::update_dialog::wrapped(g, text, font, width).into_iter().enumerate() {
@@ -236,7 +305,7 @@ impl App {
             result => {
                 self.load_tab(k, None, now);
                 if let Err(error) = result {
-                    self.tabs[k].error = Some(crate::i18n::localize(&error).into_owned());
+                    self.tabs[k].error = Some(crate::redact::passwords(&crate::i18n::localize(&error)).into_owned());
                 }
             }
         }
@@ -253,10 +322,10 @@ impl App {
                 return;
             }
             MountAsk::Question { server, message, choices } => {
-                let mut controls: Vec<Control> = message_lines(&message).iter().map(|l| Control::line(l)).collect();
+                let mut controls: Vec<Control> = message_lines(&crate::redact::passwords(&message)).iter().map(|l| Control::line(l)).collect();
                 let at = controls.len();
                 controls.push(Control::choice(S::SidebarDriveLoginAnswer.t(), choices, 0));
-                let title = crate::tr!(S::SidebarDriveLoginTitle, server = server);
+                let title = crate::tr!(S::SidebarDriveLoginTitle, server = crate::redact::passwords(&server));
                 Form::new(Kind::MountQuestion(Question { answer, at }), &title, controls, vec![S::SidebarDriveLoginContinue.t(), S::WidgetsCancel.t()])
             }
         };
@@ -348,7 +417,7 @@ pub(super) fn message_lines(text: &str) -> Vec<String> {
 }
 
 fn login_form(ask: LoginAsk, answer: MountAnswer) -> Form {
-    let mut controls: Vec<Control> = message_lines(&ask.message).iter().map(|l| Control::line(l)).collect();
+    let mut controls: Vec<Control> = message_lines(&crate::redact::passwords(&ask.message)).iter().map(|l| Control::line(l)).collect();
     let mut add = |wanted: bool, c: Control| {
         wanted.then(|| {
             controls.push(c);
@@ -360,7 +429,7 @@ fn login_form(ask: LoginAsk, answer: MountAnswer) -> Form {
     let password = add(ask.wants(ASK_PASSWORD), Control::secret(S::SidebarDriveLoginPassword.t(), ""));
     let anonymous = add(ask.wants(ASK_ANONYMOUS), Control::check(S::SidebarDriveLoginAnonymous.t(), false));
     let remember = add(ask.wants(ASK_SAVING), Control::choice(S::SidebarDriveLoginRemember.t(), vec![S::SidebarDriveLoginForget.t().to_owned(), S::SidebarDriveLoginSession.t().to_owned()], 0));
-    let title = crate::tr!(S::SidebarDriveLoginTitle, server = ask.server);
+    let title = crate::tr!(S::SidebarDriveLoginTitle, server = crate::redact::passwords(&ask.server));
     let login = Login { answer, default_user: ask.user, default_domain: ask.domain, user, domain, password, anonymous, remember };
     let mut form = Form::new(Kind::Login(login), &title, controls, vec![S::SidebarDriveLoginConnect.t(), S::WidgetsCancel.t()]);
     if let Some(k) = password.filter(|_| user.is_none_or(|u| !form.text(u).is_empty())) {

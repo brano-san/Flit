@@ -510,6 +510,14 @@ fn in_bin(p: &FsPath) -> bool {
 
 impl Pidls {
     pub(crate) fn parse(paths: &[FsPath]) -> Result<Self, PlatformError> {
+        Self::parse_paths(paths, true)
+    }
+
+    pub(crate) fn parse_for_ui(paths: &[FsPath]) -> Result<Self, PlatformError> {
+        Self::parse_paths(paths, false)
+    }
+
+    fn parse_paths(paths: &[FsPath], resolve_ftp: bool) -> Result<Self, PlatformError> {
         let mut out = Pidls { abs: Vec::with_capacity(paths.len()) };
         let recycled: Vec<FsPath> = paths.iter().filter(|p| is_recycled(p)).cloned().collect();
         let mut found = match recycled.is_empty() {
@@ -524,6 +532,16 @@ impl Pidls {
                 continue;
             }
             if p.kind() == PathKind::Shell {
+                if p.is_ftp() {
+                    if let Some(pidl) = crate::namespace::cached_ftp_pidl(p) {
+                        out.abs.push(pidl);
+                        continue;
+                    }
+                    if !resolve_ftp {
+                        let e = crate::namespace::not_found();
+                        return Err(PlatformError::new(e.code, format!("{}: {e}", p.display())));
+                    }
+                }
                 let item = crate::namespace::item(p).map_err(|e| PlatformError::new(e.code, format!("{}: {e}", p.display())))?;
                 out.abs.push(unsafe { SHGetIDListFromObject(&item) }.map_err(err)?);
                 continue;
@@ -963,7 +981,7 @@ unsafe fn invoke(hwnd: HWND, menu: &IContextMenu, id: usize, shown: &Shown, shif
 }
 
 fn properties(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
-    if paths.iter().any(in_bin) {
+    if paths.iter().any(|p| in_bin(p) || p.is_ftp()) {
         return invoke_verb(hwnd, paths, c"properties");
     }
     unsafe {
@@ -971,7 +989,7 @@ fn properties(hwnd: HWND, paths: &[FsPath]) -> Result<(), PlatformError> {
             let name = parse_name(one);
             return SHObjectProperties(Some(hwnd), SHOP_FILEPATH, PCWSTR(name.as_ptr()), PCWSTR::null()).ok().map_err(err);
         }
-        let data: IDataObject = Pidls::parse(paths)?.ui_object(hwnd)?;
+        let data: IDataObject = Pidls::parse_for_ui(paths)?.ui_object(hwnd)?;
         SHMultiFileProperties(&data, 0).map_err(err)
     }
 }
@@ -988,7 +1006,7 @@ const CMIC_MASK_FLAG_NO_UI: u32 = windows::Win32::UI::Shell::SEE_MASK_FLAG_NO_UI
 const CMIC_MASK_NOASYNC: u32 = windows::Win32::UI::Shell::SEE_MASK_NOASYNC;
 
 fn invoke_verb_masked(hwnd: HWND, paths: &[FsPath], verb: &CStr, mask: u32) -> Result<(), PlatformError> {
-    let menu: IContextMenu = Pidls::parse(paths)?.ui_object(hwnd)?;
+    let menu: IContextMenu = Pidls::parse_for_ui(paths)?.ui_object(hwnd)?;
     unsafe {
         let hmenu = CreatePopupMenu().map_err(err)?;
         let _ = menu.QueryContextMenu(hmenu, 0, FIRST_ID, LAST_ID, CMF_NORMAL);

@@ -524,6 +524,38 @@ pub fn read_dir(dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsErro
     }
 }
 
+pub(crate) fn avahi_running() -> Option<bool> {
+    avahi_bus_owner().or_else(|| {
+        let daemon = crate::tools::require("avahi-daemon").ok().or_else(|| {
+            ["/usr/sbin/avahi-daemon", "/usr/bin/avahi-daemon"].into_iter().map(std::path::PathBuf::from).find(|p| p.is_file())
+        });
+        let Some(daemon) = daemon else { return Some(false) };
+        let mut command = Command::new(daemon);
+        command.arg("--check");
+        crate::places::run_within(command, Duration::from_secs(2)).ok()?.status.code().map(|code| code == 0)
+    })
+}
+
+fn avahi_bus_owner() -> Option<bool> {
+    let mut command = crate::tools::command("gdbus").ok()?;
+    command.args([
+        "call", "--system", "--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus",
+        "--method", "org.freedesktop.DBus.NameHasOwner", "org.freedesktop.Avahi",
+    ]);
+    let output = crate::places::run_within(command, Duration::from_secs(2)).ok()?;
+    match std::str::from_utf8(&output.stdout).ok()?.trim() {
+        "(true,)" if output.status.success() => Some(true),
+        "(false,)" if output.status.success() => Some(false),
+        _ => None,
+    }
+}
+
+pub(crate) fn discovery_warning(avahi: Option<bool>, gvfs: bool, os_release: &str) -> Option<flit_core::provider::NetworkWarning> {
+    let avahi = (avahi == Some(false)).then(|| crate::tools::avahi_daemon_package(os_release));
+    let gvfs = (!gvfs).then(|| crate::tools::package_for("gvfsd-network", os_release)).flatten();
+    (avahi.is_some() || gvfs.is_some()).then_some(flit_core::provider::NetworkWarning::LinuxMissing { avahi, gvfs })
+}
+
 #[cfg(test)]
 #[path = "../test/network.rs"]
 mod tests;

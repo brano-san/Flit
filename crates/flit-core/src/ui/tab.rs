@@ -66,6 +66,7 @@ pub struct Tab {
     pub(super) discovered_servers: Option<Arc<DirSnapshot>>,
     pub(super) error: Option<String>,
     pub(super) live_off: Option<LiveOff>,
+    pub(super) discovery: super::network::DiscoveryCheck,
     pub(super) undo: Option<UndoBar>,
     pub(super) pending_diffs: VecDeque<DirChange>,
     pub(super) crumbs: Vec<(String, Location)>,
@@ -123,6 +124,7 @@ impl Tab {
             discovered_servers: None,
             error: None,
             live_off: None,
+            discovery: super::network::DiscoveryCheck::default(),
             undo: None,
             pending_diffs: VecDeque::new(),
             crumbs: Vec::new(),
@@ -155,7 +157,7 @@ impl Tab {
     pub fn title(&self) -> String {
         let mut s = match self.crumbs.last() {
             Some((label, _)) => label.clone(),
-            None => name::display(self.location().file_name()).into_owned(),
+            None => crate::redact::passwords(&name::display(self.location().file_name())).into_owned(),
         };
         if self.subfolders {
             s.push_str(SUBFOLDERS_MARK);
@@ -170,6 +172,7 @@ impl Tab {
         self.cancel.set(gen);
         self.stop_sizes();
         let loc = self.location().clone();
+        self.discovery = super::network::DiscoveryCheck::default();
         if loc != self.view_loc {
             if !self.retain_filter {
                 self.reset_filter();

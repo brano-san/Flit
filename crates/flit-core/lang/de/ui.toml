@@ -18,6 +18,9 @@ bin = "Der Papierkorb ist leer."
 folder = "Dieser Ordner ist leer."
 network = "Im Netzwerk wurden keine Computer oder freigegebenen Ordner gefunden. Drücken Sie F5, um erneut zu suchen."
 network_connect = "Zum Verbinden F5 drücken."
+network_discovery_disabled = "Die Netzwerkerkennung ist deaktiviert."
+network_start_avahi = "Starten Sie avahi-daemon aus dem Paket {package}."
+network_install_gvfs = "Installieren Sie das Paket {package}."
 
 [status]
 selected = ["{n} ausgewählt", "{n} ausgewählt"]
@@ -39,6 +42,7 @@ restore = "Wiederherstellen"
 not_now = "Nicht jetzt"
 open_folder = "Ordner öffnen"
 no = "Nein"
+open_network_settings = "Einstellungen öffnen"
 
 [job]
 operations = "Vorgänge"
@@ -131,7 +135,7 @@ replace = "Der Export der Einstellungen würde diese Datei in {folder} überschr
 restore_title = "Vorherige Sitzung wiederherstellen?"
 crashed = "Flit wurde beim letzten Mal nicht ordnungsgemäß beendet."
 crash_title = "Flit ist beim letzten Mal abgestürzt"
-crash_report = "Flit ist beim letzten Mal abgestürzt. Ein Absturzbericht wurde gespeichert: {name}."
+crash_report = "Flit ist beim letzten Mal abgestürzt. Für Fehlerberichte können Sie den anonymisierten Textbericht {name} verwenden."
 restore = "Wiederherstellen öffnet die Fenster und Registerkarten erneut, die geöffnet waren."
 
 [ops]

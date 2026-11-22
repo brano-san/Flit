@@ -128,7 +128,7 @@ pub(crate) fn needs_items(paths: &[FsPath]) -> bool {
 }
 
 pub(crate) fn write_items(owner: HWND, paths: &[FsPath], effect: u32) -> bool {
-    let data: IDataObject = match crate::context_menu::Pidls::parse(paths).and_then(|p| p.ui_object(owner)) {
+    let data: IDataObject = match crate::context_menu::Pidls::parse_for_ui(paths).and_then(|p| p.ui_object(owner)) {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!("clipboard items: {e}");

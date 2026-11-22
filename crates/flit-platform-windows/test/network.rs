@@ -1,8 +1,46 @@
 use super::*;
 use flit_core::FsErrorKind;
 
+#[test]
+fn only_a_confirmed_disabled_firewall_group_requests_a_warning() {
+    assert_eq!(discovery_warning(|| Some(false)), Some(flit_core::provider::NetworkWarning::WindowsDisabled));
+    assert_eq!(discovery_warning(|| Some(true)), None);
+    assert_eq!(discovery_warning(|| None), None);
+}
+
+#[test]
+fn an_active_profile_with_the_firewall_off_suppresses_the_discovery_warning() {
+    let active = NET_FW_PROFILE2_PRIVATE.0 | NET_FW_PROFILE2_PUBLIC.0;
+    let check = |private, public, group| discovery_warning(|| discovery_state(active, |profile| {
+        match profile {
+            NET_FW_PROFILE2_PRIVATE => private,
+            NET_FW_PROFILE2_PUBLIC => public,
+            _ => panic!("inactive domain profile was queried"),
+        }
+    }, || group));
+    assert_eq!(check(Some(true), Some(false), Some(false)), None);
+    assert_eq!(check(Some(false), Some(true), Some(false)), None);
+    assert_eq!(check(Some(true), Some(true), Some(false)), Some(flit_core::provider::NetworkWarning::WindowsDisabled));
+    assert_eq!(check(Some(true), Some(true), Some(true)), None);
+    assert_eq!(check(None, Some(true), Some(false)), None);
+}
 fn p(s: &str) -> FsPath {
     FsPath::parse(s).unwrap()
+}
+
+#[test]
+fn ftp_selects_a_shell_folder_and_retains_no_password_in_the_path() {
+    let dest = server_path("FTP://Demo:secret@FTP.example.test:21/pub/%D0%9F%D0%B0%D0%BF%D0%BA%D0%B0/my%20folder/").unwrap();
+    assert!(dest.is_ftp());
+    assert_eq!(dest.display(), "ftp://Demo@ftp.example.test:21/pub/Папка/my folder");
+    let encoded = dest.ftp_uri().unwrap();
+    assert_eq!(encoded, "ftp://Demo@ftp.example.test:21/pub/%D0%9F%D0%B0%D0%BF%D0%BA%D0%B0/my%20folder");
+    assert_eq!(FsPath::parse(&encoded).as_ref(), Some(&dest));
+    assert_eq!(dest.file_name(), b"my folder");
+    assert_eq!(FsPath::parse_exact(dest.as_bytes()), Some(dest));
+    assert!(server_path("ftp:///pub/").is_err());
+    assert!(server_path("ftps://ftp.example.test/").is_err());
+    assert!(FsPath::parse("ftp://Demo:secret@ftp.example.test/").is_none());
 }
 
 #[test]
@@ -57,7 +95,7 @@ fn server_addresses_become_network_paths() {
 #[test]
 fn servers_windows_cannot_reach_name_their_protocol() {
     assert_eq!(server_path("sftp://me@host/home"), Err("sftp".into()));
-    assert_eq!(server_path("ftp://host"), Err("ftp".into()));
+    assert_eq!(server_path("ftps://host"), Err("ftps".into()));
     assert_eq!(server_path("smb://nas:4455/share"), Err("smb".into()), "SMB on another port cannot be written as a network path");
     assert_eq!(server_path("smb://nas"), Err("smb".into()), "a share is needed");
 }

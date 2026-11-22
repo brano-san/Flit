@@ -212,6 +212,10 @@ impl Location {
         }
     }
 
+    pub(crate) fn address_text(&self) -> Cow<'_, str> {
+        self.path().ftp_uri().map_or_else(|| self.display(), Cow::Owned)
+    }
+
     pub fn is_root(&self) -> bool {
         self.path().is_root()
     }
@@ -256,6 +260,10 @@ impl Location {
                 _ => name::display(loc.file_name()).into_owned(),
             };
             cur = loc.parent();
+            let label = match crate::redact::passwords(&label) {
+                Cow::Owned(masked) => masked,
+                Cow::Borrowed(_) => label,
+            };
             out.push((label, loc));
         }
         out.reverse();
