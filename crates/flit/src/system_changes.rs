@@ -18,11 +18,12 @@ pub struct Reply {
     pub undone: bool,
     pub disabled_autostart: bool,
     pub disabled_protocol: bool,
+    pub disabled_portal: bool,
     pub offer_archives: bool,
     pub archive_registered: bool,
 }
 
-fn journal<P: Platform>() -> io::Result<Journal> {
+pub fn journal<P: Platform>() -> io::Result<Journal> {
     let dir = P::state_dir().ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, S::SettingsPageSystemStateMissing.t()))?;
     Ok(Journal::new(&dir))
 }
@@ -33,11 +34,11 @@ pub fn run<P: Platform>(action: Action) -> Reply {
     let mut offer_archives = false;
     let journal = match journal::<P>() {
         Ok(journal) => journal,
-        Err(error) => return Reply { changes: Err(error.to_string()), result: Err(error.to_string()), undone, disabled_autostart: false, disabled_protocol: false, offer_archives, archive_registered },
+        Err(error) => return Reply { changes: Err(error.to_string()), result: Err(error.to_string()), undone, disabled_autostart: false, disabled_protocol: false, disabled_portal: false, offer_archives, archive_registered },
     };
     let result = match action {
         Action::Refresh => Ok(()),
-        Action::Undo => journal.undo(&Native, None),
+        Action::Undo => undo_all(&journal),
         Action::Autostart { on: false, .. } => journal.undo(&Native, Some(Group::Autostart)),
         Action::Autostart { on: true, startup, background } => apply_autostart(&journal, startup, background),
         Action::RegisterArchive { startup } => apply_archive(&journal, startup, &mut offer_archives),
@@ -53,6 +54,7 @@ pub fn run<P: Platform>(action: Action) -> Reply {
     let suppressed = |group| record.as_ref().is_ok_and(|r| !r.allows_startup(group));
     let disabled_autostart = (undone || matches!(action, Action::Autostart { startup: true, .. })) && suppressed(Group::Autostart);
     let disabled_protocol = (undone || matches!(action, Action::Protocol { startup: true, .. })) && suppressed(Group::Protocol);
+    let disabled_portal = undone && suppressed(Group::Portal);
     let changes = record.map(|record| {
         let mut seen = std::collections::HashSet::new();
         record.changes.iter().filter(|change| seen.insert(&change.target)).map(|change| {
@@ -60,11 +62,21 @@ pub fn run<P: Platform>(action: Action) -> Reply {
                 Group::Autostart => S::SettingsPageSystemAutostart,
                 Group::Archive => S::SettingsPageSystemArchive,
                 Group::Protocol => S::SettingsPageSystemProtocol,
+                Group::Portal => S::PickPortalTitle,
             };
             (title, change.target.label())
         }).collect()
     });
-    Reply { changes: changes.map_err(|e| e.to_string()), result: result.map_err(|e| e.to_string()), undone, disabled_autostart, disabled_protocol, offer_archives, archive_registered }
+    Reply { changes: changes.map_err(|e| e.to_string()), result: result.map_err(|e| e.to_string()), undone, disabled_autostart, disabled_protocol, disabled_portal, offer_archives, archive_registered }
+}
+
+fn undo_all(journal: &Journal) -> io::Result<()> {
+    journal.undo(&Native, None)?;
+    #[cfg(target_os = "linux")]
+    if let Ok(path) = crate::portal_config::path() {
+        crate::portal_config::strip(&path)?;
+    }
+    Ok(())
 }
 
 #[cfg(any(not(windows), test))]
@@ -249,7 +261,7 @@ pub fn unregister<P: Platform>() -> i32 {
     let ui = std::env::var("FLIT_LANG").unwrap_or_else(|_| P::ui_language());
     let lang = flit_core::i18n::Lang::from_code(&ui).unwrap_or_default();
     flit_core::i18n::set_lang(lang);
-    let result = journal::<P>().and_then(|journal| journal.undo(&Native, None));
+    let result = journal::<P>().and_then(|journal| undo_all(&journal));
     #[cfg(windows)]
     notify_associations();
     match result {

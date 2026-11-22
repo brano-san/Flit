@@ -1,5 +1,5 @@
 use crate::settings::write_atomic;
-use serde::{Deserialize, Serialize};
+use crate::system_journal::{Group, Journal, Native, Target, Value};
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::Path;
@@ -7,13 +7,6 @@ use std::path::Path;
 use std::path::PathBuf;
 
 const KEY: &str = "org.freedesktop.impl.portal.FileChooser";
-
-#[derive(Serialize, Deserialize)]
-struct Saved {
-    original: Option<String>,
-    installed: String,
-    previous: Option<String>,
-}
 
 fn read(path: &Path) -> io::Result<Option<String>> {
     match fs::symlink_metadata(path) {
@@ -65,60 +58,29 @@ fn selected(text: &str) -> Option<&str> {
     text[range].split_once('=').map(|(_, value)| value.trim())
 }
 
-fn set(path: &Path, backup: &Path, on: bool, fallback: impl FnOnce() -> io::Result<String>) -> io::Result<bool> {
-    let saved: Option<Saved> = read(backup)?.map(|text| serde_json::from_str(&text)).transpose()?;
-    if !on && saved.is_none() {
-        return Ok(false);
-    }
-    let live = read(path)?;
+pub fn configure_at(journal: &Journal, path: &Path, on: bool, startup: bool, fallback: impl FnOnce() -> io::Result<String>) -> io::Result<Option<bool>> {
+    let before = read(path)?;
     if on {
-        let saved = match saved {
-            Some(saved) if live.as_ref() == Some(&saved.installed) => return Ok(false),
-            Some(saved) if live == saved.original => saved,
-            Some(_) => return Err(io::Error::new(ErrorKind::AlreadyExists, "the portal configuration was changed outside Flit")),
-            None => {
-                let source = match &live {
-                    Some(text) => text.clone(),
-                    None => fallback()?,
-                };
-                let installed = updated(&source, Some("flit"));
-                let previous = selected(&source).map(str::to_owned);
-                let saved = Saved { original: live, installed, previous };
-                write_atomic(backup, &serde_json::to_vec(&saved)?)?;
-                saved
-            }
+        if startup && !journal.inspect()?.allows_startup(Group::Portal) {
+            return Ok(None);
+        }
+        if before.as_deref().and_then(selected) == Some("flit") {
+            return Ok(Some(false));
+        }
+        let source = match &before {
+            Some(text) => text.clone(),
+            None => fallback()?,
         };
-        write_atomic(path, saved.installed.as_bytes())?;
-        return Ok(true);
+        let installed = Value { kind: 0, bytes: updated(&source, Some("flit")).into_bytes() };
+        journal.apply(&Native, Group::Portal, &[(Target::File(path.to_path_buf()), installed)], startup)?;
+    } else {
+        journal.undo(&Native, Some(Group::Portal))?;
+        strip(path)?;
     }
-    let saved = saved.unwrap();
-    let mut changed = false;
-    if live.as_ref() == Some(&saved.installed) {
-        if let Some(text) = saved.original {
-            write_atomic(path, text.as_bytes())?;
-        } else {
-            fs::remove_file(path)?;
-        }
-        changed = true;
-    } else if let Some(text) = live.filter(|text| selected(text) == Some("flit")) {
-        if saved.previous.as_deref() != Some("flit") {
-            write_atomic(path, updated(&text, saved.previous.as_deref()).as_bytes())?;
-            changed = true;
-        }
-    }
-    fs::remove_file(backup)?;
-    Ok(changed)
+    Ok(Some(read(path)? != before))
 }
 
-#[cfg(target_os = "linux")]
-fn paths(settings: &Path) -> io::Result<(PathBuf, PathBuf)> {
-    let state = settings.parent().ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "missing Flit configuration directory"))?;
-    let config_home = state.parent().ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "missing user configuration directory"))?;
-    Ok((config_home.join("xdg-desktop-portal").join("portals.conf"), state.join("portal-file-chooser.json")))
-}
-
-fn restore_on_uninstall(path: &Path, backup: &Path) -> io::Result<()> {
-    set(path, backup, false, || unreachable!())?;
+pub fn strip(path: &Path) -> io::Result<()> {
     let original = match read(path) {
         Ok(Some(text)) => text,
         Ok(None) => return Ok(()),
@@ -138,21 +100,29 @@ fn restore_on_uninstall(path: &Path, backup: &Path) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-pub fn restore(settings: &Path) -> io::Result<()> {
-    let (path, backup) = paths(settings)?;
-    restore_on_uninstall(&path, &backup)
+pub fn path() -> io::Result<PathBuf> {
+    let config_home = flit_platform_linux_gui::xdg::config_home().ok_or_else(|| io::Error::new(ErrorKind::NotFound, "missing user configuration directory"))?;
+    Ok(config_home.join("xdg-desktop-portal").join("portals.conf"))
 }
 
 #[cfg(target_os = "linux")]
-pub fn configure(settings: &Path, on: bool) -> io::Result<bool> {
-    let (path, backup) = paths(settings)?;
+pub fn restore<P: flit_platform::Platform>() -> io::Result<()> {
+    let path = path()?;
+    crate::system_changes::journal::<P>()?.undo(&Native, Some(Group::Portal))?;
+    strip(&path)
+}
+
+#[cfg(target_os = "linux")]
+pub fn configure<P: flit_platform::Platform>(on: bool, startup: bool) -> io::Result<Option<bool>> {
+    let path = path()?;
+    let journal = crate::system_changes::journal::<P>()?;
     let desktop_files: Vec<_> = std::env::var("XDG_CURRENT_DESKTOP").unwrap_or_default().split(':')
         .filter(|name| !name.is_empty() && name.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-')))
         .map(|name| format!("{}-portals.conf", name.to_ascii_lowercase())).collect();
     if on && desktop_files.iter().any(|file| path.with_file_name(file).exists()) {
         return Err(io::Error::new(ErrorKind::AlreadyExists, "a desktop-specific user portals.conf takes precedence"));
     }
-    set(&path, &backup, on, || {
+    configure_at(&journal, &path, on, startup, || {
         let config_dirs = std::env::var_os("XDG_CONFIG_DIRS").filter(|s| !s.is_empty()).unwrap_or_else(|| "/etc/xdg".into());
         let data_dirs = std::env::var_os("XDG_DATA_DIRS").filter(|s| !s.is_empty()).unwrap_or_else(|| "/usr/local/share:/usr/share".into());
         let data_home = std::env::var_os("XDG_DATA_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));

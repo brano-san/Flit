@@ -135,7 +135,7 @@ fn main() {
             std::process::exit(picker::portal_request(started));
         } else if cfg!(target_os = "linux") && a == "--restore-file-chooser" {
             #[cfg(target_os = "linux")]
-            if let Err(error) = settings::file::<P>().map_or(Ok(()), |path| portal_config::restore(&path)) {
+            if let Err(error) = portal_config::restore::<P>() {
                 use flit_core::i18n::{self, S};
                 picker::language();
                 eprintln!("{}", flit_core::tr!(S::PickPortalFailed, error = i18n::localize(&error.to_string())));

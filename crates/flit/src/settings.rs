@@ -24,7 +24,7 @@ pub enum Job {
     SystemChanges(crate::system_changes::Action),
     ResolveLink(flit_platform::WindowId, flit_core::open::Open),
     #[cfg(target_os = "linux")]
-    Portal(bool),
+    Portal { on: bool, startup: bool },
 }
 
 pub enum Reply {
@@ -43,7 +43,7 @@ pub enum Reply {
     SystemChangesUnavailable { notify: bool },
     ResolvedLink(flit_platform::WindowId, Option<crate::system_link::Link>),
     #[cfg(target_os = "linux")]
-    Portal(bool, Result<bool, String>),
+    Portal(bool, Result<Option<bool>, String>),
 }
 
 pub type Integrate = fn(bool) -> Result<(), PlatformError>;
@@ -160,9 +160,9 @@ fn work<P: Platform>(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>
                     }
                 }
                 #[cfg(target_os = "linux")]
-                Job::Portal(on) => {
-                    if let Some(path) = &path {
-                        reply(Reply::Portal(on, crate::portal_config::configure(path, on).map_err(|e| e.to_string())));
+                Job::Portal { on, startup } => {
+                    if path.is_some() {
+                        reply(Reply::Portal(on, crate::portal_config::configure::<P>(on, startup).map_err(|e| e.to_string())));
                     }
                 }
                 Job::CacheLimit(mb) => {
@@ -244,7 +244,7 @@ impl Settings {
         }
         #[cfg(target_os = "linux")]
         if let Some(on) = flag(&values, settings::PORTAL_PICKER).filter(|on| *on != flag(&self.values, settings::PORTAL_PICKER).unwrap_or(false)) {
-            self.send(Job::Portal(on));
+            self.send(Job::Portal { on, startup: flag(&self.values, settings::PORTAL_PICKER).is_none() });
         }
         if let Some(level) = log_level(&values) {
             crate::logs::set_level(level);

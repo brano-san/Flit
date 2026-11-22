@@ -1158,6 +1158,9 @@ impl<P: Platform> Handler<P> {
                     if reply.disabled_protocol {
                         self.clear_system_settings(&[flit_core::ui::settings::PROTOCOL_LINKS]);
                     }
+                    if reply.disabled_portal {
+                        self.clear_system_settings(&[flit_core::ui::settings::PORTAL_PICKER]);
+                    }
                     self.about.system_changes = Some(reply.changes);
                     self.share_about();
                     if let Err(error) = reply.result {
@@ -1174,8 +1177,9 @@ impl<P: Platform> Handler<P> {
                 }
                 #[cfg(target_os = "linux")]
                 settings::Reply::Portal(on, result) => match result {
-                    Ok(true) => self.status(id, S::PickPortalRestart.t().into()),
-                    Ok(false) => {}
+                    Ok(Some(true)) => self.status(id, S::PickPortalRestart.t().into()),
+                    Ok(Some(false)) => {}
+                    Ok(None) => self.clear_system_settings(&[flit_core::ui::settings::PORTAL_PICKER]),
                     Err(error) => {
                         tracing::warn!("file chooser portal configuration: {error}");
                         self.status(id, flit_core::tr!(S::PickPortalFailed, error = flit_core::i18n::localize(&error)));

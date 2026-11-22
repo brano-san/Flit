@@ -14,6 +14,7 @@ pub enum Group {
     Autostart,
     Archive,
     Protocol,
+    Portal,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]

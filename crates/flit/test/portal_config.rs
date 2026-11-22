@@ -22,71 +22,70 @@ impl Drop for Temp {
 #[test]
 fn toggling_file_chooser_restores_existing_config_exactly() {
     let temp = Temp::new();
+    let journal = Journal::new(&temp.0);
     let config = temp.0.join("portals.conf");
-    let backup = temp.0.join("backup.json");
     let original = format!("# user config\r\n[preferred]\r\ndefault=kde\r\n{KEY}=gtk");
     fs::write(&config, &original).unwrap();
-    assert!(set(&config, &backup, true, || unreachable!()).unwrap());
+    assert_eq!(configure_at(&journal, &config, true, false, || unreachable!()).unwrap(), Some(true));
     assert_eq!(fs::read_to_string(&config).unwrap(), format!("# user config\r\n[preferred]\r\ndefault=kde\r\n{KEY}=flit"));
-    assert!(!set(&config, &backup, true, || unreachable!()).unwrap());
-    assert!(set(&config, &backup, false, || unreachable!()).unwrap());
+    assert_eq!(configure_at(&journal, &config, true, true, || unreachable!()).unwrap(), Some(false));
+    assert_eq!(configure_at(&journal, &config, false, false, || unreachable!()).unwrap(), Some(true));
     assert_eq!(fs::read_to_string(&config).unwrap(), original);
-    assert!(!backup.exists());
+    assert!(journal.inspect().unwrap().changes.is_empty());
 }
 
 #[test]
 fn disabled_default_and_external_override_are_untouched() {
     let temp = Temp::new();
+    let journal = Journal::new(&temp.0);
     let config = temp.0.join("portals.conf");
-    let backup = temp.0.join("backup.json");
     fs::write(&config, format!("[preferred]\n{KEY}=gtk\n")).unwrap();
-    assert!(!set(&config, &backup, false, || unreachable!()).unwrap());
-    assert!(set(&config, &backup, true, || unreachable!()).unwrap());
+    assert_eq!(configure_at(&journal, &config, false, false, || unreachable!()).unwrap(), Some(false));
+    assert_eq!(configure_at(&journal, &config, true, false, || unreachable!()).unwrap(), Some(true));
     let changed = format!("[preferred]\ndefault=wlr\n{KEY}=kde\n");
     fs::write(&config, &changed).unwrap();
-    assert!(!set(&config, &backup, false, || unreachable!()).unwrap());
+    assert_eq!(configure_at(&journal, &config, false, false, || unreachable!()).unwrap(), Some(false));
     assert_eq!(fs::read_to_string(&config).unwrap(), changed);
 }
 
 #[test]
-fn uninstall_restores_the_saved_configuration_and_removes_its_backup() {
+fn undo_all_restores_the_portal_configuration_and_keeps_it_off_at_the_next_start() {
     let temp = Temp::new();
+    let journal = Journal::new(&temp.0);
     let config = temp.0.join("portals.conf");
-    let backup = temp.0.join("portal-file-chooser.json");
     let original = format!("[preferred]\r\ndefault=kde\r\n{KEY} = gtk;kde;");
     fs::write(&config, &original).unwrap();
-    assert!(set(&config, &backup, true, || unreachable!()).unwrap());
-
-    restore_on_uninstall(&config, &backup).unwrap();
-
+    assert_eq!(configure_at(&journal, &config, true, false, || unreachable!()).unwrap(), Some(true));
+    assert_eq!(journal.inspect().unwrap().changes[0].group, Group::Portal);
+    journal.undo(&Native, None).unwrap();
+    strip(&config).unwrap();
     assert_eq!(fs::read_to_string(&config).unwrap(), original);
-    assert!(!backup.exists());
+    assert_eq!(configure_at(&journal, &config, true, true, || unreachable!()).unwrap(), None);
+    assert_eq!(fs::read_to_string(&config).unwrap(), original);
 }
 
 #[test]
-fn uninstall_without_a_backup_removes_only_flit_from_file_chooser_preferences() {
+fn a_hand_edited_configuration_loses_only_flit_from_file_chooser_preferences() {
     let temp = Temp::new();
     let config = temp.0.join("portals.conf");
-    let backup = temp.0.join("portal-file-chooser.json");
     fs::write(&config, format!("[preferred]\ndefault=kde\n{KEY}=flit;gtk;kde;\n[other]\n{KEY}=flit\n")).unwrap();
     let fallback = format!("[preferred]\ndefault=kde\n{KEY}=gtk;kde;\n[other]\n{KEY}=flit\n");
 
-    restore_on_uninstall(&config, &backup).unwrap();
-    restore_on_uninstall(&config, &backup).unwrap();
+    strip(&config).unwrap();
+    strip(&config).unwrap();
 
     assert_eq!(fs::read_to_string(&config).unwrap(), fallback);
 }
 
 #[test]
-fn uninstall_removes_the_configuration_when_flit_created_it() {
+fn turning_off_removes_the_configuration_when_flit_created_it() {
     let temp = Temp::new();
-    let config = temp.0.join("portals.conf");
-    let backup = temp.0.join("portal-file-chooser.json");
-    assert!(set(&config, &backup, true, || Ok("[preferred]\ndefault=kde\n".into())).unwrap());
+    let journal = Journal::new(&temp.0);
+    let config = temp.0.join("xdg-desktop-portal").join("portals.conf");
+    assert_eq!(configure_at(&journal, &config, true, false, || Ok("[preferred]\ndefault=kde\n".into())).unwrap(), Some(true));
+    assert_eq!(fs::read_to_string(&config).unwrap(), format!("[preferred]\n{KEY}=flit\ndefault=kde\n"));
 
-    restore_on_uninstall(&config, &backup).unwrap();
+    journal.undo(&Native, Some(Group::Portal)).unwrap();
 
     assert!(!config.exists());
-    assert!(!backup.exists());
 }
-
