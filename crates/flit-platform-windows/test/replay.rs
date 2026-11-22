@@ -752,3 +752,98 @@ fn undo_reports_when_the_file_identity_cannot_be_read() {
     let report = replay::report(op, vec![(from, to)], Some(fs), &job);
     assert_eq!(flit_core::undo::inverse(&report), Some(Step::Refuse(S::ErrorsOpsUndoStamp.en())));
 }
+
+
+fn workspace_snapshot(path: &std::path::Path) -> std::collections::BTreeMap<PathBuf, Option<Vec<u8>>> {
+    fn visit(root: &std::path::Path, dir: &std::path::Path, out: &mut std::collections::BTreeMap<PathBuf, Option<Vec<u8>>>) {
+        for entry in std::fs::read_dir(dir).unwrap() {
+            let entry = entry.unwrap();
+            if entry.file_name() == "$Recycle.Bin" {
+                continue;
+            }
+            let path = entry.path();
+            let name = path.strip_prefix(root).unwrap().to_path_buf();
+            if entry.file_type().unwrap().is_dir() {
+                out.insert(name, None);
+                visit(root, &path, out);
+            } else {
+                out.insert(name, Some(std::fs::read(path).unwrap()));
+            }
+        }
+    }
+    let mut out = std::collections::BTreeMap::new();
+    visit(path, path, &mut out);
+    out
+}
+
+fn replay_property_config() -> proptest::test_runner::Config {
+    use proptest::test_runner::{Config, FileFailurePersistence};
+    let mut config = Config::default();
+    if std::env::var_os("PROPTEST_CASES").is_none() {
+        config.cases = 12;
+    }
+    config.failure_persistence = Some(Box::new(FileFailurePersistence::Direct(concat!(env!("CARGO_MANIFEST_DIR"), "/proptest-regressions/replay.txt"))));
+    config
+}
+
+proptest::proptest! {
+    #![proptest_config(replay_property_config())]
+    #[test]
+    fn filesystem_sequences_round_trip_through_undo_and_redo(
+        operations in proptest::collection::vec((0u8..6, 0usize..5, proptest::collection::vec(proptest::num::u8::ANY, 0..96), proptest::collection::vec(proptest::num::u8::ANY, 0..96)), 1..8)
+    ) {
+        use proptest::prelude::{prop_assert, prop_assert_eq};
+        let mut t = TransferFixture::new();
+        let names = ["日本語.txt".to_owned(), "emoji-🧪.txt".into(), "single'quote".into(), "%20 encoded".into(), "long-".to_owned() + &"x".repeat(112)];
+        let source = r"source\nested\deep";
+        let target = r"destination\nested\deep";
+        std::fs::create_dir_all(t.dir.join(source)).unwrap();
+        std::fs::create_dir_all(t.dir.join(target)).unwrap();
+        for (index, (mode, name, content, old)) in operations.iter().enumerate() {
+            let name = &names[*name];
+            t.write(&format!(r"{source}\{name}"), content);
+            if index == 0 || *mode >= 4 {
+                t.write(&format!(r"{target}\{name}"), old);
+            }
+        }
+        let before = workspace_snapshot(&t.dir);
+        let mut undos = Vec::new();
+        let mut previous = None;
+        for (index, (mode, choice, _, _)) in operations.into_iter().enumerate() {
+            let mut paths: Vec<_> = [source, target].iter().flat_map(|folder| {
+                std::fs::read_dir(t.dir.join(folder)).unwrap().map(|entry| {
+                    FsPath::parse(entry.unwrap().path().to_str().unwrap()).unwrap()
+                })
+            }).collect();
+            paths.sort_unstable_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+            let from = previous.take().filter(|path| paths.contains(path))
+                .unwrap_or_else(|| paths[choice % paths.len()].clone());
+            let dest = if from.parent().as_ref() == Some(&t.path(source)) { t.path(target) } else { t.path(source) };
+            let op = match mode {
+                0 | 4 => FileOp::Copy { items: vec![from], dest },
+                1 | 5 => FileOp::Move { items: vec![from], dest },
+                2 => FileOp::Rename { item: from, name: format!("renamed-{index}").into_bytes() },
+                _ if paths.len() <= 1 => FileOp::Rename { item: from, name: format!("renamed-{index}").into_bytes() },
+                _ => FileOp::Trash(vec![from]),
+            };
+            let report = t.apply(op);
+            undos.push(flit_core::undo::inverse(&report).unwrap());
+            if !matches!(report.op, FileOp::Trash(_)) {
+                previous = report.items.first().map(|(_, to)| to.clone());
+            }
+        }
+        let after = workspace_snapshot(&t.dir);
+        let mut redos = Vec::new();
+        for step in undos.into_iter().rev() {
+            let (out, redo) = t.execute(step);
+            prop_assert!(out.error.is_none(), "{:?}", out.error);
+            redos.push(redo.unwrap());
+        }
+        prop_assert_eq!(workspace_snapshot(&t.dir), before);
+        for step in redos.into_iter().rev() {
+            let (out, _) = t.execute(step);
+            prop_assert!(out.error.is_none(), "{:?}", out.error);
+        }
+        prop_assert_eq!(workspace_snapshot(&t.dir), after);
+    }
+}
