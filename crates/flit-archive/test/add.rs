@@ -587,7 +587,10 @@ fn the_owner_is_given_to_the_temporary_archive_before_anything_is_written() {
             let owner = loop {
                 let part = fs::read_dir(&t.0).unwrap().filter_map(Result::ok).find(|e| e.file_name().to_string_lossy().ends_with(".flit-part"));
                 if let Some(meta) = part.and_then(|p| p.metadata().ok()) {
-                    break Some((meta.uid(), meta.gid()));
+                    let owner = (meta.uid(), meta.gid());
+                    if owner == (65534, 65534) || meta.len() > 0 {
+                        break Some(owner);
+                    }
                 }
                 if task.is_finished() || std::time::Instant::now() >= deadline {
                     break None;
