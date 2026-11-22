@@ -7,6 +7,7 @@ mod git;
 mod jumps;
 mod layouts;
 mod logs;
+mod portable_meta;
 mod metrics;
 mod overlays;
 mod places;

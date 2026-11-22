@@ -25,6 +25,7 @@ mod poll;
 mod preferences;
 mod player;
 mod props;
+pub use flit_platform_linux::portable_metadata;
 mod svg;
 pub mod instance;
 pub mod places;

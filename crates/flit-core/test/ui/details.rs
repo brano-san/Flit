@@ -1210,6 +1210,8 @@ fn the_attributes_column_spells_explorer_letters_and_only_windows_offers_it() {
     assert_eq!(Column::Attributes.title(), "Attributes");
     assert_eq!(Column::Attributes.field(), Some(SortField::Attributes), "a click on its header sorts by it");
     assert!(!app.tab().columns.shown(Column::Attributes), "hidden until chosen, as in Explorer");
+    assert!(crate::ui::PORTABLE_COLUMNS.iter().all(|column| !app.column_kinds().contains(column)));
+    app.set_metadata_ads(true);
     let windows: Vec<Column> = app.column_kinds().to_vec();
     assert_eq!(windows.iter().copied().filter(|&c| c != Column::Attributes && !crate::ui::SHELL_COLUMNS.contains(&c)).collect::<Vec<_>>(), crate::ui::COLUMNS, "Windows adds Attributes and the shell property columns to the usual columns");
     assert!(windows.contains(&Column::Attributes));

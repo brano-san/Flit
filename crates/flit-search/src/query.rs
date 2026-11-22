@@ -30,6 +30,9 @@ pub enum Filter {
     Size(u64, u64),
     Modified(i64, i64),
     Tag(String),
+    Rating(u8, u8),
+    Comment(String),
+    PortableTag(String),
 }
 
 #[derive(Debug, Clone)]
@@ -90,7 +93,15 @@ impl Query {
         self.terms.iter().any(|t| matches!(t.filter, Filter::Tag(_)))
     }
 
+    pub fn has_metadata(&self) -> bool {
+        self.terms.iter().any(|t| matches!(t.filter, Filter::Rating(..) | Filter::Comment(_) | Filter::PortableTag(_)))
+    }
+
     pub fn matches(&self, e: &Plain<'_>, has_tag: &dyn Fn(&str) -> bool) -> bool {
+        self.matches_with(e, has_tag, &|_| false)
+    }
+
+    pub fn matches_with(&self, e: &Plain<'_>, has_tag: &dyn Fn(&str) -> bool, has_metadata: &dyn Fn(&Filter) -> bool) -> bool {
         let text = |p: &Pattern, lower: &[u8], original: &[u8]| match p {
             Pattern::Text(t) => memchr::memmem::find(lower, t).is_some(),
             Pattern::Glob(g) => glob(g, lower),
@@ -104,9 +115,21 @@ impl Query {
                 Filter::Size(lo, hi) => !e.dir && (*lo..*hi).contains(&e.size),
                 Filter::Modified(lo, hi) => (*lo..*hi).contains(&e.modified),
                 Filter::Tag(name) => has_tag(name),
+                filter => has_metadata(filter),
             };
             ok != t.negate
         })
+    }
+}
+
+impl Filter {
+    pub fn matches_metadata(&self, meta: &flit_core::portable_meta::Metadata) -> bool {
+        match self {
+            Self::Rating(lo, hi) => (*lo..*hi).contains(&meta.rating),
+            Self::Comment(needle) => meta.comment.to_lowercase().contains(needle),
+            Self::PortableTag(tag) => meta.tags.iter().any(|name| name.to_lowercase() == *tag),
+            _ => false,
+        }
     }
 }
 
@@ -231,6 +254,16 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
             } else {
                 strip_ci(s, "tag:").map(|v| Filter::Tag(v.trim().to_owned()))
             };
+            let filter = if let Some(v) = strip_ci(s, "rating:") {
+                let (lo, hi) = interval(v, &rating_value).ok_or_else(|| flit_core::i18n::S::PortableMetaInvalidRating.en().to_owned())?;
+                Some(Filter::Rating(lo.clamp(0, 11) as u8, hi.clamp(0, 11) as u8))
+            } else if let Some(v) = strip_ci(s, "comment:") {
+                Some(Filter::Comment(v.to_lowercase()))
+            } else if let Some(v) = strip_ci(s, "portable-tag:") {
+                Some(Filter::PortableTag(v.to_lowercase()))
+            } else {
+                filter
+            };
             if let Some(filter) = filter {
                 return Ok(Some(Term { negate, filter }));
             }
@@ -257,6 +290,12 @@ fn term(tok: &str, literal: bool, clock: Clock) -> Result<Option<Term>, String> 
         }
     };
     Ok(Some(Term { negate, filter: Filter::Match(scope, pattern) }))
+}
+
+fn rating_value(s: &str) -> Option<(i128, i128)> {
+    let n = s.trim().parse::<f64>().ok()? * 2.0;
+    if !(0.0..=10.0).contains(&n) || n.fract() != 0.0 { return None; }
+    Some((n as i128, n as i128 + 1))
 }
 
 fn interval(v: &str, value: &dyn Fn(&str) -> Option<(i128, i128)>) -> Option<(i128, i128)> {

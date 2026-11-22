@@ -9,6 +9,7 @@ use std::cmp::Ordering;
 use std::sync::Mutex;
 
 pub type KeepGoing<'a> = &'a (dyn Fn() -> bool + Sync);
+type FindTag<'a> = &'a (dyn Fn(&FsPath, &str) -> bool + Sync);
 
 pub struct Hit {
     lower_name: Vec<u8>,
@@ -62,7 +63,7 @@ pub fn groups(hits: &[Hit]) -> Vec<u64> {
     starts
 }
 
-fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, found: &Mutex<Found>) -> Vec<FsPath> {
+fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, found: &Mutex<Found>, find_tag: FindTag<'_>) -> Vec<FsPath> {
     let mut on_batch = |_: &ListingBuilder<'_>| keep_going();
     let mut b = ListingBuilder::new(CaseMode::Insensitive, &mut on_batch);
     let read = fs.read_dir(dir, &mut b);
@@ -72,9 +73,11 @@ fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, 
         return Vec::new();
     }
     let needs_path = query.needs_path();
+    let needs_metadata = query.has_metadata();
     let (mut subdirs, mut hits) = (Vec::new(), Vec::new());
     let mut path = Vec::new();
     for i in 0..l.len() as u32 {
+        if needs_metadata && !keep_going() { break; }
         let e = &l.entries[i as usize];
         let name = l.name(i);
         let lower_name = lowercase(name);
@@ -86,7 +89,12 @@ fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, 
             Vec::new()
         };
         let plain = Plain { name, lower_name: &lower_name, path: &path, lower_path: &lower_path, size: e.size, modified: e.modified, dir: e.is_dir() };
-        if query.matches(&plain, &|_| false) {
+        let item = std::cell::OnceCell::new();
+        let path = || item.get_or_init(|| dir.join(name));
+        let metadata = std::cell::OnceCell::new();
+        if query.matches_with(&plain, &|tag| find_tag(path(), tag), &|filter| {
+            !e.is_dir() && metadata.get_or_init(|| crate::portable_meta::read(path()).ok()).as_ref().is_some_and(|data| filter.matches_metadata(data))
+        }) {
             let row = SearchRow { name: name.to_vec(), dir: dir.as_bytes().to_vec(), meta: e.meta() };
             hits.push(Hit { lower_name, lower_dir: lowercase(dir.as_bytes()), row });
         }
@@ -100,22 +108,26 @@ fn visit<F: Fs>(fs: &F, dir: &FsPath, query: &Query, keep_going: KeepGoing<'_>, 
     subdirs
 }
 
-fn spawn<'s, F: Fs>(s: &rayon::Scope<'s>, fs: &'s F, dir: FsPath, query: &'s Query, keep_going: KeepGoing<'s>, found: &'s Mutex<Found>) {
+fn spawn<'s, F: Fs>(s: &rayon::Scope<'s>, fs: &'s F, dir: FsPath, query: &'s Query, keep_going: KeepGoing<'s>, found: &'s Mutex<Found>, find_tag: FindTag<'s>) {
     s.spawn(move |s| {
-        for sub in visit(fs, &dir, query, keep_going, found) {
-            spawn(s, fs, sub, query, keep_going, found);
+        for sub in visit(fs, &dir, query, keep_going, found, find_tag) {
+            spawn(s, fs, sub, query, keep_going, found, find_tag);
         }
     });
 }
 
 pub fn walk<F: Fs>(fs: &F, root: &FsPath, query: &Query, keep_going: KeepGoing<'_>, found: &Mutex<Found>) {
+    walk_with_tags(fs, root, query, keep_going, found, &|_, _| false);
+}
+
+pub fn walk_with_tags<F: Fs>(fs: &F, root: &FsPath, query: &Query, keep_going: KeepGoing<'_>, found: &Mutex<Found>, find_tag: FindTag<'_>) {
     if fs.seek_penalty(root) == Some(true) {
         let mut stack = vec![root.clone()];
         while let Some(dir) = stack.pop().filter(|_| keep_going()) {
-            stack.extend(visit(fs, &dir, query, keep_going, found));
+            stack.extend(visit(fs, &dir, query, keep_going, found, find_tag));
         }
     } else {
-        rayon::scope(|s| spawn(s, fs, root.clone(), query, keep_going, found));
+        rayon::scope(|s| spawn(s, fs, root.clone(), query, keep_going, found, find_tag));
     }
 }
 

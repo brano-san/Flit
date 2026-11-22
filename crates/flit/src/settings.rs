@@ -14,6 +14,7 @@ pub enum Job {
     Check,
     Export(PathBuf, String, bool),
     Import(WindowId, PathBuf),
+    Portable(WindowId, u64, flit_core::portable_meta::Request),
     BackupImport(WindowId, Box<settings::ImportPlan>, String),
     CacheSize,
     CacheLimit(u32),
@@ -26,6 +27,7 @@ pub enum Reply {
     Changed(String),
     SaveFailed(String),
     Imported(WindowId, Result<Doc, String>),
+    Portable(WindowId, u64, Result<flit_core::portable_meta::Metadata, String>),
     ImportBackedUp(WindowId, Box<settings::ImportPlan>, Result<PathBuf, String>),
     Exported(Result<PathBuf, String>),
     ExportExists { path: PathBuf, size: u64, modified: i64 },
@@ -141,6 +143,7 @@ fn work(path: Option<PathBuf>, cache: Option<Arc<Mutex<ThumbCache>>>, integrate:
                 }
                 Job::Export(to, text, replace) => reply(export(to, &text, replace)),
                 Job::Import(id, from) => reply(Reply::Imported(id, read_import(&from))),
+                Job::Portable(id, request, req) => reply(Reply::Portable(id, request, crate::portable_meta::request(req).map_err(|e| e.to_string()))),
                 Job::BackupImport(id, plan, text) => reply(Reply::ImportBackedUp(id, plan, backup_import(path.as_deref(), &last, &text))),
                 Job::CacheSize => {
                     if let Some(c) = &cache {

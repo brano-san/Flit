@@ -175,7 +175,7 @@ enum PreviewJob {
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
-    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
+    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>>, system: bool, portable: bool },
 }
 
 enum Done {
@@ -226,7 +226,20 @@ fn start_workers<P: Platform>(wake: Wake, cache: Cache, refresh: Vec<IconRequest
                         None => continue,
                     },
                     PreviewJob::QuickView { window, path } => Done::QuickView { window, shown: shell.quick_view(&path) },
-                    PreviewJob::ColumnProps { window, tab, gen, ask, dir, names } => Done::ColumnProps { window, tab, gen, ask, rows: names.into_iter().map(|n| { let props = shell.column_props(&dir.join(&n)); (n, props) }).collect() },
+                    PreviewJob::ColumnProps { window, tab, gen, ask, dir, names, system, portable } => {
+                        let rows = names.into_iter().map(|n| {
+                            let item = dir.join(&n);
+                            let mut values = if system { shell.column_props(&item) } else { flit_core::listing::ColumnValues::default() };
+                            if portable {
+                                values.text.resize(flit_core::listing::SHELL_PROPS.len(), String::new());
+                                if let Ok(meta) = crate::portable_meta::read(&item) {
+                                    values.text.extend([meta.display_rating(), meta.comment, meta.tags.join(", ")]);
+                                }
+                            }
+                            (n, values)
+                        }).collect();
+                        Done::ColumnProps { window, tab, gen, ask, rows }
+                    }
                     PreviewJob::Backdrop { window, gen, path } => Done::Backdrop { window, gen, image: shell.preview_image(&path, BACKDROP_PX) },
                     PreviewJob::Browse { window, exts, folder, start } => Done::Browsed { window, path: shell.browse(exts, folder, start.as_ref()) },
                 };
@@ -759,7 +772,10 @@ impl<P: Platform> Handler<P> {
                         st.app.open(&cmd, &P::known_folder, Instant::now());
                     }
                 }
-                Effect::Search(req) => self.search.submit(id, req),
+                Effect::Search(req) => {
+                    self.search.enable_metadata(self.windows.get(&id).is_some_and(|st| st.app.metadata_enabled()));
+                    self.search.submit(id, req);
+                }
                 Effect::Preview(req) => {
                     let _ = self.previews.send(PreviewJob::Load { window: id, req });
                 }
@@ -803,9 +819,10 @@ impl<P: Platform> Handler<P> {
                 Effect::Share(paths) => window.share(paths),
                 Effect::SetVolumeLabel { drive, label } => window.set_volume_label(drive, label),
                 Effect::StartDrag(paths) => window.start_drag(paths),
-                Effect::ShellProps { tab, gen, ask, dir, names } => {
-                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names });
+                Effect::ShellProps { tab, gen, ask, dir, names, shell, portable } => {
+                    let _ = self.previews.send(PreviewJob::ColumnProps { window: id, tab, gen, ask, dir, names, system: shell, portable });
                 }
+                Effect::PortableMetadata { id: request, req } => self.settings.send(Job::Portable(id, request, req)),
                 effect @ (Effect::Pinned(_) | Effect::PinnedCleared | Effect::PinnedFiles(_)) => {
                     let wake = !matches!(&effect, Effect::PinnedFiles(_));
                     let windows = self.windows.iter_mut().filter(|(w, _)| **w != id).map(|(_, st)| &mut st.app);
@@ -1008,6 +1025,11 @@ impl<P: Platform> Handler<P> {
                     } else if let Some(st) = self.windows.get_mut(&target) {
                         st.app.apply_confirmed_settings_import(*plan, path.to_string_lossy().into_owned());
                         self.sync_settings(target);
+                    }
+                }
+                settings::Reply::Portable(target, request, result) => {
+                    if let Some(st) = self.windows.get_mut(&target) {
+                        st.app.on_portable_metadata(request, result);
                     }
                 }
                 settings::Reply::Exported(Ok(path)) => self.status(id, flit_core::tr!(S::UiAppExported, path = path.display())),

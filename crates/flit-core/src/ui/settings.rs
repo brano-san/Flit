@@ -36,7 +36,7 @@ pub const LONG_PATHS: &str = "files.long_paths";
 pub const BUILTIN_ARCHIVES: &str = "files.builtin_archives";
 pub const NEEDS_BUILTIN_ARCHIVES: [&str; 3] = ["general.menu_compress", "files.archives_as_folders", "files.archive_format"];
 pub const QUICK_ACCESS_SYNC: &str = "advanced.quick_access_sync";
-pub const WINDOWS_ONLY: [&str; 6] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu"];
+pub const WINDOWS_ONLY: [&str; 7] = [LONG_PATHS, QUICK_ACCESS_SYNC, "files.system", "files.streams", "general.menu_stream", "general.shell_submenu", "files.portable_ads"];
 pub const WINDOW_TITLE: &str = "appearance.window_title";
 pub const LINUX_ONLY: [&str; 1] = [WINDOW_TITLE];
 
@@ -462,6 +462,7 @@ pub static SETTINGS: &[Setting] = &[
     menu_list("menu.seen_folder", |a| a.opts.menu.seen[1].clone(), |a, v| a.opts.menu.seen[1] = v),
     menu_list("menu.seen_background", |a| a.opts.menu.seen[2].clone(), |a, v| a.opts.menu.seen[2] = v),
     toggle("files.hide_companions", Page::Files, S::CompanionsHide, S::CompanionsHelp, |a| a.hide_companions, |a, on| a.set_companions(on)),
+    toggle("files.portable_ads", Page::Files, S::PortableMetaAds, S::PortableMetaAdsHelp, |a| a.metadata_ads, |a, on| a.set_metadata_ads(on)),
     Setting { id: "menu.custom", page: Page::Menu, title: S::UserMenuGroup, help: S::UserMenuHelp, kind: Kind::Menu(|a| a.opts.user_menu.clone(), |a, v| a.opts.user_menu = v) },
 ];
 

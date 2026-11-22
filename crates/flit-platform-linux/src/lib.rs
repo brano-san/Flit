@@ -9,6 +9,7 @@ pub mod mounts;
 mod ops;
 pub mod sock;
 mod tags;
+pub mod portable_metadata;
 mod trash;
 mod walk;
 

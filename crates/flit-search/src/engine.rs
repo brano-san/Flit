@@ -236,7 +236,7 @@ impl<'q> Prepared<'q> {
                 Filter::Ext(list) => !v.is_dir(i) && has_ext(v.lower_name(i), list),
                 Filter::Size(lo, hi) => !v.is_dir(i) && (*lo..*hi).contains(&v.sizes[k_]),
                 Filter::Modified(lo, hi) => (*lo..*hi).contains(&v.modified[k_]),
-                Filter::Tag(_) => false,
+                Filter::Tag(_) | Filter::Rating(..) | Filter::Comment(_) | Filter::PortableTag(_) => false,
             };
             if ok == t.negate {
                 return false;

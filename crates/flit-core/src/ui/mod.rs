@@ -39,6 +39,7 @@ mod preview_pane;
 pub mod settings;
 mod settings_import;
 mod segments;
+mod portable_meta;
 mod settings_page;
 mod setting_editor;
 pub mod sidebar;
@@ -248,6 +249,9 @@ pub enum Column {
     GitAuthor,
     GitDate,
     GitHash,
+    Rating,
+    Comment,
+    PortableTags,
 }
 
 pub const GIT_COLUMNS: [Column; 5] = [Column::GitStatus, Column::GitMessage, Column::GitAuthor, Column::GitDate, Column::GitHash];
@@ -263,7 +267,8 @@ pub const SHELL_COLUMNS: [Column; 10] = [
     Column::Authors,
     Column::Company,
 ];
-pub const REPO_COLUMNS: [Column; 16] = [
+pub const PORTABLE_COLUMNS: [Column; 3] = [Column::Rating, Column::Comment, Column::PortableTags];
+pub const REPO_COLUMNS: [Column; 19] = [
     Column::Name,
     Column::Type,
     Column::Modified,
@@ -280,8 +285,11 @@ pub const REPO_COLUMNS: [Column; 16] = [
     Column::GitAuthor,
     Column::GitDate,
     Column::GitHash,
+    Column::Rating,
+    Column::Comment,
+    Column::PortableTags,
 ];
-pub const COLUMNS: [Column; 11] = [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Volume, Column::Created, Column::Accessed, Column::FolderUsage, Column::Tag];
+pub const COLUMNS: [Column; 14] = [Column::Name, Column::Type, Column::Modified, Column::Folders, Column::Files, Column::Size, Column::Volume, Column::Created, Column::Accessed, Column::FolderUsage, Column::Tag, Column::Rating, Column::Comment, Column::PortableTags];
 pub const BIN_COLUMNS: [Column; 4] = [Column::Name, Column::Origin, Column::Deleted, Column::Size];
 pub const COMPUTER_COLUMNS: [Column; 6] = [Column::Name, Column::Type, Column::Size, Column::Free, Column::Percent, Column::FileSystem];
 pub const MENU_COLUMNS: [Column; 10] = [Column::Name, Column::Type, Column::Size, Column::Folders, Column::Files, Column::Created, Column::Modified, Column::Accessed, Column::Volume, Column::FolderUsage];
@@ -321,6 +329,9 @@ impl Column {
             Column::GitAuthor => S::GitColumnAuthor,
             Column::GitDate => S::GitColumnDate,
             Column::GitHash => S::GitColumnHash,
+            Column::Rating => S::PortableMetaRating,
+            Column::Comment => S::PortableMetaComment,
+            Column::PortableTags => S::PortableMetaTags,
         }
         .t()
     }
@@ -347,12 +358,12 @@ impl Column {
             Column::Artist => SortField::Artist,
             Column::Version => SortField::Version,
             Column::GitHash => SortField::GitHash,
-            Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate => return None,
+            Column::DateTaken | Column::CameraModel | Column::Album | Column::Title | Column::Authors | Column::Company | Column::GitStatus | Column::GitMessage | Column::GitAuthor | Column::GitDate | Column::Rating | Column::Comment | Column::PortableTags => return None,
         })
     }
 
     pub fn is_git(self) -> bool {
-        self as u8 >= Column::GitStatus as u8
+        (Column::GitStatus as u8..=Column::GitHash as u8).contains(&(self as u8))
     }
 }
 
@@ -428,7 +439,8 @@ pub enum Effect {
     ShellWarm(Vec<ShellMenu>),
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
-    ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>> },
+    ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>>, shell: bool, portable: bool },
+    PortableMetadata { id: u64, req: crate::portable_meta::Request },
     Pinned(Vec<Location>),
     PinnedCleared,
     SavedServer(ServerChange),
@@ -706,6 +718,8 @@ pub struct App {
     pub style: format::Style,
     pub show_hidden: bool,
     hide_companions: bool,
+    metadata_ads: bool,
+    metadata_request_id: u64,
     pub startup: Startup,
     pub startup_pages: Vec<Location>,
     pub about: About,
@@ -847,6 +861,8 @@ impl App {
             style: format::Style { system: ("yyyy-MM-dd".into(), "HH:mm".into()), ..Default::default() },
             show_hidden: state.show_hidden,
             hide_companions: false,
+            metadata_ads: false,
+            metadata_request_id: 0,
             startup_pages: match &state.startup {
                 Startup::Folders(pages) => pages.clone(),
                 _ => Vec::new(),

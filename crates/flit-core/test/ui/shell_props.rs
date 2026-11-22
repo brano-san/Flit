@@ -34,7 +34,7 @@ fn frame_at(app: &mut App, now: Instant) -> Vec<Ask> {
     let mut asks = Vec::new();
     for e in app.drain_effects().collect::<Vec<_>>() {
         match e {
-            Effect::ShellProps { tab, gen, ask, dir, names } => asks.push((tab, gen, ask, dir, names)),
+            Effect::ShellProps { tab, gen, ask, dir, names, .. } => asks.push((tab, gen, ask, dir, names)),
             Effect::Resort { tab, gen, view, snap } => {
                 let mut order = Vec::new();
                 sort::sort(&snap.listing, &snap.keys, view, &mut order);

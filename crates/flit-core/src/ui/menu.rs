@@ -674,6 +674,10 @@ impl App {
             if count == 1 && folders == 0 {
                 m.action("file.hashes", S::MenuHashes.t());
                 self.segments_menu(m);
+                if self.metadata_enabled() && self.tab().view_loc.provider() == crate::location::ProviderId::Local
+                    && !self.tab().view_loc.is_recycle_bin() && self.archive_view().is_none() {
+                    m.action("file.metadata", S::PortableMetaTitle.t());
+                }
             }
         }
         m.separator();

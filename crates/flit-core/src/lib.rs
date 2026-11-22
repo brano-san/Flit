@@ -29,6 +29,7 @@ pub mod render;
 pub mod sort;
 pub mod segments;
 pub mod companions;
+pub mod portable_meta;
 pub mod tags;
 pub mod text;
 pub mod theme;
