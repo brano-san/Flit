@@ -150,6 +150,29 @@ impl Windows {
     }
 }
 
+impl flit_platform::IndexPlatform for Windows {
+    type Source = <Self as Platform>::IndexSource;
+    type Walk = <Self as Platform>::FallbackIndex;
+    type Service = <Self as Platform>::Service;
+
+    fn walk_source(roots: &[String]) -> Result<Self::Walk, PlatformError> {
+        if roots.is_empty() {
+            return <Self::Walk as flit_platform::IndexSource>::new();
+        }
+        let parsed: Option<Vec<_>> = roots.iter().map(|r| FsPath::parse(r)).collect();
+        let parsed = parsed.ok_or_else(|| PlatformError::new(-1, "a --walk root is not an absolute path"))?;
+        Ok(WalkIndex::with_roots(parsed))
+    }
+
+    fn utc_offset_minutes() -> i32 {
+        <Self as Platform>::utc_offset_minutes()
+    }
+
+    fn state_dir() -> Option<std::path::PathBuf> {
+        <Self as Platform>::state_dir()
+    }
+}
+
 impl Platform for Windows {
     type WindowSystem = Win32;
     type Renderer = D3dRenderer;

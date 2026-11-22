@@ -23,35 +23,19 @@ pub use tags::{file_key, merged_tag_names, resolve_files, sync_tag_names};
 pub use walk::{indexed, WalkIndex};
 pub use trash::{percent_decode, percent_encode, trash_time, Trash};
 
-use flit_core::atlas::Slot;
-use flit_core::input::CursorIcon;
-use flit_core::provider::FileOp;
-use flit_core::render::{DrawList, Rect};
-use flit_core::text::{FontMetrics, FontStyle, GlyphBitmap, GlyphKey, ShapedText, TextBackend};
-use flit_core::ui::{Bitmap, IconRequest, ShellMenu};
-use flit_core::{FsPath, Location, Open};
-use flit_platform::*;
+use flit_platform::{IndexPlatform, IndexSource, OnClient, PlatformError, Service};
 
-pub struct Linux;
+pub struct LinuxIndex;
 
-impl Platform for Linux {
-    type WindowSystem = LinuxWindows;
-    type Renderer = GlRenderer;
-    type Text = SwashText;
-    type Fs = LinuxFs;
-    type Watcher = Inotify;
-    type Shell = FreedesktopShell;
-    type Instance = DbusInstance;
-    type IndexSource = WalkIndex;
+impl IndexPlatform for LinuxIndex {
+    type Source = WalkIndex;
+    type Walk = WalkIndex;
     type Service = Systemd;
-    type FallbackIndex = WalkIndex;
 
-    fn text() -> Result<SwashText, PlatformError> {
-        Ok(SwashText)
+    fn walk_source(_: &[String]) -> Result<Self::Walk, PlatformError> {
+        WalkIndex::new()
     }
-    fn fs() -> LinuxFs {
-        LinuxFs
-    }
+
     fn utc_offset_minutes() -> i32 {
         let now = unsafe { libc::time(std::ptr::null_mut()) };
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
@@ -60,200 +44,11 @@ impl Platform for Linux {
         }
         (tm.tm_gmtoff / 60) as i32
     }
-    fn dark_mode() -> bool {
-        false
-    }
-    fn caps() -> flit_core::caps::Caps {
-        flit_core::caps::Caps { unix_paths: true }
-    }
+
     fn state_dir() -> Option<std::path::PathBuf> {
         let absolute = |v: &str| std::env::var_os(v).map(std::path::PathBuf::from).filter(|p| p.is_absolute());
         Some(absolute("XDG_STATE_HOME").or_else(|| Some(absolute("HOME")?.join(".local/state")))?.join("flit"))
     }
-    fn home() -> FsPath {
-        std::env::var("HOME").ok().and_then(|h| FsPath::parse(&h)).unwrap_or_else(|| FsPath::parse("/").unwrap())
-    }
-    fn known_folder(_: &str) -> Option<Location> {
-        None
-    }
-
-    fn fatal_error(message: &str) {
-        eprintln!("flit: {message}");
-    }
-
-    fn refresh_period() -> Option<std::time::Duration> {
-        None
-    }
-
-    fn drives() -> Vec<flit_core::ui::Drive> {
-        Vec::new()
-    }
-
-    fn wsl_distros() -> Vec<String> {
-        Vec::new()
-    }
-}
-
-pub struct LinuxWindows;
-pub struct LinuxWindow;
-#[derive(Clone)]
-pub struct LinuxWaker;
-
-impl Waker for LinuxWaker {
-    fn wake(&self) {
-        todo!("EventLoopProxy::send_event")
-    }
-}
-
-impl Window for LinuxWindow {
-    fn id(&self) -> WindowId {
-        todo!()
-    }
-    fn activate(&self) {
-        todo!()
-    }
-    fn open_window(&self, _: WindowOptions) {
-        todo!()
-    }
-    fn size(&self) -> (u32, u32) {
-        todo!()
-    }
-    fn scale(&self) -> f32 {
-        todo!()
-    }
-    fn request_redraw(&self) {
-        todo!()
-    }
-    fn set_title(&self, _: &str) {
-        todo!()
-    }
-    fn set_cursor(&self, _: CursorIcon) {
-        todo!()
-    }
-    fn minimize(&self) {
-        todo!()
-    }
-    fn toggle_maximize(&self) {
-        todo!()
-    }
-    fn is_maximized(&self) -> bool {
-        todo!()
-    }
-    fn close(&self) {
-        todo!()
-    }
-    fn placement(&self) -> Placement {
-        todo!()
-    }
-    fn clipboard_text(&self) -> Option<String> {
-        todo!()
-    }
-    fn set_clipboard_text(&self, _: &str) {
-        todo!()
-    }
-    fn set_ime_area(&self, _: Rect) {
-        todo!()
-    }
-    fn is_dark_mode(&self) -> bool {
-        todo!()
-    }
-    fn set_clipboard_files(&self, _: &[FsPath], _: bool) {
-        todo!()
-    }
-    fn shell_menu(&self, _: ShellMenu) {
-        todo!()
-    }
-    fn properties(&self, _: Vec<FsPath>) {
-        todo!()
-    }
-    fn start_drag(&self, _: Vec<FsPath>) {
-        todo!()
-    }
-    fn set_timer(&self, _: u32) {
-        todo!()
-    }
-}
-
-impl WindowSystem for LinuxWindows {
-    type Window = LinuxWindow;
-    type Waker = LinuxWaker;
-    fn new() -> Result<Self, PlatformError> {
-        Err(PlatformError::unsupported("Linux window system"))
-    }
-    fn waker(&self) -> LinuxWaker {
-        LinuxWaker
-    }
-    fn run<H: WindowHandler<Self>>(self, _: WindowOptions, _: H) -> Result<(), PlatformError> {
-        Err(PlatformError::unsupported("Linux window system"))
-    }
-}
-
-pub struct GlRenderer;
-
-impl Renderer for GlRenderer {
-    type Window = LinuxWindow;
-    type Device = ();
-    fn device(_: bool) -> Result<(), PlatformError> {
-        Err(PlatformError::unsupported("Linux renderer"))
-    }
-    fn new(_: &(), _: &LinuxWindow, _: u32) -> Result<Self, PlatformError> {
-        Err(PlatformError::unsupported("Linux renderer"))
-    }
-    fn resize(&mut self, _: u32, _: u32) {}
-    fn upload(&mut self, _: Slot, _: &[u8]) {}
-    fn render(&mut self, _: &DrawList) -> Result<(), RenderError> {
-        Ok(())
-    }
-}
-
-pub struct SwashText;
-
-impl TextBackend for SwashText {
-    fn shape(&mut self, _: &str, _: FontStyle, _: &mut ShapedText) {
-        todo!()
-    }
-    fn rasterize(&mut self, _: GlyphKey, _: &mut GlyphBitmap) -> bool {
-        todo!()
-    }
-    fn metrics(&mut self, _: FontStyle) -> FontMetrics {
-        todo!()
-    }
-}
-
-pub struct FreedesktopShell;
-
-impl Shell for FreedesktopShell {
-    fn new() -> Result<Self, PlatformError> {
-        Ok(FreedesktopShell)
-    }
-    fn icon(&mut self, _: &IconRequest) -> Option<Bitmap> {
-        None
-    }
-    fn type_name(&mut self, _: &[u8]) -> Option<String> {
-        None
-    }
-    fn open(&mut self, _: &FsPath) -> Result<(), PlatformError> {
-        Err(PlatformError::unsupported("xdg-open"))
-    }
-}
-
-impl FileOps for FreedesktopShell {
-    fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
-        ops::run(op, job, Trash::from_env().as_ref())
-    }
-    fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError> {
-        Err(PlatformError::unsupported("clipboard"))
-    }
-    fn clear_clipboard(&mut self) {}
-}
-
-pub struct DbusInstance;
-
-impl SingleInstance for DbusInstance {
-    fn acquire(_: &Open) -> Instance<Self> {
-        Instance::Primary(DbusInstance)
-    }
-    fn listen(self, _: OpenSink, _: Wake) {}
 }
 
 pub struct Systemd;

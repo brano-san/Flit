@@ -621,6 +621,16 @@ pub trait Service {
     fn listen(max_clients: usize, on_client: OnClient<Self::Conn>) -> Result<(), PlatformError>;
 }
 
+pub trait IndexPlatform {
+    type Source: IndexSource + 'static;
+    type Walk: IndexSource + 'static;
+    type Service: Service;
+
+    fn walk_source(roots: &[String]) -> Result<Self::Walk, PlatformError>;
+    fn utc_offset_minutes() -> i32;
+    fn state_dir() -> Option<std::path::PathBuf>;
+}
+
 pub trait Platform: 'static {
     type WindowSystem: WindowSystem;
     type Renderer: Renderer<Window = <Self::WindowSystem as WindowSystem>::Window>;
