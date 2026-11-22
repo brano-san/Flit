@@ -40,28 +40,36 @@ fn every_key_is_used_in_the_code() {
 
 #[test]
 fn placeholders_match_in_every_language() {
+    let mut mismatches = Vec::new();
     for s in S::ALL {
-        let en = placeholders(s.en());
+        let en = placeholders(S_TABLE[Lang::En as usize][s as usize]);
         for l in Lang::ALL {
-            assert_eq!(placeholders(s.in_lang(l)), en, "{} in {l:?}", s.key());
-        }
-    }
-    for p in P::ALL {
-        let en = placeholders(p.forms(Lang::En).last().unwrap());
-        assert!(en.contains(&"n"), "{} has no {{n}}", p.key());
-        for l in Lang::ALL {
-            for f in p.forms(l) {
-                assert_eq!(placeholders(f), en, "{} in {l:?}: {f}", p.key());
+            let actual = placeholders(S_TABLE[l as usize][s as usize]);
+            if actual != en {
+                mismatches.push(format!("{}:{} expected {en:?}, found {actual:?}", l.code(), s.key()));
             }
         }
     }
+    for p in P::ALL {
+        let en = placeholders(P_TABLE[Lang::En as usize][p as usize].last().unwrap_or(&""));
+        assert!(en.contains(&"n"), "{} has no {{n}}", p.key());
+        for l in Lang::ALL {
+            for (i, form) in P_TABLE[l as usize][p as usize].iter().enumerate() {
+                let actual = placeholders(form);
+                if actual != en {
+                    mismatches.push(format!("{}:{} form {} expected {en:?}, found {actual:?}", l.code(), p.key(), i + 1));
+                }
+            }
+        }
+    }
+    assert!(mismatches.is_empty(), "placeholder mismatches:\n{}", mismatches.join("\n"));
 }
 
 #[test]
 fn plural_strings_have_the_forms_of_their_language() {
     for p in P::ALL {
         for l in Lang::ALL {
-            assert_eq!(p.forms(l).len(), l.plural_forms(), "{} in {l:?}", p.key());
+            assert_eq!(P_TABLE[l as usize][p as usize].len(), l.plural_forms(), "{} in {l:?}", p.key());
         }
     }
 }
@@ -83,11 +91,11 @@ fn cldr_plural_rules_for_the_other_languages() {
 fn no_string_is_empty_or_padded() {
     for l in Lang::ALL {
         for s in S::ALL {
-            let t = s.in_lang(l);
+            let t = S_TABLE[l as usize][s as usize];
             assert!(!t.is_empty() && t.trim() == t, "{} in {l:?}: {t:?}", s.key());
         }
         for p in P::ALL {
-            assert!(p.forms(l).iter().all(|f| !f.is_empty() && f.trim() == *f), "{} in {l:?}", p.key());
+            assert!(P_TABLE[l as usize][p as usize].iter().all(|f| !f.is_empty() && f.trim() == *f), "{} in {l:?}", p.key());
         }
     }
 }
@@ -167,6 +175,48 @@ fn language_picker_lists_every_language_in_its_own_name() {
         let name = choices[k + 1].1;
         assert!(Lang::ALL.iter().all(|&o| name.in_lang(o) == name.en()), "{}", name.key());
     }
+}
+
+#[test]
+fn pseudo_locale_accentuates_and_expands_ui_text_without_touching_values() {
+    set_pseudo(true);
+    set_lang(Lang::Ru);
+    assert_eq!(lang(), Lang::Pseudo);
+    assert_eq!(S::SettingsPageLineTitle.t(), "«Ŝéţţıñĝš ··»");
+    assert_eq!(crate::trn!(P::DetailsCountFiles, 1), "«1 ƒıļé ··»");
+    assert_eq!(crate::trn!(P::DetailsCountFiles, 3), "«3 ƒıļéš ··»");
+    assert!(crate::path::is_label(S::PathHome.t().as_bytes(), S::PathHome));
+
+    let template = "Open {name} in {folder}\nClose {name}";
+    let expanded = cache_pseudo(template);
+    assert_eq!(placeholders(expanded), ["folder", "name"]);
+    let filled = fill(expanded, &[("name", &"Budget 2026.txt"), ("folder", &"C:\\data")]);
+    assert_eq!(filled.matches("Budget 2026.txt").count(), 2);
+    assert!(filled.contains("C:\\data\n"));
+    let phrase = "This is a long label with enough space ".repeat(10);
+    let expansion = cache_pseudo(&phrase).chars().count() as f64 / phrase.chars().count() as f64;
+    assert!((1.28..1.32).contains(&expansion));
+    set_pseudo(false);
+}
+
+#[test]
+fn pseudo_locale_stays_out_of_settings_logs_and_generated_file_names() {
+    use crate::ui::settings::language_of;
+    set_lang(Lang::Ru);
+    set_pseudo(true);
+
+    assert!(!Lang::ALL.contains(&Lang::Pseudo));
+    assert!((0..=Lang::ALL.len()).all(|choice| language_of(choice) != Lang::Pseudo));
+    assert_eq!(Lang::from_code("pseudo"), None);
+    assert_eq!(S::SettingsPageLineTitle.en(), "Settings");
+    assert_eq!(localize(S::ErrorsSearchUnreadableQuery.en()), S::ErrorsSearchUnreadableQuery.t());
+    assert_eq!(localize("C:\\data\\Budget.txt"), "C:\\data\\Budget.txt");
+    assert_eq!(crate::name::link_name(b"Budget.txt"), crate::name::link_name_in(b"Budget.txt", Lang::En));
+    assert_eq!(crate::name::copy_suffix_in(Lang::Pseudo), crate::name::copy_suffix_in(Lang::En));
+
+    set_pseudo(false);
+    assert_eq!(lang(), Lang::Ru);
+    assert_eq!(S::SettingsPageLineTitle.t(), S::SettingsPageLineTitle.in_lang(Lang::Ru));
 }
 
 #[test]

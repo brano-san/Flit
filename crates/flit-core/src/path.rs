@@ -35,7 +35,10 @@ const UNIX_HOST: bool = cfg!(unix);
 pub fn is_label(input: &[u8], label: S) -> bool {
     let Ok(text) = std::str::from_utf8(input) else { return false };
     let text = text.trim().to_lowercase();
-    Lang::ALL.iter().any(|&l| label.in_lang(l).to_lowercase() == text)
+    Lang::ALL
+        .into_iter()
+        .chain((crate::i18n::lang() == Lang::Pseudo).then_some(Lang::Pseudo))
+        .any(|l| label.in_lang(l).to_lowercase() == text)
 }
 
 impl FsPath {
