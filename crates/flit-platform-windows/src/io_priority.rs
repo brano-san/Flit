@@ -5,6 +5,9 @@ use windows::Win32::Storage::FileSystem::{IoPriorityHintVeryLow, FILE_IO_PRIORIT
 struct AlignedHint(FILE_IO_PRIORITY_HINT_INFO);
 
 pub(crate) fn idle(handle: HANDLE) {
+    if handle.is_invalid() {
+        return;
+    }
     let hint = AlignedHint(FILE_IO_PRIORITY_HINT_INFO { PriorityHint: IoPriorityHintVeryLow });
     apply(handle, &hint);
 }
