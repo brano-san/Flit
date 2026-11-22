@@ -1,5 +1,5 @@
 placeholder = "Пошук: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: або $ і властивість:значення для Windows Search"
-placeholder_unix = "Пошук: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: або $ для тексту всередині файлів"
+placeholder_unix = "Пошук: слова, *.ext, ext:, size:, dm:, path:, regex:, tag: або $ для пошуку тексту у файлах"
 title = "Пошук — Flit"
 title_in = "Пошук у {name} — Flit"
 invalid = "Запит недійсний."
@@ -11,49 +11,49 @@ results = ["{n} результат", "{n} результати", "{n} резул
 done_in = "{results} за {ms} мс"
 in = "У {name}"
 all_drives = "Усі диски"
-recent = "Нещодавні пошуки · Shift+Del видаляє запис"
+recent = "Нещодавні пошуки · Shift+Del видаляє вибраний запис"
 folders = ["{n} папка", "{n} папки", "{n} папок"]
 
 [error]
-rows_without_folders = "Індекс надіслав рядки без папок."
-invalid_rows = "Індекс надіслав недійсні рядки: {error}"
+rows_without_folders = "Індекс повернув записи без папок."
+invalid_rows = "Індекс повернув недійсні записи: {error}"
 unavailable = "Пошук недоступний: {error}"
 cannot_start = "Не вдається почати пошук: {error}"
 shell = "Windows Search: {error}"
-syntax_position = "Помилка запиту в позиції {position}"
-timestamps_need_folder = "Дати створення і доступу доступні в пошуку за текою."
+syntax_position = "Помилка в пошуковому запиті на позиції {position}"
+timestamps_need_folder = "Дати створення й доступу можна шукати в межах папки."
 
 [column]
 folder = "Папка"
 
 [source]
-walk = "Пошук наживо в папці та її вкладених папках"
+walk = "Прямий пошук у папці та її вкладених папках"
 shell = "Windows Search"
 content = "Пошук за вмістом (Tracker, Baloo або Recoll)"
 tagged = "Файли з тегами"
 connecting = "Підключення до індексу"
-service = "Служба індексу"
+service = "Служба індексування"
 fallback = "Локальний індекс (flit-indexd недоступний)"
 local = "Локальний індекс"
-off = "Індексування вимкнено в Налаштуваннях › Додатково; Ctrl+Shift+F шукає у відкритій папці"
+off = "Індексування вимкнено (Параметри › Додатково). Ctrl+Shift+F запускає пошук у відкритій папці."
 
 [index]
 default = "індекс"
-ready = ["{label} {n} файл", "{label} {n} файли", "{label} {n} файлів"]
-scanning = ["{label} індексування {percent}% ({n} файл)", "{label} індексування {percent}% ({n} файли)", "{label} індексування {percent}% ({n} файлів)"]
-error = "{label} помилка: {error}"
+ready = ["{label}: {n} файл", "{label}: {n} файли", "{label}: {n} файлів"]
+scanning = ["{label}: індексування {percent} % ({n} файл)", "{label}: індексування {percent} % ({n} файли)", "{label}: індексування {percent} % ({n} файлів)"]
+error = "{label}: помилка {error}"
 
 [exclude]
 action = "Виключити з пошуку"
 
 [explore]
-folders = "Теки"
+folders = "Папки"
 within = "Шукати в поточних результатах"
-folders_help = "Показує теки й кількість результатів у них."
-within_help = "Додає умову до поточних результатів."
-similar = "Знайти схожі"
-similar_help = "Шукає за типом, днем зміни, розміром і тегами вибраного файлу."
-facets = "Фасети"
+folders_help = "Показує папки й кількість результатів у кожній."
+within_help = "Звужує поточні результати пошуку."
+similar = "Знайти схожі файли"
+similar_help = "Шукає за типом, датою зміни, розміром і тегами вибраного файлу."
+facets = "Фільтри"
 facets_help = "Показує фільтри й гістограму дат зміни."
 year = "Рік"
 no_extension = "Без розширення"

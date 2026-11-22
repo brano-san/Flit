@@ -1,4 +1,4 @@
 default = "За замовчуванням"
-system_font = "Системний за замовчуванням"
+system_font = "Системний шрифт"
 not_installed = "{font} (не встановлено)"
-backdrop_failed = "Не вдається показати {path} як тло"
+backdrop_failed = "Не вдається використати {path} як тло"
