@@ -840,19 +840,19 @@ impl<'a> Engine<'a> {
                     return Res::Nothing;
                 }
             };
+            let occupied = group && !replace && node_at(ddir, &dname, false).is_ok();
+            if !occupied && group {
+                if let Some(error) = self.job.companion_collision(src, &dst) {
+                    self.note(error);
+                    return Res::Nothing;
+                }
+            }
             if replace {
                 match self.replace_file((sdir, sname), (ddir, &dname, &dst), node, mode) {
                     Ok(()) => return Res::Whole(dst),
                     Err(e) if mode == Mode::Move && e.raw_os_error() == Some(libc::EXDEV) => return self.transfer(sdir, sname, src, ddir, dst, node, Mode::Across),
                     Err(e) if self.trouble(src, &e) => continue,
                     Err(_) => return Res::Nothing,
-                }
-            }
-            let occupied = group && node_at(ddir, &dname, false).is_ok();
-            if !occupied && group {
-                if let Some(error) = self.job.companion_collision(src, &dst) {
-                    self.note(error);
-                    return Res::Nothing;
                 }
             }
             let tried = if occupied {

@@ -715,19 +715,19 @@ impl<'a> Engine<'a> {
         let group = top && self.job.has_companions(src);
         let (mut replace, mut retried) = (false, false);
         loop {
+            let occupied = group && !replace && !same(src, &dst) && exists(&dst);
+            if !occupied && group {
+                if let Some(error) = self.job.companion_collision(src, &dst) {
+                    self.note(error);
+                    return Res::Nothing;
+                }
+            }
             if replace {
                 match self.replace_file(src, &dst, m.size, mode) {
                     Ok(()) => return Res::Whole(dst),
                     Err(e) if !self.stopped() && mode == Mode::Move && code(&e) == ERROR_NOT_SAME_DEVICE => return self.transfer(src, dst, m, Mode::Across, top),
                     Err(e) if !self.stopped() && self.trouble(src, &e, false) => continue,
                     Err(_) => return Res::Nothing,
-                }
-            }
-            let occupied = group && !same(src, &dst) && exists(&dst);
-            if !occupied && group {
-                if let Some(error) = self.job.companion_collision(src, &dst) {
-                    self.note(error);
-                    return Res::Nothing;
                 }
             }
             let tried = if occupied {
