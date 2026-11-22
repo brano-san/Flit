@@ -1,17 +1,17 @@
 selected = ["{n} Element ausgewählt", "{n} Elemente ausgewählt"]
-archived = "In einem Archiv: Zum Anzeigen der Vorschau extrahieren"
+archived = "Für eine Vorschau die Datei aus dem Archiv entpacken"
 cannot_play = "Diese Datei kann nicht wiedergegeben werden: {error}"
 no_player = "kein Mediaplayer gefunden. Installieren Sie das Paket {package}"
 properties = "Eigenschaften"
 reading = "Eigenschaften werden gelesen…"
 loading = "Vorschau wird geladen…"
 new_tag = "+ Neues Tag"
-shortcut = "Verknüpfung mit {target}"
+shortcut = "Verknüpfung zu {target}"
 too_large = "Die Datei ist für eine Vorschau zu groß"
 online_only = "Nur online gespeichert.\nFür die Vorschau wird die Datei auf dieses Gerät heruntergeladen."
-download = "Für Vorschau herunterladen"
+download = "Für die Vorschau herunterladen"
 copy_image = "Bild kopieren"
-truncated = ["Das erste {n} Zeichen wird angezeigt", "Die ersten {n} Zeichen werden angezeigt"]
+truncated = ["{n} Zeichen vom Textanfang angezeigt", "{n} Zeichen vom Textanfang angezeigt"]
 folders = ["{n} Ordner", "{n} Ordner"]
 files = ["{n} Datei", "{n} Dateien"]
 cannot_open = "Datei konnte nicht geöffnet werden"
@@ -32,9 +32,9 @@ free_of = "{free} von {total}"
 
 [attr]
 read_only = "Schreibgeschützt"
-hidden = "Versteckt"
+hidden = "Ausgeblendet"
 system = "System"
-link = "Verknüpfung"
+link = "Link"
 compressed = "Komprimiert"
 encrypted = "Verschlüsselt"
 online_only = "Nur online verfügbar"
@@ -43,15 +43,15 @@ offline = "Offline"
 
 [folder]
 empty = "Dieser Ordner ist leer."
-scanned = ["{size} im ersten {n} Element", "{size} in den ersten {n} Elementen"]
+scanned = ["Erste Elemente: {size} ({n} Element)", "Erste Elemente: {size} ({n} Elemente)"]
 hidden = ["{n} Element ausgeblendet", "{n} Elemente ausgeblendet"]
-last_change = "Letzte Änderung {date}"
+last_change = "Letzte Änderung: {date}"
 most_common = "Am häufigsten: {types}"
-no_extension = "keine Erweiterung"
+no_extension = "keine Dateierweiterung"
 
 [filter]
-lines = "{n} Zeilen filtern..."
-files = "{n} Dateien filtern..."
+lines = "{n} Zeilen filtern…"
+files = "{n} Dateien filtern…"
 
 [pretty]
 button = "Formatieren"

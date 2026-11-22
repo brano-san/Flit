@@ -13,11 +13,11 @@ esc_cancels = "Esc bricht ab"
 cannot = "{key} kann nicht verwendet werden: {why}"
 other_keys = "Drücken Sie andere Tasten"
 already = "{key} führt bereits „{command}“ aus"
-reassign = "{key} von „{from}“ zu „{command}“ neu zuweisen"
+reassign = "{key} statt „{from}“ nun „{command}“ zuweisen"
 assign = "{key} „{command}“ zuweisen"
 remove = "Tastenkombination {key} entfernen"
 
 [editor]
 title = "Tastenkombinationen für „{command}“"
 change = "{key} ändern"
-removes = "Entf entfernt sie"
+removes = "Entf entfernt die Tastenkombination"

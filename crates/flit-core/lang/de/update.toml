@@ -11,10 +11,10 @@ other_window = "In einem anderen Flit-Fenster laufen noch Dateivorgänge"
 checking = "Suche nach Updates…"
 up_to_date = "Flit {version} ist aktuell"
 check_failed = "Die Suche nach Updates ist fehlgeschlagen: {error}"
-available = "Flit {version} ist verfügbar: „Nach Updates suchen“ installiert es"
+available = "Flit {version} ist verfügbar. Installation über „Nach Updates suchen“"
 failed = "Das Update kann nicht installiert werden: {error}"
 
-managed_available = "Flit {version} ist verfügbar. Die Update-Prüfung zeigt die Installationsanleitung."
+managed_available = "Flit {version} ist verfügbar. „Nach Updates suchen“ zeigt die Installationsanleitung."
 
 [dialog]
 title = "Flit {version} ist verfügbar"
@@ -29,12 +29,12 @@ downloading = "Flit {version} wird heruntergeladen… {percent} %"
 downloading_plain = "Flit {version} wird heruntergeladen…"
 installing = "Flit {version} wird installiert…"
 read_only = "Flit kann seine Dateien in {dir} nicht ersetzen. Laden Sie die neue Version von der Release-Seite herunter."
-jobs = ["{n} Dateivorgang läuft noch. Installieren Sie das Update, wenn er fertig ist.", "{n} Dateivorgänge laufen noch. Installieren Sie das Update, wenn sie fertig sind."]
+jobs = ["{n} Dateivorgang läuft noch. Installieren Sie das Update nach seinem Abschluss.", "{n} Dateivorgänge laufen noch. Installieren Sie das Update nach ihrem Abschluss."]
 
 package_manager = "Über die Paketverwaltung aktualisieren"
 appimage = "Laden Sie das neue AppImage von der Release-Seite herunter."
 
-microsoft_store = "Microsoft Store verwaltet Updates für diese Installation."
+microsoft_store = "Der Microsoft Store verwaltet Updates für diese Installation."
 
 [page]
 group = "Updates"
