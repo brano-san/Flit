@@ -134,52 +134,32 @@ struct FcFontSet {
     fonts: *mut *mut c_void,
 }
 
-macro_rules! fc_api {
-    ($($field:ident = $sym:literal: fn($($arg:ty),*) $(-> $ret:ty)?;)*) => {
-        struct Api {
-            $($field: unsafe extern "C" fn($($arg),*) $(-> $ret)?,)*
-        }
-
-        impl Api {
-            fn load(lib: *mut c_void) -> Option<Self> {
-                Some(Self {
-                    $($field: unsafe {
-                        let sym = libc::dlsym(lib, concat!($sym, "\0").as_ptr() as *const c_char);
-                        if sym.is_null() {
-                            return None;
-                        }
-                        std::mem::transmute::<*mut c_void, unsafe extern "C" fn($($arg),*) $(-> $ret)?>(sym)
-                    },)*
-                })
-            }
-        }
-    };
-}
-
-fc_api! {
-    init = "FcInitLoadConfigAndFonts": fn() -> *mut c_void;
-    pattern_create = "FcPatternCreate": fn() -> *mut c_void;
-    pattern_destroy = "FcPatternDestroy": fn(*mut c_void);
-    add_string = "FcPatternAddString": fn(*mut c_void, *const c_char, *const u8) -> c_int;
-    add_integer = "FcPatternAddInteger": fn(*mut c_void, *const c_char, c_int) -> c_int;
-    add_bool = "FcPatternAddBool": fn(*mut c_void, *const c_char, c_int) -> c_int;
-    get_string = "FcPatternGetString": fn(*mut c_void, *const c_char, c_int, *mut *const u8) -> c_int;
-    get_integer = "FcPatternGetInteger": fn(*mut c_void, *const c_char, c_int, *mut c_int) -> c_int;
-    get_bool = "FcPatternGetBool": fn(*mut c_void, *const c_char, c_int, *mut c_int) -> c_int;
-    config_substitute = "FcConfigSubstitute": fn(*mut c_void, *mut c_void, c_int) -> c_int;
-    default_substitute = "FcDefaultSubstitute": fn(*mut c_void);
-    font_match = "FcFontMatch": fn(*mut c_void, *mut c_void, *mut c_int) -> *mut c_void;
-    font_sort = "FcFontSort": fn(*mut c_void, *mut c_void, c_int, *mut *mut c_void, *mut c_int) -> *mut FcFontSet;
-    font_list = "FcFontList": fn(*mut c_void, *mut c_void, *mut c_void) -> *mut FcFontSet;
-    font_set_destroy = "FcFontSetDestroy": fn(*mut FcFontSet);
-    object_set_create = "FcObjectSetCreate": fn() -> *mut c_void;
-    object_set_add = "FcObjectSetAdd": fn(*mut c_void, *const c_char) -> c_int;
-    object_set_destroy = "FcObjectSetDestroy": fn(*mut c_void);
-    config_destroy = "FcConfigDestroy": fn(*mut c_void);
+crate::symbols::library_api! {
+    struct Api from c"libfontconfig.so.1" {
+        init = c"FcInitLoadConfigAndFonts": fn() -> *mut c_void;
+        pattern_create = c"FcPatternCreate": fn() -> *mut c_void;
+        pattern_destroy = c"FcPatternDestroy": fn(*mut c_void);
+        add_string = c"FcPatternAddString": fn(*mut c_void, *const c_char, *const u8) -> c_int;
+        add_integer = c"FcPatternAddInteger": fn(*mut c_void, *const c_char, c_int) -> c_int;
+        add_bool = c"FcPatternAddBool": fn(*mut c_void, *const c_char, c_int) -> c_int;
+        get_string = c"FcPatternGetString": fn(*mut c_void, *const c_char, c_int, *mut *const u8) -> c_int;
+        get_integer = c"FcPatternGetInteger": fn(*mut c_void, *const c_char, c_int, *mut c_int) -> c_int;
+        get_bool = c"FcPatternGetBool": fn(*mut c_void, *const c_char, c_int, *mut c_int) -> c_int;
+        config_substitute = c"FcConfigSubstitute": fn(*mut c_void, *mut c_void, c_int) -> c_int;
+        default_substitute = c"FcDefaultSubstitute": fn(*mut c_void);
+        font_match = c"FcFontMatch": fn(*mut c_void, *mut c_void, *mut c_int) -> *mut c_void;
+        font_sort = c"FcFontSort": fn(*mut c_void, *mut c_void, c_int, *mut *mut c_void, *mut c_int) -> *mut FcFontSet;
+        font_list = c"FcFontList": fn(*mut c_void, *mut c_void, *mut c_void) -> *mut FcFontSet;
+        font_set_destroy = c"FcFontSetDestroy": fn(*mut FcFontSet);
+        object_set_create = c"FcObjectSetCreate": fn() -> *mut c_void;
+        object_set_add = c"FcObjectSetAdd": fn(*mut c_void, *const c_char) -> c_int;
+        object_set_destroy = c"FcObjectSetDestroy": fn(*mut c_void);
+        config_destroy = c"FcConfigDestroy": fn(*mut c_void);
+    }
 }
 
 pub struct Fontconfig {
-    api: Api,
+    api: &'static Api,
     config: *mut c_void,
 }
 
@@ -220,11 +200,8 @@ impl Drop for Pattern<'_> {
 
 impl Fontconfig {
     pub fn load() -> Option<Self> {
-        let lib = unsafe { libc::dlopen(c"libfontconfig.so.1".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-        if lib.is_null() {
-            return None;
-        }
-        let api = Api::load(lib)?;
+        static API: OnceLock<Option<Api>> = OnceLock::new();
+        let api = API.get_or_init(Api::load).as_ref()?;
         let config = unsafe { (api.init)() };
         (!config.is_null()).then_some(Self { api, config })
     }
@@ -252,7 +229,7 @@ impl Fontconfig {
 
     fn query(&self, family: &str, weight: c_int) -> Option<Pattern<'_>> {
         let name = CString::new(family).ok()?;
-        let p = Pattern(&self.api, unsafe { (self.api.pattern_create)() });
+        let p = Pattern(self.api, unsafe { (self.api.pattern_create)() });
         unsafe {
             (self.api.add_string)(p.1, key(FAMILY), name.as_ptr() as *const u8);
             (self.api.add_integer)(p.1, key(WEIGHT), weight);
@@ -271,7 +248,7 @@ impl Fontconfig {
         if raw.is_null() {
             return None;
         }
-        let m = Pattern(&self.api, raw);
+        let m = Pattern(self.api, raw);
         let named = (0..).map_while(|n| self.string(m.1, FAMILY, n)).any(|f| f.eq_ignore_ascii_case(family.as_bytes()));
         if exact && !named {
             return None;
@@ -321,7 +298,7 @@ impl Fontconfig {
     }
 
     pub fn families(&self) -> Vec<String> {
-        let p = Pattern(&self.api, unsafe { (self.api.pattern_create)() });
+        let p = Pattern(self.api, unsafe { (self.api.pattern_create)() });
         let os = unsafe { (self.api.object_set_create)() };
         unsafe {
             (self.api.add_bool)(p.1, key(OUTLINE), 1);
@@ -360,7 +337,7 @@ impl Fontconfig {
         if raw.is_null() {
             return Prefs::default();
         }
-        let m = Pattern(&self.api, raw);
+        let m = Pattern(self.api, raw);
         fontconfig_prefs(self.boolean(m.1, ANTIALIAS), self.integer(m.1, RGBA), self.boolean(m.1, HINTING_KEY), self.integer(m.1, HINTSTYLE))
     }
 

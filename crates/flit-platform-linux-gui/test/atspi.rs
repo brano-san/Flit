@@ -59,7 +59,7 @@ fn the_private_settings_read_reply_unwraps_both_variants_and_preserves_empty() {
     let (tx, rx) = crossbeam_channel::bounded(1);
     let server = std::thread::spawn(move || {
         let api = dbus::load().unwrap();
-        let conn = Conn::open(&api, &bus).unwrap();
+        let conn = Conn::open(api, &bus).unwrap();
         let owned = conn.call("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus", "RequestName", &[V::S(PORTAL.to_owned()), V::U(0)]).unwrap();
         assert_eq!(owned, vec![Arg::I(1)]);
         tx.send(()).unwrap();
@@ -68,7 +68,7 @@ fn the_private_settings_read_reply_unwraps_both_variants_and_preserves_empty() {
         while answered < 2 && Instant::now() < until {
             conn.drain(|message| unsafe {
                 if (api.msg_type)(message) == TYPE_METHOD_CALL && text((api.member)(message)) == "Read" {
-                    assert_eq!(args(&api, message), vec![Arg::S(GNOME_WM.to_owned()), Arg::S("button-layout".to_owned())]);
+                    assert_eq!(args(api, message), vec![Arg::S(GNOME_WM.to_owned()), Arg::S("button-layout".to_owned())]);
                     let reply = (api.new_return)(message);
                     let value = if answered == 0 { "close:" } else { "" };
                     conn.append(reply, &[V::Var(Box::new(V::Var(Box::new(V::S(value.to_owned())))))]);

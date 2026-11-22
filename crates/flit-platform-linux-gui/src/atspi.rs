@@ -1061,7 +1061,7 @@ fn watch(fd: c_int) -> libc::pollfd {
 
 pub(crate) fn run(address: &str, refresh: &dyn Fn(), act: &dyn Fn(WindowId, Event)) {
     let Some(api) = dbus::load() else { return };
-    let Some(session) = Conn::open(&api, address) else { return };
+    let Some(session) = Conn::open(api, address) else { return };
     session.add_match(STATUS_MATCH);
     let Some(mut wanted) = status(&session) else { return };
     let mut pipe = [-1; 2];
@@ -1072,7 +1072,7 @@ pub(crate) fn run(address: &str, refresh: &dyn Fn(), act: &dyn Fn(WindowId, Even
     let mut bridge: Option<Bridge> = None;
     loop {
         if wanted && bridge.is_none() {
-            bridge = Bridge::connect(&api, &session);
+            bridge = Bridge::connect(api, &session);
             wanted = bridge.is_some();
             if wanted {
                 LISTENING.store(true, Ordering::Release);
@@ -1155,7 +1155,7 @@ pub(crate) fn read_button_layout() -> Option<String> {
 
 fn read_button_layout_at(address: &str) -> Option<String> {
     let api = dbus::load()?;
-    let conn = Conn::open(&api, address)?;
+    let conn = Conn::open(api, address)?;
     let reply = conn.call(PORTAL, PORTAL_PATH, "org.freedesktop.portal.Settings", "Read", &[V::S(GNOME_WM.to_owned()), V::S("button-layout".to_owned())])?;
     reply.iter().find_map(setting_string)
 }
@@ -1192,7 +1192,7 @@ pub(crate) fn look_change(args: &[Arg]) -> Option<LookChange> {
 
 pub(crate) fn watch_settings(address: &str, changed: &dyn Fn(i64), clicks: &dyn Fn(i64), look: &dyn Fn(LookChange)) {
     let Some(api) = dbus::load() else { return };
-    let Some(conn) = Conn::open(&api, address) else { return };
+    let Some(conn) = Conn::open(api, address) else { return };
     conn.add_match(SETTING_MATCH);
     conn.add_match(INTERFACE_MATCH);
     conn.add_match(MOUSE_MATCH);
@@ -1203,7 +1203,7 @@ pub(crate) fn watch_settings(address: &str, changed: &dyn Fn(i64), clicks: &dyn 
         let mut click = None;
         let alive = conn.drain(|msg| unsafe {
             if (api.msg_type)(msg) == TYPE_SIGNAL && text((api.member)(msg)) == "SettingChanged" {
-                let a = args(&api, msg);
+                let a = args(api, msg);
                 latest = color_scheme_change(&a).or(latest);
                 looks.extend(look_change(&a));
                 click = double_click_change(&a).or(click);
@@ -1264,7 +1264,7 @@ pub(crate) fn choose_file(title: &str, exts: &[&str], folder: bool, start: Optio
     static NEXT: AtomicU64 = AtomicU64::new(0);
     let address = dbus::session_address()?;
     let api = dbus::load()?;
-    let conn = Conn::open(&api, &address)?;
+    let conn = Conn::open(api, &address)?;
     let token = format!("flit{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
     let expected = request_path(&conn.me, &token);
     conn.add_match(&format!("type='signal',interface='org.freedesktop.portal.Request',member='Response',path='{expected}'"));
@@ -1279,7 +1279,7 @@ pub(crate) fn choose_file(title: &str, exts: &[&str], folder: bool, start: Optio
         let mut answer = None;
         let alive = conn.drain(|msg| unsafe {
             if (api.msg_type)(msg) == TYPE_SIGNAL && text((api.member)(msg)) == "Response" && text((api.path)(msg)) == handle {
-                answer = Some(chosen_uri(&args(&api, msg)));
+                answer = Some(chosen_uri(&args(api, msg)));
             }
         });
         if let Some(a) = answer {

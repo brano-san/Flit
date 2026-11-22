@@ -5,8 +5,9 @@ use flit_platform::{PlatformError, Wake, Watcher};
 use crossbeam_channel::Sender;
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CString, OsStr};
+use std::fs::File;
 use std::hash::Hash;
-use std::io;
+use std::io::{self, Read};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -29,7 +30,7 @@ struct Watches<K> {
 }
 
 pub struct Notify<K> {
-    fd: Arc<OwnedFd>,
+    fd: Arc<File>,
     watches: Arc<Mutex<Watches<K>>>,
 }
 
@@ -54,7 +55,7 @@ impl<K: Clone + Eq + Hash + Send + 'static> Notify<K> {
         if fd < 0 {
             return Err(io::Error::last_os_error());
         }
-        let fd = Arc::new(unsafe { OwnedFd::from_raw_fd(fd) });
+        let fd = Arc::new(File::from(unsafe { OwnedFd::from_raw_fd(fd) }));
         let watches = Arc::new(Mutex::new(Watches { dirs: HashMap::new(), keys: HashMap::new() }));
         let (rfd, rw) = (fd.clone(), watches.clone());
         std::thread::Builder::new().name("flit-inotify".into()).spawn(move || read_loop(&rfd, &rw, window, &emit))?;
@@ -154,7 +155,7 @@ fn flush<K: Clone>(watches: &Mutex<Watches<K>>, pending: HashMap<i32, Pending>, 
     }
 }
 
-fn read_loop<K: Clone>(fd: &OwnedFd, watches: &Mutex<Watches<K>>, window: Duration, emit: &dyn Fn(K, Notice)) {
+fn read_loop<K: Clone>(mut fd: &File, watches: &Mutex<Watches<K>>, window: Duration, emit: &dyn Fn(K, Notice)) {
     let mut buf = vec![0u8; 64 << 10];
     let mut pending = HashMap::new();
     let mut overflow = false;
@@ -164,14 +165,13 @@ fn read_loop<K: Clone>(fd: &OwnedFd, watches: &Mutex<Watches<K>>, window: Durati
         let mut pfd = libc::pollfd { fd: fd.as_raw_fd(), events: libc::POLLIN, revents: 0 };
         let ready = unsafe { libc::poll(&mut pfd, 1, timeout) };
         if ready > 0 {
-            let n = unsafe { libc::read(fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len()) };
-            if n <= 0 {
-                if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return;
-            }
-            parse(&buf[..n as usize], &mut pending, &mut overflow);
+            let n = match fd.read(&mut buf) {
+                Ok(0) => return,
+                Ok(n) => n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(_) => return,
+            };
+            parse(&buf[..n], &mut pending, &mut overflow);
             deadline.get_or_insert_with(|| Instant::now() + window);
         } else if ready < 0 && io::Error::last_os_error().kind() != io::ErrorKind::Interrupted {
             return;

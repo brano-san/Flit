@@ -2,6 +2,7 @@ use flit_core::open::OpenTarget;
 use flit_core::Open;
 use flit_platform::{OpenSink, Wake};
 use std::ffi::{c_char, c_int, c_void, CStr, CString};
+use std::ptr::NonNull;
 
 pub const NAME: &CStr = c"org.freedesktop.FileManager1";
 const INTROSPECTION: &CStr = c"<node><interface name=\"org.freedesktop.FileManager1\">\
@@ -29,11 +30,11 @@ impl Error {
     }
 
     pub(crate) fn message(&self) -> String {
-        text(self.message)
+        unsafe { text(self.message) }
     }
 
     pub(crate) fn name(&self) -> String {
-        text(self.name)
+        unsafe { text(self.name) }
     }
 }
 
@@ -46,102 +47,54 @@ impl Iter {
     }
 }
 
-pub(crate) struct Api {
-    pub(crate) error_init: unsafe extern "C" fn(*mut Error),
-    pub(crate) error_free: unsafe extern "C" fn(*mut Error),
-    pub(crate) open_private: unsafe extern "C" fn(*const c_char, *mut Error) -> *mut c_void,
-    pub(crate) register: unsafe extern "C" fn(*mut c_void, *mut Error) -> u32,
-    pub(crate) request_name: unsafe extern "C" fn(*mut c_void, *const c_char, u32, *mut Error) -> c_int,
-    pub(crate) read_write: unsafe extern "C" fn(*mut c_void, c_int) -> u32,
-    pub(crate) pop: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-    pub(crate) msg_type: unsafe extern "C" fn(*mut c_void) -> c_int,
-    pub(crate) member: unsafe extern "C" fn(*mut c_void) -> *const c_char,
-    pub(crate) interface: unsafe extern "C" fn(*mut c_void) -> *const c_char,
-    pub(crate) iter_init: unsafe extern "C" fn(*mut c_void, *mut Iter) -> u32,
-    pub(crate) iter_type: unsafe extern "C" fn(*mut Iter) -> c_int,
-    pub(crate) iter_recurse: unsafe extern "C" fn(*mut Iter, *mut Iter),
-    pub(crate) iter_basic: unsafe extern "C" fn(*mut Iter, *mut c_void),
-    pub(crate) iter_next: unsafe extern "C" fn(*mut Iter) -> u32,
-    pub(crate) iter_init_append: unsafe extern "C" fn(*mut c_void, *mut Iter),
-    pub(crate) iter_append_basic: unsafe extern "C" fn(*mut Iter, c_int, *const c_void) -> u32,
-    pub(crate) new_return: unsafe extern "C" fn(*mut c_void) -> *mut c_void,
-    pub(crate) send: unsafe extern "C" fn(*mut c_void, *mut c_void, *mut u32) -> u32,
-    pub(crate) flush: unsafe extern "C" fn(*mut c_void),
-    pub(crate) unref: unsafe extern "C" fn(*mut c_void),
-    pub(crate) new_method_call: unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, *const c_char) -> *mut c_void,
-    pub(crate) new_signal: unsafe extern "C" fn(*const c_char, *const c_char, *const c_char) -> *mut c_void,
-    pub(crate) new_error: unsafe extern "C" fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void,
-    pub(crate) call: unsafe extern "C" fn(*mut c_void, *mut c_void, c_int, *mut Error) -> *mut c_void,
-    pub(crate) open_container: unsafe extern "C" fn(*mut Iter, c_int, *const c_char, *mut Iter) -> u32,
-    pub(crate) close_container: unsafe extern "C" fn(*mut Iter, *mut Iter) -> u32,
-    pub(crate) add_match: unsafe extern "C" fn(*mut c_void, *const c_char, *mut Error),
-    pub(crate) path: unsafe extern "C" fn(*mut c_void) -> *const c_char,
-    pub(crate) unique_name: unsafe extern "C" fn(*mut c_void) -> *const c_char,
-    pub(crate) unix_fd: unsafe extern "C" fn(*mut c_void, *mut c_int) -> u32,
-    pub(crate) dispatch_status: unsafe extern "C" fn(*mut c_void) -> c_int,
-    pub(crate) close: unsafe extern "C" fn(*mut c_void),
-    pub(crate) release: unsafe extern "C" fn(*mut c_void),
-    pub(crate) reply_serial: unsafe extern "C" fn(*mut c_void) -> u32,
-    pub(crate) error_name: unsafe extern "C" fn(*mut c_void) -> *const c_char,
+crate::symbols::library_api! {
+    pub(crate) struct Api from c"libdbus-1.so.3" {
+        threads_init = c"dbus_threads_init_default": fn() -> u32;
+        pub(crate) error_init = c"dbus_error_init": fn(*mut Error);
+        pub(crate) error_free = c"dbus_error_free": fn(*mut Error);
+        pub(crate) open_private = c"dbus_connection_open_private": fn(*const c_char, *mut Error) -> *mut c_void;
+        pub(crate) register = c"dbus_bus_register": fn(*mut c_void, *mut Error) -> u32;
+        pub(crate) request_name = c"dbus_bus_request_name": fn(*mut c_void, *const c_char, u32, *mut Error) -> c_int;
+        pub(crate) read_write = c"dbus_connection_read_write": fn(*mut c_void, c_int) -> u32;
+        pub(crate) pop = c"dbus_connection_pop_message": fn(*mut c_void) -> *mut c_void;
+        pub(crate) msg_type = c"dbus_message_get_type": fn(*mut c_void) -> c_int;
+        pub(crate) member = c"dbus_message_get_member": fn(*mut c_void) -> *const c_char;
+        pub(crate) interface = c"dbus_message_get_interface": fn(*mut c_void) -> *const c_char;
+        pub(crate) iter_init = c"dbus_message_iter_init": fn(*mut c_void, *mut Iter) -> u32;
+        pub(crate) iter_type = c"dbus_message_iter_get_arg_type": fn(*mut Iter) -> c_int;
+        pub(crate) iter_recurse = c"dbus_message_iter_recurse": fn(*mut Iter, *mut Iter);
+        pub(crate) iter_basic = c"dbus_message_iter_get_basic": fn(*mut Iter, *mut c_void);
+        pub(crate) iter_next = c"dbus_message_iter_next": fn(*mut Iter) -> u32;
+        pub(crate) iter_init_append = c"dbus_message_iter_init_append": fn(*mut c_void, *mut Iter);
+        pub(crate) iter_append_basic = c"dbus_message_iter_append_basic": fn(*mut Iter, c_int, *const c_void) -> u32;
+        pub(crate) new_return = c"dbus_message_new_method_return": fn(*mut c_void) -> *mut c_void;
+        pub(crate) send = c"dbus_connection_send": fn(*mut c_void, *mut c_void, *mut u32) -> u32;
+        pub(crate) flush = c"dbus_connection_flush": fn(*mut c_void);
+        pub(crate) unref = c"dbus_message_unref": fn(*mut c_void);
+        pub(crate) new_method_call = c"dbus_message_new_method_call": fn(*const c_char, *const c_char, *const c_char, *const c_char) -> *mut c_void;
+        pub(crate) new_signal = c"dbus_message_new_signal": fn(*const c_char, *const c_char, *const c_char) -> *mut c_void;
+        pub(crate) new_error = c"dbus_message_new_error": fn(*mut c_void, *const c_char, *const c_char) -> *mut c_void;
+        pub(crate) call = c"dbus_connection_send_with_reply_and_block": fn(*mut c_void, *mut c_void, c_int, *mut Error) -> *mut c_void;
+        pub(crate) open_container = c"dbus_message_iter_open_container": fn(*mut Iter, c_int, *const c_char, *mut Iter) -> u32;
+        pub(crate) close_container = c"dbus_message_iter_close_container": fn(*mut Iter, *mut Iter) -> u32;
+        pub(crate) add_match = c"dbus_bus_add_match": fn(*mut c_void, *const c_char, *mut Error);
+        pub(crate) path = c"dbus_message_get_path": fn(*mut c_void) -> *const c_char;
+        pub(crate) unique_name = c"dbus_bus_get_unique_name": fn(*mut c_void) -> *const c_char;
+        pub(crate) unix_fd = c"dbus_connection_get_unix_fd": fn(*mut c_void, *mut c_int) -> u32;
+        pub(crate) dispatch_status = c"dbus_connection_get_dispatch_status": fn(*mut c_void) -> c_int;
+        pub(crate) close = c"dbus_connection_close": fn(*mut c_void);
+        pub(crate) release = c"dbus_connection_unref": fn(*mut c_void);
+        pub(crate) reply_serial = c"dbus_message_get_reply_serial": fn(*mut c_void) -> u32;
+        pub(crate) error_name = c"dbus_message_get_error_name": fn(*mut c_void) -> *const c_char;
+    }
 }
 
-unsafe fn cast<T: Copy>(p: *mut c_void) -> T {
-    std::mem::transmute_copy(&p)
-}
-
-pub(crate) fn load() -> Option<Api> {
-    let lib = unsafe { libc::dlopen(c"libdbus-1.so.3".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if lib.is_null() {
-        return None;
-    }
-    let sym = |name: &CStr| {
-        let p = unsafe { libc::dlsym(lib, name.as_ptr()) };
-        (!p.is_null()).then_some(p)
-    };
-    unsafe {
-        let init: unsafe extern "C" fn() -> u32 = cast(sym(c"dbus_threads_init_default")?);
-        if init() == 0 {
-            return None;
-        }
-        Some(Api {
-            error_init: cast(sym(c"dbus_error_init")?),
-            error_free: cast(sym(c"dbus_error_free")?),
-            open_private: cast(sym(c"dbus_connection_open_private")?),
-            register: cast(sym(c"dbus_bus_register")?),
-            request_name: cast(sym(c"dbus_bus_request_name")?),
-            read_write: cast(sym(c"dbus_connection_read_write")?),
-            pop: cast(sym(c"dbus_connection_pop_message")?),
-            msg_type: cast(sym(c"dbus_message_get_type")?),
-            member: cast(sym(c"dbus_message_get_member")?),
-            interface: cast(sym(c"dbus_message_get_interface")?),
-            iter_init: cast(sym(c"dbus_message_iter_init")?),
-            iter_type: cast(sym(c"dbus_message_iter_get_arg_type")?),
-            iter_recurse: cast(sym(c"dbus_message_iter_recurse")?),
-            iter_basic: cast(sym(c"dbus_message_iter_get_basic")?),
-            iter_next: cast(sym(c"dbus_message_iter_next")?),
-            iter_init_append: cast(sym(c"dbus_message_iter_init_append")?),
-            iter_append_basic: cast(sym(c"dbus_message_iter_append_basic")?),
-            new_return: cast(sym(c"dbus_message_new_method_return")?),
-            send: cast(sym(c"dbus_connection_send")?),
-            flush: cast(sym(c"dbus_connection_flush")?),
-            unref: cast(sym(c"dbus_message_unref")?),
-            new_method_call: cast(sym(c"dbus_message_new_method_call")?),
-            new_signal: cast(sym(c"dbus_message_new_signal")?),
-            new_error: cast(sym(c"dbus_message_new_error")?),
-            call: cast(sym(c"dbus_connection_send_with_reply_and_block")?),
-            open_container: cast(sym(c"dbus_message_iter_open_container")?),
-            close_container: cast(sym(c"dbus_message_iter_close_container")?),
-            add_match: cast(sym(c"dbus_bus_add_match")?),
-            path: cast(sym(c"dbus_message_get_path")?),
-            unique_name: cast(sym(c"dbus_bus_get_unique_name")?),
-            unix_fd: cast(sym(c"dbus_connection_get_unix_fd")?),
-            dispatch_status: cast(sym(c"dbus_connection_get_dispatch_status")?),
-            close: cast(sym(c"dbus_connection_close")?),
-            release: cast(sym(c"dbus_connection_unref")?),
-            reply_serial: cast(sym(c"dbus_message_get_reply_serial")?),
-            error_name: cast(sym(c"dbus_message_get_error_name")?),
-        })
-    }
+pub(crate) fn load() -> Option<&'static Api> {
+    static API: std::sync::OnceLock<Option<Api>> = std::sync::OnceLock::new();
+    API.get_or_init(|| {
+        let api = Api::load()?;
+        (unsafe { (api.threads_init)() } != 0).then_some(api)
+    }).as_ref()
 }
 
 pub fn request(method: &str, uris: &[Vec<u8>]) -> Option<Open> {
@@ -158,7 +111,7 @@ pub fn request(method: &str, uris: &[Vec<u8>]) -> Option<Open> {
     }
 }
 
-pub(crate) fn text(p: *const c_char) -> String {
+pub(crate) unsafe fn text(p: *const c_char) -> String {
     if p.is_null() {
         return String::new();
     }
@@ -191,22 +144,114 @@ unsafe fn uris_and_startup_id(api: &Api, msg: *mut c_void) -> (Vec<Vec<u8>>, Str
     (out, startup_id.map(|s| String::from_utf8_lossy(&s).into_owned()).unwrap_or_default())
 }
 
-unsafe fn reply(api: &Api, conn: *mut c_void, msg: *mut c_void, xml: Option<&CStr>) {
-    let r = (api.new_return)(msg);
-    if r.is_null() {
-        return;
+struct BusError<'a>(&'a Api, Error);
+
+impl<'a> BusError<'a> {
+    fn new(api: &'a Api) -> Self {
+        let mut error = Self(api, Error::new());
+        unsafe { (api.error_init)(&mut error.1) };
+        error
     }
-    if let Some(xml) = xml {
-        let mut it = Iter::new();
-        (api.iter_init_append)(r, &mut it);
-        let p = xml.as_ptr();
-        (api.iter_append_basic)(&mut it, TYPE_STRING, (&p as *const *const c_char).cast());
-    }
-    (api.send)(conn, r, std::ptr::null_mut());
-    (api.flush)(conn);
-    (api.unref)(r);
 }
 
+impl Drop for BusError<'_> {
+    fn drop(&mut self) {
+        unsafe { (self.0.error_free)(&mut self.1) };
+    }
+}
+
+struct Connection<'a> {
+    api: &'a Api,
+    raw: NonNull<c_void>,
+}
+
+impl<'a> Connection<'a> {
+    fn open(api: &'a Api, address: &CStr, name: Option<&CStr>) -> Result<Self, String> {
+        let mut err = BusError::new(api);
+        let conn = unsafe {
+            let raw = (api.open_private)(address.as_ptr(), &mut err.1);
+            let raw = NonNull::new(raw).ok_or_else(|| err.1.message())?;
+            let conn = Self { api, raw };
+            if (api.register)(raw.as_ptr(), &mut err.1) == 0
+                || name.is_some_and(|name| (api.request_name)(raw.as_ptr(), name.as_ptr(), NAME_DO_NOT_QUEUE, &mut err.1) != PRIMARY_OWNER)
+            {
+                return Err(err.1.message());
+            }
+            conn
+        };
+        Ok(conn)
+    }
+
+    fn pop(&self) -> Option<Message<'a>> {
+        let raw = NonNull::new(unsafe { (self.api.pop)(self.raw.as_ptr()) })?;
+        Some(Message { api: self.api, raw })
+    }
+
+    fn wait(&self, timeout: c_int) -> bool {
+        unsafe { (self.api.read_write)(self.raw.as_ptr(), timeout) != 0 }
+    }
+
+    fn send(&self, msg: &Message<'_>) -> bool {
+        unsafe { (self.api.send)(self.raw.as_ptr(), msg.raw.as_ptr(), std::ptr::null_mut()) != 0 }
+    }
+
+    fn flush(&self) {
+        unsafe { (self.api.flush)(self.raw.as_ptr()) };
+    }
+}
+
+impl Drop for Connection<'_> {
+    fn drop(&mut self) {
+        unsafe {
+            (self.api.close)(self.raw.as_ptr());
+            (self.api.release)(self.raw.as_ptr());
+        }
+    }
+}
+
+struct Message<'a> {
+    api: &'a Api,
+    raw: NonNull<c_void>,
+}
+
+impl Message<'_> {
+    fn method(&self) -> Option<(String, String)> {
+        let raw = self.raw.as_ptr();
+        unsafe {
+            ((self.api.msg_type)(raw) == TYPE_METHOD_CALL).then(|| (text((self.api.member)(raw)), text((self.api.interface)(raw))))
+        }
+    }
+
+    fn args(&self) -> (Vec<Vec<u8>>, String) {
+        unsafe { uris_and_startup_id(self.api, self.raw.as_ptr()) }
+    }
+
+    fn method_return(&self, xml: Option<&CStr>) -> Option<Self> {
+        unsafe {
+            let raw = NonNull::new((self.api.new_return)(self.raw.as_ptr()))?;
+            if let Some(xml) = xml {
+                let mut it = Iter::new();
+                (self.api.iter_init_append)(raw.as_ptr(), &mut it);
+                let p = xml.as_ptr();
+                (self.api.iter_append_basic)(&mut it, TYPE_STRING, (&p as *const *const c_char).cast());
+            }
+            Some(Self { api: self.api, raw })
+        }
+    }
+
+    fn reply(&self, conn: &Connection<'_>, xml: Option<&CStr>) {
+        if let Some(r) = self.method_return(xml) {
+            conn.send(&r);
+            conn.flush();
+        }
+    }
+}
+
+impl Drop for Message<'_> {
+    fn drop(&mut self) {
+        unsafe { (self.api.unref)(self.raw.as_ptr()) };
+    }
+}
 pub fn session_address() -> Option<String> {
     ["DBUS_SESSION_BUS_ADDRESS", "DBUS_STARTER_ADDRESS"]
         .iter()
@@ -217,54 +262,36 @@ pub fn session_address() -> Option<String> {
 pub fn serve(address: &str, opens: OpenSink, wake: Wake, ready: impl FnOnce(bool)) {
     let Some(api) = load() else { return ready(false) };
     let Ok(addr) = CString::new(address) else { return ready(false) };
-    unsafe {
-        let mut err = std::mem::zeroed::<Error>();
-        (api.error_init)(&mut err);
-        let conn = (api.open_private)(addr.as_ptr(), &mut err);
-        let owned = !conn.is_null() && (api.register)(conn, &mut err) != 0 && (api.request_name)(conn, NAME.as_ptr(), NAME_DO_NOT_QUEUE, &mut err) == PRIMARY_OWNER;
-        if !owned {
-            tracing::info!("not serving {}: {}", NAME.to_string_lossy(), text(err.message));
-            (api.error_free)(&mut err);
-            if !conn.is_null() {
-                (api.close)(conn);
-                (api.release)(conn);
-            }
+    let conn = match Connection::open(api, &addr, Some(NAME)) {
+        Ok(conn) => conn,
+        Err(error) => {
+            tracing::info!("not serving {}: {error}", NAME.to_string_lossy());
             return ready(false);
         }
-        ready(true);
-        loop {
-            loop {
-                let msg = (api.pop)(conn);
-                if msg.is_null() {
-                    break;
-                }
-                if (api.msg_type)(msg) == TYPE_METHOD_CALL {
-                    let (member, iface) = (text((api.member)(msg)), text((api.interface)(msg)));
-                    if member == "Introspect" {
-                        reply(&api, conn, msg, Some(INTROSPECTION));
-                    } else if iface.is_empty() || iface == "org.freedesktop.FileManager1" {
-                        let (uris, startup_id) = uris_and_startup_id(&api, msg);
-                        if let Some(open) = request(&member, &uris) {
-                            crate::window::startup_token(startup_id);
-                            let sent = opens.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|tx| tx.send(open).is_ok());
-                            if sent {
-                                wake();
-                            }
-                        }
-                        reply(&api, conn, msg, None);
+    };
+    ready(true);
+    loop {
+        while let Some(msg) = conn.pop() {
+            let Some((member, iface)) = msg.method() else { continue };
+            if member == "Introspect" {
+                msg.reply(&conn, Some(INTROSPECTION));
+            } else if iface.is_empty() || iface == "org.freedesktop.FileManager1" {
+                let (uris, startup_id) = msg.args();
+                if let Some(open) = request(&member, &uris) {
+                    crate::window::startup_token(startup_id);
+                    let sent = opens.lock().unwrap_or_else(|e| e.into_inner()).as_ref().is_some_and(|tx| tx.send(open).is_ok());
+                    if sent {
+                        wake();
                     }
                 }
-                (api.unref)(msg);
-            }
-            if (api.read_write)(conn, -1) == 0 {
-                break;
+                msg.reply(&conn, None);
             }
         }
-        (api.close)(conn);
-        (api.release)(conn);
+        if !conn.wait(-1) {
+            break;
+        }
     }
 }
-
 pub fn start(opens: OpenSink, wake: Wake) {
     let Some(address) = session_address() else { return };
     let _ = std::thread::Builder::new().name("flit-dbus".into()).spawn(move || serve(&address, opens, wake, |_| {}));
@@ -283,59 +310,35 @@ fn launcher_updates(rx: crossbeam_channel::Receiver<Option<u32>>, mut send: impl
     }
 }
 
-fn launcher_signal(api: &Api, percent: (f64, bool)) -> *mut c_void {
+fn launcher_signal(api: &Api, percent: (f64, bool)) -> Option<Message<'_>> {
     use crate::atspi::{put, V};
-    let Ok(path) = CString::new(format!("/com/canonical/unity/launcherentry/{}", std::process::id())) else { return std::ptr::null_mut() };
+    let path = CString::new(format!("/com/canonical/unity/launcherentry/{}", std::process::id())).ok()?;
     unsafe {
-        let msg = (api.new_signal)(path.as_ptr(), c"com.canonical.Unity.LauncherEntry".as_ptr(), c"Update".as_ptr());
-        if !msg.is_null() {
-            let mut it = Iter::new();
-            (api.iter_init_append)(msg, &mut it);
-            put(api, &mut it, "", &V::S("application://flit.desktop".into()));
-            put(api, &mut it, "", &V::Props(vec![("progress".into(), V::D(percent.0)), ("progress-visible".into(), V::B(percent.1))]));
-        }
-        msg
+        let raw = NonNull::new((api.new_signal)(path.as_ptr(), c"com.canonical.Unity.LauncherEntry".as_ptr(), c"Update".as_ptr()))?;
+        let msg = Message { api, raw };
+        let mut it = Iter::new();
+        (api.iter_init_append)(raw.as_ptr(), &mut it);
+        put(api, &mut it, "", &V::S("application://flit.desktop".into()));
+        put(api, &mut it, "", &V::Props(vec![("progress".into(), V::D(percent.0)), ("progress-visible".into(), V::B(percent.1))]));
+        Some(msg)
     }
 }
 
 fn serve_launcher(rx: crossbeam_channel::Receiver<Option<u32>>) {
     let Some(address) = session_address().and_then(|a| CString::new(a).ok()) else { return };
     let Some(api) = load() else { return };
-    unsafe {
-        let mut err = Error::new();
-        (api.error_init)(&mut err);
-        let conn = (api.open_private)(address.as_ptr(), &mut err);
-        let registered = !conn.is_null() && (api.register)(conn, &mut err) != 0;
-        (api.error_free)(&mut err);
-        if !conn.is_null() {
-            if registered {
-                launcher_updates(rx, |value| {
-                    let msg = launcher_signal(&api, value);
-                    if msg.is_null() {
-                        return false;
-                    }
-                    let sent = (api.send)(conn, msg, std::ptr::null_mut()) != 0;
-                    (api.unref)(msg);
-                    if sent {
-                        (api.flush)(conn);
-                    }
-                    let alive = (api.read_write)(conn, 0) != 0;
-                    loop {
-                        let incoming = (api.pop)(conn);
-                        if incoming.is_null() {
-                            break;
-                        }
-                        (api.unref)(incoming);
-                    }
-                    sent && alive
-                });
-            }
-            (api.close)(conn);
-            (api.release)(conn);
+    let Ok(conn) = Connection::open(api, &address, None) else { return };
+    launcher_updates(rx, |value| {
+        let Some(msg) = launcher_signal(api, value) else { return false };
+        let sent = conn.send(&msg);
+        if sent {
+            conn.flush();
         }
-    }
+        let alive = conn.wait(0);
+        while conn.pop().is_some() {}
+        sent && alive
+    });
 }
-
 pub(crate) fn launcher_progress(percent: Option<u32>) {
     static WORKER: std::sync::OnceLock<Option<crossbeam_channel::Sender<Option<u32>>>> = std::sync::OnceLock::new();
     if let Some(tx) = WORKER.get_or_init(|| {

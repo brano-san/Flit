@@ -26,6 +26,7 @@ mod preferences;
 mod player;
 mod props;
 mod svg;
+mod symbols;
 pub mod instance;
 pub mod places;
 pub mod shell;
