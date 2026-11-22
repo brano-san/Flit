@@ -1,4 +1,4 @@
-use super::form::Form;
+use super::form::{Control, Form};
 use super::{centered, App, Hit, Route};
 use crate::archive::{self, ArchiveOp};
 use crate::fmt as format;
@@ -88,6 +88,10 @@ pub(super) struct Job {
 }
 
 impl Job {
+    fn can_limit_speed(&self) -> bool {
+        self.state == JobState::Running && self.ctl.copy_limit_available()
+    }
+
     fn title(&self) -> String {
         match (&self.op, self.wsl) {
             (FileOp::Trash(items), true) => crate::tr!(S::UiJobTitleTrashingLinux, what = count(items)),
@@ -179,6 +183,11 @@ impl Job {
             },
             JobState::Failed(e) => s.push_str(e),
             JobState::Cancelled => s.push_str(S::UiJobCancelledDetail.t()),
+        }
+        let rate = self.ctl.copy_limit();
+        if rate != 0 && self.can_limit_speed() {
+            s.push_str(" · ");
+            crate::tr_into!(&mut s, S::UiJobCopyLimitActive, rate = crate::i18n::num(rate as u64));
         }
         s
     }
@@ -649,6 +658,9 @@ impl App {
             items.push(if j.ctl.is_paused() { S::UiJobResume } else { S::UiJobPause });
         }
         items.push(if j.state == JobState::Running { S::UiButtonCancel } else { S::UiJobRemove });
+        if j.can_limit_speed() {
+            items.push(S::UiJobCopyLimit);
+        }
         items
     }
 
@@ -669,6 +681,13 @@ impl App {
             }
             Some(S::UiButtonCancel) => self.cancel_job(row),
             Some(S::UiJobPause | S::UiJobResume) => self.pause_job(row),
+            Some(S::UiJobCopyLimit) => {
+                if let Some(job) = self.jobs.list.get(i) {
+                    let value = job.ctl.copy_limit().to_string();
+                    let controls = vec![Control::text(S::UiJobCopyLimitUnit.t(), &value, "")];
+                    self.open_form(Form::new(super::archive::Kind::CopyLimit(job.id), S::UiJobCopyLimitTitle.t(), controls, vec![S::ArchiveOk.t(), S::UiButtonCancel.t()]));
+                }
+            }
             Some(_) => {
                 self.jobs.list.remove(i);
                 self.jobs.first = self.jobs.first.min(self.jobs.list.len().saturating_sub(MAX_ROWS));
@@ -677,6 +696,17 @@ impl App {
         }
         self.layout();
         self.dirty = true;
+    }
+
+    pub(super) fn submit_copy_limit(&mut self, mut form: Form, id: OpId) -> Option<Form> {
+        let job = self.job_mut(id).filter(|j| j.can_limit_speed())?;
+        let Ok(rate) = form.text(0).trim().parse::<u32>() else {
+            form.say(S::UiJobCopyLimitInvalid.t(), true);
+            return Some(form);
+        };
+        job.ctl.set_copy_limit(rate);
+        self.dirty = true;
+        None
     }
 
     fn answer(&mut self, button: usize) {
@@ -868,7 +898,12 @@ impl App {
             if let Some(row) = j.menu.filter(|r| j.visible().contains(r)) {
                 let more = Jobs::more_rect(j.r.rows[row - j.first], s);
                 let n = self_menu_len(j, row);
-                j.r.menu = (0..n).map(|k| Rect::new(more.right() - s(MENU_W), more.bottom() + s(2.0) + k as f32 * s(MENU_ROW), s(MENU_W), s(MENU_ROW))).collect();
+                let row_height = s(MENU_ROW);
+                let mut top = more.bottom() + s(2.0);
+                if top + n as f32 * row_height > h {
+                    top = (more.y - s(2.0) - n as f32 * row_height).max(s(4.0));
+                }
+                j.r.menu = (0..n).map(|k| Rect::new(more.right() - s(MENU_W), top + k as f32 * row_height, s(MENU_W), row_height)).collect();
             }
         }
         if let Some(ask) = j.asks.front() {
@@ -1307,7 +1342,7 @@ impl App {
 }
 
 fn self_menu_len(j: &Jobs, row: usize) -> usize {
-    j.list.get(j.row_of(row)).map_or(0, |job| 1 + usize::from(job.dest.is_some()) + usize::from(job.state == JobState::Running))
+    j.list.get(j.row_of(row)).map_or(0, |job| 1 + usize::from(job.dest.is_some()) + usize::from(job.state == JobState::Running) + usize::from(job.can_limit_speed()))
 }
 
 #[cfg(test)]

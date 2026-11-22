@@ -69,6 +69,11 @@ notify_done = ["{title} — завершено: {n} елемент", "{title} �
 notify_failed = "{title} — завершено з помилками"
 trash_bar = ["Видалено в кошик: {n} елемент", "Видалено в кошик: {n} елементи", "Видалено в кошик: {n} елементів"]
 cancelled_detail = "Скасовано до завершення; решта елементів залишилася на місці"
+copy_limit = "Обмежити швидкість…"
+copy_limit_title = "Ліміт швидкості копіювання"
+copy_limit_unit = "МБ/с (0 — без ліміту)"
+copy_limit_invalid = "Введіть ціле невід’ємне число."
+copy_limit_active = "Ліміт {rate} МБ/с"
 
 [job_title]
 copying = "Копіювання {what} в {dest}"

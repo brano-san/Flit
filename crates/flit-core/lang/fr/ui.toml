@@ -69,6 +69,11 @@ notify_done = ["{title} terminé : {n} élément", "{title} terminé : {n} élé
 notify_failed = "{title} terminé avec des erreurs"
 trash_bar = ["Déplacé vers la corbeille : {n} élément", "Déplacé vers la corbeille : {n} élément", "Déplacé vers la corbeille : {n} éléments"]
 cancelled_detail = "Annulé avant la fin ; les éléments restants ont été laissés en place"
+copy_limit = "Limiter le débit…"
+copy_limit_title = "Limite de débit de copie"
+copy_limit_unit = "Mo/s (0 = sans limite)"
+copy_limit_invalid = "Saisissez un entier positif ou nul."
+copy_limit_active = "Limite {rate} Mo/s"
 
 [job_title]
 copying = "Copie de {what} vers {dest}"

@@ -69,6 +69,11 @@ notify_done = ["{title} beendet: {n} Element", "{title} beendet: {n} Elemente"]
 notify_failed = "{title} mit Fehlern beendet"
 trash_bar = ["In den Papierkorb verschoben: {n} Element", "In den Papierkorb verschoben: {n} Elemente"]
 cancelled_detail = "Vor dem Abschluss abgebrochen; die restlichen Elemente wurden nicht verändert"
+copy_limit = "Tempo begrenzen…"
+copy_limit_title = "Kopiertempo begrenzen"
+copy_limit_unit = "MB/s (0 = unbegrenzt)"
+copy_limit_invalid = "Geben Sie eine nichtnegative ganze Zahl ein."
+copy_limit_active = "Limit {rate} MB/s"
 
 [job_title]
 copying = "{what} wird nach {dest} kopiert"

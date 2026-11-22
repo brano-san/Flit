@@ -69,6 +69,11 @@ notify_done = ["{title}已完成：{n} 项"]
 notify_failed = "{title}已完成，但有错误"
 trash_bar = ["已删除到回收站：{n} 项"]
 cancelled_detail = "在完成前已取消；剩余项目保持原位"
+copy_limit = "限制速度…"
+copy_limit_title = "复制速度限制"
+copy_limit_unit = "MB/s（0 表示不限速）"
+copy_limit_invalid = "请输入非负整数。"
+copy_limit_active = "限速 {rate} MB/s"
 
 [job_title]
 copying = "正在将 {what} 复制到 {dest}"

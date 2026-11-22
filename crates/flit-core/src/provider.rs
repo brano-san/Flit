@@ -6,7 +6,7 @@ use crate::path::FsPath;
 use crate::sort::{CaseMode, ViewSpec};
 use arc_swap::ArcSwapOption;
 use std::fmt;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 
 pub type TabId = u64;
@@ -280,6 +280,10 @@ impl Launch {
 }
 
 impl FileOp {
+    pub fn is_copy_or_move(&self) -> bool {
+        matches!(self, Self::Copy { .. } | Self::Move { .. } | Self::MoveTo(_))
+    }
+
     pub fn all_paths(&self, f: impl Fn(&FsPath) -> bool) -> bool {
         self.map_paths(|p| f(p).then(|| p.clone())).is_some()
     }
@@ -401,6 +405,8 @@ struct Answer {
 struct Control {
     cancelled: AtomicBool,
     paused: AtomicBool,
+    copy_limit: AtomicU32,
+    copy_limit_available: AtomicBool,
     answer: Mutex<Answer>,
     changed: Condvar,
 }
@@ -433,6 +439,22 @@ impl OpCtl {
         self.0.paused.store(paused, Ordering::Release);
         let _held = self.lock();
         self.0.changed.notify_all();
+    }
+
+    pub fn copy_limit(&self) -> u32 {
+        self.0.copy_limit.load(Ordering::Relaxed)
+    }
+
+    pub fn set_copy_limit(&self, megabytes_per_second: u32) {
+        self.0.copy_limit.store(megabytes_per_second, Ordering::Relaxed);
+    }
+
+    pub fn copy_limit_available(&self) -> bool {
+        self.0.copy_limit_available.load(Ordering::Relaxed)
+    }
+
+    pub fn set_copy_limit_available(&self, available: bool) -> bool {
+        self.0.copy_limit_available.swap(available, Ordering::Relaxed) != available
     }
 
     pub fn is_paused(&self) -> bool {

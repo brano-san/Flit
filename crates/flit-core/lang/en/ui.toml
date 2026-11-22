@@ -69,6 +69,11 @@ notify_done = ["{title} finished: {n} item", "{title} finished: {n} items"]
 notify_failed = "{title} finished with errors"
 trash_bar = ["Trashed {n} item", "Trashed {n} items"]
 cancelled_detail = "Cancelled before it finished; the remaining items were left in place"
+copy_limit = "Limit speed…"
+copy_limit_title = "Copy speed limit"
+copy_limit_unit = "MB/s (0 = unlimited)"
+copy_limit_invalid = "Enter a non-negative whole number."
+copy_limit_active = "Limit {rate} MB/s"
 
 [job_title]
 copying = "Copying {what} to {dest}"

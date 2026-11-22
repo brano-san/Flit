@@ -3,6 +3,7 @@ mod indexer;
 mod local;
 pub mod walk;
 mod wsl;
+mod pace;
 
 pub use digest::hash_file;
 pub use indexer::{root_of, start_indexer};
@@ -404,6 +405,7 @@ struct JobState {
     failure: Option<Sink<Failure>>,
     now: std::sync::Mutex<Shown>,
     performed: std::sync::Mutex<Option<FileOp>>,
+    copy_bucket: std::sync::Mutex<pace::Bucket>,
 }
 
 #[derive(Clone)]
@@ -411,11 +413,11 @@ pub struct Job(Arc<JobState>);
 
 impl Job {
     pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
     }
 
     pub fn asking(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
     }
 
     pub fn performed(&self, op: FileOp) {
@@ -436,6 +438,12 @@ impl Job {
 
     pub fn cancelled(&self) -> bool {
         self.0.ctl.is_cancelled()
+    }
+
+    pub fn set_copy_limit_available(&self, available: bool) {
+        if self.ctl().set_copy_limit_available(available) {
+            (self.0.progress)(self.progress());
+        }
     }
 
     pub fn progress(&self) -> OpProgress {

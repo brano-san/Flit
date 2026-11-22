@@ -462,6 +462,21 @@ fn a_copy_short_of_space_asks_before_it_fails() {
 }
 
 #[test]
+fn copy_speed_limit_paces_the_native_copy() {
+    let t = TempDir::new("copy-speed");
+    let input = t.file("source.txt", &"x".repeat(300_000));
+    std::fs::create_dir(t.0.join("out")).unwrap();
+    let job = Job::detached(Resolve::Skip);
+    job.ctl().set_copy_limit(1);
+    let began = std::time::Instant::now();
+    let out = engine::run(&FileOp::Copy { items: vec![input], dest: t.path("out") }, &job);
+    assert!(out.error.is_none() && out.rest.is_none());
+    assert!(job.ctl().copy_limit_available());
+    assert_eq!(std::fs::metadata(t.0.join(r"out\source.txt")).unwrap().len(), 300_000);
+    assert!(began.elapsed() >= std::time::Duration::from_millis(175), "the copy finished before its bytes could be transferred at 1 MB/s");
+}
+
+#[test]
 fn copies_trees_natively_and_names_duplicates_like_explorer() {
     let t = TempDir::new("tree");
     std::fs::create_dir_all(t.0.join(r"src\sub\deep")).unwrap();

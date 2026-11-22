@@ -113,11 +113,13 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
     }
     read_hello(&mut input, &ours)?;
     send(&output, &Request::Op { id: OP, op: op.clone(), policy: job.ctl().policy() })?;
+    job.set_copy_limit_available(op.is_copy_or_move());
     let finished = Arc::new(AtomicBool::new(false));
     let watcher = {
         let (finished, output, job) = (finished.clone(), output.clone(), job.clone());
         std::thread::Builder::new().name("flit-elevated-cancel".into()).spawn(move || {
             let mut paused = false;
+            let mut copy_limit = 0;
             while !finished.load(Ordering::Acquire) {
                 if job.cancelled() {
                     let _ = send(&output, &Request::Cancel { id: OP });
@@ -126,6 +128,11 @@ pub fn drive<R: Read, W: Write + Send + 'static>(mut input: R, output: W, op: &F
                 if job.ctl().is_paused() != paused {
                     paused = !paused;
                     let _ = send(&output, &Request::Pause { id: OP, paused });
+                }
+                let megabytes_per_second = job.ctl().copy_limit();
+                if copy_limit != megabytes_per_second {
+                    copy_limit = megabytes_per_second;
+                    let _ = send(&output, &Request::CopyLimit { id: OP, megabytes_per_second });
                 }
                 std::thread::sleep(CANCEL_POLL);
             }

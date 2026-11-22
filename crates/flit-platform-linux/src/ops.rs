@@ -504,6 +504,7 @@ impl<'a> Engine<'a> {
     fn pump(&self, from: RawFd, to: RawFd, offset: u64, limit: u64, p: &mut Pump) -> io::Result<u64> {
         let mut done = 0u64;
         loop {
+            self.job.ctl().wait_while_paused();
             if self.job.cancelled() {
                 return Err(errno(libc::ECANCELED));
             }
@@ -552,6 +553,9 @@ impl<'a> Engine<'a> {
             };
             if n == 0 {
                 return Ok(done);
+            }
+            if !self.job.pace_copy(n as u64) {
+                return Err(errno(libc::ECANCELED));
             }
             done += n as u64;
             let at = p.base + offset + done;
@@ -1172,6 +1176,7 @@ pub fn run(op: &FileOp, job: &Job, trash: Option<&Trash>) -> OpOutcome {
 pub fn run_in(op: &FileOp, job: &Job, trash: Option<&Trash>, lang: Lang) -> OpOutcome {
     let mut e = Engine { lang, ..Engine::new(job) };
     let linux = op.all_paths(|p| p.kind() == PathKind::Unix);
+    job.set_copy_limit_available(linux && op.is_copy_or_move());
     match op {
         _ if !linux => e.note(NOT_LINUX.into()),
         FileOp::Copy { items, dest } => e.copy(items, dest),

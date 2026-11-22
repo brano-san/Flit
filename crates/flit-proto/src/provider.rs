@@ -7,7 +7,7 @@ use flit_core::{FsError, FsPath, Meta};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 8;
 pub const MAX_FAILURE_TEXT: usize = 4096;
 
 pub type ReqId = u64;
@@ -25,6 +25,7 @@ pub enum Request {
     Recover { id: ReqId, choice: Option<Recover>, all: bool },
     Lang { code: String },
     Pause { id: ReqId, paused: bool },
+    CopyLimit { id: ReqId, megabytes_per_second: u32 },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

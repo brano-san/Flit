@@ -156,6 +156,7 @@ struct OpState {
     ctl: OpCtl,
     cancelled: bool,
     paused: bool,
+    copy_limit: u32,
     clear: bool,
     performed: Option<FileOp>,
 }
@@ -370,21 +371,28 @@ impl Ctl {
     }
 
     fn poll_cancels(&mut self) {
-        let newly: Vec<Request> = self
-            .pending
-            .iter_mut()
-            .filter_map(|(&id, p)| match p {
-                Pending::Op(o) if !o.cancelled && o.ctl.is_cancelled() => {
-                    o.cancelled = true;
-                    Some(Request::Cancel { id })
-                }
-                Pending::Op(o) if !o.cancelled && o.paused != o.ctl.is_paused() => {
-                    o.paused = !o.paused;
-                    Some(Request::Pause { id, paused: o.paused })
-                }
-                _ => None,
-            })
-            .collect();
+        let mut newly = Vec::new();
+        for (&id, pending) in &mut self.pending {
+            let Pending::Op(op) = pending else { continue };
+            if op.cancelled {
+                continue;
+            }
+            if op.ctl.is_cancelled() {
+                op.cancelled = true;
+                newly.push(Request::Cancel { id });
+                continue;
+            }
+            let paused = op.ctl.is_paused();
+            if op.paused != paused {
+                op.paused = paused;
+                newly.push(Request::Pause { id, paused });
+            }
+            let megabytes_per_second = op.ctl.copy_limit();
+            if op.copy_limit != megabytes_per_second {
+                op.copy_limit = megabytes_per_second;
+                newly.push(Request::CopyLimit { id, megabytes_per_second });
+            }
+        }
         for req in newly {
             self.send(req);
         }
@@ -656,7 +664,8 @@ impl Ctl {
                 }
                 let id = self.id();
                 let policy = ctl.policy();
-                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, paused: false, clear, performed: None }));
+                ctl.set_copy_limit_available(request.is_copy_or_move());
+                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, paused: false, copy_limit: 0, clear, performed: None }));
                 self.send(Request::Lang { code: flit_core::i18n::lang().code().into() });
                 self.send(Request::Op { id, op: request, policy });
             }

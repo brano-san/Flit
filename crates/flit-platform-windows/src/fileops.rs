@@ -549,6 +549,9 @@ fn empty_bin() -> OpOutcome {
 }
 
 fn with_rest(mut items: Vec<(FsPath, FsPath)>, error: Option<PlatformError>, rest: Option<FileOp>, job: &Job) -> OpOutcome {
+    if rest.is_some() {
+        job.set_copy_limit_available(false);
+    }
     let out = match rest {
         None => return OpOutcome { items, error },
         Some(FileOp::Restore(pairs)) => unsafe { restore(&pairs) },

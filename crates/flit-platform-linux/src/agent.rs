@@ -206,6 +206,11 @@ pub fn serve(mut input: impl Read, output: impl Write + Send + 'static, build: S
                     ctl.pause(paused);
                 }
             }
+            Request::CopyLimit { id, megabytes_per_second } => {
+                if let Some(ctl) = ctx.ops().get(&id) {
+                    ctl.set_copy_limit(megabytes_per_second);
+                }
+            }
             Request::Recover { id, choice, all } => match (ctx.ops().get(&id), choice) {
                 (Some(ctl), Some(choice)) => ctl.answer_failure(choice, all),
                 (Some(ctl), None) => ctl.cancel(),

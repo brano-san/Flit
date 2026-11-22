@@ -743,10 +743,35 @@ fn conflict_buttons_never_overlap_even_in_a_narrow_window() {
 }
 
 #[test]
+fn speed_limit_from_the_operations_panel_changes_only_that_copy() {
+    let mut app = app_at(r"C:\x");
+    app.run_action("ops.show", t0());
+    let (id, ctl) = paste(&mut app);
+    ctl.set_copy_limit_available(true);
+    let (_, other) = paste(&mut app);
+    let row = app.jobs.list.iter().position(|j| j.id == id).map(|k| app.jobs.row_of(k)).unwrap();
+    let set_rate = |app: &mut App, value: &str| {
+        click(app, |a| Jobs::more_rect(a.jobs.r.rows[row], unscaled));
+        let option = app.job_menu_items(row).iter().position(|&s| s == "Limit speed…").expect("running copy has a speed limit");
+        click(app, |a| a.jobs.r.menu[option]);
+        app.jobs.form.as_mut().unwrap().set_text(0, value);
+        app.form_submit(0);
+    };
+    set_rate(&mut app, "7");
+    assert_eq!(ctl.copy_limit(), 7);
+    assert_eq!(other.copy_limit(), 0);
+    set_rate(&mut app, "0");
+    assert_eq!(ctl.copy_limit(), 0);
+    finish(&mut app, id, None);
+    assert!(!app.job_menu_items(row).contains(&"Limit speed…"));
+}
+
+#[test]
 fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
     let mut app = app_at(r"C:\x");
     app.run_action("ops.show", t0());
     let (first, ctl) = paste(&mut app);
+    ctl.set_copy_limit_available(true);
     let (_, other) = paste(&mut app);
     let tab = app.tab().id;
     let progress = OpProgress { stage: Stage::Running, bytes: 50, total_bytes: 200, items: 1, total_items: 4 };
@@ -763,7 +788,7 @@ fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
     assert_eq!(app.overall_progress().map(|p| p.1), Some(true), "the taskbar shows the paused state");
     app.frame(&mut g, t0());
     click(&mut app, |a| Jobs::more_rect(a.jobs.r.rows[row], unscaled));
-    assert_eq!(app.job_menu_items(row), ["Open destination", "Resume", "Cancel"]);
+    assert_eq!(app.job_menu_items(row), ["Open destination", "Resume", "Cancel", "Limit speed…"]);
     click(&mut app, |a| a.jobs.r.menu[1]);
     assert!(!ctl.is_paused() && !ctl.is_cancelled());
     app.pause_job(row);
@@ -774,3 +799,18 @@ fn a_running_operation_pauses_and_resumes_from_its_row_or_its_menu() {
     assert_ne!(app.jobs_hit(r.x + 2.0, r.y + 2.0), Some(Hit::OpsPause(done)), "a finished operation has nothing to pause");
     assert!(!app.job_menu_items(done).contains(&"Resume"));
 }
+#[test]
+fn a_transfer_outside_the_flit_engine_has_no_speed_limit_controls() {
+    let mut app = app_at(r"C:\x");
+    let (_, ctl) = paste(&mut app);
+    ctl.set_copy_limit(7);
+    assert!(!app.job_menu(0).contains(&S::UiJobCopyLimit));
+    assert!(!app.jobs.list[0].detail(false).contains("7"));
+    ctl.set_copy_limit_available(true);
+    assert!(app.job_menu(0).contains(&S::UiJobCopyLimit));
+    assert!(app.jobs.list[0].detail(false).contains("7"));
+    ctl.set_copy_limit_available(false);
+    assert!(!app.job_menu(0).contains(&S::UiJobCopyLimit));
+    assert!(!app.jobs.list[0].detail(false).contains("7"));
+}
+

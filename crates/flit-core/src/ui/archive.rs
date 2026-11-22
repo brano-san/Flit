@@ -77,6 +77,7 @@ pub(super) enum Kind {
     ConnectServer,
     RenameServer(String),
     MountQuestion(super::network::Question),
+    CopyLimit(OpId),
 }
 
 impl Kind {
@@ -102,6 +103,7 @@ impl Kind {
             Kind::ConnectServer => "connect_server",
             Kind::RenameServer(_) => "rename_server",
             Kind::MountQuestion(_) => "mount_question",
+            Kind::CopyLimit(_) => "copy_limit",
         }
     }
 }
@@ -771,6 +773,7 @@ impl App {
             Kind::ConnectServer => self.submit_server(f),
             Kind::RenameServer(_) => self.submit_server_name(f),
             Kind::MountQuestion(_) => self.submit_mount_question(f),
+            Kind::CopyLimit(id) => self.submit_copy_limit(f, id),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
