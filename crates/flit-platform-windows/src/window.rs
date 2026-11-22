@@ -783,8 +783,11 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         }
         node.window.dpi.set(GetDpiForWindow(hwnd));
         apply_dark(hwnd, opts.dark);
-        let _ = AddClipboardFormatListener(hwnd);
-        crate::context_menu::prewarm();
+        let isolated = flit_platform::isolated_gui_test();
+        if !isolated {
+            let _ = AddClipboardFormatListener(hwnd);
+            crate::context_menu::prewarm();
+        }
         let _ = SetWindowPos(hwnd, None, 0, 0, 0, 0, SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
         update_size(&node.window);
         self.nodes.borrow_mut().push(node.clone());
@@ -797,7 +800,9 @@ impl<H: WindowHandler<Win32>> Shared<H> {
         node.queue.borrow_mut().push_back(Event::Animations(client_area_animation()));
         node.queue.borrow_mut().push_back(Event::Accent(system_accent()));
         node.queue.borrow_mut().push_back(Event::TextScale(text_scale()));
-        node.queue.borrow_mut().push_back(Event::ClipboardText(clipboard_has_text()));
+        if !isolated {
+            node.queue.borrow_mut().push_back(Event::ClipboardText(clipboard_has_text()));
+        }
         let tabs = if hidden { std::env::var("FLIT_CAPTURE_TABS").ok().and_then(|v| v.parse().ok()).unwrap_or(0) } else { 0 };
         for _ in 0..tabs {
             node.queue.borrow_mut().push_back(Event::Key { key: Key::Tab, mods: Mods::default(), pressed: true });

@@ -779,6 +779,7 @@ dependencies = [
  "flit-search",
  "jpeg-decoder",
  "libc",
+ "png",
  "postcard",
  "pretty_yaml",
  "quick-xml",

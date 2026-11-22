@@ -59,6 +59,7 @@ mod temp;
 mod frame;
 
 pub use fonts::prefetch as prefetch_fonts;
+pub use gl::{GlDevice, GlRenderer};
 pub use thumb::decode_webp;
 pub use window::{LinuxWaker, LinuxWindow, LinuxWindows};
 
@@ -69,12 +70,17 @@ use flit_core::ui::Bitmap;
 use flit_core::{FsPath, Location};
 use flit_platform::{Platform, PlatformError, RenderError, Renderer, Window};
 use flit_platform_linux::{Systemd, WalkIndex};
-use gl::{GlDevice, GlRenderer};
 use std::path::PathBuf;
 use std::sync::Arc;
 use winit::raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 pub struct Linux;
+
+impl Linux {
+    pub fn capture_text() -> text::LinuxText {
+        text::LinuxText::bundled()
+    }
+}
 
 impl Platform for Linux {
     type WindowSystem = LinuxWindows;

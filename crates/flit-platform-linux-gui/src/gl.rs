@@ -16,7 +16,10 @@ use glutin::prelude::*;
 use glutin::surface::{SurfaceAttributesBuilder, SwapInterval, WindowSurface};
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use std::cell::Cell;
+use std::fs::File;
+use std::io::BufWriter;
 use std::num::NonZeroU32;
+use std::path::Path;
 use std::rc::Rc;
 use std::thread::ThreadId;
 
@@ -283,7 +286,6 @@ impl Drop for Shared {
 
 enum Target {
     Window(Surface<WindowSurface>),
-    #[cfg_attr(not(test), allow(dead_code))]
     Offscreen(glow::Framebuffer, glow::Texture),
 }
 
@@ -312,7 +314,6 @@ impl GlRenderer {
         Self::with_target(dev, Target::Window(surface), (w, h), atlas_size)
     }
 
-    #[cfg_attr(not(test), allow(dead_code))]
     pub fn offscreen(dev: &GlDevice, (w, h): (u32, u32), atlas_size: u32) -> Result<Self, PlatformError> {
         dev.bind_to_current_thread()?;
         let s = &dev.shared;
@@ -493,6 +494,38 @@ impl GlRenderer {
         match &self.target {
             Target::Window(surface) => surface.swap_buffers(&s.context).map_err(classify),
             Target::Offscreen(..) => Ok(()),
+        }
+    }
+
+    pub fn render_capture(&mut self, list: &DrawList, path: &Path) -> Result<(), RenderError> {
+        if !matches!(self.target, Target::Offscreen(..)) {
+            return Err(RenderError::Other(err("capture requires an offscreen render target")));
+        }
+        self.render(list)?;
+        let pixels = self.read_rgba()?;
+        let (width, height) = self.size;
+        let file = File::create(path).map_err(|e| RenderError::Other(err(e)))?;
+        let mut encoder = png::Encoder::new(BufWriter::new(file), width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().map_err(|e| RenderError::Other(err(e)))?;
+        writer.write_image_data(&pixels).map_err(|e| RenderError::Other(err(e)))?;
+        writer.finish().map_err(|e| RenderError::Other(err(e)))
+    }
+
+    fn read_rgba(&self) -> Result<Vec<u8>, RenderError> {
+        let (w, h) = self.size;
+        let row = w as usize * 4;
+        let mut pixels = vec![0; row * h as usize];
+        let gl = &self.shared.gl;
+        let error = unsafe {
+            gl.read_pixels(0, 0, w as i32, h as i32, glow::RGBA, glow::UNSIGNED_BYTE, glow::PixelPackData::Slice(Some(&mut pixels)));
+            gl.get_error()
+        };
+        match error {
+            glow::NO_ERROR => Ok(pixels.chunks_exact(row).rev().flatten().copied().collect()),
+            glow::CONTEXT_LOST => Err(RenderError::DeviceLost),
+            _ => Err(RenderError::Other(err(format!("OpenGL pixel readback failed: {error:#x}")))),
         }
     }
 }

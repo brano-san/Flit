@@ -575,7 +575,10 @@ pub fn load<P: Platform>() -> Saved {
     file::<P>()
         .as_deref()
         .and_then(load_from)
-        .unwrap_or_else(|| Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None).with_nav(NavState { pinned: P::bookmarks(), ..NavState::default() }))
+        .unwrap_or_else(|| {
+            let pinned = if flit_platform::isolated_gui_test() { Vec::new() } else { P::bookmarks() };
+            Saved::new(Persisted { path: Location::from_local(P::home()), ..Default::default() }, None).with_nav(NavState { pinned, ..NavState::default() })
+        })
 }
 
 pub fn save<P: Platform>(s: &Saved) {

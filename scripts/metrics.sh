@@ -22,11 +22,11 @@ unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME WAYLAND_DISPLA
 case $server in
 xvfb)
     display=:$((90 + RANDOM % 100))
-    Xvfb "$display" -screen 0 1600x1000x24 -nolisten tcp >/dev/null 2>&1 &
+    Xvfb "$display" -screen 0 1600x1000x24 -nolisten tcp >"$sandbox/server.log" 2>&1 &
     export DISPLAY=$display
     ;;
 weston)
-    weston --backend=headless-backend.so --socket=flit-metrics --width=1600 --height=1000 --idle-time=0 >/dev/null 2>&1 &
+    weston --backend=headless-backend.so --socket=flit-metrics --width=1600 --height=1000 --idle-time=0 >"$sandbox/server.log" 2>&1 &
     export WAYLAND_DISPLAY=flit-metrics
     ;;
 *)
@@ -35,7 +35,7 @@ weston)
     ;;
 esac
 server_pid=$!
-trap 'kill $server_pid 2>/dev/null; rm -rf "$sandbox"' EXIT
+trap 'kill "$server_pid" 2>/dev/null || true; rm -rf "$sandbox"' EXIT
 sleep 1
 
 median() {
@@ -45,7 +45,24 @@ median() {
 printf '| folder | %s |\n' "$(echo $keys | sed 's/ / | /g')"
 for folder in flat_10k flat_100k; do
     for i in $(seq "$runs"); do
-        timeout 120 "$target/release/flit" --metrics "$out/$folder-$i.json" "$data/$folder" >/dev/null 2>&1 || true
+        report=$out/$folder-$i.json
+        log=$sandbox/$folder-$i.log
+        if timeout 120 "$target/release/flit" --metrics "$report" "$data/$folder" >"$log" 2>&1; then
+            if grep -Eqs '^\{.*"start_to_first_frame_ms":[0-9].*\}$' "$report"; then
+                continue
+            fi
+            echo "$server metrics for $folder run $i produced no complete report" >&2
+            status=1
+        else
+            status=$?
+            echo "$server metrics for $folder run $i exited with status $status" >&2
+        fi
+        cat "$sandbox/server.log" "$log" >&2
+        app_log=$HOME/.local/state/flit/logs/flit.log
+        if [ -f "$app_log" ]; then
+            cat "$app_log" >&2
+        fi
+        exit "$status"
     done
     row="| $folder |"
     for k in $keys; do
@@ -54,4 +71,3 @@ for folder in flat_10k flat_100k; do
     echo "$row"
 done
 ls -l "$target/release/flit" | awk '{print "binary bytes:", $5}'
-grep -q '"start_to_first_frame_ms":[0-9]' "$out/flat_10k-1.json" || { echo "flit drew no frame under $server" >&2; exit 1; }

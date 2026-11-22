@@ -211,6 +211,7 @@ pub struct LinuxText {
     fallback: Vec<FontFile>,
     fallback_faces: FxHashMap<(usize, bool), u16>,
     adopted: bool,
+    bundled_only: bool,
     chars: FxHashMap<(char, bool), u16>,
     scale: ScaleContext,
     image: Image,
@@ -231,7 +232,15 @@ impl Default for LinuxText {
 
 impl LinuxText {
     pub fn new() -> Self {
-        let shared = fonts::fonts();
+        Self::with_fonts(Some(fonts::fonts()))
+    }
+
+    pub(crate) fn bundled() -> Self {
+        Self::with_fonts(None)
+    }
+
+    fn with_fonts(shared: Option<&fonts::Fonts>) -> Self {
+        let bundled_only = shared.is_none();
         let mut t = Self {
             faces: Vec::new(),
             loaded: FxHashMap::default(),
@@ -241,14 +250,15 @@ impl LinuxText {
             icons: 0,
             fallback: Vec::new(),
             fallback_faces: FxHashMap::default(),
-            adopted: false,
+            adopted: bundled_only,
+            bundled_only,
             chars: FxHashMap::default(),
             scale: ScaleContext::new(),
             image: Image::new(),
             outline: Outline::new(),
             path: Vec::new(),
             hinters: Vec::new(),
-            hinting: fonts::rendering().hinting,
+            hinting: if bundled_only { Hinting::None } else { fonts::rendering().hinting },
             buffer: Some(Buffer::new()),
             runs: Vec::new(),
             placed: Vec::new(),
@@ -259,7 +269,7 @@ impl LinuxText {
         t.icons = icons;
         t.default_ui = [regular, bold];
         t.mono = [regular, bold];
-        let source = shared.live().map(|l| &l.resolved).or(shared.cached.as_ref());
+        let source = shared.and_then(|fonts| fonts.live().map(|l| &l.resolved).or(fonts.cached.as_ref()));
         if let Some(r) = source {
             if let Some(p) = r.ui.as_ref().and_then(|p| t.load_pair(p)) {
                 t.default_ui = p;
@@ -573,6 +583,9 @@ impl TextBackend for LinuxText {
     }
 
     fn glyph_mode(&mut self) -> GlyphMode {
+        if self.bundled_only {
+            return GlyphMode::default();
+        }
         let r = fonts::rendering();
         self.hinting = r.hinting;
         glyph_mode_for(r, fonts::lcd_blend())
@@ -589,6 +602,9 @@ impl TextBackend for LinuxText {
         if name.is_empty() {
             return true;
         }
+        if self.bundled_only {
+            return false;
+        }
         let shared = fonts::fonts();
         if let Some(p) = shared.remembered(name).and_then(|p| self.load_pair(&p)) {
             self.ui = p;
@@ -602,6 +618,9 @@ impl TextBackend for LinuxText {
     }
 
     fn families(&mut self) -> Vec<String> {
+        if self.bundled_only {
+            return Vec::new();
+        }
         fonts::fonts().wait().fc.as_ref().map(|fc| fc.families()).unwrap_or_default()
     }
 }

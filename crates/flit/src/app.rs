@@ -994,10 +994,22 @@ impl<P: Platform> Handler<P> {
                 }
                 Effect::ShellMenu(menu) => window.shell_menu(menu),
                 Effect::ShellPick(cmd) => window.shell_pick(cmd),
-                Effect::PaletteShell { ticket, menu } => window.palette_shell(ticket, menu),
+                Effect::PaletteShell { ticket, menu } => {
+                    if !flit_platform::isolated_gui_test() {
+                        window.palette_shell(ticket, menu);
+                    }
+                }
                 Effect::PaletteShellPick { ticket, command } => window.palette_shell_pick(ticket, command),
-                Effect::ShellPrefetch(menu) => window.shell_prefetch(menu),
-                Effect::ShellWarm(menus) => window.shell_warm(menus),
+                Effect::ShellPrefetch(menu) => {
+                    if !flit_platform::isolated_gui_test() {
+                        window.shell_prefetch(menu);
+                    }
+                }
+                Effect::ShellWarm(menus) => {
+                    if !flit_platform::isolated_gui_test() {
+                        window.shell_warm(menus);
+                    }
+                }
                 Effect::Layout(cmd) => self.layout_cmd(id, cmd),
                 Effect::Properties(paths) => window.properties(paths),
                 Effect::Share(paths) => window.share(paths),
@@ -2062,7 +2074,9 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let (shell, thumbs, sorter, previews, overlays, done) = start_workers::<P>(wake.clone(), thumb_cache.clone(), refresh)?;
     let tags = TagWorker::start::<P>(local.tags().clone(), wake.clone())?;
     let fs_path = |p: PathBuf| FsPath::parse(&p.to_string_lossy());
-    let integrate = !picking && metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none();
+    let headless = picking || metrics.is_some() || flit_platform::isolated_gui_test();
+    let capture = std::env::var_os("FLIT_HIDDEN_CAPTURE").is_some();
+    let integrate = !headless && !capture;
     let about = About {
         file: settings_file.clone().and_then(fs_path),
         logs: P::state_dir().map(|d| d.join("logs")).and_then(fs_path),
@@ -2083,7 +2097,7 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     } else {
         open
     };
-    let files = if !picking && metrics.is_none() && std::env::var_os("FLIT_HIDDEN_CAPTURE").is_none() { Files::of::<P>() } else { None };
+    let files = if !headless && !capture { Files::of::<P>() } else { None };
     let crashed = files.as_ref().is_some_and(Files::crashed);
     let dump = files.as_ref().filter(|_| crashed).and_then(Files::marked_at).zip(P::state_dir()).and_then(|(t, d)| crate::logs::crash_report(&d.join("logs"), t)).and_then(fs_path);
     let previous = files.as_ref().and_then(|f| session::load(&f.session));
@@ -2097,7 +2111,6 @@ pub fn run<P: Platform>(open: Open, instance: Option<P::Instance>, metrics: Opti
     let restore = StartupRestore { previous, allowed: !picking && (!crashed || restore_crash), dump };
     let h_wake = wake.clone();
     let update_wake = wake.clone();
-    let headless = picking || metrics.is_some();
     let (pick_request, picker_result) = picker.map_or((None, None), |(request, result)| (Some(request), Some(result)));
     let tray = integrate.then(|| flit_platform::tray::Tray::new(wake.clone()));
     let mut h = Handler::<P> {

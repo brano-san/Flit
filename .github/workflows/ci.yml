@@ -69,6 +69,34 @@ jobs:
           name: flit-linux
           path: target/packages/*.tar.gz
 
+  linux-gui-regressions:
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    timeout-minutes: 30
+    env:
+      LIBGL_ALWAYS_SOFTWARE: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libxkbcommon-x11-0 libegl1 libgles2 libgl1-mesa-dri xvfb xauth xdotool dbus-daemon libglib2.0-bin at-spi2-core gir1.2-atspi-2.0 python3-gi
+      - id: build
+        run: cargo build --release -p flit
+      - name: AT-SPI scenarios
+        run: bash scripts/gui-a11y.sh target/release/flit
+      - name: Golden screenshots
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        env:
+          FLIT_SNAPSHOT_OUTPUT: ${{ runner.temp }}/flit-gui-snapshots
+        run: xvfb-run -a cargo test --release -p flit --test gui_snapshots -- gui_snapshots --exact --ignored --test-threads=2
+      - name: Actual screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: gui-regressions-linux
+          path: ${{ runner.temp }}/flit-gui-snapshots/
+          if-no-files-found: ignore
+
   deps-isolation:
     runs-on: ubuntu-24.04
     steps:

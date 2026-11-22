@@ -18,7 +18,8 @@ const FILES: u64 = 7;
 const HEADER: u64 = 8;
 const PREVIEW: u64 = 9;
 const DIALOG: u64 = 10;
-const LEAF: u64 = 1 << 63;
+const RENAME_EDIT: u64 = 17;
+pub(super) const LEAF: u64 = 1 << 63;
 
 const NAV_IDS: [&str; 7] = ["nav.back", "nav.forward", "nav.up", "", "folder.cycle_view", "folder.bookmark", ""];
 
@@ -186,6 +187,12 @@ impl App {
             }
         }
 
+        if let Some((text, rect)) = self.rename_text().zip(self.rename_ime_area()).filter(|(_, r)| !self.search.active && r.w > 0.0 && r.h > 0.0) {
+            let k = t.add(0, RENAME_EDIT, Role::Edit, S::ActionsFileRename.t(), rect);
+            t.nodes[k].value = text.to_owned();
+            focus = Some(k);
+        }
+
         let pane = self.preview_area();
         if pane.w > 0.0 {
             let k = t.add(0, PREVIEW, Role::Pane, S::A11yRegionPreview.t(), pane);
@@ -195,6 +202,10 @@ impl App {
         }
 
         if let Some(k) = self.settings_a11y(&mut t, &mut targets) {
+            focus = Some(k);
+        }
+
+        if let Some(k) = self.palette_accessibility(&mut t, &mut targets) {
             focus = Some(k);
         }
 
@@ -245,7 +256,11 @@ impl App {
     }
 
     fn a11y_hit(&self, id: u64) -> Option<Hit> {
-        self.a11y_targets.iter().find(|(k, _)| *k == id).map(|&(_, h)| h)
+        let hit = self.a11y_targets.iter().find(|(k, _)| *k == id).map(|&(_, h)| h)?;
+        if let Hit::PaletteRow(row) = hit {
+            return self.palette_has_accessible_command(row, id).then_some(hit);
+        }
+        Some(hit)
     }
 
     pub(super) fn a11y_invoke(&mut self, id: u64, now: Instant) {
@@ -265,6 +280,12 @@ impl App {
             Hit::Form(k) => self.form_a11y_focus(k),
             Hit::FormFlag(k, j) => self.form_a11y_flag(k, j, false),
             Hit::DialogButton(k) => self.jobs.sel = k,
+            Hit::PaletteRow(row) => {
+                if let Some(p) = &mut self.nav.palette {
+                    p.select_row(row);
+                }
+                self.layout();
+            }
             Hit::Row(row) => {
                 self.focus = Focus::List;
                 if let Some(v) = &mut self.tabs[self.cur].view {
@@ -292,6 +313,7 @@ impl App {
                 self.tabs[self.cur].focus_row(row, crate::input::Mods::default());
                 self.dirty = true;
             }
+            Some(Hit::PaletteRow(_)) => self.a11y_focus(id),
             Some(_) => self.a11y_invoke(id, now),
             None => {}
         }

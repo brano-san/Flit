@@ -41,6 +41,9 @@ pub struct PlacesWorker {
 
 impl PlacesWorker {
     pub fn new<P: Platform>(wake: Wake, snapshot: Option<PathBuf>) -> Self {
+        if flit_platform::isolated_gui_test() {
+            return Self { requests: unbounded().0, results: crossbeam_channel::never(), current: Arc::default(), pending: None };
+        }
         let current: Arc<Places> = Arc::new(snapshot.as_deref().and_then(load_places).unwrap_or_default());
         let start = current.clone();
         let (requests, jobs) = unbounded::<Job>();
