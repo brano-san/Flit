@@ -11,7 +11,7 @@ use crate::uia::{WM_A11Y_FOCUS, WM_A11Y_INVOKE, WM_A11Y_SELECT};
 use windows::Win32::UI::Accessibility::{IRawElementProviderSimple, UiaClientsAreListening, UiaDisconnectProvider, UiaReturnRawElementProvider, UiaRootObjectId, HCF_HIGHCONTRASTON, HIGHCONTRASTW};
 use flit_core::ui::{Bitmap, DragEvent, ShellMenu};
 use flit_core::FsPath;
-use flit_platform::{DropReply, Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
+use flit_platform::{DropReply, Placement, PlatformError, Waker, Window, WindowControls, WindowFrame, WindowHandler, WindowId, WindowOptions, WindowShell, WindowSystem, WindowTransfer};
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::rc::Rc;
@@ -250,61 +250,9 @@ fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
 
-impl Window for Win32Window {
+impl WindowFrame for Win32Window {
     fn id(&self) -> WindowId {
         self.id
-    }
-
-    fn activate(&self) {
-        unsafe {
-            if IsIconic(self.hwnd()).as_bool() {
-                let _ = ShowWindow(self.hwnd(), SW_RESTORE);
-            }
-            let _ = SetForegroundWindow(self.hwnd());
-        }
-    }
-
-    fn request_attention(&self) {
-        let h = self.hwnd();
-        if h.is_invalid() || unsafe { GetForegroundWindow() } == h {
-            return;
-        }
-        let info = FLASHWINFO {
-            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
-            hwnd: h,
-            dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
-            uCount: 0,
-            dwTimeout: 0,
-        };
-        unsafe { let _ = FlashWindowEx(&info); }
-    }
-
-    fn set_taskbar_progress(&self, progress: Option<(u32, bool)>) {
-        let h = self.hwnd();
-        if h.is_invalid() {
-            return;
-        }
-        let Some(list) = TASKBAR.with(|t| t.get_or_init(taskbar_list).clone()) else { return };
-        unsafe {
-            match progress {
-                Some((percent, waiting)) => {
-                    let _ = list.SetProgressState(h, if waiting { TBPF_PAUSED } else { TBPF_NORMAL });
-                    let _ = list.SetProgressValue(h, u64::from(percent), 100);
-                }
-                None => {
-                    let _ = list.SetProgressState(h, TBPF_NOPROGRESS);
-                }
-            }
-        }
-    }
-
-    fn open_window(&self, opts: WindowOptions) {
-        let p = Box::into_raw(Box::new(opts));
-        unsafe {
-            if PostMessageW(Some(self.hub), WM_OPEN_WINDOW, WPARAM(0), LPARAM(p as isize)).is_err() {
-                drop(Box::from_raw(p));
-            }
-        }
     }
 
     fn size(&self) -> (u32, u32) {
@@ -333,6 +281,76 @@ impl Window for Win32Window {
         }
     }
 
+    fn set_ime_area(&self, area: Rect) {
+        self.ime_area.set(area);
+    }
+
+    fn is_dark_mode(&self) -> bool {
+        crate::dark_mode()
+    }
+
+    fn set_dark(&self, dark: bool) {
+        apply_dark(self.hwnd(), dark);
+    }
+
+    fn set_timer(&self, ms: u32) {
+        unsafe { SetTimer(Some(self.hwnd()), TIMER_ID, ms, None) };
+    }
+
+    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
+        let mut p = POINT { x: x as i32, y: y as i32 };
+        unsafe {
+            let _ = ClientToScreen(self.hwnd(), &mut p);
+        }
+        (p.x, p.y)
+    }
+
+    fn window_at(&self, x: f32, y: f32) -> Option<(WindowId, f32, f32)> {
+        let (sx, sy) = self.to_screen(x, y);
+        unsafe {
+            let root = GetAncestor(WindowFromPoint(POINT { x: sx, y: sy }), GA_ROOT);
+            let id = OPEN.with_borrow(|open| open.iter().find(|(h, _)| *h == root.0 as isize).map(|&(_, id)| id))?;
+            let mut p = POINT { x: sx, y: sy };
+            let _ = ScreenToClient(root, &mut p);
+            Some((id, p.x as f32, p.y as f32))
+        }
+    }
+}
+
+impl WindowControls for Win32Window {
+    fn activate(&self) {
+        unsafe {
+            if IsIconic(self.hwnd()).as_bool() {
+                let _ = ShowWindow(self.hwnd(), SW_RESTORE);
+            }
+            let _ = SetForegroundWindow(self.hwnd());
+        }
+    }
+
+    fn request_attention(&self) {
+        let h = self.hwnd();
+        if h.is_invalid() || unsafe { GetForegroundWindow() } == h {
+            return;
+        }
+        let info = FLASHWINFO {
+            cbSize: std::mem::size_of::<FLASHWINFO>() as u32,
+            hwnd: h,
+            dwFlags: FLASHW_TRAY | FLASHW_TIMERNOFG,
+            uCount: 0,
+            dwTimeout: 0,
+        };
+        unsafe { let _ = FlashWindowEx(&info); }
+    }
+
+    fn open_window(&self, opts: WindowOptions) {
+        let p = Box::into_raw(Box::new(opts));
+        unsafe {
+            if PostMessageW(Some(self.hub), WM_OPEN_WINDOW, WPARAM(0), LPARAM(p as isize)).is_err() {
+                drop(Box::from_raw(p));
+            }
+        }
+    }
+
     fn minimize(&self) {
         self.post(WM_SYSCOMMAND, SC_MINIMIZE as usize);
     }
@@ -353,18 +371,6 @@ impl Window for Win32Window {
         self.post(WM_DESTROY_REQUEST, 0);
     }
 
-    fn notify(&self, text: &str) {
-        crate::toast::notify(self.hwnd(), text);
-    }
-
-    fn set_folder(&self, folder: Option<&FsPath>) {
-        crate::shellwin::show(self.hwnd(), self.id, folder);
-    }
-
-    fn set_selection(&self, selection: &dyn Fn() -> flit_platform::SelectionSource) -> bool {
-        crate::shellwin::select(self.hwnd(), selection)
-    }
-
     fn placement(&self) -> Placement {
         let mut wp = WINDOWPLACEMENT { length: size_of::<WINDOWPLACEMENT>() as u32, ..Default::default() };
         match self.restore.get() {
@@ -383,6 +389,25 @@ impl Window for Win32Window {
         }
     }
 
+    fn toggle_fullscreen(&self) {
+        if self.mode.get() == Mode::Full {
+            self.leave_mode();
+        } else {
+            self.enter_mode(Mode::Full);
+        }
+    }
+
+    fn set_compact(&self, on: Option<bool>) {
+        let compact = self.mode.get() == Mode::Compact;
+        match on.unwrap_or(!compact) {
+            true if !compact => self.enter_mode(Mode::Compact),
+            false if compact => self.leave_mode(),
+            _ => {}
+        }
+    }
+}
+
+impl WindowTransfer for Win32Window {
     fn clipboard_text(&self) -> Option<String> {
         unsafe {
             crate::clipboard::open(Some(self.hwnd())).ok()?;
@@ -435,23 +460,48 @@ impl Window for Win32Window {
         }
     }
 
-    fn set_ime_area(&self, area: Rect) {
-        self.ime_area.set(area);
-    }
-
-    fn is_dark_mode(&self) -> bool {
-        crate::dark_mode()
-    }
-
-    fn set_dark(&self, dark: bool) {
-        apply_dark(self.hwnd(), dark);
-    }
-
     fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
         if cut && !paths.is_empty() && paths.iter().all(crate::context_menu::is_recycled) {
             return crate::context_menu::request(self.hwnd(), ShellUi::Verb(paths.to_vec(), c"cut"));
         }
         crate::clipboard::write_files(self.hwnd(), paths, cut);
+    }
+
+    fn start_drag(&self, paths: Vec<FsPath>) {
+        crate::context_menu::request(self.hwnd(), ShellUi::Drag(paths));
+    }
+}
+
+impl WindowShell for Win32Window {
+    fn set_taskbar_progress(&self, progress: Option<(u32, bool)>) {
+        let h = self.hwnd();
+        if h.is_invalid() {
+            return;
+        }
+        let Some(list) = TASKBAR.with(|t| t.get_or_init(taskbar_list).clone()) else { return };
+        unsafe {
+            match progress {
+                Some((percent, waiting)) => {
+                    let _ = list.SetProgressState(h, if waiting { TBPF_PAUSED } else { TBPF_NORMAL });
+                    let _ = list.SetProgressValue(h, u64::from(percent), 100);
+                }
+                None => {
+                    let _ = list.SetProgressState(h, TBPF_NOPROGRESS);
+                }
+            }
+        }
+    }
+
+    fn notify(&self, text: &str) {
+        crate::toast::notify(self.hwnd(), text);
+    }
+
+    fn set_folder(&self, folder: Option<&FsPath>) {
+        crate::shellwin::show(self.hwnd(), self.id, folder);
+    }
+
+    fn set_selection(&self, selection: &dyn Fn() -> flit_platform::SelectionSource) -> bool {
+        crate::shellwin::select(self.hwnd(), selection)
     }
 
     fn shell_menu(&self, menu: ShellMenu) {
@@ -490,54 +540,12 @@ impl Window for Win32Window {
         crate::context_menu::request(self.hwnd(), ShellUi::Properties(paths));
     }
 
-    fn start_drag(&self, paths: Vec<FsPath>) {
-        crate::context_menu::request(self.hwnd(), ShellUi::Drag(paths));
-    }
-
-    fn set_timer(&self, ms: u32) {
-        unsafe { SetTimer(Some(self.hwnd()), TIMER_ID, ms, None) };
-    }
-
-    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
-        let mut p = POINT { x: x as i32, y: y as i32 };
-        unsafe {
-            let _ = ClientToScreen(self.hwnd(), &mut p);
-        }
-        (p.x, p.y)
-    }
-
-    fn window_at(&self, x: f32, y: f32) -> Option<(WindowId, f32, f32)> {
-        let (sx, sy) = self.to_screen(x, y);
-        unsafe {
-            let root = GetAncestor(WindowFromPoint(POINT { x: sx, y: sy }), GA_ROOT);
-            let id = OPEN.with_borrow(|open| open.iter().find(|(h, _)| *h == root.0 as isize).map(|&(_, id)| id))?;
-            let mut p = POINT { x: sx, y: sy };
-            let _ = ScreenToClient(root, &mut p);
-            Some((id, p.x as f32, p.y as f32))
-        }
-    }
-
-    fn toggle_fullscreen(&self) {
-        if self.mode.get() == Mode::Full {
-            self.leave_mode();
-        } else {
-            self.enter_mode(Mode::Full);
-        }
-    }
-
-    fn set_compact(&self, on: Option<bool>) {
-        let compact = self.mode.get() == Mode::Compact;
-        match on.unwrap_or(!compact) {
-            true if !compact => self.enter_mode(Mode::Compact),
-            false if compact => self.leave_mode(),
-            _ => {}
-        }
-    }
-
     fn host(&self, cmd: HostCmd) {
         crate::prevhost::command(self.hwnd(), cmd);
     }
 }
+
+impl Window for Win32Window {}
 
 pub(crate) fn fit_rect(r: RECT, area: RECT) -> RECT {
     let w = (r.right - r.left).clamp(0, (area.right - area.left).max(0));

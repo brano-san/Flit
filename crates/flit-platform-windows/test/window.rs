@@ -19,8 +19,8 @@ fn wheel_and_double_click_changes_reread_the_mouse_settings() {
     assert!(!mouse_setting(WPARAM(SPI_SETHIGHCONTRAST.0 as usize)));
     assert!(!mouse_setting(WPARAM(SPI_SETCLIENTAREAANIMATION.0 as usize)));
     assert!(!mouse_setting(WPARAM(0)), "a bare broadcast keeps the values Flit already has");
-    assert_eq!(crate::wheel_lines(), <crate::Windows as flit_platform::Platform>::wheel_lines());
-    assert_eq!(crate::double_click_time(), <crate::Windows as flit_platform::Platform>::double_click_time());
+    assert_eq!(crate::wheel_lines(), <crate::Windows as flit_platform::WindowPlatform>::wheel_lines());
+    assert_eq!(crate::double_click_time(), <crate::Windows as flit_platform::WindowPlatform>::double_click_time());
 }
 #[test]
 fn a_window_rect_larger_than_its_monitor_is_cut_down_to_it() {

@@ -4,7 +4,7 @@ use flit_core::atlas::Slot;
 use flit_core::render::{DrawList, Instance};
 use flit_core::thumbs::THUMB_ATLAS;
 use flit_core::ui::Bitmap;
-use flit_platform::{PlatformError, RenderError, Renderer, Window};
+use flit_platform::{PlatformError, RenderError, Renderer, WindowFrame};
 use std::cell::Cell;
 use std::path::Path;
 use std::rc::Rc;

@@ -1329,7 +1329,7 @@ fn pending_state() -> Option<std::path::PathBuf> {
     }
     #[cfg(not(test))]
     {
-        use flit_platform::Platform;
+        use flit_platform::ProfilePlatform;
         crate::Windows::state_dir()
     }
 }

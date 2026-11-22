@@ -3,7 +3,7 @@ use flit_core::library::LibraryOp;
 use flit_core::ui::{Bitmap, IconKind, IconRequest, KnownFolder, Places};
 use flit_core::path::PathKind;
 use flit_core::{FsPath, Location};
-use flit_platform::{Platform, Wake};
+use flit_platform::{DevicePlatform, FilePlatform, ShellPlatform, Wake};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -40,7 +40,7 @@ pub struct PlacesWorker {
 }
 
 impl PlacesWorker {
-    pub fn new<P: Platform>(wake: Wake, snapshot: Option<PathBuf>) -> Self {
+    pub fn new<P: DevicePlatform + FilePlatform + ShellPlatform>(wake: Wake, snapshot: Option<PathBuf>) -> Self {
         if flit_platform::isolated_gui_test() {
             return Self { requests: unbounded().0, results: crossbeam_channel::never(), current: Arc::default(), pending: None };
         }
@@ -193,7 +193,7 @@ fn shown(k: KnownFolder, l: &Location) -> bool {
     k != KnownFolder::OneDrive || l.to_windows().is_some_and(|p| flit_platform::std_path(&p).is_dir())
 }
 
-fn collect<P: Platform>() -> Places {
+fn collect<P: DevicePlatform + FilePlatform + ShellPlatform>() -> Places {
     let folders = KnownFolder::ALL
         .iter()
         .filter_map(|&k| {

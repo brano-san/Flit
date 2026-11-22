@@ -8,7 +8,7 @@ use flit_core::render::Rect;
 use flit_core::ui::{drop_effect, Bitmap, DragEvent, PrimaryPaste, ShellMenu};
 use flit_core::i18n::S;
 use flit_core::FsPath;
-use flit_platform::{Placement, PlatformError, Waker, Window, WindowHandler, WindowId, WindowOptions, WindowSystem};
+use flit_platform::{Placement, PlatformError, Waker, Window, WindowControls, WindowFrame, WindowHandler, WindowId, WindowOptions, WindowShell, WindowSystem, WindowTransfer};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ffi::CStr;
@@ -673,7 +673,7 @@ impl Drop for LinuxWindow {
     }
 }
 
-impl Window for LinuxWindow {
+impl WindowFrame for LinuxWindow {
     fn id(&self) -> WindowId {
         self.id
     }
@@ -700,6 +700,47 @@ impl Window for LinuxWindow {
         }
     }
 
+    fn set_ime_area(&self, area: Rect) {
+        if self.ime_area.replace(area) == area {
+            return;
+        }
+        let data = ImeRequestData::default().with_cursor_area(PhysicalPosition::new(area.x, area.y).into(), PhysicalSize::new(area.w, area.h).into());
+        let _ = self.raw.request_ime_update(ImeRequest::Update(data));
+    }
+
+    fn is_dark_mode(&self) -> bool {
+        preferred_dark().unwrap_or(false)
+    }
+
+    fn set_timer(&self, ms: u32) {
+        self.timer.set(Some(Instant::now() + Duration::from_millis(ms.into())));
+    }
+
+    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
+        let inset = self.raw.surface_position();
+        match self.raw.outer_position() {
+            Ok(at) => (at.x + inset.x + x as i32, at.y + inset.y + y as i32),
+            Err(_) => (x as i32, y as i32),
+        }
+    }
+
+    fn window_at(&self, x: f32, y: f32) -> Option<(WindowId, f32, f32)> {
+        if self.is_wayland() {
+            return None;
+        }
+        let mut targets = self.targets.borrow_mut();
+        targets.refresh(Instant::now());
+        let source = targets.windows.iter().find(|w| w.target.id == self.id)?.target;
+        let point = (source.origin.0 + f64::from(x), source.origin.1 + f64::from(y));
+        tab_target(targets.windows.iter().map(|w| TabTarget { minimized: w.minimized.get(), ..w.target }), self.id, point)
+    }
+
+    fn set_dark(&self, dark: bool) {
+        self.raw.set_theme(Some(if dark { Theme::Dark } else { Theme::Light }));
+    }
+}
+
+impl WindowControls for LinuxWindow {
     fn minimize(&self) {
         if let Some(w) = self.targets.borrow().windows.iter().find(|w| w.target.id == self.id) {
             w.minimized.set(true);
@@ -740,6 +781,84 @@ impl Window for LinuxWindow {
         }
     }
 
+    fn open_window(&self, opts: WindowOptions) {
+        self.push(Command::Open(opts));
+    }
+
+    fn placement(&self) -> Placement {
+        let (x, y) = if self.is_wayland() {
+            self.raw.outer_position().unwrap_or_default().into()
+        } else {
+            self.to_screen(0.0, 0.0)
+        };
+        let (width, height) = self.compact_from.get().unwrap_or(self.normal_size.get());
+        Placement { x, y, width: width as i32, height: height as i32, maximized: self.raw.is_maximized() }
+    }
+
+    fn toggle_fullscreen(&self) {
+        let full = self.raw.fullscreen().is_some();
+        self.raw.set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
+    }
+
+    fn set_server_decorations(&self, on: bool) {
+        if self.server.replace(on) == on {
+            return;
+        }
+        self.raw.set_decorations(on);
+        self.cache_target(TargetGeometry::Refresh);
+        self.restore_cursor();
+    }
+
+    fn set_compact(&self, on: Option<bool>) {
+        let compact = self.compact_from.get().is_some();
+        if on.unwrap_or(!compact) == compact {
+            return;
+        }
+        if compact {
+            return self.leave_compact();
+        }
+        self.raw.set_fullscreen(None);
+        self.raw.set_maximized(false);
+        self.compact_from.set(Some(self.normal_size.get()));
+        self.raw.set_window_level(WindowLevel::AlwaysOnTop);
+        let _ = self.raw.request_surface_size(LogicalSize::new(COMPACT_SIZE.0, COMPACT_SIZE.1).into());
+    }
+}
+
+impl WindowTransfer for LinuxWindow {
+    fn clipboard_text(&self) -> Option<String> {
+        self.push(Command::Paste(self.id));
+        None
+    }
+
+    fn set_clipboard_text(&self, text: &str) {
+        self.push(Command::Copy(text.to_owned()));
+    }
+
+    fn set_primary_text(&self, text: &str) {
+        self.push(Command::SetPrimary(text.to_owned()));
+    }
+
+    fn primary_text(&self, paste: PrimaryPaste) -> Option<String> {
+        self.push(Command::PastePrimary(self.id, paste));
+        None
+    }
+
+    fn set_clipboard_image(&self, image: &Bitmap) {
+        self.push(Command::CopyImage(image.clone()));
+    }
+
+    fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
+        crate::shell::remember_files(paths, cut);
+        self.push(Command::CopyFiles(paths.to_vec(), cut));
+    }
+
+    fn start_drag(&self, paths: Vec<FsPath>) {
+        self.push(Command::Drag(self.raw.id(), paths, self.scale.get()));
+    }
+}
+
+impl WindowShell for LinuxWindow {
     fn set_taskbar_progress(&self, progress: Option<(u32, bool)>) {
         let percent = launcher_step(progress.map(|(v, _)| v));
         let sent = percent.map_or(LAUNCHER_HIDDEN, |v| v + 1);
@@ -782,59 +901,6 @@ impl Window for LinuxWindow {
         }
     }
 
-    fn open_window(&self, opts: WindowOptions) {
-        self.push(Command::Open(opts));
-    }
-
-    fn placement(&self) -> Placement {
-        let (x, y) = if self.is_wayland() {
-            self.raw.outer_position().unwrap_or_default().into()
-        } else {
-            self.to_screen(0.0, 0.0)
-        };
-        let (width, height) = self.compact_from.get().unwrap_or(self.normal_size.get());
-        Placement { x, y, width: width as i32, height: height as i32, maximized: self.raw.is_maximized() }
-    }
-
-    fn clipboard_text(&self) -> Option<String> {
-        self.push(Command::Paste(self.id));
-        None
-    }
-
-    fn set_clipboard_text(&self, text: &str) {
-        self.push(Command::Copy(text.to_owned()));
-    }
-
-    fn set_primary_text(&self, text: &str) {
-        self.push(Command::SetPrimary(text.to_owned()));
-    }
-
-    fn primary_text(&self, paste: PrimaryPaste) -> Option<String> {
-        self.push(Command::PastePrimary(self.id, paste));
-        None
-    }
-
-    fn set_clipboard_image(&self, image: &Bitmap) {
-        self.push(Command::CopyImage(image.clone()));
-    }
-
-    fn set_ime_area(&self, area: Rect) {
-        if self.ime_area.replace(area) == area {
-            return;
-        }
-        let data = ImeRequestData::default().with_cursor_area(PhysicalPosition::new(area.x, area.y).into(), PhysicalSize::new(area.w, area.h).into());
-        let _ = self.raw.request_ime_update(ImeRequest::Update(data));
-    }
-
-    fn is_dark_mode(&self) -> bool {
-        preferred_dark().unwrap_or(false)
-    }
-
-    fn set_clipboard_files(&self, paths: &[FsPath], cut: bool) {
-        crate::shell::remember_files(paths, cut);
-        self.push(Command::CopyFiles(paths.to_vec(), cut));
-    }
-
     fn shell_menu(&self, menu: ShellMenu) {
         let reply = self.menu_replies.begin();
         let (start, x, y, kind) = (Instant::now(), menu.x, menu.y, menu.kind);
@@ -874,67 +940,9 @@ impl Window for LinuxWindow {
     }
 
     fn properties(&self, _paths: Vec<FsPath>) {}
-
-    fn start_drag(&self, paths: Vec<FsPath>) {
-        self.push(Command::Drag(self.raw.id(), paths, self.scale.get()));
-    }
-
-    fn set_timer(&self, ms: u32) {
-        self.timer.set(Some(Instant::now() + Duration::from_millis(ms.into())));
-    }
-
-    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
-        let inset = self.raw.surface_position();
-        match self.raw.outer_position() {
-            Ok(at) => (at.x + inset.x + x as i32, at.y + inset.y + y as i32),
-            Err(_) => (x as i32, y as i32),
-        }
-    }
-
-    fn window_at(&self, x: f32, y: f32) -> Option<(WindowId, f32, f32)> {
-        if self.is_wayland() {
-            return None;
-        }
-        let mut targets = self.targets.borrow_mut();
-        targets.refresh(Instant::now());
-        let source = targets.windows.iter().find(|w| w.target.id == self.id)?.target;
-        let point = (source.origin.0 + f64::from(x), source.origin.1 + f64::from(y));
-        tab_target(targets.windows.iter().map(|w| TabTarget { minimized: w.minimized.get(), ..w.target }), self.id, point)
-    }
-
-    fn toggle_fullscreen(&self) {
-        let full = self.raw.fullscreen().is_some();
-        self.raw.set_fullscreen((!full).then_some(Fullscreen::Borderless(None)));
-    }
-
-    fn set_dark(&self, dark: bool) {
-        self.raw.set_theme(Some(if dark { Theme::Dark } else { Theme::Light }));
-    }
-
-    fn set_server_decorations(&self, on: bool) {
-        if self.server.replace(on) == on {
-            return;
-        }
-        self.raw.set_decorations(on);
-        self.cache_target(TargetGeometry::Refresh);
-        self.restore_cursor();
-    }
-
-    fn set_compact(&self, on: Option<bool>) {
-        let compact = self.compact_from.get().is_some();
-        if on.unwrap_or(!compact) == compact {
-            return;
-        }
-        if compact {
-            return self.leave_compact();
-        }
-        self.raw.set_fullscreen(None);
-        self.raw.set_maximized(false);
-        self.compact_from.set(Some(self.normal_size.get()));
-        self.raw.set_window_level(WindowLevel::AlwaysOnTop);
-        let _ = self.raw.request_surface_size(LogicalSize::new(COMPACT_SIZE.0, COMPACT_SIZE.1).into());
-    }
 }
+
+impl Window for LinuxWindow {}
 
 #[derive(Clone)]
 pub struct LinuxWaker {

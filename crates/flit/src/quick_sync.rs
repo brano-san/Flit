@@ -1,7 +1,7 @@
 use crossbeam_channel::{unbounded, Receiver, RecvTimeoutError, Sender};
 use flit_core::quick_sync::{Change, QuickAccess, QuickSync};
 use flit_core::Location;
-use flit_platform::{Platform, Wake};
+use flit_platform::{ShellPlatform, Wake};
 use std::time::Duration;
 
 pub const POLL: Duration = Duration::from_secs(3);
@@ -59,7 +59,7 @@ pub struct QuickSyncWorker {
 }
 
 impl QuickSyncWorker {
-    pub fn new<P: Platform>(allowed: bool, wake: Wake) -> Self {
+    pub fn new<P: ShellPlatform>(allowed: bool, wake: Wake) -> Self {
         let start: Start = Box::new(move || {
             let (jobs, rx) = unbounded();
             let (tx, changes) = unbounded();

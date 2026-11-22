@@ -2,7 +2,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use ed25519_compact::{PublicKey, Signature};
 use flit_core::i18n::S;
 use flit_core::update::{base64_decode, newer, parse_manifest_since, percent, ManagedInstallation, Release, UpdateEvent, UpdateRequest, CURRENT, MANIFEST_URL, PLATFORM};
-use flit_platform::{Platform, PlatformError, Wake};
+use flit_platform::{NetworkPlatform, PlatformError, SystemPlatform, Wake};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -287,7 +287,7 @@ fn error_file(archive: &Path) -> PathBuf {
     with_suffix(archive, ".error")
 }
 
-fn elevated<P: Platform>(archive: &[u8], signature: &str) -> Result<bool, String> {
+fn elevated<P: SystemPlatform>(archive: &[u8], signature: &str) -> Result<bool, String> {
     let file = std::env::temp_dir().join(format!("flit-update-{}.zip", std::process::id()));
     fs::write(&file, archive).map_err(|e| format!("{}: {e}", file.display()))?;
     let _ = fs::remove_file(error_file(&file));
@@ -303,13 +303,13 @@ fn elevated<P: Platform>(archive: &[u8], signature: &str) -> Result<bool, String
     }
 }
 
-fn fetch<P: Platform>(url: &str, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<Vec<u8>, String> {
+fn fetch<P: NetworkPlatform>(url: &str, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
     P::download(url, &mut out, progress).map_err(|e: PlatformError| e.message)?;
     Ok(out)
 }
 
-fn check<P: Platform>(metrics: bool) -> Result<Option<Release>, String> {
+fn check<P: NetworkPlatform>(metrics: bool) -> Result<Option<Release>, String> {
     let manifest = match std::env::var_os(LOCAL_MANIFEST) {
         Some(path) => fs::read(path).map_err(|e| e.to_string())?,
         None if !network_allowed(metrics) => return Err(S::UpdateErrorOff.t().to_owned()),
@@ -361,7 +361,7 @@ fn running_exe() -> Result<PathBuf, String> {
 }
 
 
-fn run<P: Platform>(jobs: Receiver<UpdateRequest>, tx: Sender<Reply>, wake: Wake, cancel: Arc<AtomicBool>, metrics: bool) {
+fn run<P: NetworkPlatform + SystemPlatform>(jobs: Receiver<UpdateRequest>, tx: Sender<Reply>, wake: Wake, cancel: Arc<AtomicBool>, metrics: bool) {
     let send = |r: Reply| {
         let _ = tx.send(r);
         wake();
@@ -431,7 +431,7 @@ pub struct UpdateWorker {
 }
 
 impl UpdateWorker {
-    pub fn start<P: Platform>(wake: Wake, metrics: bool) -> Result<Self, PlatformError> {
+    pub fn start<P: NetworkPlatform + SystemPlatform>(wake: Wake, metrics: bool) -> Result<Self, PlatformError> {
         let (jobs, rx) = unbounded();
         let (tx, events) = unbounded();
         let cancel = Arc::new(AtomicBool::new(false));
@@ -451,7 +451,7 @@ impl UpdateWorker {
     }
 }
 
-pub fn on_start<P: Platform>() {
+pub fn on_start<P: SystemPlatform>() {
     if let Ok(pid) = std::env::var(RESTARTED_FROM) {
         std::env::remove_var(RESTARTED_FROM);
         if let Ok(pid) = pid.parse() {

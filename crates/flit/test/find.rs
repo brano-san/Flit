@@ -1,6 +1,6 @@
 use super::*;
 use flit_core::ui::{SearchKey, SearchSort};
-use flit_platform::Platform;
+use flit_platform::FilePlatform;
 use flit_search::query::{parse, Clock};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

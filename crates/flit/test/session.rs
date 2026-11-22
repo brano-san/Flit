@@ -186,7 +186,7 @@ fn session_serializes_network_tabs_and_trails_compatibly_with_the_running_platfo
     let root = Location::from_local(flit_core::FsPath::network());
     let server = Location::from_local(flit_core::FsPath::network_server(b"NAS").unwrap());
     let local = Location::parse("/tmp").unwrap();
-    let home = Location::from_local(crate::P::home());
+    let home = Location::from_local(<crate::P as flit_platform::ShellPlatform>::home());
     let network = |path: &Location| if cfg!(target_os = "linux") { home.clone() } else { path.clone() };
     let w = WindowSession { tabs: vec![root.clone(), server.clone(), local.clone()], cur: 1, trails: vec![server.clone(), root.clone(), local.clone()], panels: None };
     let s = Session::new(vec![(w, None)], Vec::new());

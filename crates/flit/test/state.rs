@@ -2,6 +2,30 @@ use super::*;
 use flit_core::sort::{GroupField, GroupSpec, SortSpec};
 use flit_core::ui::{folder_key, Columns};
 
+struct TestProfile<const HAS_STATE_DIR: bool>;
+
+impl<const HAS_STATE_DIR: bool> ProfilePlatform for TestProfile<HAS_STATE_DIR> {
+    fn state_dir() -> Option<PathBuf> {
+        HAS_STATE_DIR.then(|| std::env::temp_dir().join(format!("flit-state-profile-{}", std::process::id())))
+    }
+}
+
+#[test]
+fn window_state_is_written_only_when_the_profile_has_a_state_directory() {
+    let scratch = crate::find::tests::Scratch::new("state-profile", &["profile/"]);
+    let state = classic();
+    let file = scratch.0.join("state.bin");
+
+    save::<TestProfile<false>>(&state);
+    assert!(!file.exists());
+    assert!(super::file::<TestProfile<false>>().is_none());
+
+    save::<TestProfile<true>>(&state);
+    let saved = Saved::decode(&std::fs::read(file).unwrap()).unwrap();
+    assert_eq!(saved.persisted, state.persisted);
+    assert_eq!(saved.placement(), state.placement());
+}
+
 const GIT_LEN: usize = 35;
 const DESCRIPTIONS_LEN: usize = 1;
 const QUICK_LEN: usize = 4;

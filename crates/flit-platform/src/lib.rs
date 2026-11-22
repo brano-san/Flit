@@ -1,12 +1,14 @@
 mod digest;
 mod indexer;
 mod local;
+mod platform;
 pub mod parse_process;
 mod segments;
 pub mod dedup;
 mod companions;
 pub use companions::companion_collision;
 pub mod walk;
+mod window;
 mod wsl;
 mod pace;
 pub mod conflicts;
@@ -16,20 +18,21 @@ pub use digest::hash_file;
 pub use flit_core::provider::PlatformErrorKind;
 pub use indexer::{root_of, start_indexer};
 pub use local::{measure, read_deep, via_unc, LocalProvider, CANCELLED};
+pub use platform::{DevicePlatform, FilePlatform, NetworkPlatform, Platform, ProfilePlatform, SearchPlatform, ShellPlatform, SystemPlatform, WindowPlatform};
+pub use window::{Window, WindowControls, WindowFrame, WindowShell, WindowTransfer};
 pub use wsl::{AgentImage, AgentImages, AgentLauncher, AgentProcess, Clipboard, Timing, WslProvider, UNMAPPABLE};
 
 use crossbeam_channel::Sender;
 use flit_core::atlas::Slot;
 use flit_core::desktop_ini::DesktopIni;
-use flit_core::input::{CursorIcon, Event, HitArea};
-use flit_core::preview::{HostCmd, PropGroup};
-use flit_core::render::{DrawList, Rect};
-use flit_core::ui::{Bitmap, DragEvent, IconRequest, NewTemplate, PrimaryPaste, ShellMenu};
+use flit_core::input::{Event, HitArea};
+use flit_core::preview::PropGroup;
+use flit_core::render::DrawList;
+use flit_core::ui::{Bitmap, DragEvent, IconRequest};
 use flit_core::digest::HashKind;
 use flit_core::provider::{Access, Accounts, Conflict, Failure, FileOp, Launch, MountAnswer, MountAsk, MountReply, OpCtl, OpProgress, Recover, Resolve, Stage};
 use flit_core::listing::DirStats;
-use flit_core::tags::FileKey;
-use flit_core::{FsError, FsPath, ListingBuilder, Location, Meta, Open, ProviderEvent, ProviderRequest, TabId};
+use flit_core::{FsError, FsPath, ListingBuilder, Meta, Open, ProviderEvent, ProviderRequest, TabId};
 use flit_search::index::{Checkpoint, IndexSink};
 use flit_search::proto::VolumeInfo;
 use std::fmt;
@@ -169,61 +172,6 @@ pub trait Waker: Clone + Send + Sync + 'static {
 }
 
 pub type SelectionSource = std::sync::Arc<dyn Fn() -> (Vec<FsPath>, Option<FsPath>) + Send + Sync>;
-
-pub trait Window {
-    fn id(&self) -> WindowId;
-    fn size(&self) -> (u32, u32);
-    fn scale(&self) -> f32;
-    fn request_redraw(&self);
-    fn set_title(&self, title: &str);
-    fn set_folder(&self, _folder: Option<&FsPath>) {}
-    fn set_selection(&self, _selection: &dyn Fn() -> SelectionSource) -> bool {
-        true
-    }
-    fn set_cursor(&self, cursor: CursorIcon);
-    fn minimize(&self);
-    fn toggle_maximize(&self);
-    fn is_maximized(&self) -> bool;
-    fn close(&self);
-    fn activate(&self);
-    fn open_window(&self, opts: WindowOptions);
-    fn placement(&self) -> Placement;
-    fn clipboard_text(&self) -> Option<String>;
-    fn set_clipboard_text(&self, text: &str);
-    fn set_clipboard_image(&self, _image: &Bitmap) {}
-    fn set_primary_text(&self, _text: &str) {}
-    fn primary_text(&self, _paste: PrimaryPaste) -> Option<String> {
-        None
-    }
-    fn set_ime_area(&self, area: Rect);
-    fn is_dark_mode(&self) -> bool;
-    fn set_clipboard_files(&self, paths: &[FsPath], cut: bool);
-    fn shell_menu(&self, menu: ShellMenu);
-    fn properties(&self, paths: Vec<FsPath>);
-    fn start_drag(&self, paths: Vec<FsPath>);
-    fn set_timer(&self, ms: u32);
-    fn to_screen(&self, x: f32, y: f32) -> (i32, i32) {
-        (x as i32, y as i32)
-    }
-    fn window_at(&self, _x: f32, _y: f32) -> Option<(WindowId, f32, f32)> {
-        None
-    }
-    fn toggle_fullscreen(&self) {}
-    fn request_attention(&self) {}
-    fn set_taskbar_progress(&self, _progress: Option<(u32, bool)>) {}
-    fn notify(&self, _text: &str) {}
-    fn set_dark(&self, _dark: bool) {}
-    fn set_compact(&self, _on: Option<bool>) {}
-    fn set_server_decorations(&self, _on: bool) {}
-    fn host(&self, _cmd: HostCmd) {}
-    fn share(&self, _paths: Vec<FsPath>) {}
-    fn set_volume_label(&self, _drive: FsPath, _label: String) {}
-    fn shell_pick(&self, _cmd: Option<u32>) {}
-    fn palette_shell(&self, _ticket: u64, _menu: ShellMenu) {}
-    fn palette_shell_pick(&self, _ticket: u64, _command: Option<u32>) {}
-    fn shell_prefetch(&self, _menu: Option<ShellMenu>) {}
-    fn shell_warm(&self, _menus: Vec<ShellMenu>) {}
-}
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DropReply {
@@ -791,128 +739,6 @@ pub trait IndexPlatform {
     fn walk_source(roots: &[String]) -> Result<Self::Walk, PlatformError>;
     fn utc_offset_minutes() -> i32;
     fn state_dir() -> Option<std::path::PathBuf>;
-}
-
-pub trait Platform: 'static {
-    type WindowSystem: WindowSystem;
-    type Renderer: Renderer<Window = <Self::WindowSystem as WindowSystem>::Window>;
-    type Text: Text;
-    type Fs: Fs;
-    type Watcher: Watcher;
-    type Shell: Shell + FileOps;
-    type Instance: SingleInstance;
-    type IndexSource: IndexSource;
-    type Service: Service;
-    type FallbackIndex: IndexSource + 'static;
-
-    fn text() -> Result<Self::Text, PlatformError>;
-    fn fs() -> Self::Fs;
-    fn utc_offset_minutes() -> i32;
-    fn dark_mode() -> bool;
-    fn state_dir() -> Option<std::path::PathBuf>;
-    fn cache_dir() -> Option<std::path::PathBuf> {
-        Self::state_dir()
-    }
-    fn config_dir() -> Option<std::path::PathBuf> {
-        Self::state_dir()
-    }
-    fn caps() -> flit_core::caps::Caps {
-        flit_core::caps::Caps::default()
-    }
-    fn recycle_bin() -> bool {
-        false
-    }
-    fn home() -> FsPath;
-    fn known_folder(name: &str) -> Option<Location>;
-    fn business_onedrive() -> Vec<(String, Location)> {
-        Vec::new()
-    }
-    fn fatal_error(message: &str);
-    fn refresh_period() -> Option<std::time::Duration>;
-    fn drives() -> Vec<flit_core::ui::Drive>;
-    fn wsl_distros() -> Vec<String>;
-    fn templates() -> Vec<NewTemplate> {
-        Vec::new()
-    }
-    fn libraries() -> Vec<flit_core::library::Library> {
-        Vec::new()
-    }
-    fn library(_op: &flit_core::library::LibraryOp) -> Result<(), PlatformError> {
-        Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineNoLibraries.en()))
-    }
-    fn recent(_limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
-        (Vec::new(), false)
-    }
-    fn bookmarks() -> Vec<Location> {
-        Vec::new()
-    }
-    fn bookmarks_changed(_added: &[Location], _removed: &[Location]) {}
-    fn double_click_time() -> std::time::Duration {
-        std::time::Duration::from_millis(500)
-    }
-    fn wheel_lines() -> u32 {
-        3
-    }
-    fn elevated() -> bool {
-        false
-    }
-    fn date_patterns() -> (String, String) {
-        ("yyyy-MM-dd".into(), "HH:mm".into())
-    }
-    fn os_version() -> String {
-        std::env::consts::OS.to_owned()
-    }
-    fn missing_tools() -> Vec<flit_core::ui::MissingTool> {
-        Vec::new()
-    }
-    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
-        None
-    }
-    fn ui_language() -> String {
-        String::new()
-    }
-    fn integrate(_on: bool) -> Result<(), PlatformError> {
-        Err(PlatformError::unsupported("system integration"))
-    }
-    fn tidy_integration() {}
-    fn watch_wsl(_changed: Box<dyn Fn() + Send>) {}
-    fn admin_launcher() -> Option<Box<dyn AgentLauncher>> {
-        None
-    }
-    fn wsl_launcher(_distro: &str, _images: &AgentImages) -> Option<Box<dyn AgentLauncher>> {
-        None
-    }
-    fn file_key(_path: &FsPath) -> Option<FileKey> {
-        None
-    }
-    fn resolve_files(files: &[(FileKey, &FsPath)]) -> Vec<Resolved> {
-        files.iter().map(|_| Resolved::Unavailable).collect()
-    }
-    fn sync_tag_names(_path: &FsPath, _drop: &[String], _keep: &[String]) {}
-    fn shell_search(_folder: Option<&FsPath>, _query: &str, _keep_going: &dyn Fn() -> bool, _found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
-        Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineNoWindowsSearch.en()))
-    }
-    fn download(_url: &str, _out: &mut dyn std::io::Write, _progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
-        Err(PlatformError::unsupported("downloads"))
-    }
-    fn wait_exit(_pid: u32, _limit: std::time::Duration) {}
-    fn keep_awake(_reason: &str) -> Option<Awake> {
-        None
-    }
-    fn jump_list(_pinned: &[Location], _frequent: &[Location]) {}
-    fn quick_access() -> Option<Box<dyn flit_core::quick_sync::QuickAccess>> {
-        None
-    }
-    fn never_shown_extensions() -> Vec<String> {
-        Vec::new()
-    }
-    fn run_elevated(_args: &[String]) -> Result<u32, PlatformError> {
-        Err(PlatformError::unsupported("running with administrator rights"))
-    }
-
-    fn raise_watch_limit() -> flit_core::ui::WatchLimit {
-        flit_core::ui::WatchLimit::Failed(PlatformError::unsupported("raising the watch limit").message)
-    }
 }
 
 pub fn posix_date_patterns(date: &str, time: &str) -> Option<(String, String)> {

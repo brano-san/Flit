@@ -68,7 +68,7 @@ use flit_core::render::DrawList;
 
 use flit_core::ui::Bitmap;
 use flit_core::{FsPath, Location};
-use flit_platform::{Platform, PlatformError, RenderError, Renderer, Window};
+use flit_platform::{DevicePlatform, FilePlatform, NetworkPlatform, Platform, PlatformError, ProfilePlatform, RenderError, Renderer, SearchPlatform, ShellPlatform, SystemPlatform, WindowFrame, WindowPlatform};
 use flit_platform_linux::{Systemd, WalkIndex};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -82,41 +82,13 @@ impl Linux {
     }
 }
 
-impl Platform for Linux {
+impl WindowPlatform for Linux {
     type WindowSystem = LinuxWindows;
     type Renderer = LinuxRenderer;
     type Text = text::LinuxText;
-    type Fs = fs::LinuxGuiFs;
-    type Watcher = fs::LinuxGuiWatcher;
-    type Shell = shell::LinuxShell;
-    type Instance = instance::SocketInstance;
-    type IndexSource = WalkIndex;
-    type Service = Systemd;
-    type FallbackIndex = WalkIndex;
 
     fn text() -> Result<text::LinuxText, PlatformError> {
         Ok(text::LinuxText::new())
-    }
-
-    fn raise_watch_limit() -> flit_core::ui::WatchLimit {
-        fs::raise_watch_limit()
-    }
-
-    fn keep_awake(reason: &str) -> Option<flit_platform::Awake> {
-        awake::Awake::hold(reason).map(|a| Box::new(a) as flit_platform::Awake)
-    }
-
-    fn fs() -> fs::LinuxGuiFs {
-        fs::LinuxGuiFs
-    }
-
-    fn utc_offset_minutes() -> i32 {
-        let now = unsafe { libc::time(std::ptr::null_mut()) };
-        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-        match unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
-            true => 0,
-            false => (tm.tm_gmtoff / 60) as i32,
-        }
     }
 
     fn dark_mode() -> bool {
@@ -131,32 +103,96 @@ impl Platform for Linux {
         input::wheel_lines()
     }
 
+    fn fatal_error(message: &str) {
+        eprintln!("flit: {message}");
+        alert::show(message);
+    }
+
+    fn refresh_period() -> Option<std::time::Duration> {
+        None
+    }
+}
+
+impl FilePlatform for Linux {
+    type Fs = fs::LinuxGuiFs;
+    type Watcher = fs::LinuxGuiWatcher;
+
+    fn raise_watch_limit() -> flit_core::ui::WatchLimit {
+        fs::raise_watch_limit()
+    }
+
+    fn fs() -> fs::LinuxGuiFs {
+        fs::LinuxGuiFs
+    }
+
     fn caps() -> flit_core::caps::Caps {
         flit_core::caps::Caps { unix_paths: true }
-    }
-
-    fn elevated() -> bool {
-        unsafe { libc::geteuid() == 0 }
-    }
-
-    fn missing_tools() -> Vec<flit_core::ui::MissingTool> {
-        tools::missing()
     }
 
     fn recycle_bin() -> bool {
         true
     }
 
+    fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
+        flit_platform_linux::file_key(path)
+    }
+
+    fn resolve_files(files: &[(flit_core::tags::FileKey, &FsPath)]) -> Vec<flit_platform::Resolved> {
+        flit_platform_linux::resolve_files(files)
+    }
+
+    fn sync_tag_names(path: &FsPath, drop: &[String], keep: &[String]) {
+        flit_platform_linux::sync_tag_names(path, drop, keep)
+    }
+}
+
+impl ShellPlatform for Linux {
+    type Shell = shell::LinuxShell;
+
     fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
         places::recent(limit)
     }
+
     fn bookmarks() -> Vec<flit_core::Location> {
         places::bookmarks()
     }
+
     fn bookmarks_changed(added: &[flit_core::Location], removed: &[flit_core::Location]) {
         places::sync_bookmarks(added, removed)
     }
 
+    fn home() -> FsPath {
+        xdg::home().and_then(|h| xdg::fs_path(&h)).unwrap_or_else(FsPath::unix_root)
+    }
+
+    fn known_folder(name: &str) -> Option<Location> {
+        xdg::known_folder(name)
+    }
+
+    fn templates() -> Vec<flit_core::ui::NewTemplate> {
+        xdg::templates()
+    }
+}
+
+impl DevicePlatform for Linux {
+    fn drives() -> Vec<flit_core::ui::Drive> {
+        places::drives()
+    }
+
+    fn wsl_distros() -> Vec<String> {
+        Vec::new()
+    }
+
+    fn watch_wsl(changed: Box<dyn Fn() + Send>) {
+        places::watch_mounts(Box::new(move || {
+            changed();
+            window::devices_changed();
+        }));
+        udisks::watch(window::devices_changed);
+    }
+}
+
+impl ProfilePlatform for Linux {
     fn state_dir() -> Option<PathBuf> {
         xdg::state_dir()
     }
@@ -168,17 +204,30 @@ impl Platform for Linux {
     fn config_dir() -> Option<PathBuf> {
         xdg::config_dir()
     }
+}
 
-    fn home() -> FsPath {
-        xdg::home().and_then(|h| xdg::fs_path(&h)).unwrap_or_else(FsPath::unix_root)
+impl SystemPlatform for Linux {
+    type Instance = instance::SocketInstance;
+
+    fn keep_awake(reason: &str) -> Option<flit_platform::Awake> {
+        awake::Awake::hold(reason).map(|a| Box::new(a) as flit_platform::Awake)
     }
 
-    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
-        network::discovery_warning(network::avahi_running(), tools::gvfs_network_present(), &tools::os_release())
+    fn utc_offset_minutes() -> i32 {
+        let now = unsafe { libc::time(std::ptr::null_mut()) };
+        let mut tm: libc::tm = unsafe { std::mem::zeroed() };
+        match unsafe { libc::localtime_r(&now, &mut tm) }.is_null() {
+            true => 0,
+            false => (tm.tm_gmtoff / 60) as i32,
+        }
     }
 
-    fn known_folder(name: &str) -> Option<Location> {
-        xdg::known_folder(name)
+    fn elevated() -> bool {
+        unsafe { libc::geteuid() == 0 }
+    }
+
+    fn missing_tools() -> Vec<flit_core::ui::MissingTool> {
+        tools::missing()
     }
 
     fn ui_language() -> String {
@@ -189,67 +238,40 @@ impl Platform for Linux {
         locale::date_patterns().unwrap_or_else(|| ("yyyy-MM-dd".into(), "HH:mm".into()))
     }
 
-    fn templates() -> Vec<flit_core::ui::NewTemplate> {
-        xdg::templates()
-    }
-
-    fn fatal_error(message: &str) {
-        eprintln!("flit: {message}");
-        alert::show(message);
-    }
-
-    fn refresh_period() -> Option<std::time::Duration> {
-        None
-    }
-
-    fn drives() -> Vec<flit_core::ui::Drive> {
-        places::drives()
-    }
-
-    fn wsl_distros() -> Vec<String> {
-        Vec::new()
-    }
-
     fn admin_launcher() -> Option<Box<dyn flit_platform::AgentLauncher>> {
         Some(Box::new(elevated::RootLauncher::pkexec()))
-    }
-
-    fn watch_wsl(changed: Box<dyn Fn() + Send>) {
-        places::watch_mounts(Box::new(move || {
-            changed();
-            window::devices_changed();
-        }));
-        udisks::watch(window::devices_changed);
     }
 
     fn integrate(on: bool) -> Result<(), PlatformError> {
         xdg::desktop_entry(on).and_then(|_| xdg::default_manager(on)).and_then(|_| xdg::bus_activation(on)).map_err(handle_error)
     }
 
-    fn file_key(path: &FsPath) -> Option<flit_core::tags::FileKey> {
-        flit_platform_linux::file_key(path)
+    fn wait_exit(pid: u32, limit: std::time::Duration) {
+        update::wait_exit(pid, limit)
     }
+}
 
-    fn resolve_files(files: &[(flit_core::tags::FileKey, &FsPath)]) -> Vec<flit_platform::Resolved> {
-        flit_platform_linux::resolve_files(files)
-    }
+impl SearchPlatform for Linux {
+    type IndexSource = WalkIndex;
+    type Service = Systemd;
+    type FallbackIndex = WalkIndex;
 
     fn shell_search(folder: Option<&FsPath>, query: &str, keep_going: &dyn Fn() -> bool, found: &mut dyn FnMut(FsPath, flit_core::Meta)) -> Result<(), PlatformError> {
         content::search(folder, query, keep_going, found)
     }
+}
 
-    fn sync_tag_names(path: &FsPath, drop: &[String], keep: &[String]) {
-        flit_platform_linux::sync_tag_names(path, drop, keep)
+impl NetworkPlatform for Linux {
+    fn network_warning() -> Option<flit_core::provider::NetworkWarning> {
+        network::discovery_warning(network::avahi_running(), tools::gvfs_network_present(), &tools::os_release())
     }
 
     fn download(url: &str, out: &mut dyn std::io::Write, progress: &mut dyn FnMut(u64, Option<u64>) -> bool) -> Result<(), PlatformError> {
         update::download(url, out, progress)
     }
-
-    fn wait_exit(pid: u32, limit: std::time::Duration) {
-        update::wait_exit(pid, limit)
-    }
 }
+
+impl Platform for Linux {}
 pub struct LinuxRenderer {
     gl: GlRenderer,
     window: Arc<dyn winit::window::Window>,

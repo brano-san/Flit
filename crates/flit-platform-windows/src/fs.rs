@@ -460,7 +460,7 @@ impl NtFs {
             _ if flit_core::library::is_library(dir) => return crate::library::list(dir, out),
             _ => {}
         }
-        if let Some(listed) = flit_archive::read_dir(dir, out, <crate::Windows as flit_platform::Platform>::utc_offset_minutes()) {
+        if let Some(listed) = flit_archive::read_dir(dir, out, <crate::Windows as flit_platform::SystemPlatform>::utc_offset_minutes()) {
             return listed;
         }
         let h = match open_dir(dir, FILE_LIST_DIRECTORY.0, false) {
