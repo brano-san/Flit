@@ -137,6 +137,7 @@ fn transfer_volume(fs: &dyn Fs, op: &FileOp) -> Option<Vec<u8>> {
     let crosses = |a: &FsPath, b: &FsPath| volume(a) != volume(b);
     match op {
         FileOp::Copy { dest, .. } | FileOp::Segments { dest, .. } => Some(volume(dest)),
+        FileOp::Dedup { keep, .. } | FileOp::RestoreDedup { keep, .. } => Some(volume(keep)),
         FileOp::Move { items, dest } if items.iter().any(|i| crosses(i, dest)) => Some(volume(dest)),
         FileOp::MoveTo(pairs) if pairs.iter().any(|(a, b)| crosses(a, b)) => pairs.first().map(|(_, b)| volume(b)),
         FileOp::Archive(ArchiveOp::Compress { archive, .. }) => Some(volume(archive)),
@@ -485,7 +486,7 @@ fn perform<S: FileOps>(sh: &mut S, op: FileOp, cut: bool, job: &Job) -> Finished
     }
     let out = match &op {
         FileOp::Segments { source, dest, part_size } => crate::segments::run(sh, source, dest, *part_size, job),
-        _ => sh.file_op(&op, job),
+        _ => crate::dedup::run(sh, &op, job).unwrap_or_else(|| sh.file_op(&op, job)),
     };
     if cut && out.error.is_none() {
         sh.clear_clipboard();

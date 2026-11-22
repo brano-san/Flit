@@ -31,6 +31,11 @@ pub fn inverse(report: &OpReport) -> Option<Step> {
         FileOp::Link { .. } if items.iter().all(|(_, to)| to.kind() == PathKind::Unix) => FileOp::Delete(items.iter().map(|(_, to)| to.clone()).collect()),
         FileOp::Copy { .. } | FileOp::Link { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } | FileOp::Restore(_) | FileOp::Archive(_) => created(),
         FileOp::Segments { .. } => created(),
+        FileOp::Dedup { keep, backups, .. } => {
+            if backups.is_empty() { return None; }
+            FileOp::RestoreDedup { keep: keep.clone(), backups: backups.clone() }
+        }
+        FileOp::RestoreDedup { keep, .. } => FileOp::Dedup { keep: keep.clone(), candidates: items.iter().map(|(_, to)| to.clone()).collect(), backups: Vec::new() },
         FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_) => FileOp::MoveTo(items.iter().map(|(from, to)| (to.clone(), from.clone())).collect()),
         FileOp::Rename { .. } => {
             let (old, new) = &items[0];
@@ -56,6 +61,12 @@ pub struct Journal {
 
 impl Journal {
     pub fn record(&mut self, origin: Origin, provider: ProviderId, report: &OpReport) {
+        if let (Origin::Undo, FileOp::RestoreDedup { keep, backups }) = (origin, &report.op) {
+            let remaining: Vec<_> = backups.iter().filter(|b| !report.items.iter().any(|(_, target)| *target == b.target)).cloned().collect();
+            if !remaining.is_empty() {
+                self.undo.push((provider.clone(), Step::Run(FileOp::RestoreDedup { keep: keep.clone(), backups: remaining })));
+            }
+        }
         let Some(step) = inverse(report) else { return };
         let stack = match origin {
             Origin::Fresh => {

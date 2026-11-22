@@ -667,6 +667,9 @@ impl App {
                 m.action("file.flatten", S::MenuFlattenFolder.t());
             }
             self.media_entries(m);
+            if count > 1 && folders == 0 && self.archive_view().is_none() && self.tab().view_loc.provider() == crate::location::ProviderId::Local {
+                m.action("file.dedup", S::DedupTitle.t());
+            }
             m.separator();
             if m.shown("archive.menu") {
                 self.archive_menu(m);

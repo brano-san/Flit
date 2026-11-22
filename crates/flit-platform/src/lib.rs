@@ -2,6 +2,7 @@ mod digest;
 mod indexer;
 mod local;
 mod segments;
+pub mod dedup;
 mod companions;
 pub use companions::companion_collision;
 pub mod walk;
@@ -565,6 +566,12 @@ impl Pasted {
 
 pub trait FileOps {
     fn file_identity(&mut self, _path: &FsPath) -> Option<flit_core::tags::FileKey> { None }
+    fn keep_dedup_backup(&mut self, _path: &FsPath, _original: &FsPath) -> Option<FsPath> { None }
+    fn rename_local_replace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
+        std::fs::rename(std_path(from), std_path(to))
+            .map_err(|e| PlatformError::new(i64::from(e.raw_os_error().unwrap_or(-1)), e.to_string()))
+    }
+    fn verify_dedup_data(&mut self, _path: &FsPath) -> Result<(), PlatformError> { Ok(()) }
     fn decode_local_ansi(&self, _bytes: &[u8]) -> Option<String> { None }
     fn rename_local_noreplace(&mut self, _from: &FsPath, _to: &FsPath) -> Result<(), PlatformError> {
         Err(PlatformError::new(-1, flit_core::i18n::S::ErrorsEngineBadName.en()))

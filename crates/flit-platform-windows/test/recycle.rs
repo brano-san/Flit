@@ -208,3 +208,24 @@ fn emptying_a_fake_bin_removes_items_and_orphans_but_keeps_desktop_ini() {
     assert_eq!(bin.names(), ["desktop.ini"]);
     assert_eq!(count(&[bin.path()]), 0);
 }
+
+#[test]
+fn recycling_a_staged_duplicate_records_the_live_name_and_folder() {
+    let bin = FakeBin::new("dedup-origin");
+    let staged = bin.top.join(".flit-parts").join("original");
+    let original = bin.top.join("download photo.jpg");
+    std::fs::create_dir(staged.parent().unwrap()).unwrap();
+    std::fs::write(&staged, b"original bytes").unwrap();
+    std::fs::write(&original, b"replacement bytes").unwrap();
+    let staged = FsPath::parse(staged.to_str().unwrap()).unwrap();
+    let original = FsPath::parse(original.to_str().unwrap()).unwrap();
+    let (mut budget, mut seed) = (u64::MAX, 7);
+    let recycled = recycle_from(&bin.path(), &staged, &original, &mut budget, &mut seed).unwrap();
+    assert!(!std_path(&staged).exists());
+    assert!(recycled.file_name().ends_with(b".jpg"));
+    let list = listed(&[bin.path()]);
+    let (i, _) = find(&list, "download photo.jpg");
+    assert_eq!(bin::original(&list, i), Some(original.clone()));
+    assert_eq!(std::fs::read(std_path(&original)).unwrap(), b"replacement bytes");
+    assert_eq!(std::fs::read(std_path(&recycled)).unwrap(), b"original bytes");
+}

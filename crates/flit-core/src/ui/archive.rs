@@ -80,6 +80,7 @@ pub(super) enum Kind {
     SettingsImport(super::settings::ImportPlan),
     SettingsImportDone(super::settings_import::AppliedImport),
     Segments { source: FsPath, split: bool },
+    Dedup { keep: FsPath, candidates: Vec<FsPath> },
     PortableMetaWait { id: u64, path: FsPath, sidecar: FsPath },
     PortableMeta { path: FsPath, sidecar: FsPath, value: crate::portable_meta::Metadata },
 }
@@ -110,6 +111,7 @@ impl Kind {
             Kind::SettingsImport(_) => "settings_import",
             Kind::SettingsImportDone(_) => "settings_import_done",
             Kind::Segments { .. } => "segments",
+            Kind::Dedup { .. } => "dedup",
             Kind::PortableMetaWait { .. } | Kind::PortableMeta { .. } => "portable_metadata",
         }
     }
@@ -783,6 +785,10 @@ impl App {
             Kind::Segments { .. } => self.submit_segments(f),
             Kind::PortableMeta { .. } => self.submit_portable_metadata(f, b),
             Kind::PortableMetaWait { .. } => None,
+            Kind::Dedup { keep, candidates } => {
+                self.submit_dedup(keep, candidates);
+                None
+            }
             Kind::SettingsImport(plan) => {
                 self.approve_settings_import(plan);
                 None

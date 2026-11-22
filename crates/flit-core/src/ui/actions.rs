@@ -530,6 +530,7 @@ pub static ACTIONS: &[Action] = &[
     Action::new("tags.settings", G::Flit, S::ActionsTagsSettings, S::DescribeTagsSettings, &[], |a, _| a.open_settings(Some(Page::Tags))),
     Action::new("file.split", G::Folder, S::SegmentsSplit, S::SegmentsDescribeSplit, &[], |a, _| a.segments_dialog(true)),
     Action::new("file.join", G::Folder, S::SegmentsJoin, S::SegmentsDescribeJoin, &[], |a, _| a.segments_dialog(false)),
+    Action::new("file.dedup", G::Folder, S::DedupTitle, S::DedupDescribe, &[], |a, _| a.dedup_selection()),
     Action::new("file.metadata", G::Folder, S::PortableMetaTitle, S::PortableMetaDescribe, &[], |a, _| a.file_metadata()),
     Action::new("settings.export", G::Flit, S::ActionsSettingsExport, S::DescribeSettingsExport, &[], |a, _| a.ask_export_settings()),
     Action::new("settings.import", G::Flit, S::ActionsSettingsImport, S::DescribeSettingsImport, &[], |a, _| a.ask_import_settings()),

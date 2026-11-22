@@ -341,6 +341,8 @@ fn job_title(op: &FileOp) -> Option<String> {
         FileOp::Archive(ArchiveOp::Extract { archives, .. }) => crate::tr!(S::UiJobTitleExtracting, what = count(archives)),
         FileOp::Archive(ArchiveOp::Open { item }) => crate::tr!(S::UiJobTitleOpening, what = quoted(item)),
         FileOp::Segments { source, part_size, .. } => crate::tr!(if part_size.is_some() { S::SegmentsSplitting } else { S::SegmentsJoining }, what = quoted(source)),
+        FileOp::Dedup { keep, .. } => crate::tr!(S::DedupReplacing, what = quoted(keep)),
+        FileOp::RestoreDedup { keep, .. } => crate::tr!(S::DedupRestoring, what = quoted(keep)),
         FileOp::InstallFonts(fonts) => crate::tr!(S::OpsExtraInstallingFonts, what = count(fonts)),
         FileOp::SetAccess { items, .. } => crate::tr!(S::PermissionsChanging, what = count(items)),
         FileOp::SetAttributes { items, .. } => crate::tr!(S::PropertiesChanging, what = count(items)),

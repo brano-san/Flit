@@ -17,7 +17,7 @@ use windows::core::{s, HRESULT, PCWSTR, PWSTR};
 use windows::Win32::Foundation::ERROR_CANCELLED;
 use windows::Win32::Storage::FileSystem::{
     CopyFile2, CreateDirectoryW, DeleteFileW, GetFileAttributesW, MoveFileExW, SetFileAttributesW, COPYFILE2_EXTENDED_PARAMETERS, COPY_FILE_FAIL_IF_EXISTS, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_HIDDEN, FILE_ATTRIBUTE_NORMAL,
-    FILE_ATTRIBUTE_READONLY, FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES, MOVE_FILE_FLAGS,
+    FILE_ATTRIBUTE_READONLY, FILE_FLAGS_AND_ATTRIBUTES, INVALID_FILE_ATTRIBUTES, MOVEFILE_REPLACE_EXISTING, MOVE_FILE_FLAGS,
 };
 use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
 use windows::Win32::UI::Shell::*;
@@ -156,6 +156,8 @@ fn check_names(op: &FileOp) -> Result<(), PlatformError> {
         FileOp::Paste { dest } | FileOp::PasteLink { dest } | FileOp::PasteLinkAs { dest, .. } | FileOp::PasteDropped { dest, .. } => vec![dest],
         FileOp::Archive(_) => Vec::new(),
         FileOp::Segments { source, dest, .. } => vec![source, dest],
+        FileOp::Dedup { keep, candidates, .. } => [keep].into_iter().chain(candidates).collect(),
+        FileOp::RestoreDedup { keep, backups } => [keep].into_iter().chain(backups.iter().flat_map(|b| [&b.target, &b.trash])).collect(),
         FileOp::InstallFonts(v) => v.iter().collect(),
         FileOp::LockScreen(p) | FileOp::GrantAccess(p) => vec![p],
         FileOp::SetAccess { items, .. } | FileOp::SetAttributes { items, .. } => items.iter().collect(),
@@ -285,7 +287,7 @@ unsafe fn queue(fo: &IFileOperation, op: &FileOp) -> Result<(), PlatformError> {
             };
             fo.NewItem(&shell_item(dir)?, FILE_ATTRIBUTE_NORMAL.0, PCWSTR(name.as_ptr()), source.as_ref().map_or(PCWSTR::null(), |s| PCWSTR(s.as_ptr())), None).map_err(err)?;
         }
-        FileOp::Link { .. } | FileOp::LinkAs { .. } | FileOp::PasteLinkAs { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) | FileOp::Segments { .. } => return Err(PlatformError::new(-1, "not a file operation")),
+        FileOp::Link { .. } | FileOp::LinkAs { .. } | FileOp::PasteLinkAs { .. } | FileOp::Restore(_) | FileOp::Paste { .. } | FileOp::PasteLink { .. } | FileOp::Purge(_) | FileOp::EmptyBin | FileOp::NewStream { .. } | FileOp::Flatten(_) | FileOp::FolderIcon { .. } | FileOp::Archive(_) | FileOp::InstallFonts(_) | FileOp::LockScreen(_) | FileOp::SetAccess { .. } | FileOp::Access(_) | FileOp::SetAttributes { .. } | FileOp::PasteDropped { .. } | FileOp::GrantAccess(_) | FileOp::Segments { .. } | FileOp::Dedup { .. } | FileOp::RestoreDedup { .. } => return Err(PlatformError::new(-1, "not a file operation")),
     }
     Ok(())
 }
@@ -572,6 +574,34 @@ fn device_op(op: &FileOp, job: &Job) -> OpOutcome {
     }
 }
 
+pub(crate) fn verify_dedup_data(path: &FsPath) -> Result<(), PlatformError> {
+    use windows::Win32::Foundation::{ERROR_HANDLE_EOF, WIN32_ERROR};
+    use windows::Win32::Storage::FileSystem::{FindClose, FindFirstStreamW, FindNextStreamW, FindStreamInfoStandard, WIN32_FIND_STREAM_DATA};
+
+    let wide = path.to_wide(true);
+    let mut data = WIN32_FIND_STREAM_DATA::default();
+    let handle = unsafe { FindFirstStreamW(PCWSTR(wide.as_ptr()), FindStreamInfoStandard, (&mut data as *mut WIN32_FIND_STREAM_DATA).cast(), None) };
+    let handle = match handle {
+        Ok(h) => h,
+        Err(e) if WIN32_ERROR::from_error(&e) == Some(ERROR_HANDLE_EOF) => return Ok(()),
+        Err(e) => return Err(err(e)),
+    };
+    let result = loop {
+        let wide = data.cStreamName.split(|&c| c == 0).next().unwrap_or_default();
+        let name = String::from_utf16_lossy(wide);
+        if !name.eq_ignore_ascii_case("::$DATA") && !name.eq_ignore_ascii_case(":Zone.Identifier:$DATA") {
+            break Err(PlatformError::new(-1, tr_en!(S::DedupRichDataNamed, name = name)));
+        }
+        match unsafe { FindNextStreamW(handle, (&mut data as *mut WIN32_FIND_STREAM_DATA).cast()) } {
+            Ok(()) => {}
+            Err(e) if WIN32_ERROR::from_error(&e) == Some(ERROR_HANDLE_EOF) => break Ok(()),
+            Err(e) => break Err(err(e)),
+        }
+    };
+    let _ = unsafe { FindClose(handle) };
+    result
+}
+
 impl FileOps for ShellCom {
     fn decode_local_ansi(&self, bytes: &[u8]) -> Option<String> {
         use windows::Win32::Globalization::{CP_ACP, MB_ERR_INVALID_CHARS, MultiByteToWideChar};
@@ -586,10 +616,24 @@ impl FileOps for ShellCom {
         rename_local_noreplace(from, to)
     }
 
+    fn verify_dedup_data(&mut self, path: &FsPath) -> Result<(), PlatformError> {
+        verify_dedup_data(path)
+    }
+
     fn file_identity(&mut self, path: &FsPath) -> Option<flit_core::tags::FileKey> {
         crate::tags::file_key(path)
     }
 
+    fn rename_local_replace(&mut self, from: &FsPath, to: &FsPath) -> Result<(), PlatformError> {
+        let (src, dst) = (from.to_wide(true), to.to_wide(true));
+        unsafe { MoveFileExW(PCWSTR(src.as_ptr()), PCWSTR(dst.as_ptr()), MOVEFILE_REPLACE_EXISTING) }.map_err(err)?;
+        notify(SHCNE_UPDATEITEM, to, None);
+        Ok(())
+    }
+
+    fn keep_dedup_backup(&mut self, path: &FsPath, original: &FsPath) -> Option<FsPath> {
+        crate::recycle::keep_dedup_backup(path, original)
+    }
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         if !op.all_paths(|p| p.kind() != flit_core::path::PathKind::Shell) {
             return device_op(op, job);

@@ -271,9 +271,13 @@ impl Trash {
     }
 
     pub fn trash(&self, path: &Path) -> io::Result<PathBuf> {
-        let base = path.file_name().ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
+        self.trash_from(path, path)
+    }
+
+    pub fn trash_from(&self, path: &Path, original: &Path) -> io::Result<PathBuf> {
+        let base = original.file_name().ok_or_else(|| io::Error::from_raw_os_error(libc::EINVAL))?;
         let dev = fs::symlink_metadata(path)?.dev();
-        let (dir, original) = self.place(path, dev)?;
+        let (dir, original) = self.place(original, dev)?;
         let (files, info) = (dir.join("files"), dir.join("info"));
         private_dirs(&files)?;
         private_dirs(&info)?;

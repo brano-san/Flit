@@ -78,6 +78,7 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
         ("Open Types Dropdown", "Alt+T"),
         ("Split file…", ""),
         ("Join parts…", ""),
+        ("Replace duplicates with hard links…", ""),
         ("File metadata…", ""),
     ]),
     ("View", &[

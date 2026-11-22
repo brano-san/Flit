@@ -208,6 +208,22 @@ pub enum FileOp {
     LinkAs { items: Vec<FsPath>, dest: FsPath, kind: LinkKind },
     PasteLinkAs { dest: FsPath, kind: LinkKind },
     Segments { source: FsPath, dest: FsPath, part_size: Option<u64> },
+    Dedup { keep: FsPath, candidates: Vec<FsPath>, backups: Vec<DedupBackup> },
+    RestoreDedup { keep: FsPath, backups: Vec<DedupBackup> },
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct DedupBackup {
+    pub target: FsPath,
+    pub trash: FsPath,
+    pub linked: crate::tags::FileKey,
+    pub saved: crate::tags::FileKey,
+}
+
+impl DedupBackup {
+    fn map(&self, f: &impl Fn(&FsPath) -> Option<FsPath>) -> Option<Self> {
+        Some(Self { target: f(&self.target)?, trash: f(&self.trash)?, ..self.clone() })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -317,6 +333,8 @@ impl FileOp {
             FileOp::LinkAs { items, dest, kind } => FileOp::LinkAs { items: all(items)?, dest: f(dest)?, kind: *kind },
             FileOp::PasteLinkAs { dest, kind } => FileOp::PasteLinkAs { dest: f(dest)?, kind: *kind },
             FileOp::Segments { source, dest, part_size } => FileOp::Segments { source: f(source)?, dest: f(dest)?, part_size: *part_size },
+            FileOp::Dedup { keep, candidates, backups } => FileOp::Dedup { keep: f(keep)?, candidates: all(candidates)?, backups: backups.iter().map(|b| b.map(&f)).collect::<Option<_>>()? },
+            FileOp::RestoreDedup { keep, backups } => FileOp::RestoreDedup { keep: f(keep)?, backups: backups.iter().map(|b| b.map(&f)).collect::<Option<_>>()? },
         })
     }
 }

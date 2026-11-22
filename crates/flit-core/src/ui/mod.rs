@@ -39,6 +39,7 @@ mod preview_pane;
 pub mod settings;
 mod settings_import;
 mod segments;
+mod dedup;
 mod portable_meta;
 mod settings_page;
 mod setting_editor;
