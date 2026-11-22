@@ -371,3 +371,4 @@
 "item.quick_view" = "Die Auswahl in einem separaten Fenster anzeigen, Leertaste"
 "preview.play" = "Audio oder Video in der Vorschau starten oder stoppen"
 "app.check_updates" = "Bei GitHub nachsehen, ob ein neueres Flit erschienen ist, dann herunterladen, installieren und neu starten, Update, Aktualisierung, neue Version, Release"
+"edit.undo_history" = "Vorgang zum Rückgängigmachen oder Wiederholen wählen"

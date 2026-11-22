@@ -369,3 +369,4 @@
 "status.no_real_path" = "Cet élément n’a pas d’emplacement réel sur le disque."
 "status.select_program" = "Sélectionnez d'abord un fichier exécutable."
 "app.check_updates" = "Rechercher les mises à jour"
+"edit.undo_history" = "Historique des opérations"

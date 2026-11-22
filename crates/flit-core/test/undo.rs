@@ -100,3 +100,39 @@ fn linux_trash_is_undone_by_a_restore_in_the_same_distro() {
     j.record(Origin::Fresh, wsl.clone(), &trashed);
     assert_eq!(j.take(Origin::Undo), Some((wsl, Step::Run(FileOp::Restore(vec![(p("/home/u/.local/share/Trash/files/a:b"), p("/home/u/a:b"))])))));
 }
+
+#[test]
+fn history_can_undo_an_older_independent_operation_and_keep_its_identity_for_redo() {
+    let mut journal = Journal::default();
+    let local = ProviderId::Local;
+    let first = report(FileOp::Copy { items: vec![p("/source/a")], dest: p("/target") }, &[("/source/a", "/target/a")]);
+    let second = report(FileOp::Copy { items: vec![p("/source/b")], dest: p("/target") }, &[("/source/b", "/target/b")]);
+    journal.record(Origin::Fresh, local.clone(), &first);
+    journal.record(Origin::Fresh, local.clone(), &second);
+    let first_id = journal.entries(Origin::Undo)[0].id;
+    let second_id = journal.entries(Origin::Undo)[1].id;
+    assert!(journal.blockers(Origin::Undo, first_id).is_empty());
+    assert_eq!(journal.begin(Origin::Undo, Some(first_id)), Some((local.clone(), Step::Run(FileOp::Trash(vec![p("/target/a")])))));
+    journal.record(Origin::Undo, local.clone(), &report(FileOp::Trash(vec![p("/target/a")]), &[("/target/a", "/trash/files/a")]));
+    assert_eq!(journal.entries(Origin::Undo)[0].id, second_id);
+    assert_eq!(journal.entries(Origin::Redo)[0].id, first_id);
+    let third = report(FileOp::Copy { items: vec![p("/source/c")], dest: p("/target") }, &[("/source/c", "/target/c")]);
+    journal.record(Origin::Fresh, local, &third);
+    assert!(journal.entries(Origin::Redo).is_empty());
+}
+
+#[test]
+fn history_lists_transitive_dependencies_newest_first_and_failed_undo_remains_available() {
+    let mut journal = Journal::default();
+    let local = ProviderId::Local;
+    for (a, b) in [("/a", "/b"), ("/b", "/c"), ("/other", "/independent"), ("/c", "/last")] {
+        journal.record(Origin::Fresh, local.clone(), &report(FileOp::MoveTo(vec![(p(a), p(b))]), &[(a, b)]));
+    }
+    let ids: Vec<_> = journal.entries(Origin::Undo).iter().map(|entry| entry.id).collect();
+    assert_eq!(journal.blockers(Origin::Undo, ids[0]), [ids[3], ids[1]]);
+    assert!(journal.begin(Origin::Undo, Some(ids[3])).is_some());
+    assert!(journal.running());
+    journal.record(Origin::Undo, local, &OpReport::new(FileOp::MoveTo(Vec::new()), Vec::new()));
+    assert!(!journal.running());
+    assert_eq!(journal.entries(Origin::Undo).last().unwrap().id, ids[3]);
+}

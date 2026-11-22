@@ -130,15 +130,45 @@ pub fn inverse_ops(report: &OpReport) -> Option<Vec<Step>> {
     Some(steps)
 }
 
+#[derive(Clone, Debug)]
+pub struct Entry {
+    pub id: u64,
+    pub provider: ProviderId,
+    label: S,
+    pub example: FsPath,
+    pub step: Step,
+    paths: Vec<FsPath>,
+}
+
 #[derive(Default, Debug)]
 pub struct Journal {
-    undo: Vec<(ProviderId, Step)>,
-    redo: Vec<(ProviderId, Step)>,
+    undo: Vec<Entry>,
+    redo: Vec<Entry>,
+    current: Option<(Origin, usize, Entry)>,
+    id: u64,
 }
 
 impl Journal {
     pub fn record(&mut self, origin: Origin, provider: ProviderId, report: &OpReport) {
-        let Some(step) = inverse(report) else { return };
+        let Some(step) = inverse(report) else {
+            if origin != Origin::Fresh {
+                self.retry();
+            }
+            return;
+        };
+        let entry = if origin != Origin::Fresh {
+            self.current.take().map(|(_, _, mut entry)| {
+                entry.step = step.clone();
+                entry
+            })
+        } else {
+            None
+        };
+        let entry = entry.unwrap_or_else(|| {
+            self.id += 1;
+            let paths = report.items.iter().flat_map(|(a, b)| [a.clone(), b.clone()]).collect();
+            Entry { id: self.id, provider, label: operation_label(&report.op), example: report.items[0].0.clone(), step, paths }
+        });
         let stack = match origin {
             Origin::Fresh => {
                 self.redo.clear();
@@ -147,22 +177,105 @@ impl Journal {
             Origin::Undo => &mut self.redo,
             Origin::Redo => &mut self.undo,
         };
-        stack.push((provider, step));
+        stack.push(entry);
         if stack.len() > DEPTH {
             stack.remove(0);
         }
     }
 
-    pub fn take(&mut self, origin: Origin) -> Option<(ProviderId, Step)> {
+    pub fn entries(&self, origin: Origin) -> &[Entry] {
         match origin {
-            Origin::Undo => self.undo.pop(),
-            Origin::Redo => self.redo.pop(),
+            Origin::Undo => &self.undo,
+            Origin::Redo => &self.redo,
+            Origin::Fresh => &[],
+        }
+    }
+
+    pub fn running(&self) -> bool {
+        self.current.is_some()
+    }
+
+    pub fn blockers(&self, origin: Origin, id: u64) -> Vec<u64> {
+        let entries = self.entries(origin);
+        let Some(at) = entries.iter().position(|entry| entry.id == id) else { return Vec::new() };
+        let mut affected = vec![&entries[at]];
+        for entry in &entries[at + 1..] {
+            if affected.iter().any(|earlier| earlier.overlaps(entry)) {
+                affected.push(entry);
+            }
+        }
+        affected[1..].iter().rev().map(|entry| entry.id).collect()
+    }
+
+    pub fn begin(&mut self, origin: Origin, id: Option<u64>) -> Option<(ProviderId, Step)> {
+        if self.running() {
+            return None;
+        }
+        let stack = self.stack_mut(origin)?;
+        let at = match id {
+            Some(id) => stack.iter().position(|entry| entry.id == id)?,
+            None => stack.len().checked_sub(1)?,
+        };
+        let entry = &stack[at];
+        let step = (entry.provider.clone(), entry.step.clone());
+        if !matches!(step.1, Step::Refuse(_)) {
+            let entry = stack.remove(at);
+            self.current = Some((origin, at, entry));
+        } else if id.is_none() {
+            stack.remove(at);
+        }
+        Some(step)
+    }
+
+    fn stack_mut(&mut self, origin: Origin) -> Option<&mut Vec<Entry>> {
+        match origin {
+            Origin::Undo => Some(&mut self.undo),
+            Origin::Redo => Some(&mut self.redo),
             Origin::Fresh => None,
         }
     }
 
+    pub fn retry(&mut self) {
+        if let Some((origin, at, entry)) = self.current.take() {
+            if let Some(stack) = self.stack_mut(origin) {
+                stack.insert(at.min(stack.len()), entry);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn take(&mut self, origin: Origin) -> Option<(ProviderId, Step)> {
+        let entry = self.stack_mut(origin)?.pop()?;
+        Some((entry.provider, entry.step))
+    }
+
     pub fn depth(&self) -> (usize, usize) {
         (self.undo.len(), self.redo.len())
+    }
+}
+
+impl Entry {
+    pub fn label(&self) -> String {
+        format!("{} · {}", self.label.t(), self.example.display())
+    }
+
+    fn overlaps(&self, other: &Self) -> bool {
+        self.provider == other.provider
+            && self.paths.iter().any(|a| other.paths.iter().any(|b| a.same(b) || a.is_inside(b) || b.is_inside(a)))
+    }
+}
+
+fn operation_label(op: &FileOp) -> S {
+    match op {
+        FileOp::Copy { .. } => S::ActionsFileCopy,
+        FileOp::Move { .. } | FileOp::MoveTo(_) | FileOp::Flatten(_) => S::UiOpsUndoHistoryMove,
+        FileOp::Rename { .. } => S::ActionsFileRename,
+        FileOp::Trash(_) => S::ActionsItemTrash,
+        FileOp::Restore(_) => S::ActionsBinRestore,
+        FileOp::NewFolder { .. } => S::ActionsFileNewFolder,
+        FileOp::NewFile { .. } => S::ActionsFileNewFile,
+        FileOp::Archive(ArchiveOp::Compress { .. }) => S::ActionsArchiveCompress,
+        _ => S::UiOpsUndoHistoryOperation,
     }
 }
 

@@ -369,3 +369,4 @@
 "status.no_real_path" = "Dieses Element hat keinen echten Speicherort auf dem Datenträger."
 "status.select_program" = "Wählen Sie zuerst eine ausführbare Datei."
 "app.check_updates" = "Nach Updates suchen"
+"edit.undo_history" = "Rückgängig-Verlauf"
