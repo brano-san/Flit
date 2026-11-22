@@ -4,7 +4,7 @@ use super::jobs::JobState;
 use super::{App, Effect};
 use crate::i18n::{P, S};
 use crate::provider::Launch;
-use crate::update::{percent, Release, UpdateEvent, UpdateRequest, CURRENT, RELEASES_URL};
+use crate::update::{percent, ManagedInstallation, Release, UpdateEvent, UpdateRequest, CURRENT, RELEASES_URL};
 
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -24,6 +24,7 @@ pub(super) enum Stage {
     Ask,
     Busy,
     ReadOnly,
+    Package,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -37,6 +38,7 @@ fn buttons(stage: Stage) -> Vec<&'static str> {
         Stage::Ask => vec![S::UpdateDialogInstall.t(), S::UpdateDialogSkip.t(), S::UpdateDialogLater.t()],
         Stage::Busy => vec![S::WidgetsCancel.t()],
         Stage::ReadOnly => vec![S::UpdateDialogOpenReleases.t(), S::UpdateDialogLater.t()],
+        Stage::Package => vec![S::UpdateDialogSkip.t(), S::UpdateDialogLater.t()],
     }
 }
 
@@ -68,6 +70,12 @@ fn note_lines(notes: &str) -> Vec<String> {
 
 impl App {
     pub fn check_updates(&mut self, manual: bool) {
+        if self.about.store_managed {
+            if manual {
+                self.status(S::UpdateDialogMicrosoftStore.t());
+            }
+            return;
+        }
         if manual {
             self.status(S::UpdateStatusChecking.t());
         }
@@ -75,7 +83,7 @@ impl App {
     }
 
     pub fn checks_updates_on_start(&self) -> bool {
-        self.updates.on_start
+        self.updates.on_start && !self.about.store_managed
     }
 
     pub fn file_jobs_running(&self) -> usize {
@@ -95,7 +103,9 @@ impl App {
         match ev {
             UpdateEvent::Checked { manual, found: Err(error) } if manual => self.status(crate::tr!(S::UpdateStatusCheckFailed, error = error)),
             UpdateEvent::Checked { manual, found: Ok(None) } if manual => self.status(crate::tr!(S::UpdateStatusUpToDate, version = CURRENT)),
-            UpdateEvent::Checked { manual, found: Ok(Some(release)) } => self.offer_update(release, manual),
+            UpdateEvent::Checked { manual, found: Ok(Some(release)) } => self.offer_update(release, manual, None),
+            UpdateEvent::Managed { manual, release, installation } => self.offer_update(release, manual, Some(installation)),
+            UpdateEvent::StoreManaged => self.status(S::UpdateDialogMicrosoftStore.t()),
             UpdateEvent::Checked { .. } => {}
             UpdateEvent::Progress { received, total } => {
                 if let Some((f, version)) = self.busy_update() {
@@ -121,21 +131,35 @@ impl App {
         self.dirty = true;
     }
 
-    fn offer_update(&mut self, release: Release, manual: bool) {
+    fn offer_update(&mut self, release: Release, manual: bool, installation: Option<ManagedInstallation>) {
         if !manual && self.updates.skipped.contains(&release.version) {
             return;
         }
         if let Some(f) = &self.jobs.form {
             if !matches!(f.kind, Kind::Update(_)) {
-                self.status(crate::tr!(S::UpdateStatusAvailable, version = release.version));
+                self.status(if installation.is_some() { crate::tr!(S::UpdateStatusManagedAvailable, version = release.version) } else { crate::tr!(S::UpdateStatusAvailable, version = release.version) });
+                return;
             }
-            return;
+            if installation.is_none() {
+                return;
+            }
         }
         let title = crate::tr!(S::UpdateDialogTitle, version = release.version);
         let mut controls = vec![Control::value(S::UpdateDialogInstalled.t(), CURRENT), Control::value(S::UpdateDialogNew.t(), &release.version)];
+        let (stage, message) = match installation {
+            Some(ManagedInstallation::Package(command)) => {
+                controls.push(Control::paragraph(S::UpdateDialogPackageManager.t().to_owned()));
+                controls.push(Control::line(&command));
+                (Stage::Package, None)
+            }
+            Some(ManagedInstallation::AppImage) => (Stage::ReadOnly, Some(S::UpdateDialogAppimage.t())),
+            None => (Stage::Ask, Some(S::UpdateDialogRestart.t())),
+        };
         controls.extend(note_lines(&release.notes).iter().map(|l| Control::line(l)));
-        let mut form = Form::new(Kind::Update(Updating { release, stage: Stage::Ask }), &title, controls, buttons(Stage::Ask));
-        form.say(S::UpdateDialogRestart.t(), false);
+        let mut form = Form::new(Kind::Update(Updating { release, stage }), &title, controls, buttons(stage));
+        if let Some(message) = message {
+            form.say(message, false);
+        }
         self.open_form(form);
     }
 
@@ -169,7 +193,7 @@ impl App {
                 self.effects.push(Effect::Update(request));
                 Some(f)
             }
-            (Stage::Ask, 1) => {
+            (Stage::Ask, 1) | (Stage::Package, 0) => {
                 self.updates.skipped = vec![u.release.version.clone()];
                 None
             }

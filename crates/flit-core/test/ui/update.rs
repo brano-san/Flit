@@ -186,3 +186,16 @@ fn the_dialog_leaves_room_between_its_parts_and_keeps_buttons_to_their_text() {
     assert!(f.button_rects.windows(2).all(|w| (w[1].x - w[0].right() - 8.0).abs() < 1.0));
     assert!(f.button_rects.iter().map(|r| r.w).sum::<f32>() < f.rect.w - 80.0, "buttons are as wide as their text, not stretched across");
 }
+
+#[test]
+fn w3_sys_a_managed_package_keeps_version_checks_and_shows_an_upgrade_command() {
+    let mut a = app();
+    let command = "sudo apt install --only-upgrade flit";
+    a.on_update(UpdateEvent::Managed { manual: true, release: release("9.0.0"), installation: ManagedInstallation::Package(command.into()) });
+    let form = a.jobs.form.as_ref().unwrap();
+    assert_eq!(stage(&a), Some(Stage::Package));
+    assert!(!form.buttons.contains(&S::UpdateDialogInstall.t()));
+    assert!(form.controls.iter().any(|control| matches!(control, Control::Line(value) if value == command)));
+    key(&mut a, Key::Enter);
+    assert!(requests(&mut a).is_empty());
+}

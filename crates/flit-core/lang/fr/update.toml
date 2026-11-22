@@ -14,6 +14,8 @@ check_failed = "Impossible de rechercher les mises à jour : {error}"
 available = "Flit {version} est disponible : « Rechercher les mises à jour » l’installe"
 failed = "Impossible d’installer la mise à jour : {error}"
 
+managed_available = "Flit {version} est disponible. Vérifiez les mises à jour pour afficher les instructions."
+
 [dialog]
 title = "Flit {version} est disponible"
 installed = "Version installée"
@@ -28,6 +30,11 @@ downloading_plain = "Téléchargement de Flit {version}…"
 installing = "Installation de Flit {version}…"
 read_only = "Flit ne peut pas remplacer ses fichiers dans {dir}. Téléchargez la nouvelle version depuis la page des versions."
 jobs = ["{n} opération sur les fichiers est encore en cours. Installez la mise à jour quand elle sera terminée.", "{n} d’opérations sur les fichiers sont encore en cours. Installez la mise à jour quand elles seront terminées.", "{n} opérations sur les fichiers sont encore en cours. Installez la mise à jour quand elles seront terminées."]
+
+package_manager = "Mettre à jour via le gestionnaire de paquets"
+appimage = "Téléchargez la nouvelle AppImage depuis la page des versions."
+
+microsoft_store = "Microsoft Store gère les mises à jour de cette installation."
 
 [page]
 group = "Mises à jour"

@@ -116,7 +116,7 @@ fn a_bus_activation_file_replaced_by_someone_else_is_left_alone() {
 fn the_desktop_entry_runs_this_executable_and_handles_folders() {
     let text = desktop_text(Path::new("/opt/my apps/100%/a\"b$c\\d"));
     assert!(text.contains("\nExec=\"/opt/my apps/100%%/a\\\\\"b\\\\$c\\\\\\\\d\" %U\n"), "{text}");
-    assert!(text.contains("\nMimeType=inode/directory;\n") && text.starts_with("[Desktop Entry]\n"), "{text}");
+    assert!(text.contains("\nMimeType=inode/directory;application/zip;") && text.starts_with("[Desktop Entry]\n"), "{text}");
     assert_eq!(text.lines().filter(|l| l.starts_with("Exec=")).count(), 2);
     assert!(text.lines().all(|l| !l.starts_with("Exec=flit")), "{text}");
 }

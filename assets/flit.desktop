@@ -8,7 +8,7 @@ Icon=flit
 Terminal=false
 StartupNotify=true
 Categories=System;FileTools;FileManager;Utility;Core;
-MimeType=inode/directory;
+MimeType=inode/directory;application/zip;application/x-7z-compressed;application/vnd.rar;application/x-tar;application/x-compressed-tar;application/gzip;application/x-lha;application/java-archive;
 StartupWMClass=flit
 Actions=new-window;
 

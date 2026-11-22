@@ -14,6 +14,8 @@ check_failed = "No se pueden buscar actualizaciones: {error}"
 available = "Flit {version} está disponible: «Buscar actualizaciones» lo instala"
 failed = "No se puede instalar la actualización: {error}"
 
+managed_available = "Flit {version} está disponible. Busque actualizaciones para ver las instrucciones."
+
 [dialog]
 title = "Flit {version} está disponible"
 installed = "Versión instalada"
@@ -28,6 +30,11 @@ downloading_plain = "Descargando Flit {version}…"
 installing = "Instalando Flit {version}…"
 read_only = "Flit no puede reemplazar sus archivos en {dir}. Descargue la nueva versión desde la página de versiones."
 jobs = ["Todavía hay {n} operación con archivos en curso. Instale la actualización cuando termine.", "Todavía hay {n} de operaciones con archivos en curso. Instale la actualización cuando terminen.", "Todavía hay {n} operaciones con archivos en curso. Instale la actualización cuando terminen."]
+
+package_manager = "Actualice mediante el gestor de paquetes"
+appimage = "Descargue la nueva AppImage desde la página de versiones."
+
+microsoft_store = "Microsoft Store gestiona las actualizaciones de esta instalación."
 
 [page]
 group = "Actualizaciones"

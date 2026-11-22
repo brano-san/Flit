@@ -585,3 +585,14 @@ fn primary_reply_in_search_keeps_the_click_and_skips_a_reopened_search() {
     a.on_event(&Event::PrimaryPasted(stale, "late".into()), t0());
     assert_eq!(a.search_text(), "alXpha");
 }
+
+#[test]
+fn w3_sys_only_exact_saved_history_entries_can_be_opened_by_a_search_link() {
+    let mut a = app();
+    a.set_search_history(vec!["quarterly reports".to_owned()]);
+    assert!(!a.open_saved_search("quarterly"));
+    assert!(!a.search_active());
+    assert!(a.open_saved_search("quarterly reports"));
+    assert!(a.search_active());
+    assert_eq!(a.search_text(), "quarterly reports");
+}
