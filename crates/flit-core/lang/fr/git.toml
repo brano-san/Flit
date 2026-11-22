@@ -13,6 +13,15 @@ creating = "Création de la branche…"
 deleting = "Suppression de la branche…"
 created = "Branche {branch} créée"
 deleted = "Branche {branch} supprimée"
+switch_title = "Modifications locales"
+switch_blocked = "Le passage à {branch} écraserait les modifications locales."
+switch_choice = "Action"
+switch_merge = "Transférer les modifications"
+switch_stash = "Remiser et changer de branche"
+switch_discard = "Abandonner les modifications"
+switch_continue = "Continuer"
+switch_discard_confirm = "Abandonner définitivement les modifications locales et passer à {branch} ?"
+switch_changed = "La branche actuelle a changé. Réessayez de changer de branche."
 
 [sequence]
 merge = "Fusion en cours"
@@ -54,6 +63,9 @@ initializing = "Création du dépôt Git…"
 cloning = "Clonage de {url}…"
 switching = "Passage à {branch}…"
 
+cancelled = "Opération Git annulée"
+cloning_name = "Clonage de {name}…"
+
 [done]
 sync = "Synchronisation terminée"
 fetch = "Récupération terminée"
@@ -62,6 +74,8 @@ push = "Push terminé"
 init = "Dépôt Git créé"
 clone = "Cloné dans {name}"
 switch = "Passé à {branch}"
+
+notify = "{title} terminé"
 
 [error]
 no_upstream = "Aucune branche amont"
@@ -75,6 +89,11 @@ auth_title = "Se connecter au serveur Git"
 auth_text = "Git a besoin d’un nom d’utilisateur, d’un mot de passe ou d’une clé pour exécuter {command}. Lancez la commande dans un terminal, où Git pourra les demander."
 auth_open = "Ouvrir un terminal"
 
+github_login = "Se connecter à GitHub"
+github_install = "Installez {package} pour vous connecter à GitHub depuis cette fenêtre."
+
+unknown = "Git n’a pas indiqué la cause de l’échec"
+
 [clone]
 title = "Cloner un dépôt"
 url = "URL du dépôt"
@@ -82,3 +101,41 @@ hint = "https://github.com/owner/repo.git"
 button = "Cloner"
 integration = "Intégration Git"
 integration_help = "Afficher les états Git et les informations du dépôt"
+
+destination = "Dossier de destination"
+cleanup_failed = "Impossible de supprimer le clone annulé dans {path} : {error}"
+in_progress = "Un autre clonage utilise déjà {path}."
+
+[stash]
+restore = "Restaurer les modifications remisées"
+restoring = "Restauration des modifications remisées…"
+restored = "Modifications remisées restaurées"
+missing = "Cette remise n’existe plus."
+switched = "Branche {branch} active. Utilisez git stash pop pour restaurer les modifications remisées."
+switch_failed = "Les modifications ont été remisées. Restaurez-les avec git stash pop. Échec du changement de branche : {error}"
+count = ["{n} remise", "{n} de remises", "{n} remises"]
+apply = "Appliquer"
+drop = "Supprimer…"
+drop_confirm = "Supprimer définitivement cette remise ? {stash}"
+applying = "Application de la remise…"
+applied = "Remise appliquée"
+dropping = "Suppression de la remise…"
+dropped = "Remise supprimée"
+
+[progress]
+counting = "Comptage des objets"
+compressing = "Compression des objets"
+receiving = "Réception des objets"
+resolving = "Résolution des deltas"
+writing = "Écriture des objets"
+updating = "Mise à jour des fichiers"
+filtering = "Filtrage du contenu"
+unpacking = "Décompression des objets"
+
+[lock]
+warning = "Git a peut-être laissé index.lock"
+remove = "Supprimer index.lock…"
+title = "Supprimer le verrou d’index Git"
+confirm = "Supprimer {path} ? Terminez les autres opérations Git dans ce dépôt avant de supprimer le verrou."
+changed = "Le verrou a changé ou n’existe plus."
+remove_failed = "Impossible de supprimer le verrou d’index Git : {error}"

@@ -127,6 +127,9 @@ pub(super) enum Cmd {
     Setting(usize, usize),
     GitBranch(usize),
     GitDeleteBranch(usize),
+    GitPopStash(String),
+    GitApplyStash(String),
+    GitDropStash(crate::git::Stash),
     CopyGitHash(String),
     Column(ColumnCmd),
     Types(TypeCmd),
@@ -472,6 +475,20 @@ impl App {
             }
             m.separator();
             m.action("git.open_remote", S::ActionsGitOpenRemote.t());
+            if let Some(stash) = a.flit_stash() {
+                m.command(Cmd::GitPopStash(stash.oid.clone()), S::GitStashRestore.t(), String::new(), false);
+            }
+            if let Some(g) = a.git_info().filter(|g| !g.stashes.is_empty()) {
+                let title = crate::trn!(crate::i18n::P::GitStashCount, g.stashes.len());
+                m.submenu(&title, |m| {
+                    for stash in g.stashes.iter() {
+                        m.submenu(&stash.message, |m| {
+                            m.command(Cmd::GitApplyStash(stash.oid.clone()), S::GitStashApply.t(), String::new(), false);
+                            m.command(Cmd::GitDropStash(stash.clone()), S::GitStashDrop.t(), String::new(), false);
+                        });
+                    }
+                });
+            }
         })
     }
 
@@ -783,6 +800,9 @@ impl App {
             Some(Cmd::Setting(i, choice)) => self.choose_setting(i, choice),
             Some(Cmd::GitBranch(k)) => self.git_switch(k),
             Some(Cmd::GitDeleteBranch(k)) => self.ask_git_delete(k),
+            Some(Cmd::GitPopStash(oid)) => self.git_run(crate::git::GitOp::PopStash(oid)),
+            Some(Cmd::GitApplyStash(oid)) => self.git_run(crate::git::GitOp::ApplyStash(oid)),
+            Some(Cmd::GitDropStash(stash)) => self.ask_git_drop_stash(stash),
             Some(Cmd::CopyGitHash(hash)) => self.effects.push(super::Effect::SetClipboard(hash)),
             Some(Cmd::Column(c)) => self.column_command(c),
             Some(Cmd::Types(c)) => self.types_command(c),

@@ -15,6 +15,7 @@ use windows::Win32::Foundation::S_OK;
 use windows::Win32::System::Com::StructuredStorage::{StgCreateDocfile, IStorage};
 use windows::Win32::System::Com::{IDataObject, IStream, DVASPECT_CONTENT, FORMATETC, STGC_DEFAULT, STGM_FAILIFTHERE, STGM_READWRITE, STGM_SHARE_EXCLUSIVE, TYMED_HGLOBAL, TYMED_ISTORAGE, TYMED_ISTREAM};
 use windows::Win32::System::DataExchange::{IsClipboardFormatAvailable, RegisterClipboardFormatW};
+use windows::Win32::System::Memory::GlobalSize;
 use windows::Win32::System::Ole::{OleGetClipboard, OleInitialize, ReleaseStgMedium};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{IShellItem, SHCreateItemFromIDList, CFSTR_FILECONTENTS, CFSTR_FILEDESCRIPTORW, CFSTR_INETURLA, CFSTR_INETURLW, CFSTR_PREFERREDDROPEFFECT, CFSTR_SHELLIDLIST};
@@ -26,6 +27,7 @@ const FD_WRITESTIME: u32 = 0x20;
 const FD_FILESIZE: u32 = 0x40;
 const ATTRIBUTE_DIRECTORY: u32 = 0x10;
 const MAX_TITLE: usize = 120;
+const MAX_REPO_URL: usize = 16 * 1024;
 const CHUNK: usize = 1 << 16;
 const UNIX_EPOCH_TICKS: u64 = 116_444_736_000_000_000;
 
@@ -199,9 +201,13 @@ fn offers(data: &IDataObject, name: PCWSTR) -> bool {
 }
 
 fn bytes(data: &IDataObject, name: PCWSTR) -> Option<Vec<u8>> {
+    bytes_up_to(data, name, usize::MAX)
+}
+
+fn bytes_up_to(data: &IDataObject, name: PCWSTR, limit: usize) -> Option<Vec<u8>> {
     unsafe {
         let mut medium = data.GetData(&etc(format(name), -1, TYMED_HGLOBAL.0 as u32)).ok()?;
-        let out = if medium.tymed == TYMED_HGLOBAL.0 as u32 { global_bytes(medium.u.hGlobal) } else { None };
+        let out = if medium.tymed == TYMED_HGLOBAL.0 as u32 && GlobalSize(medium.u.hGlobal) <= limit { global_bytes(medium.u.hGlobal) } else { None };
         ReleaseStgMedium(&mut medium);
         out
     }
@@ -316,26 +322,40 @@ unsafe fn write_files(data: &IDataObject, dest: &FsPath, job: &Job) -> OpOutcome
     out
 }
 
-fn write_url(data: &IDataObject, dest: &FsPath) -> OpOutcome {
-    let url = bytes(data, CFSTR_INETURLW).and_then(|b| url_text(&b, true)).or_else(|| bytes(data, CFSTR_INETURLA).and_then(|b| url_text(&b, false)));
-    let Some(url) = url else { return failed(nothing()) };
+fn read_url(data: &IDataObject, limit: usize) -> Option<String> {
+    bytes_up_to(data, CFSTR_INETURLW, limit).and_then(|b| url_text(&b, true)).or_else(|| bytes_up_to(data, CFSTR_INETURLA, limit).and_then(|b| url_text(&b, false)))
+}
+
+pub(crate) fn read_drop_url(data: &IDataObject) -> Option<String> {
+    read_url(data, MAX_REPO_URL)
+}
+
+fn write_url(data: &IDataObject, dest: &FsPath, cached: Option<&str>) -> OpOutcome {
+    let url;
+    let text = if let Some(cached) = cached {
+        cached
+    } else {
+        url = read_url(data, usize::MAX);
+        let Some(text) = url.as_deref() else { return failed(nothing()) };
+        text
+    };
     let title = described(data).into_iter().next().map(|d| d.name);
-    let name = free_name(&url_name(&url, title.as_deref()), true, |n| exists(&dest.join(n.as_bytes())));
+    let name = free_name(&url_name(text, title.as_deref()), true, |n| exists(&dest.join(n.as_bytes())));
     let path = dest.join(name.as_bytes());
-    match std::fs::File::create_new(std_path(&path)).and_then(|mut f| f.write_all(&internet_shortcut(&url))) {
+    match std::fs::File::create_new(std_path(&path)).and_then(|mut f| f.write_all(&internet_shortcut(text))) {
         Ok(()) => OpOutcome { items: vec![(path.clone(), path)], error: None },
         Err(e) => failed(io(e)),
     }
 }
 
-unsafe fn transfer(data: &IDataObject, kind: Content, dest: &FsPath, moving: bool, job: &Job) -> OpOutcome {
+unsafe fn transfer(data: &IDataObject, kind: Content, dest: &FsPath, moving: bool, job: &Job, url: Option<&str>) -> OpOutcome {
     match kind {
         Content::Items => match bytes(data, CFSTR_SHELLIDLIST) {
             Some(cida) => copy_items(&cida_pidls(&cida), dest, moving, job),
             None => failed(nothing()),
         },
         Content::Files => write_files(data, dest, job),
-        Content::Url => write_url(data, dest),
+        Content::Url => write_url(data, dest, url),
     }
 }
 
@@ -353,7 +373,7 @@ pub(crate) fn paste(dest: &FsPath, job: &Job) -> OpOutcome {
         };
         let Some(kind) = content_of(&data) else { return failed(nothing()) };
         let moving = kind == Content::Items && bytes(&data, CFSTR_PREFERREDDROPEFFECT).and_then(|b| word(&b, 0)).is_some_and(effect_is_move);
-        let out = transfer(&data, kind, dest, moving, job);
+        let out = transfer(&data, kind, dest, moving, job, None);
         if moving && out.error.is_none() {
             crate::clipboard::clear_if_unchanged();
         }
@@ -363,7 +383,7 @@ pub(crate) fn paste(dest: &FsPath, job: &Job) -> OpOutcome {
 
 enum Held {
     Items(Vec<u8>),
-    Data(Content, AgileReference<IDataObject>),
+    Data { kind: Content, data: AgileReference<IDataObject>, url: Option<String> },
 }
 
 struct HeldDrop {
@@ -379,10 +399,10 @@ fn held() -> std::sync::MutexGuard<'static, Vec<HeldDrop>> {
     HELD.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-pub(crate) fn hold_drop(data: &IDataObject, kind: Content, dest: &FsPath) -> Option<u64> {
+pub(crate) fn hold_drop(data: &IDataObject, kind: Content, dest: &FsPath, url: Option<String>) -> Option<u64> {
     let held_data = match kind {
         Content::Items => Held::Items(bytes(data, CFSTR_SHELLIDLIST)?),
-        kind => Held::Data(kind, AgileReference::new(data).map_err(|e| tracing::warn!("drop data: {e}")).ok()?),
+        kind => Held::Data { kind, data: AgileReference::new(data).map_err(|e| tracing::warn!("drop data: {e}")).ok()?, url },
     };
     let ticket = TICKETS.fetch_add(1, Ordering::Relaxed);
     held().push(HeldDrop { ticket, dest: dest.clone(), held: held_data });
@@ -406,9 +426,9 @@ pub(crate) fn paste_dropped(dest: &FsPath, moving: bool, job: &Job) -> OpOutcome
     match take_drop(dest) {
         None => failed(nothing()),
         Some(Held::Items(cida)) => unsafe { copy_items(&cida_pidls(&cida), dest, moving, job) },
-        Some(Held::Data(kind, data)) => unsafe {
+        Some(Held::Data { kind, data, url }) => unsafe {
             match data.resolve() {
-                Ok(data) => transfer(&data, kind, dest, false, job),
+                Ok(data) => transfer(&data, kind, dest, false, job, url.as_deref()),
                 Err(e) => failed(err(e)),
             }
         },

@@ -74,11 +74,12 @@ fontconfig = "*"
 
 [target.'cfg(windows)'.dependencies]
 flit-platform-windows.workspace = true
-windows = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_Registry", "Win32_Security", "Win32_UI_Shell"] }
+windows = { workspace = true, features = ["Win32_Storage_FileSystem", "Win32_Storage_Packaging_Appx", "Win32_System_Console", "Win32_System_Diagnostics_ToolHelp", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_Security", "Win32_UI_Shell"] }
 zip = { version = "7.3", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [target.'cfg(not(windows))'.dependencies]
 flit-platform-linux-gui.workspace = true
+libc.workspace = true
 tar = { version = "0.4", default-features = false }
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 

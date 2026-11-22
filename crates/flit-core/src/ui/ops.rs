@@ -115,6 +115,7 @@ pub enum DragEvent {
     Leave,
     Drop { x: f32, y: f32, mods: Mods, allowed: u32 },
     DropData { x: f32, y: f32, data: std::sync::Arc<crate::provider::DroppedFile> },
+    DropRepository { x: f32, y: f32, url: String },
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -607,8 +608,7 @@ impl App {
         }
         let provider = self.admin_route(provider, tab);
         let Some((provider, op)) = route(provider, op, self.caps.unix_paths) else { return self.status(MIXED_PATHS.t()) };
-        self.ops.next_id += 1;
-        let id = self.ops.next_id;
+        let id = self.allocate_op_id();
         let ctl = OpCtl::new(self.conflict_default);
         self.track_job(id, &provider, &op, &ctl);
         let optimistic_removal = provider == ProviderId::Local
@@ -666,14 +666,20 @@ impl App {
         self.ops.pending.iter().find(|p| p.id == id).map(|p| p.ctl.clone())
     }
 
+    pub(super) fn allocate_op_id(&mut self) -> OpId {
+        self.ops.next_id += 1;
+        self.ops.next_id
+    }
+
     pub(super) fn cancel_ops(&mut self) {
         for p in &self.ops.pending {
             p.ctl.cancel();
         }
+        self.cancel_git_jobs();
     }
 
     pub fn ops_pending(&self) -> bool {
-        !self.ops.pending.is_empty()
+        !self.ops.pending.is_empty() || self.running_jobs() != 0
     }
 
     pub(super) fn ops_in_flight(&self) -> usize {
@@ -2010,6 +2016,25 @@ impl App {
     }
 
     pub fn drag(&mut self, ev: &DragEvent, now: Instant) -> u32 {
+        if let DragEvent::DropRepository { x, y, url } = ev {
+            if let Some(Target::Into { dest, spot }) = self.drop_target(*x, *y) {
+                let tab = match spot {
+                    Spot::Tab(i) => &self.tabs[i],
+                    Spot::Row(r) => {
+                        let t = self.tab();
+                        let is_dir = t.view.as_ref().and_then(|v| v.rows().get(r).map(|&i| v.listing().entries[i as usize].is_dir()));
+                        if is_dir != Some(true) { return drop_effect::NONE; }
+                        t
+                    }
+                    _ => self.tab(),
+                };
+                if self.ask_clone_in(tab.id, dest, url) {
+                    self.drag(&DragEvent::Leave, now);
+                    return drop_effect::COPY;
+                }
+            }
+            return drop_effect::NONE;
+        }
         let normalized;
         let (ev, data) = match ev {
             DragEvent::DropData { x, y, data } => {
@@ -2037,7 +2062,7 @@ impl App {
                 self.ops.drag_scroll = Some((*x, *y, *mods, *allowed));
                 self.drag_over(*x, *y, *mods, *allowed)
             }
-            DragEvent::DropData { .. } => drop_effect::NONE,
+            DragEvent::DropData { .. } | DragEvent::DropRepository { .. } => drop_effect::NONE,
             DragEvent::Leave => {
                 self.nav.sidebar.dragging_out = false;
                 self.ops.dropping = None;

@@ -258,6 +258,12 @@ impl App {
             right -= bw + self.s(4.0);
         }
 
+        let in_bin = self.tab().view_loc.is_recycle_bin();
+        let branch = self.git_branch_label().filter(|_| !in_bin);
+        let filter_edge = self.nav.filter.field.x + 2.0 * bw + pad + self.s(6.0);
+        let branch_min = g.measure(G_BRANCH, font) + self.s(16.0);
+        let branch_edge = filter_edge + self.s(super::filter::MIN_W);
+
         let tab = self.tab();
         let current = tab.view.as_ref().filter(|v| v.snap().gen == tab.gen && !tab.location().is_home_page());
         if let Some(v) = current {
@@ -290,7 +296,6 @@ impl App {
         }
         let at = g.dl.instances.len();
 
-        let in_bin = self.tab().view_loc.is_recycle_bin();
         let encoding = self.encoding_label();
         let encoding = [encoding.as_str()];
         let bin = BIN_BUTTONS.map(S::t);
@@ -315,9 +320,16 @@ impl App {
         self.layout.encoding = if in_bin { Rect::default() } else { buttons[0] };
         self.layout.bin = if in_bin { buttons } else { Default::default() };
         self.layout.branch = Rect::default();
-        if let Some(branch) = self.git_branch().filter(|b| !b.is_empty() && !in_bin) {
-            let label = arena.alloc_str(&format!("{G_BRANCH} {branch}"));
-            let w = g.measure(label, font) + self.s(16.0);
+        if let Some(label) = branch.filter(|_| right - branch_edge >= branch_min) {
+            let label = arena.alloc_str(&format!("{G_BRANCH} {label}"));
+            let full = g.measure(label, font) + self.s(16.0);
+            let (label, w) = if full <= right - branch_edge {
+                (&*label, full)
+            } else {
+                let name = arena.alloc_str(&format!("{G_BRANCH} {}", self.git_branch().unwrap_or_default()));
+                let width = g.measure(name, font) + self.s(16.0);
+                if width <= right - branch_edge { (&*name, width) } else { (G_BRANCH, branch_min) }
+            };
             right -= w;
             let b = Rect::new(right, r.y + self.s(2.0), w, r.h - self.s(4.0));
             let lit = self.lit(Hit::Branch);

@@ -8,7 +8,7 @@ use crate::theme::Theme;
 
 const BOX_W: f32 = 245.0;
 const TYPING_W: f32 = 320.0;
-const MIN_W: f32 = 90.0;
+pub(super) const MIN_W: f32 = 90.0;
 const G_FILTER: &str = "\u{E721}";
 
 #[derive(Default)]

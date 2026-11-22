@@ -13,6 +13,15 @@ creating = "正在创建分支…"
 deleting = "正在删除分支…"
 created = "已创建分支 {branch}"
 deleted = "已删除分支 {branch}"
+switch_title = "本地更改"
+switch_blocked = "切换到 {branch} 会覆盖本地更改。"
+switch_choice = "操作"
+switch_merge = "带上更改"
+switch_stash = "贮藏更改并切换"
+switch_discard = "丢弃更改"
+switch_continue = "继续"
+switch_discard_confirm = "要永久丢弃本地更改并切换到 {branch} 吗？"
+switch_changed = "当前分支已更改，请重试切换分支。"
 
 [sequence]
 merge = "正在合并"
@@ -54,6 +63,9 @@ initializing = "正在创建 Git 仓库…"
 cloning = "正在克隆 {url}…"
 switching = "正在切换到 {branch}…"
 
+cancelled = "已取消 Git 操作"
+cloning_name = "正在克隆 {name}…"
+
 [done]
 sync = "同步完成"
 fetch = "获取完成"
@@ -62,6 +74,8 @@ push = "推送完成"
 init = "已创建 Git 仓库"
 clone = "已克隆到 {name}"
 switch = "已切换到 {branch}"
+
+notify = "{title}已完成"
 
 [error]
 no_upstream = "没有上游分支"
@@ -75,6 +89,11 @@ auth_title = "登录 Git 服务器"
 auth_text = "运行 {command} 时 Git 需要用户名、密码或密钥。请在终端中运行它，Git 会在那里询问。"
 auth_open = "打开终端"
 
+github_login = "登录 GitHub"
+github_install = "请安装 {package}，以便在此处登录 GitHub。"
+
+unknown = "Git 未报告命令失败的原因"
+
 [clone]
 title = "克隆仓库"
 url = "仓库 URL"
@@ -82,3 +101,41 @@ hint = "https://github.com/owner/repo.git"
 button = "克隆"
 integration = "Git 集成"
 integration_help = "显示 Git 状态和仓库信息"
+
+destination = "目标文件夹"
+cleanup_failed = "无法删除已取消的克隆 {path}：{error}"
+in_progress = "另一项克隆操作已在使用 {path}。"
+
+[stash]
+restore = "恢复贮藏的更改"
+restoring = "正在恢复贮藏的更改…"
+restored = "已恢复贮藏的更改"
+missing = "此贮藏项已不存在。"
+switched = "已切换到 {branch}。使用 git stash pop 恢复贮藏的更改。"
+switch_failed = "更改已贮藏，可用 git stash pop 恢复。切换失败：{error}"
+count = ["{n} 条贮藏"]
+apply = "应用"
+drop = "删除…"
+drop_confirm = "永久删除此贮藏？{stash}"
+applying = "正在应用贮藏…"
+applied = "已应用贮藏"
+dropping = "正在删除贮藏…"
+dropped = "已删除贮藏"
+
+[progress]
+counting = "正在统计对象"
+compressing = "正在压缩对象"
+receiving = "正在接收对象"
+resolving = "正在解析增量"
+writing = "正在写入对象"
+updating = "正在更新文件"
+filtering = "正在过滤内容"
+unpacking = "正在解包对象"
+
+[lock]
+warning = "Git 可能留下了 index.lock"
+remove = "删除 index.lock…"
+title = "删除 Git 索引锁"
+confirm = "删除 {path}？删除锁文件前，请结束此仓库中的其他 Git 操作。"
+changed = "锁文件已更改或已不存在。"
+remove_failed = "无法删除 Git 索引锁：{error}"

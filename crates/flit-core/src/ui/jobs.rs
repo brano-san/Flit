@@ -1,4 +1,4 @@
-use super::form::Form;
+use super::form::{Control, Form};
 use super::{centered, App, Hit, Route};
 use crate::archive::{self, ArchiveOp};
 use crate::fmt as format;
@@ -10,6 +10,7 @@ use crate::name;
 use crate::open::OpenTarget;
 use crate::path::FsPath;
 use crate::provider::{Conflict, Failure, FileOp, OpCtl, OpId, OpProgress, PlatformErrorKind, Recover, Resolve, Stage};
+use crate::git::{GitIndexLock, GitJob, GitPhase, GitProgress};
 use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
@@ -64,7 +65,7 @@ pub enum JobState {
 
 pub(super) struct Job {
     pub id: OpId,
-    op: FileOp,
+    kind: JobKind,
     wsl: bool,
     pub dest: Option<Location>,
     pub ctl: OpCtl,
@@ -80,12 +81,22 @@ pub(super) struct Job {
     samples: VecDeque<f32>,
 }
 
+enum JobKind {
+    File(FileOp),
+    Git { title: String, phase: Option<GitPhase>, lock: Option<GitIndexLock>, lock_error: Option<String> },
+}
+
 impl Job {
     fn title(&self) -> String {
-        match (&self.op, self.wsl) {
-            (FileOp::Trash(items), true) => crate::tr!(S::UiJobTitleTrashingLinux, what = count(items)),
-            (op, _) => job_title(op).unwrap_or_default(),
+        match (&self.kind, self.wsl) {
+            (JobKind::File(FileOp::Trash(items)), true) => crate::tr!(S::UiJobTitleTrashingLinux, what = count(items)),
+            (JobKind::File(op), _) => job_title(op).unwrap_or_default(),
+            (JobKind::Git { title, .. }, _) => title.clone(),
         }
+    }
+
+    fn can_pause(&self) -> bool {
+        self.state == JobState::Running && matches!(self.kind, JobKind::File(_))
     }
     fn fraction(&self) -> f32 {
         let p = &self.progress;
@@ -156,6 +167,9 @@ impl Job {
                 crate::trn_into!(&mut s, P::UiJobItemsOf, p.total_items, done = crate::i18n::num(p.items.min(p.total_items)));
             }
             JobState::Running => {
+                if let JobKind::Git { phase: Some(phase), .. } = &self.kind {
+                    return phase.label().to_owned();
+                }
                 crate::trn_into!(&mut s, P::UiJobItemsOf, p.total_items, done = crate::i18n::num(p.items.min(p.total_items)));
                 if self.speed > 0.0 && !self.ctl.is_paused() {
                     s.push_str(" · ");
@@ -171,6 +185,14 @@ impl Job {
                 _ => s.push_str(S::UiJobCompleted.t()),
             },
             JobState::Failed(e) => s.push_str(e),
+            JobState::Cancelled if matches!(self.kind, JobKind::Git { lock: Some(_), .. }) => {
+                if let JobKind::Git { lock_error: Some(error), .. } = &self.kind {
+                    s.push_str(error);
+                } else {
+                    s.push_str(S::GitLockWarning.t());
+                }
+            }
+            JobState::Cancelled if matches!(self.kind, JobKind::Git { .. }) => s.push_str(S::GitOpCancelled.t()),
             JobState::Cancelled => s.push_str(S::UiJobCancelledDetail.t()),
         }
         s
@@ -419,13 +441,62 @@ impl App {
         if let FileOp::PasteDropped { data, .. } = &mut summary {
             *data = None;
         }
-        let job = Job { id, op: summary, wsl: matches!(provider, ProviderId::Wsl(_)), dest: job_dest(provider, op), ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created: Instant::now(), started: None, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
+        self.track_job_kind(id, JobKind::File(summary), matches!(provider, ProviderId::Wsl(_)), job_dest(provider, op), ctl);
+    }
+
+    pub(super) fn track_git_job(&mut self, job: &GitJob, dir: &FsPath, title: String) {
+        self.track_job_kind(job.id, JobKind::Git { title, phase: None, lock: None, lock_error: None }, false, Some(Location::from_local(dir.clone())), &job.ctl);
+    }
+
+    fn track_job_kind(&mut self, id: OpId, kind: JobKind, wsl: bool, dest: Option<Location>, ctl: &OpCtl) {
+        let created = Instant::now();
+        let started = matches!(kind, JobKind::Git { .. }).then_some(created);
+        let job = Job { id, kind, wsl, dest, ctl: ctl.clone(), state: JobState::Running, progress: OpProgress::default(), asking: false, erred: false, created, started, finished: None, mark: None, speed: 0.0, samples: VecDeque::new() };
         if let Some(k) = self.jobs.list.iter().position(|j| j.state != JobState::Running).filter(|_| self.jobs.list.len() >= MAX_JOBS) {
             self.jobs.list.remove(k);
         }
         self.jobs.list.push(job);
         self.layout();
         self.dirty = true;
+    }
+
+    pub(super) fn git_job_progress(&mut self, id: OpId, progress: GitProgress) {
+        if let Some(j) = self.job_mut(id).filter(|j| j.state == JobState::Running) {
+            if let JobKind::Git { phase, .. } = &mut j.kind {
+                *phase = Some(progress.phase);
+                j.progress = OpProgress { stage: Stage::Running, items: progress.percent.into(), total_items: 100, ..Default::default() };
+                self.dirty = true;
+            }
+        }
+    }
+
+    pub(super) fn git_job_lock(&mut self, id: OpId, index_lock: GitIndexLock) {
+        if let Some(j) = self.job_mut(id) {
+            if let JobKind::Git { lock, .. } = &mut j.kind {
+                *lock = Some(index_lock);
+                self.dirty = true;
+            }
+        }
+    }
+
+    pub(super) fn git_index_lock_removed(&mut self, id: OpId, error: Option<&str>) {
+        if let Some(j) = self.job_mut(id) {
+            if let JobKind::Git { lock, lock_error, .. } = &mut j.kind {
+                if let Some(error) = error {
+                    *lock_error = Some(crate::tr!(S::GitLockRemoveFailed, error = error));
+                } else {
+                    *lock = None;
+                    *lock_error = None;
+                }
+                self.dirty = true;
+            }
+        }
+    }
+
+    pub(super) fn cancel_git_jobs(&self) {
+        for j in self.jobs.list.iter().filter(|j| j.state == JobState::Running && matches!(j.kind, JobKind::Git { .. })) {
+            j.ctl.cancel();
+        }
     }
 
     fn job_mut(&mut self, id: OpId) -> Option<&mut Job> {
@@ -479,7 +550,7 @@ impl App {
         self.jobs.asks.retain(|a| !asked(a));
         let Some(j) = self.job_mut(id) else { return };
         j.state = match error {
-            _ if cancelled || j.ctl.is_cancelled() => JobState::Cancelled,
+            _ if cancelled || (matches!(j.kind, JobKind::File(_)) && j.ctl.is_cancelled()) => JobState::Cancelled,
             Some(e) => JobState::Failed(e.to_owned()),
             None => JobState::Done,
         };
@@ -490,8 +561,15 @@ impl App {
         let failed = matches!(j.state, JobState::Failed(_));
         let announced = !matches!(j.state, JobState::Cancelled);
         let (items, title) = (j.progress.items, j.title());
+        let git = matches!(j.kind, JobKind::Git { .. });
         if !self.active && announced && took >= NOTIFY_AFTER {
-            let text = if failed { crate::tr!(S::UiJobNotifyFailed, title = title) } else { crate::trn!(P::UiJobNotifyDone, items, title = title) };
+            let text = if failed {
+                crate::tr!(S::UiJobNotifyFailed, title = title)
+            } else if git {
+                crate::tr!(S::GitDoneNotify, title = title)
+            } else {
+                crate::trn!(P::UiJobNotifyDone, items, title = title)
+            };
             self.effects.push(super::Effect::Notify(text));
         }
         if took.as_millis() > super::bottom::ELAPSED_MIN_MS {
@@ -625,7 +703,7 @@ impl App {
 
     pub fn pause_job(&mut self, row: usize) {
         let i = self.jobs.row_of(row);
-        if let Some(j) = self.jobs.list.get_mut(i).filter(|j| j.state == JobState::Running) {
+        if let Some(j) = self.jobs.list.get_mut(i).filter(|j| j.can_pause()) {
             j.ctl.pause(!j.ctl.is_paused());
             (j.mark, j.speed) = (None, 0.0);
             self.dirty = true;
@@ -638,8 +716,11 @@ impl App {
         if j.dest.is_some() {
             items.push(S::UiJobOpenDestination);
         }
-        if j.state == JobState::Running {
+        if j.can_pause() {
             items.push(if j.ctl.is_paused() { S::UiJobResume } else { S::UiJobPause });
+        }
+        if matches!(j.kind, JobKind::Git { lock: Some(_), .. }) {
+            items.push(S::GitLockRemove);
         }
         items.push(if j.state == JobState::Running { S::UiButtonCancel } else { S::UiJobRemove });
         items
@@ -662,6 +743,14 @@ impl App {
             }
             Some(S::UiButtonCancel) => self.cancel_job(row),
             Some(S::UiJobPause | S::UiJobResume) => self.pause_job(row),
+            Some(S::GitLockRemove) => {
+                let j = &self.jobs.list[i];
+                if let JobKind::Git { lock: Some(lock), .. } = &j.kind {
+                    let controls = vec![Control::paragraph(crate::tr!(S::GitLockConfirm, path = lock.path.display()))];
+                    let kind = super::archive::Kind::GitRemoveIndexLock { id: j.id, lock: lock.clone() };
+                    self.open_form(Form::new(kind, S::GitLockTitle.t(), controls, vec![S::UiButtonDelete.t(), S::UiButtonCancel.t()]));
+                }
+            }
             Some(_) => {
                 self.jobs.list.remove(i);
                 self.jobs.first = self.jobs.first.min(self.jobs.list.len().saturating_sub(MAX_ROWS));
@@ -943,11 +1032,12 @@ impl App {
             if Jobs::more_rect(row, s).contains(x, y) {
                 return Some(Hit::OpsMore(i));
             }
-            let running = self.jobs.list.get(self.jobs.row_of(i)).is_some_and(|j| j.state == JobState::Running);
+            let job = self.jobs.list.get(self.jobs.row_of(i));
+            let running = job.is_some_and(|j| j.state == JobState::Running);
             if running && Jobs::cancel_rect(row, s).contains(x, y) {
                 return Some(Hit::OpsCancel(i));
             }
-            if running && Jobs::pause_rect(row, s).contains(x, y) {
+            if job.is_some_and(Job::can_pause) && Jobs::pause_rect(row, s).contains(x, y) {
                 return Some(Hit::OpsPause(i));
             }
             if row.contains(x, y) {
@@ -1087,7 +1177,7 @@ impl App {
             let (more, cancel, pause) = (Jobs::more_rect(row, s), Jobs::cancel_rect(row, s), Jobs::pause_rect(row, s));
             let status = j.status();
             let sw = g.measure(&status, small);
-            let title_end = if running { pause.x } else { more.x } - s(8.0) - sw;
+            let title_end = if j.can_pause() { pause.x } else if running { cancel.x } else { more.x } - s(8.0) - sw;
             let pause_glyph = if j.ctl.is_paused() { G_PLAY } else { G_PAUSE };
             let mt = g.metrics(font);
             let title_y = (row.y + s(6.0) + (s(24.0) + mt.ascent - mt.descent) / 2.0).round();
@@ -1104,7 +1194,7 @@ impl App {
                 _ => t.accent,
             };
             g.text(title_end, title_y, &status, small, status_color, f32::INFINITY);
-            for (b, glyph, show, hit) in [(pause, pause_glyph, running, Hit::OpsPause(i)), (cancel, G_CLOSE, running, Hit::OpsCancel(i)), (more, G_MORE, true, Hit::OpsMore(i))] {
+            for (b, glyph, show, hit) in [(pause, pause_glyph, j.can_pause(), Hit::OpsPause(i)), (cancel, G_CLOSE, running, Hit::OpsCancel(i)), (more, G_MORE, true, Hit::OpsMore(i))] {
                 if !show {
                     continue;
                 }
@@ -1189,7 +1279,7 @@ impl App {
                 (S::UiConflictTitle.t().into(), lines)
             }
             Some(Ask::Failure { id, failure: f }) => {
-                let op = self.jobs.list.iter().find(|j| j.id == *id).map(|j| &j.op);
+                let op = self.jobs.list.iter().find(|j| j.id == *id).and_then(|j| match &j.kind { JobKind::File(op) => Some(op), JobKind::Git { .. } => None });
                 let folder = f.path.parent().map(|p| p.display().into_owned()).unwrap_or_default();
                 let hint = if f.fatal { S::UiFailureFullHint.t().to_owned() } else { crate::tr!(S::UiFailureWhere, folder = folder) };
                 let title = if f.fatal { S::UiFailureFullTitle.t().to_owned() } else { failure_title(op, quoted(&f.path)) };

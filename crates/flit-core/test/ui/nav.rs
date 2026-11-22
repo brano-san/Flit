@@ -826,7 +826,7 @@ fn dialog_text_fields_pick_words_drag_and_offer_the_field_menu_but_secrets_stay_
     use crate::ui::archive::Kind;
     use crate::ui::form::{Control, Form};
     let mut app = app_at(r"C:\x");
-    app.open_form(Form::new(Kind::GitClone, "Clone", vec![Control::text("Address", "alpha beta", ""), Control::secret("Password", "")], vec!["OK", "Cancel"]));
+    app.open_form(Form::new(Kind::GitClone { tab: app.tab().id, dir: app.tab().location().path().clone() }, "Clone", vec![Control::text("Address", "alpha beta", ""), Control::secret("Password", "")], vec!["OK", "Cancel"]));
     redraw(&mut app);
     let rows = app.jobs.form.as_ref().unwrap().rows.clone();
     let (y, y2) = (rows[0].y + rows[0].h / 2.0, rows[1].y + rows[1].h / 2.0);
@@ -1000,7 +1000,7 @@ fn primary_reply_in_a_form_keeps_the_clicked_control_after_focus_moves() {
     use crate::ui::form::{Control, Form};
     let mut app = app_at("/home/u");
     app.caps.unix_paths = true;
-    app.open_form(Form::new(Kind::GitClone, "Clone", vec![Control::text("Address", "first", ""), Control::text("Directory", "alpha", "")], vec!["OK", "Cancel"]));
+    app.open_form(Form::new(Kind::GitClone { tab: app.tab().id, dir: app.tab().location().path().clone() }, "Clone", vec![Control::text("Address", "first", ""), Control::text("Directory", "alpha", "")], vec!["OK", "Cancel"]));
     redraw(&mut app);
     let row = app.form_text_rect(1).unwrap();
     let x = row.x + 170.0_f32.min(row.w * 0.42) + 8.0 + 20.0;

@@ -66,7 +66,222 @@ fn upstream_status_tracks_the_current_branch_and_detached_or_unborn_heads() {
     assert!(status(r, false, &mut Cache::default()).unwrap().upstream.is_none());
 }
 
+#[test]
+fn status_in_a_subfolder_shows_divergence_and_diff_and_stash_actions_use_the_selected_entry() {
+    let t = temp("divergence");
+    let bare = t.0.join("bare.git");
+    let main = t.0.join("main");
+    let peer = t.0.join("peer");
+    sh(&t.0, &["init", "--bare", "-q", bare.to_str().unwrap()]);
+    sh(&t.0, &["init", "-q", main.to_str().unwrap()]);
+    let file = main.join("a.txt");
+    fs::write(&file, "base\n").unwrap();
+    sh(&main, &["add", "."]);
+    sh(&main, &["commit", "-qm", "base"]);
+    sh(&main, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    sh(&main, &["push", "-u", "origin", "main"]);
+    sh(&t.0, &["clone", "--", bare.to_str().unwrap(), peer.to_str().unwrap()]);
+    sh(&main, &["commit", "--allow-empty", "-qm", "local"]);
+    sh(&peer, &["commit", "--allow-empty", "-qm", "remote"]);
+    sh(&peer, &["push", "origin", "main"]);
+    sh(&main, &["fetch", "origin"]);
+    fs::write(&file, "saved\n").unwrap();
+    sh(&main, &["stash", "push", "-m", "My stash"]);
+    let nested = main.join("nested");
+    fs::create_dir(&nested).unwrap();
+    fs::write(&file, "changed\nline added\n").unwrap();
+    let info = status(&nested, false, &mut Cache::default()).unwrap();
+    assert_eq!(info.upstream.as_deref(), Some("origin/main"));
+    assert_eq!((info.ahead, info.behind, info.insertions, info.deletions), (1, 1, 2, 1));
+    assert!(info.status.is_empty());
+    assert_eq!(info.stashes.len(), 1);
+    assert!(info.stashes[0].flit_branch().is_none());
+    let oid = info.stashes[0].oid.clone();
+    fs::write(&file, "base\n").unwrap();
+    run_op(&main, &GitOp::ApplyStash(oid.clone())).unwrap();
+    assert_eq!(fs::read_to_string(&file).unwrap(), "saved\n");
+    assert_eq!(stashes(&main).len(), 1);
+    run_op(&main, &GitOp::DropStash(oid.clone())).unwrap();
+    assert!(stashes(&main).is_empty());
+    assert!(run_op(&main, &GitOp::DropStash(oid)).is_err());
+    assert_eq!(fs::read_to_string(&file).unwrap(), "saved\n");
+}
+
 struct Temp(PathBuf);
+
+#[test]
+fn git_shortstat_counts_staged_lines_and_keeps_unborn_diff_semantics() {
+    let temp = temp("staged shortstat");
+    let dir = &temp.0;
+    let file = dir.join("test.txt");
+    sh(dir, &["init", "-q"]);
+    fs::write(&file, "base\n").unwrap();
+    sh(dir, &["add", "."]);
+    let mut cache = Cache::default();
+    let counts = |cache: &mut Cache| {
+        let info = status(dir, false, cache).unwrap();
+        (info.insertions, info.deletions)
+    };
+    assert_eq!(counts(&mut cache), (0, 0));
+    sh(dir, &["commit", "-qm", "base"]);
+    assert_eq!(counts(&mut cache), (0, 0));
+    fs::write(&file, "updated\nsecond\n").unwrap();
+    sh(dir, &["add", "."]);
+    assert_eq!(counts(&mut cache), (2, 1));
+    fs::write(&file, "updated\nsecond\nthird\n").unwrap();
+    assert_eq!(counts(&mut cache), (3, 1));
+}
+
+#[test]
+fn git_stash_status_reuses_the_reflog_cache_and_refreshes_it_when_the_log_changes() {
+    let temp = temp("stash cache");
+    let dir = &temp.0;
+    let file = dir.join("test.txt");
+    sh(dir, &["init", "-q"]);
+    fs::write(&file, "base\n").unwrap();
+    sh(dir, &["add", "."]);
+    sh(dir, &["commit", "-qm", "base"]);
+    let mut cache = Cache::default();
+    assert!(status(dir, false, &mut cache).unwrap().stashes.is_empty());
+    fs::write(&file, "first change\n").unwrap();
+    sh(dir, &["stash", "push", "-m", "First"]);
+    let first = status(dir, false, &mut cache).unwrap().stashes;
+    assert_eq!(first.len(), 1);
+    assert!(Arc::ptr_eq(&first, &status(dir, false, &mut cache).unwrap().stashes));
+    fs::write(&file, "another change\n").unwrap();
+    sh(dir, &["stash", "push", "-m", "Second"]);
+    assert_eq!(status(dir, false, &mut cache).unwrap().stashes.len(), 2);
+    sh(dir, &["stash", "clear"]);
+    assert!(status(dir, false, &mut cache).unwrap().stashes.is_empty());
+}
+
+#[test]
+fn git_cancelled_clone_removes_only_its_new_directory() {
+    let temp = temp("clone cleanup");
+    let clone = CloneDestination::prepare(&temp.0, "https://example.test/owner/repo.git").unwrap();
+    assert_eq!(clone.path, temp.0.join("repo"));
+    fs::create_dir(clone.path.join(".git")).unwrap();
+    fs::write(clone.path.join(".git/index.lock"), "partial checkout").unwrap();
+    assert!(CloneDestination::prepare(&temp.0, "ssh://git@other/owner/repo.git").is_err());
+    clone.clean(true).unwrap();
+    assert!(!clone.path.exists());
+    drop(clone);
+
+    fs::create_dir(temp.0.join("repo")).unwrap();
+    let existing = CloneDestination::prepare(&temp.0, "https://example.test/owner/repo.git").unwrap();
+    fs::write(existing.path.join("keep.txt"), "existing").unwrap();
+    existing.clean(true).unwrap();
+    assert!(existing.path.join("keep.txt").is_file());
+
+    let owned = CloneDestination::prepare(&temp.0, "https://example.test/owner/new.git").unwrap();
+    fs::rename(&owned.path, temp.0.join("moved")).unwrap();
+    fs::create_dir(&owned.path).unwrap();
+    owned.clean(true).unwrap();
+    assert!(owned.path.is_dir());
+}
+
+#[test]
+fn git_tracked_clone_keeps_completed_repositories_and_can_clone_a_local_bundle() {
+    let temp = temp("tracked clone");
+    let root = &temp.0;
+    let source = root.join("source.git");
+    sh(root, &["init", "-q", source.to_str().unwrap()]);
+    sh(&source, &["commit", "--allow-empty", "-qm", "base"]);
+    let bundle = root.join("backup.bundle");
+    sh(&source, &["bundle", "create", bundle.to_str().unwrap(), "--all"]);
+    let (events, _) = unbounded();
+    let wake: Wake = Arc::new(|| {});
+    for (url, name) in [(&source, "source"), (&bundle, "backup")] {
+        let dir = FsPath::parse(&root.to_string_lossy()).unwrap();
+        let op = GitOp::Clone { url: url.to_string_lossy().into_owned() };
+        let result = execute_tracked(1, dir, op, GitJob { id: 1, ctl: OpCtl::default() }, &events, &wake);
+        assert!(matches!(result, GitEvent::TrackedDone { result: GitResult::Success, .. }), "{result:?}");
+        assert!(root.join(name).join(".git/HEAD").is_file());
+    }
+}
+
+#[test]
+fn git_index_lock_cleanup_rejects_old_and_replaced_locks() {
+    let temp = temp("index lock");
+    let lock = temp.0.join("index.lock");
+    let touch = |time| fs::File::create(&lock).unwrap().set_times(fs::FileTimes::new().set_modified(time)).unwrap();
+    let started = SystemTime::now();
+    touch(started - Duration::from_secs(10));
+    assert!(new_index_lock(&lock, started).is_none());
+    touch(started + Duration::from_secs(10));
+    let offered = new_index_lock(&lock, started).unwrap();
+    assert!(lock.exists());
+    let old = temp.0.join("old.lock");
+    fs::rename(&lock, old).unwrap();
+    touch(offered.modified);
+    assert!(remove_index_lock(&offered).is_err());
+    assert!(lock.exists());
+    remove_index_lock(&index_lock(&lock).unwrap()).unwrap();
+    assert!(!lock.exists());
+}
+
+#[test]
+fn git_cancellation_allows_git_to_remove_its_index_lock() {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        use windows::Win32::System::Threading::DETACHED_PROCESS;
+        if std::env::var_os("FLIT_GIT_CANCEL_TEST_CHILD").is_none() {
+            let child = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "git::tests::git_cancellation_allows_git_to_remove_its_index_lock", "--nocapture"])
+                .env("FLIT_GIT_CANCEL_TEST_CHILD", "1")
+                .creation_flags(DETACHED_PROCESS.0)
+                .output().unwrap();
+            assert!(child.status.success(), "{}\n{}", String::from_utf8_lossy(&child.stdout), String::from_utf8_lossy(&child.stderr));
+            assert!(String::from_utf8_lossy(&child.stdout).contains("1 passed"));
+            return;
+        }
+    }
+    let temp = temp("graceful git cancel");
+    let dir = &temp.0;
+    sh(dir, &["init", "-q"]);
+    sh(dir, &["config", "filter.block.clean", "touch flit-started; sleep 20; cat"]);
+    fs::write(dir.join(".gitattributes"), "slow.txt filter=block\n").unwrap();
+    fs::write(dir.join("slow.txt"), "contents\n").unwrap();
+    let mut cmd = command(dir);
+    cmd.args(["add", "slow.txt"]);
+    let ctl = OpCtl::default();
+    let stop = ctl.clone();
+    let worker = std::thread::spawn(move || process::run(cmd, &stop, |_| {}));
+    let deadline = Instant::now() + Duration::from_secs(8);
+    let marker = dir.join("flit-started");
+    while !marker.exists() && !worker.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let lock = dir.join(".git/index.lock");
+    let blocking = marker.exists() && lock.exists();
+    ctl.cancel();
+    let result = worker.join().unwrap();
+    assert!(blocking, "{result:?}");
+    assert!(matches!(result, Err(process::RunError::Cancelled { .. })), "{result:?}");
+    assert!(!lock.exists(), "Git did not get to remove its lock: {result:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn git_cancellation_escalates_if_the_group_ignores_sigterm() {
+    let temp = temp("force git cancel");
+    let mut cmd = Command::new("sh");
+    cmd.current_dir(&temp.0).args(["-c", "trap '' TERM; touch started; exec sleep 15"]);
+    let ctl = OpCtl::default();
+    let stop = ctl.clone();
+    let worker = std::thread::spawn(move || process::run(cmd, &stop, |_| {}));
+    let marker = temp.0.join("started");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !marker.exists() && !worker.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let started = Instant::now();
+    ctl.cancel();
+    assert_eq!(worker.join().unwrap(), Err(process::RunError::Cancelled { forced: true }));
+    assert!(marker.is_file());
+    assert!(started.elapsed() >= Duration::from_secs(2));
+}
 
 #[test]
 fn abort_restores_each_conflicted_sequence_and_refuses_a_different_operation() {
@@ -157,6 +372,140 @@ fn sh(dir: &Path, args: &[&str]) {
 
 fn have_git() -> bool {
     command(&std::env::temp_dir()).arg("--version").stdout(Stdio::null()).stderr(Stdio::null()).status().is_ok_and(|s| s.success())
+}
+
+#[test]
+fn github_login_prefers_gcm_and_uses_the_supplied_path_for_gh() {
+    let t = temp("github programs");
+    let path = std::env::join_paths([&t.0]).unwrap();
+    assert_eq!(select_github_login(Some(&path), |_| panic!("git unavailable"), "gh"), GithubLogin::Install("gh"));
+    for name in ["gh", "git"] {
+        let filename = if cfg!(windows) { format!("{name}.exe") } else { name.to_owned() };
+        let file = t.0.join(filename);
+        fs::write(&file, "").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o700)).unwrap();
+        }
+    }
+    let gh = select_github_login(Some(&path), |_| false, "gh");
+    assert!(matches!(gh, GithubLogin::Command(argv) if argv[0].contains("gh") && argv[1..] == ["auth", "login", "--web"]));
+    let gcm = select_github_login(Some(&path), |_| true, "gh");
+    assert!(matches!(gcm, GithubLogin::Command(argv) if argv[0].contains("git") && argv[1..] == ["credential-manager", "github", "login"]));
+}
+
+#[test]
+fn github_auth_uses_the_remote_for_the_failing_command() {
+    let t = temp("github remotes");
+    let r = &t.0;
+    sh(r, &["init", "-q"]);
+    sh(r, &["commit", "--allow-empty", "-qm", "base"]);
+    sh(r, &["remote", "add", "origin", "https://gitlab.com/owner/repo"]);
+    sh(r, &["remote", "add", "upstream", "https://github.com/owner/repo"]);
+    sh(r, &["remote", "set-url", "--push", "upstream", "git@github.com:owner/repo"]);
+    sh(r, &["config", "branch.main.remote", "upstream"]);
+    sh(r, &["config", "branch.main.pushRemote", "origin"]);
+    assert!(git::github_remote(&auth_remote(r, &GitOp::Sync, &["pull"], "").unwrap()));
+    assert!(!git::github_remote(&auth_remote(r, &GitOp::Sync, &["push"], "").unwrap()));
+    sh(r, &["config", "branch.main.pushRemote", "upstream"]);
+    assert_eq!(auth_remote(r, &GitOp::Push, &["push"], "").as_deref(), Some("git@github.com:owner/repo"));
+    assert!(!git::github_remote(&auth_remote(r, &GitOp::Push, &["push", "--set-upstream", "origin", "HEAD"], "").unwrap()));
+    sh(r, &["remote", "set-url", "--add", "--push", "upstream", "https://gitlab.com/owner/repo"]);
+    let error = "fatal: Authentication failed for 'https://gitlab.com/owner/repo'";
+    assert_eq!(auth_remote(r, &GitOp::Push, &["push"], error).as_deref(), Some("https://gitlab.com/owner/repo"));
+    assert!(auth_remote(r, &GitOp::Push, &["push"], "Authentication failed").is_none());
+    sh(r, &["remote", "remove", "origin"]);
+    sh(r, &["config", "--unset", "branch.main.remote"]);
+    assert!(git::github_remote(&auth_remote(r, &GitOp::Fetch, &["fetch", "--prune"], "").unwrap()));
+}
+
+#[test]
+fn cancelling_git_push_stops_the_receive_hook_and_its_processes() {
+    let t = temp("cancel push");
+    let bare = t.0.join("remote.git");
+    let work = t.0.join("work");
+    sh(&t.0, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+    sh(&t.0, &["init", "-q", work.to_str().unwrap()]);
+    sh(&work, &["commit", "--allow-empty", "-qm", "first"]);
+    sh(&work, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    let hook = bare.join("hooks/pre-receive");
+    fs::write(&hook, "#!/bin/sh\nprintf started > flit-started\nsleep 4\nprintf survived > flit-survived\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&hook, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut cmd = command(&work);
+    cmd.args(["push", "--progress", "--set-upstream", "origin", "HEAD"]);
+    let ctl = flit_core::provider::OpCtl::default();
+    let stop = ctl.clone();
+    let push = std::thread::spawn(move || process::run(cmd, &stop, |_| {}));
+    let started = bare.join("flit-started");
+    let deadline = Instant::now() + Duration::from_secs(15);
+    while !started.exists() && !push.is_finished() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    ctl.cancel();
+    let result = push.join().unwrap();
+    assert!(started.exists(), "{result:?}");
+    assert!(matches!(result, Err(process::RunError::Cancelled { .. })));
+    std::thread::sleep(Duration::from_millis(4200));
+    assert!(!bare.join("flit-survived").exists(), "the receive hook survived cancellation");
+    assert!(output(&bare, &["rev-parse", "--verify", "refs/heads/main"]).is_err());
+}
+
+#[test]
+fn switch_refusal_offers_retries_and_can_restore_the_named_stash() {
+    for (tag, choice) in [("stash", SwitchChoice::Stash), ("discard", SwitchChoice::Discard), ("merge", SwitchChoice::Merge)] {
+        let t = temp(tag);
+        let r = &t.0;
+        sh(r, &["init", "-q"]);
+        let file = r.join("a.txt");
+        fs::write(&file, "base\n").unwrap();
+        sh(r, &["add", "."]);
+        sh(r, &["commit", "-qm", "base"]);
+        sh(r, &["switch", "-c", "dev"]);
+        fs::write(&file, "dev\n").unwrap();
+        let added = r.join("added.txt");
+        fs::write(&added, "tracked on dev\n").unwrap();
+        sh(r, &["add", "added.txt"]);
+        sh(r, &["commit", "-qam", "dev"]);
+        sh(r, &["switch", "main"]);
+        fs::write(&file, "local\n").unwrap();
+        let dir = FsPath::parse(&r.to_string_lossy()).unwrap();
+        let ev = execute(1, dir.clone(), GitOp::Switch("dev".into()));
+        assert!(matches!(ev, GitEvent::SwitchBlocked { from, branch, .. } if &from == "main" && &branch == "dev"));
+        assert!(matches!(execute(1, dir.clone(), GitOp::Switch("missing".into())), GitEvent::Done { error: Some(_), .. }));
+        assert_eq!(fs::read_to_string(&file).unwrap(), "local\n");
+        let retry = GitOp::RetrySwitch { from: "main".into(), branch: "dev".into(), choice };
+        if choice == SwitchChoice::Discard {
+            fs::write(&added, "new untracked file\n").unwrap();
+            assert!(run_op(r, &retry).is_err());
+            assert_eq!(fs::read_to_string(&added).unwrap(), "new untracked file\n");
+            fs::remove_file(&added).unwrap();
+        }
+        assert!(matches!(execute(1, dir.clone(), retry.clone()), GitEvent::Done { error: None, .. }));
+        let info = status(r, false, &mut Cache::default()).unwrap();
+        assert_eq!(info.branch, "dev");
+        assert!(run_op(r, &retry).is_err(), "a stale dialog cannot act on a different branch");
+        match choice {
+            SwitchChoice::Merge => assert_eq!(info.status.get(&b"a.txt"[..]), Some(&GitStatus::Conflict)),
+            SwitchChoice::Discard => assert_eq!(fs::read_to_string(&file).unwrap(), "dev\n"),
+            SwitchChoice::Stash => {
+                let stash = info.stashes.iter().find(|s| s.flit_branch() == Some("main")).unwrap();
+                sh(r, &["switch", "main"]);
+                fs::write(&file, "external\n").unwrap();
+                sh(r, &["stash", "push", "-m", "External changes"]);
+                run_op(r, &GitOp::PopStash(stash.oid.clone())).unwrap();
+                assert_eq!(fs::read_to_string(&file).unwrap(), "local\n");
+                let left = stashes(r);
+                assert_eq!(left.len(), 1);
+                assert!(left[0].0.flit_branch().is_none());
+                assert!(run_op(r, &GitOp::PopStash(stash.oid.clone())).is_err());
+            }
+        }
+    }
 }
 
 #[test]

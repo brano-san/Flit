@@ -551,17 +551,28 @@ fn run_in_terminal(program: &FsPath, terminal: Option<&str>) -> Option<Command> 
     }
     let (path, folder) = (program.display().into_owned(), dir.display().into_owned());
     let script = program.as_bytes().rsplit(|&b| b == b'.').next().is_some_and(|ext| ext.eq_ignore_ascii_case(b"ps1"));
-    let line = match script {
-        true => format!("powershell.exe -NoLogo -NoExit -File \"{path}\""),
-        false => format!("cmd.exe /k call \"{path}\""),
+    let (program, args) = match script {
+        true => ("powershell.exe", format!("-NoLogo -NoExit -File \"{path}\"")),
+        false => ("cmd.exe", format!("/k call \"{path}\"")),
     };
-    Some(match terminal {
-        Some(wt) => Command { program: wt.to_owned(), args: format!("new-tab -d {} {}", quote_path(&folder.replace(';', r"\;")), line.replace(';', r"\;")), dir: None, admin: false },
-        None => {
-            let (program, args) = line.split_once(' ').unwrap_or((&line, ""));
-            Command { program: program.into(), args: args.into(), dir: Some(folder), admin: false }
-        }
-    })
+    Some(terminal_line(&folder, program, &args, terminal))
+}
+
+fn terminal_line(folder: &str, program: &str, args: &str, terminal: Option<&str>) -> Command {
+    match terminal {
+        Some(wt) => Command { program: wt.to_owned(), args: format!("new-tab -d {} {} {}", quote_path(&folder.replace(';', r"\;")), quote_path(&program.replace(';', r"\;")), args.replace(';', r"\;")), dir: None, admin: false },
+        None => Command { program: program.into(), args: args.into(), dir: Some(folder.into()), admin: false },
+    }
+}
+
+fn run_terminal_command(dir: &FsPath, argv: &[String], terminal: Option<&str>) -> Option<Command> {
+    if argv.is_empty() { return None; }
+    let script = argv.iter().map(|arg| format!("'{}'", arg.replace('\'', "''"))).collect::<Vec<_>>().join(" ");
+    let utf16: Vec<u8> = format!("& {script}").encode_utf16().flat_map(u16::to_le_bytes).collect();
+    let command = flit_core::update::base64_encode(&utf16);
+    let system = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| r"C:\Windows".into()));
+    let program = system.join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    Some(terminal_line(&dir.display(), &program.to_string_lossy(), &format!("-NoLogo -NoProfile -NoExit -EncodedCommand {command}"), terminal))
 }
 
 pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> {
@@ -589,6 +600,7 @@ pub(crate) fn commands(launch: &Launch, terminal: Option<&str>) -> Vec<Command> 
                 .collect(),
         },
         Launch::RunInTerminal { program } => run_in_terminal(program, terminal).into_iter().collect(),
+        Launch::RunInTerminalCommand { dir, argv } => run_terminal_command(dir, argv, terminal).into_iter().collect(),
         Launch::Eject(_) | Launch::Unmount(_) | Launch::Mount(_) | Launch::Unlock { .. } | Launch::MapDrive(_) | Launch::Disconnect(_) | Launch::ConnectServer(_) | Launch::ConnectAndSaveServer(_) | Launch::ConnectNetwork { .. } | Launch::Reveal { .. } | Launch::ChooseApp { .. } | Launch::SetDefault { .. } | Launch::Custom { .. } | Launch::Execute(_) | Launch::Display(_) | Launch::Print(_) | Launch::FileManager(_) | Launch::Command { .. } | Launch::Wallpaper(_) => Vec::new(),
     }
 }

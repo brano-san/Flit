@@ -23,6 +23,19 @@ fn folder_takes_the_strongest_status() {
 }
 
 #[test]
+fn porcelain_branch_header_does_not_turn_into_a_file_and_gone_upstream_is_unavailable() {
+    let out = b"## topic/x...origin/topic/x [ahead 2, behind 5]\0 M f.txt\0";
+    assert_eq!(parse_tracking(out), (Some("origin/topic/x".into()), 2, 5));
+    let files = parse_status(out, b"");
+    assert_eq!(files.len(), 1);
+    assert_eq!(files.get(&b"f.txt"[..]), Some(&GitStatus::Modified));
+    assert_eq!(parse_tracking(b"## main...origin/main [gone]\0"), (None, 0, 0));
+    assert_eq!(parse_tracking(b"## No commits yet on main\0"), (None, 0, 0));
+    assert_eq!(parse_shortstat(b" 1 file changed, 1 insertion(+), 2 deletions(-)\n"), (1, 2));
+    assert_eq!(parse_shortstat(b" 1 file changed\n"), (0, 0));
+}
+
+#[test]
 fn log_keeps_the_newest_commit_per_child() {
     let out = b"\x1eaaaaaaa1111111111111111111111111111111111\x1faaaaaaa\x1fAnn\x1f1700000000\x1fsecond\0\nb/x.txt\0top.txt\0\x1ebbbbbbb2222222222222222222222222222222222\x1fbbbbbbb\x1fBob\x1f1600000000\x1ffirst\0\nb/y.txt\0old.txt\0";
     let mut commits = FxHashMap::default();
@@ -70,4 +83,39 @@ fn remotes_become_web_urls() {
     assert_eq!(repo_name("https://github.com/o/flit.git").as_deref(), Some("flit"));
     assert_eq!(repo_name("git@github.com:o/r").as_deref(), Some("r"));
     assert_eq!(repo_name("C:\\tmp\\bare.git").as_deref(), Some("bare"));
+    assert_eq!(repo_name("git@host:project/.git").as_deref(), Some("project"));
+    assert_eq!(repo_name("/tmp/long  name.git").as_deref(), Some("long name"));
+}
+
+#[test]
+fn repository_drops_accept_only_clone_links_or_repository_pages() {
+    for (url, want) in [
+        ("https://github.com/a/b?tab=readme-ov-file#top", "https://github.com/a/b"),
+        ("https://gitlab.com/a/b/", "https://gitlab.com/a/b"),
+        ("https://codeberg.org/a/b", "https://codeberg.org/a/b"),
+        ("https://bitbucket.org/a/b", "https://bitbucket.org/a/b"),
+        ("https://example.com/a/group/b.git", "https://example.com/a/group/b.git"),
+        ("git@host:user/repo", "git@host:user/repo"),
+    ] {
+        assert_eq!(dropped_repo_url(url), Some(want));
+    }
+    for url in [
+        "https://github.com/a/b/tree/main", "https://github.com/a/b/issues?tab=all",
+        "https://github.com.evil/a/b", "https://github.com@evil/a/b",
+        "https://example.com/a/b", "https://github.com/a", "https://github.com/a//b",
+        "git@host:user", "git@:user/repo", "file:///tmp/repo.git", "C:\\tmp\\repo.git",
+        "https://github.com/a/b\nhttps://github.com/c/d",
+    ] {
+        assert_eq!(dropped_repo_url(url), None, "{url}");
+    }
+}
+
+#[test]
+fn github_login_checks_the_remote_authority() {
+    for url in ["https://github.com/owner/repo", "ssh://git@GitHub.com:22/owner/repo", "git@github.com:owner/repo"] {
+        assert!(github_remote(url));
+    }
+    for url in ["https://gitlab.com/o/r", "https://github.com.evil/o/r", "https://example.com/o/tag@github.com/r", "https://github.com@evil.test/o/r", "C:/github.com", "file://github.com/o/r"] {
+        assert!(!github_remote(url), "{url}");
+    }
 }

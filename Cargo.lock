@@ -744,6 +744,7 @@ dependencies = [
  "flit-platform-windows",
  "flit-proto",
  "flit-search",
+ "libc",
  "postcard",
  "rayon",
  "serde",

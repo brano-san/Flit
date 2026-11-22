@@ -13,6 +13,15 @@ creating = "Creating branch…"
 deleting = "Deleting branch…"
 created = "Created branch {branch}"
 deleted = "Deleted branch {branch}"
+switch_title = "Local changes"
+switch_blocked = "Local changes would be overwritten by switching to {branch}."
+switch_choice = "Action"
+switch_merge = "Carry changes over"
+switch_stash = "Stash and switch"
+switch_discard = "Discard changes"
+switch_continue = "Continue"
+switch_discard_confirm = "Permanently discard local changes and switch to {branch}? This cannot be undone."
+switch_changed = "The current branch has changed. Try switching branches again."
 
 [sequence]
 merge = "Merge in progress"
@@ -54,6 +63,9 @@ initializing = "Creating a Git repository…"
 cloning = "Cloning {url}…"
 switching = "Switching to {branch}…"
 
+cancelled = "Git operation cancelled"
+cloning_name = "Cloning {name}…"
+
 [done]
 sync = "Sync finished"
 fetch = "Fetch finished"
@@ -62,6 +74,8 @@ push = "Push finished"
 init = "Created a Git repository"
 clone = "Cloned into {name}"
 switch = "Switched to {branch}"
+
+notify = "{title} finished"
 
 [error]
 no_upstream = "No upstream branch"
@@ -75,6 +89,11 @@ auth_title = "Sign in to the Git server"
 auth_text = "Git needs a user name, password or key to run {command}. Run it in a terminal, where Git can ask for them."
 auth_open = "Open terminal"
 
+github_login = "Sign in to GitHub"
+github_install = "Install {package} to sign in to GitHub here."
+
+unknown = "Git did not report why the command failed"
+
 [clone]
 title = "Clone repository"
 url = "Repository URL"
@@ -82,3 +101,41 @@ hint = "https://github.com/owner/repo.git"
 button = "Clone"
 integration = "Git integration"
 integration_help = "Show Git status badges and repository information"
+
+destination = "Destination"
+cleanup_failed = "Could not remove the cancelled clone at {path}: {error}"
+in_progress = "Another clone is already using {path}."
+
+[stash]
+restore = "Restore stashed changes"
+restoring = "Restoring stashed changes…"
+restored = "Stashed changes restored"
+missing = "This stash entry no longer exists."
+switched = "Switched to {branch}. Use git stash pop to restore stashed changes."
+switch_failed = "Changes are stashed and can be restored with git stash pop. Switching failed: {error}"
+count = ["{n} stash","{n} stashes"]
+apply = "Apply"
+drop = "Drop…"
+drop_confirm = "Permanently drop this stash? {stash}"
+applying = "Applying stash…"
+applied = "Stash applied"
+dropping = "Dropping stash…"
+dropped = "Stash dropped"
+
+[progress]
+counting = "Counting objects"
+compressing = "Compressing objects"
+receiving = "Receiving objects"
+resolving = "Resolving deltas"
+writing = "Writing objects"
+updating = "Updating files"
+filtering = "Filtering content"
+unpacking = "Unpacking objects"
+
+[lock]
+warning = "Git may have left index.lock"
+remove = "Remove index.lock…"
+title = "Remove Git index lock"
+confirm = "Remove {path}? Close other Git operations in this repository before deleting the lock."
+changed = "The lock has changed or no longer exists."
+remove_failed = "Could not remove the Git index lock: {error}"

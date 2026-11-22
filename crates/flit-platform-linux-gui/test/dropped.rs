@@ -3,7 +3,8 @@ use crate::temp::Temp;
 
 fn save(dir: &Path, content: &Content, text_stem: &str, image_stem: &str) -> std::io::Result<PathBuf> {
     use std::os::unix::ffi::OsStringExt;
-    let out = queued(&queued_path(dir), &content.clone().file(text_stem, image_stem), &Job::detached(flit_core::provider::Resolve::KeepBoth));
+    let file = content.clone().file(text_stem, image_stem).unwrap();
+    let out = queued(&queued_path(dir), &file, &Job::detached(flit_core::provider::Resolve::KeepBoth));
     if let Some(error) = out.error {
         return Err(std::io::Error::other(error.message));
     }
@@ -69,6 +70,30 @@ fn dropped_text_that_is_only_an_address_becomes_a_link_and_other_text_stays_text
     assert_eq!(interpret(Some(PNG), b""), None);
 }
 
+#[test]
+fn repository_drops_reuse_the_link_data_and_keep_ordinary_browser_links() {
+    for (hint, bytes, expected) in [
+        (TypeHint::UriList, b"https://github.com/owner/repo?tab=readme\r\n".as_slice(), Some("https://github.com/owner/repo")),
+        (TypeHint::Plaintext, b"git@host:owner/repo".as_slice(), Some("git@host:owner/repo")),
+        (TypeHint::UriList, b"https://github.com/owner/repo/issues\r\n".as_slice(), None),
+    ] {
+        let Some(Dragged::Content(content)) = interpret(Some(hint), bytes) else { panic!("browser content") };
+        assert_eq!(content.repository_url(), expected);
+    }
+}
+
+#[test]
+fn repository_only_uri_drops_have_no_link_file_fallback() {
+    for url in ["ssh://git@host/owner/repo.git", "git@host:owner/repo.git"] {
+        let bytes = format!("# Browser drop\r\n{url}\r\n");
+        let Some(Dragged::Content(content)) = interpret(Some(TypeHint::UriList), bytes.as_bytes()) else { panic!("repository address") };
+        assert_eq!(content.repository_url(), Some(url));
+        assert!(content.file("Dropped text", "Dropped image").is_none());
+    }
+    let Some(Dragged::Content(content)) = interpret(Some(TypeHint::UriList), b"https://github.com/owner/repo\r\n") else { panic!("web address") };
+    assert!(content.file("Dropped text", "Dropped image").unwrap().name.ends_with(b".desktop"));
+}
+
 fn queued_file(name: &str, bytes: &[u8]) -> flit_core::provider::DroppedFile {
     flit_core::provider::DroppedFile { name: name.as_bytes().to_vec(), bytes: bytes.to_vec() }
 }
@@ -90,7 +115,7 @@ fn queued_links_text_and_png_keep_their_names_bytes_and_creation_reports() {
         (Content::Image(b"\x89PNG\r\n\x1a\n".to_vec()), "Dropped image.png", b"\x89PNG\r\n\x1a\n"),
     ];
     for (content, name, bytes) in cases {
-        let data = std::sync::Arc::new(content.file("Dropped text", "Dropped image"));
+        let data = std::sync::Arc::new(content.file("Dropped text", "Dropped image").unwrap());
         let job = Job::detached(Resolve::Skip);
         let out = crate::shell::LinuxShell.file_op(&FileOp::PasteDropped { dest: dest.clone(), moving: false, data: Some(data) }, &job);
         assert!(out.error.is_none(), "{:?}", out.error);

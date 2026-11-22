@@ -13,6 +13,15 @@ creating = "Створення гілки…"
 deleting = "Видалення гілки…"
 created = "Гілку {branch} створено"
 deleted = "Гілку {branch} видалено"
+switch_title = "Локальні зміни"
+switch_blocked = "Перемикання на гілку {branch} перезапише локальні зміни."
+switch_choice = "Дія"
+switch_merge = "Перенести зміни"
+switch_stash = "Приховати й перемкнутися"
+switch_discard = "Відкинути зміни"
+switch_continue = "Продовжити"
+switch_discard_confirm = "Безповоротно відкинути локальні зміни й перемкнутися на гілку {branch}?"
+switch_changed = "Поточна гілка змінилася. Спробуйте перемкнути її ще раз."
 
 [sequence]
 merge = "Триває злиття"
@@ -54,6 +63,9 @@ initializing = "Створення репозиторію Git…"
 cloning = "Клонування {url}…"
 switching = "Перемикання на {branch}…"
 
+cancelled = "Операцію Git скасовано"
+cloning_name = "Клонування {name}…"
+
 [done]
 sync = "Синхронізацію завершено"
 fetch = "Зміни отримано"
@@ -62,6 +74,8 @@ push = "Зміни надіслано"
 init = "Створено репозиторій Git"
 clone = "Клоновано в {name}"
 switch = "Перемкнуто на {branch}"
+
+notify = "{title} — завершено"
 
 [error]
 no_upstream = "Немає вищестоящої гілки"
@@ -75,6 +89,11 @@ auth_title = "Вхід на сервер Git"
 auth_text = "Для команди {command} Git потрібні ім’я користувача, пароль або ключ. Виконайте її в терміналі, де Git зможе їх запитати."
 auth_open = "Відкрити термінал"
 
+github_login = "Увійти в GitHub"
+github_install = "Встановіть {package}, щоб увійти в GitHub звідси."
+
+unknown = "Git не повідомив причину помилки"
+
 [clone]
 title = "Клонувати репозиторій"
 url = "Адреса репозиторію"
@@ -82,3 +101,41 @@ hint = "https://github.com/owner/repo.git"
 button = "Клонувати"
 integration = "Інтеграція Git"
 integration_help = "Показувати стан Git та інформацію про репозиторій"
+
+destination = "Папка призначення"
+cleanup_failed = "Не вдалося видалити папку скасованого клонування {path}: {error}"
+in_progress = "Інша операція клонування вже використовує {path}."
+
+[stash]
+restore = "Повернути приховані зміни"
+restoring = "Повернення прихованих змін…"
+restored = "Приховані зміни повернено"
+missing = "Цього запису stash більше немає."
+switched = "Перемкнено на {branch}. Приховані зміни можна повернути через git stash pop."
+switch_failed = "Зміни приховано. Їх можна повернути через git stash pop. Помилка перемикання: {error}"
+count = ["{n} запис stash","{n} записи stash","{n} записів stash"]
+apply = "Застосувати"
+drop = "Видалити…"
+drop_confirm = "Безповоротно видалити запис stash? {stash}"
+applying = "Застосування stash…"
+applied = "Stash застосовано"
+dropping = "Видалення stash…"
+dropped = "Запис stash видалено"
+
+[progress]
+counting = "Підрахунок об’єктів"
+compressing = "Стиснення об’єктів"
+receiving = "Отримання об’єктів"
+resolving = "Розв’язання дельт"
+writing = "Запис об’єктів"
+updating = "Оновлення файлів"
+filtering = "Фільтрування вмісту"
+unpacking = "Розпакування об’єктів"
+
+[lock]
+warning = "Git міг залишити index.lock"
+remove = "Видалити index.lock…"
+title = "Видалення блокування індексу Git"
+confirm = "Видалити {path}? Перед видаленням завершіть інші операції Git у цьому репозиторії."
+changed = "Файл блокування змінився або більше не існує."
+remove_failed = "Не вдалося видалити блокування індексу Git: {error}"

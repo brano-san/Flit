@@ -13,6 +13,15 @@ creating = "Creando rama…"
 deleting = "Eliminando rama…"
 created = "Rama {branch} creada"
 deleted = "Rama {branch} eliminada"
+switch_title = "Cambios locales"
+switch_blocked = "Al cambiar a {branch} se sobrescribirían los cambios locales."
+switch_choice = "Acción"
+switch_merge = "Trasladar los cambios"
+switch_stash = "Guardar en stash y cambiar"
+switch_discard = "Descartar los cambios"
+switch_continue = "Continuar"
+switch_discard_confirm = "¿Descartar permanentemente los cambios locales y cambiar a {branch}?"
+switch_changed = "La rama actual ha cambiado. Intenta cambiar de rama de nuevo."
 
 [sequence]
 merge = "Fusión en curso"
@@ -54,6 +63,9 @@ initializing = "Creando un repositorio Git…"
 cloning = "Clonando {url}…"
 switching = "Cambiando a {branch}…"
 
+cancelled = "Operación de Git cancelada"
+cloning_name = "Clonando {name}…"
+
 [done]
 sync = "Sincronización completada"
 fetch = "Fetch completado"
@@ -62,6 +74,8 @@ push = "Push completado"
 init = "Repositorio Git creado"
 clone = "Clonado en {name}"
 switch = "Cambiado a {branch}"
+
+notify = "{title} finalizado"
 
 [error]
 no_upstream = "No hay una rama de seguimiento"
@@ -75,6 +89,11 @@ auth_title = "Iniciar sesión en el servidor Git"
 auth_text = "Git necesita un nombre de usuario, una contraseña o una clave para ejecutar {command}. Ejecútalo en una terminal, donde Git podrá pedirlos."
 auth_open = "Abrir terminal"
 
+github_login = "Iniciar sesión en GitHub"
+github_install = "Instala {package} para iniciar sesión en GitHub desde aquí."
+
+unknown = "Git no indicó el motivo del error"
+
 [clone]
 title = "Clonar repositorio"
 url = "URL del repositorio"
@@ -82,3 +101,41 @@ hint = "https://github.com/owner/repo.git"
 button = "Clonar"
 integration = "Integración Git"
 integration_help = "Mostrar estados Git e información del repositorio"
+
+destination = "Carpeta de destino"
+cleanup_failed = "No se pudo eliminar el clon cancelado en {path}: {error}"
+in_progress = "Otra clonación ya está utilizando {path}."
+
+[stash]
+restore = "Restaurar los cambios guardados"
+restoring = "Restaurando los cambios guardados…"
+restored = "Cambios guardados restaurados"
+missing = "Esta entrada de stash ya no existe."
+switched = "Se cambió a {branch}. Usa git stash pop para restaurar los cambios guardados."
+switch_failed = "Los cambios se guardaron en stash. Puedes recuperarlos con git stash pop. Error al cambiar de rama: {error}"
+count = ["{n} entrada de stash", "{n} de entradas de stash", "{n} entradas de stash"]
+apply = "Aplicar"
+drop = "Eliminar…"
+drop_confirm = "¿Eliminar esta entrada de stash permanentemente? {stash}"
+applying = "Aplicando el stash…"
+applied = "Stash aplicado"
+dropping = "Eliminando la entrada de stash…"
+dropped = "Entrada de stash eliminada"
+
+[progress]
+counting = "Contando objetos"
+compressing = "Comprimiendo objetos"
+receiving = "Recibiendo objetos"
+resolving = "Resolviendo deltas"
+writing = "Escribiendo objetos"
+updating = "Actualizando archivos"
+filtering = "Filtrando contenido"
+unpacking = "Desempaquetando objetos"
+
+[lock]
+warning = "Es posible que Git haya dejado index.lock"
+remove = "Eliminar index.lock…"
+title = "Eliminar bloqueo del índice de Git"
+confirm = "¿Eliminar {path}? Cierra las demás operaciones de Git en este repositorio antes de eliminar el bloqueo."
+changed = "El bloqueo ha cambiado o ya no existe."
+remove_failed = "No se pudo eliminar el bloqueo del índice de Git: {error}"

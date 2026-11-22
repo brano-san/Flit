@@ -1623,7 +1623,15 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     handler.drag(w, enter);
                 }
                 if dropping {
-                    let fallback = d.content.take().map(|content| content.file(S::UiDroppedText.t(), S::UiDroppedImage.t()));
+                    if let Some(url) = d.content.as_ref().and_then(crate::dropped::Content::repository_url) {
+                        if handler.drag(w, DragEvent::DropRepository { x, y, url: url.to_owned() }).effect != drop_effect::NONE {
+                            self.incoming = None;
+                            return;
+                        }
+                    }
+                    let content = d.content.take();
+                    let repository_only = matches!(content, Some(crate::dropped::Content::Repository(_)));
+                    let fallback = content.and_then(|content| content.file(S::UiDroppedText.t(), S::UiDroppedImage.t()));
                     let offer = d.xds.take().filter(|_| matches!(arrival, Arrival::Drop));
                     saving = offer.and_then(|(offer, kind)| match crate::xds::prepare(&offer, fallback.clone(), &std::env::temp_dir()) {
                         Ok(pending) => Some((pending, kind)),
@@ -1635,6 +1643,7 @@ impl<H: WindowHandler<LinuxWindows>> Loop<H> {
                     match (&saving, fallback) {
                         (Some((pending, _)), _) => DragEvent::DropData { x, y, data: pending.data.clone() },
                         (None, Some(file)) => DragEvent::DropData { x, y, data: Arc::new(file) },
+                        (None, None) if repository_only => DragEvent::Leave,
                         (None, None) => DragEvent::Drop { x, y, mods, allowed },
                     }
                 } else {
