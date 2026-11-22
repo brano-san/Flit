@@ -221,6 +221,7 @@ fn open_child(parent: &Handle, name: &[u16]) -> Option<Handle> {
 }
 
 fn scan(dir: &Handle, keep_going: &dyn Fn() -> bool, totals: &mut (u64, u64), mut subdir: impl FnMut(&[u16])) -> Result<(), FsError> {
+    crate::io_priority::idle(dir.0);
     SCAN_BUFFER.with_borrow_mut(|buf| {
         let mut first = true;
         while keep_going() {
@@ -433,8 +434,8 @@ fn list_parallel(h: HANDLE, out: &mut ListingBuilder<'_>) -> Result<(), FsError>
     })
 }
 
-impl Fs for NtFs {
-    fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+impl NtFs {
+    fn list(&self, dir: &FsPath, out: &mut ListingBuilder<'_>, background: bool) -> Result<(), FsError> {
         match dir.kind() {
             PathKind::Computer => return volumes(out),
             PathKind::RecycleBin => return crate::recycle::list(&crate::recycle::roots(), out),
@@ -449,6 +450,9 @@ impl Fs for NtFs {
             Err(e) if crate::network::needs_logon(dir, &e) && crate::network::logon(dir) => open_dir(dir, FILE_LIST_DIRECTORY.0, false)?,
             opened => opened?,
         };
+        if background {
+            crate::io_priority::idle(h);
+        }
         if let Some(v) = (out.wants_ids() && dir.kind() == PathKind::Drive).then(|| crate::tags::volume_serial(h)).flatten() {
             out.set_volume(v);
         }
@@ -480,6 +484,20 @@ impl Fs for NtFs {
         }
         result
     }
+}
+
+impl Fs for NtFs {
+    fn read_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        self.list(dir, out, false)
+    }
+
+    fn operation_meta(&self, path: &FsPath) -> Option<Meta> {
+        crate::engine::stat(path)
+    }
+
+    fn read_background_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        self.list(dir, out, true)
+    }
 
     fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, flit_platform::PlatformError> {
         crate::digest::hash_file(file, kinds, job)
@@ -491,6 +509,10 @@ impl Fs for NtFs {
 
     fn localized_name(&self, dir: &FsPath) -> Option<String> {
         crate::shell::localized_name(dir)
+    }
+
+    fn server_key(&self, path: &FsPath) -> Option<Vec<u8>> {
+        crate::network::server_key(path)
     }
 
     fn remote(&self, path: &FsPath) -> bool {

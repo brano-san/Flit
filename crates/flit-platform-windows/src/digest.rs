@@ -7,6 +7,7 @@ use flit_platform::{Job, PlatformError, CANCELLED};
 use std::fmt::Write as _;
 use std::fs::File;
 use std::io::Read;
+use std::os::windows::io::AsRawHandle;
 use std::sync::Arc;
 use windows::Win32::Security::Cryptography::*;
 
@@ -91,6 +92,7 @@ fn fill(f: &mut File, buf: &mut [u8]) -> std::io::Result<usize> {
 pub fn hash_file(file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<String>, PlatformError> {
     let io = |e: std::io::Error| PlatformError::from_io(&e, flit_core::fmt::io_reason(&e));
     let mut f = File::open(std_path(file)).map_err(io)?;
+    crate::io_priority::idle(windows::Win32::Foundation::HANDLE(f.as_raw_handle()));
     let total = f.metadata().map_err(io)?.len();
     job.update(|p| {
         p.stage = Stage::Running;

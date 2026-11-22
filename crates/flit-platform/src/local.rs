@@ -1,4 +1,5 @@
 use crate::{FileOps, Fs, Job, MountPrompt, PlatformError, Provider, Shell, Wake, Watcher};
+use crate::scheduler::{LaneKey, Priority, Progress, Scheduler};
 use crossbeam_channel::{bounded, unbounded, Sender};
 use flit_core::archive::ArchiveOp;
 use flit_core::digest::HashKind;
@@ -87,12 +88,20 @@ impl Reply {
     }
 
     fn job(&self, ctl: OpCtl) -> Job {
-        let (p, c, f) = (self.clone(), self.clone(), self.clone());
-        Job::asking(
+        let (p, c, f, b) = (self.clone(), self.clone(), self.clone(), self.clone());
+        let review = ctl.clone();
+        Job::asking_with_conflicts(
             ctl,
             Box::new(move |progress| p.send(ProviderEvent::OpProgress { tab: p.tab, id: p.id, progress })),
             Box::new(move |conflict| c.send(ProviderEvent::OpConflict { tab: c.tab, id: c.id, conflict })),
             Box::new(move |failure| f.send(ProviderEvent::OpFailure { tab: f.tab, id: f.id, failure })),
+            Box::new(move |conflicts| {
+                if b.events.send(ProviderEvent::OpConflicts { tab: b.tab, id: b.id, conflicts }).is_ok() {
+                    (b.wake)();
+                } else {
+                    review.cancel();
+                }
+            }),
         )
     }
 }
@@ -202,9 +211,20 @@ impl LocalProvider {
         }
         let (sizes, sizes_rx) = unbounded::<SizesJob>();
         let (sizes_fs, sizes_events, sizes_wake) = (fs.clone(), events.clone(), wake.clone());
+        let scheduler = Scheduler::new(3).map_err(|e| PlatformError::new(-1, format!("cannot start the background scheduler: {e}")))?;
         spawn("flit-sizes".into(), move || {
             for job in sizes_rx {
-                run_sizes(&*sizes_fs, job, &sizes_events, &sizes_wake);
+                if !job.cancel.is_current(job.gen) {
+                    continue;
+                }
+                let (key, limit) = if let Some(server) = sizes_fs.server_key(&job.dir) {
+                    (LaneKey::Server(server), 2)
+                } else {
+                    let limit = if sizes_fs.seek_penalty(&job.dir) == Some(false) { 2 } else { 1 };
+                    (LaneKey::Volume(sizes_fs.volume_key(&job.dir)), limit)
+                };
+                let (fs, events, wake) = (sizes_fs.clone(), sizes_events.clone(), sizes_wake.clone());
+                scheduler.schedule(Priority::Visible, key, limit, "folder sizes", move |progress| run_sizes(&*fs, job, &events, &wake, &progress));
             }
         })?;
         let (shell, shell_rx) = unbounded::<(TabId, ShellJob)>();
@@ -303,7 +323,10 @@ impl LocalProvider {
                 let (gate, running, failed, fs) = (gate.clone(), running.clone(), reply.clone(), ops_fs.clone());
                 let started = spawn(format!("flit-op-{id}"), move || {
                     let turn = transfer_volume(&*fs, &op).map(|key| gate.enter(key, &job));
-                    let result = match (turn.as_ref().is_some_and(Option::is_none), S::new()) {
+                    let ready = !turn.as_ref().is_some_and(Option::is_none)
+                        && (S::reviews_transfer_conflicts()
+                            || job.preflight_conflicts(|| crate::conflicts::collect(&*fs, &op, job.ctl())));
+                    let result = match (!ready, S::new()) {
                         (true, _) => (Some(OpError::new(crate::PlatformErrorKind::Cancelled, CANCELLED)), Some(OpReport { op, items: Vec::new() }), Vec::new()),
                         (false, Ok(mut sh)) => perform(&mut sh, op, cut, &job),
                         (false, Err(e)) => (Some(e.operation_error()), None, Vec::new()),
@@ -541,13 +564,14 @@ fn run_list<F: Fs + ?Sized>(fs: &F, job: ListJob, watch: &Sender<WatchCmd>, wake
     list(fs, gen, &path, view, case, tags, &out, &cancel, wake);
 }
 
-fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake: &Wake) {
+fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake: &Wake, progress: &Progress) {
     let SizesJob { tab, gen, dir, mut items, cancel, allowed } = job;
     if !cancel.is_current(gen) {
         return;
     }
     let mut skipped = Vec::new();
     items.retain(|(i, name)| {
+        progress.record();
         let path = dir.join(name);
         let kind = if path.is_network() || fs.remote(&path) { 2 } else if fs.seek_penalty(&path) == Some(true) { 1 } else { 0 };
         if !allowed[kind] { skipped.push(*i); }
@@ -560,7 +584,10 @@ fn run_sizes<F: Fs>(fs: &F, job: SizesJob, events: &Sender<ProviderEvent>, wake:
     if items.is_empty() {
         return;
     }
-    let keep_going = || cancel.is_current(gen);
+    let keep_going = || {
+        progress.record();
+        cancel.is_current(gen)
+    };
     fs.dir_sizes(&dir, &items, &keep_going, &|idx, stats| {
         if keep_going() {
             let _ = events.send(ProviderEvent::DirSize { tab, gen, idx, stats });
@@ -786,7 +813,7 @@ fn tree_stats<F: Fs + ?Sized>(fs: &F, root: &FsPath, keep_going: &(dyn Fn() -> b
     while let Some(dir) = stack.pop() {
         let mut each_batch = |_: &ListingBuilder<'_>| keep_going();
         let mut b = ListingBuilder::new(CaseMode::Sensitive, &mut each_batch);
-        if fs.read_dir(&dir, &mut b).is_err() {
+        if fs.read_background_dir(&dir, &mut b).is_err() {
             s.partial |= keep_going();
             continue;
         }

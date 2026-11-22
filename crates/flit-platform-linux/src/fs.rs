@@ -345,6 +345,7 @@ pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result
 }
 
 pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> DirStats {
+    let _idle = crate::io_priority::IdleIo::enter();
     let mut s = DirStats::default();
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
@@ -361,7 +362,7 @@ pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> DirStats {
                 s.size += m.size;
                 s.files += 1;
             }
-            true
+            !(s.files + s.folders).is_multiple_of(BATCH as u32) || keep_going()
         });
         s.partial |= read.is_err();
     }
@@ -589,6 +590,30 @@ impl Fs for LinuxFs {
             flit_platform::walk::Media::Solid => Some(false),
             _ => None,
         }
+    }
+
+    fn hash(&self, file: &FsPath, kinds: &[flit_core::digest::HashKind], job: &flit_platform::Job) -> Result<Vec<String>, flit_platform::PlatformError> {
+        let _idle = crate::io_priority::IdleIo::enter();
+        flit_platform::hash_file(file, kinds, job)
+    }
+
+    fn operation_meta(&self, path: &FsPath) -> Option<Meta> {
+        let name = cstring(host(path)?.as_os_str().as_bytes()).ok()?;
+        node_at(libc::AT_FDCWD, &name, false).ok().map(|n| n.meta(path.file_name()))
+    }
+
+    fn read_background_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        let _idle = crate::io_priority::IdleIo::enter();
+        self.read_dir(dir, out)
+    }
+
+    fn server_key(&self, path: &FsPath) -> Option<Vec<u8>> {
+        crate::mounts::server_key(host(path)?, &crate::mounts::read().ok()?)
+    }
+
+    fn volume_key(&self, path: &FsPath) -> Vec<u8> {
+        host(path).and_then(|path| crate::mounts::volume_key(path, &crate::mounts::read().ok()?))
+            .unwrap_or_else(|| path.root_bytes().to_vec())
     }
 
     fn remote(&self, path: &FsPath) -> bool {

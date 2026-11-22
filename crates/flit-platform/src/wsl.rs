@@ -7,7 +7,7 @@ use flit_core::path::PathKind;
 use flit_core::provider::{Failure, FileOp, GenToken, OpCtl, OpError, OpId, OpReport, Recover, Resolve, SnapshotSlot};
 use flit_core::sort::{SortKeys, ViewSpec};
 use flit_core::{FsError, FsErrorKind, FsPath, Location, ProviderEvent, ProviderRequest, TabId};
-use flit_proto::provider::{agent_runs, check_conflict, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
+use flit_proto::provider::{agent_runs, check_conflict, check_conflicts, check_failure, check_performed, check_report, Event, ReqId, Request, VERSION};
 use flit_proto::transport::{read_frame, read_hello, write_frame, Hello, ProtoError, Protocol};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
@@ -91,6 +91,7 @@ enum Msg {
     Lost(u64, String),
     Answer(ReqId, Option<Resolve>, Option<Resolve>),
     Recover(ReqId, Option<Recover>, bool),
+    ConflictAnswers(ReqId, Option<Vec<Resolve>>),
     Quit,
 }
 
@@ -156,6 +157,7 @@ struct OpState {
     ctl: OpCtl,
     cancelled: bool,
     paused: bool,
+    copy_limit: u32,
     clear: bool,
     performed: Option<FileOp>,
 }
@@ -331,6 +333,11 @@ impl Ctl {
                         self.send(Request::Answer { id, choice, policy });
                     }
                 }
+                Ok(Msg::ConflictAnswers(id, choices)) => {
+                    if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
+                        self.send(Request::ConflictAnswers { id, choices });
+                    }
+                }
                 Ok(Msg::Recover(id, choice, all)) => {
                     if matches!(self.pending.get(&id), Some(Pending::Op(_))) {
                         self.send(Request::Recover { id, choice, all });
@@ -370,21 +377,28 @@ impl Ctl {
     }
 
     fn poll_cancels(&mut self) {
-        let newly: Vec<Request> = self
-            .pending
-            .iter_mut()
-            .filter_map(|(&id, p)| match p {
-                Pending::Op(o) if !o.cancelled && o.ctl.is_cancelled() => {
-                    o.cancelled = true;
-                    Some(Request::Cancel { id })
-                }
-                Pending::Op(o) if !o.cancelled && o.paused != o.ctl.is_paused() => {
-                    o.paused = !o.paused;
-                    Some(Request::Pause { id, paused: o.paused })
-                }
-                _ => None,
-            })
-            .collect();
+        let mut newly = Vec::new();
+        for (&id, pending) in &mut self.pending {
+            let Pending::Op(op) = pending else { continue };
+            if op.cancelled {
+                continue;
+            }
+            if op.ctl.is_cancelled() {
+                op.cancelled = true;
+                newly.push(Request::Cancel { id });
+                continue;
+            }
+            let paused = op.ctl.is_paused();
+            if op.paused != paused {
+                op.paused = paused;
+                newly.push(Request::Pause { id, paused });
+            }
+            let megabytes_per_second = op.ctl.copy_limit();
+            if op.copy_limit != megabytes_per_second {
+                op.copy_limit = megabytes_per_second;
+                newly.push(Request::CopyLimit { id, megabytes_per_second });
+            }
+        }
         for req in newly {
             self.send(req);
         }
@@ -656,7 +670,8 @@ impl Ctl {
                 }
                 let id = self.id();
                 let policy = ctl.policy();
-                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, paused: false, clear, performed: None }));
+                ctl.set_copy_limit_available(request.is_copy_or_move());
+                self.pending.insert(id, Pending::Op(OpState { tab, op, request: request.clone(), ctl, cancelled: false, paused: false, copy_limit: 0, clear, performed: None }));
                 self.send(Request::Lang { code: flit_core::i18n::lang().code().into() });
                 self.send(Request::Op { id, op: request, policy });
             }
@@ -688,6 +703,27 @@ impl Ctl {
         });
         if asked.is_err() {
             self.send(Request::Answer { id, choice: None, policy: None });
+        }
+    }
+
+    fn review_conflicts(&mut self, id: ReqId, conflicts: Vec<flit_core::provider::Conflict>) {
+        let Some(Pending::Op(o)) = self.pending.get(&id) else { return };
+        if let Err(e) = check_conflicts(&o.request, &conflicts) {
+            return self.crashed(&e.to_string());
+        }
+        let (tab, op, ctl, events, wake, tx) = (o.tab, o.op, o.ctl.clone(), self.events.clone(), self.wake.clone(), self.tx.clone());
+        let started = std::thread::Builder::new().name(format!("flit-wsl-review-{op}")).spawn(move || {
+            let choices = ctl.confirm_conflicts(conflicts, |conflicts| {
+                if events.send(ProviderEvent::OpConflicts { tab, id: op, conflicts }).is_ok() {
+                    wake();
+                } else {
+                    ctl.cancel();
+                }
+            });
+            let _ = tx.send(Msg::ConflictAnswers(id, choices));
+        });
+        if started.is_err() {
+            self.send(Request::ConflictAnswers { id, choices: None });
         }
     }
 
@@ -776,6 +812,7 @@ impl Ctl {
                 }
             }
             Event::OpConflict { id, conflict } => self.ask(id, conflict),
+            Event::OpConflicts { id, conflicts } => self.review_conflicts(id, conflicts),
             Event::OpFailure { id, failure } => self.recover(id, failure),
             Event::OpDone { id, error, items } => self.finished(id, error, items),
             Event::OpPerformed { id, op } => self.performed(id, op),
@@ -809,6 +846,7 @@ impl Ctl {
             match p {
                 Pending::List(l) => l.finish(Some(FsError { kind: FsErrorKind::Unavailable, code: 0 }), &self.wake),
                 Pending::Op(o) => {
+                    o.ctl.close_conflict_review();
                     o.ctl.answer(Resolve::Skip, false);
                     o.ctl.answer_failure(Recover::Skip, false);
                     self.emit(ProviderEvent::OpDone { tab: o.tab, id: o.op, error: Some(lost.clone().into()), report: None });

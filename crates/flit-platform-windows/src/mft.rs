@@ -437,6 +437,7 @@ fn open_ntfs(root: &FsPath) -> Result<Ntfs, PlatformError> {
     let device: Vec<u16> = format!(r"\\.\{}", volume_id(root)).encode_utf16().chain(Some(0)).collect();
     let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     let volume = Handle(unsafe { CreateFileW(PCWSTR(device.as_ptr()), GENERIC_READ.0, share, None, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES(0), None) }.map_err(err)?);
+    crate::io_priority::idle(volume.0);
     let journal = query_journal(volume.0).map_err(err)?;
     let dir = open_dir(root, FILE_READ_ATTRIBUTES.0, false).map_err(|e| PlatformError::new(e.code, format!("cannot open {}", root.display())))?;
     let root_id = file_id(root).ok_or_else(|| PlatformError::new(-1, format!("cannot identify {}", root.display())))?;

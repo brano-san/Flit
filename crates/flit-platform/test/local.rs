@@ -52,7 +52,7 @@ fn size_policy_distinguishes_ssd_hdd_and_mounted_network_paths() {
             allowed[enabled] = true;
             let job = SizesJob { tab: 1, gen, dir: FsPath::parse("/home/user/HDD").unwrap(), items: vec![(4, b"child".to_vec())], cancel, allowed };
             let wake: Wake = Arc::new(|| {});
-            run_sizes(&MediaFs { spinning, network }, job, &tx, &wake);
+            run_sizes(&MediaFs { spinning, network }, job, &tx, &wake, &Progress::default());
             let event = rx.try_recv().unwrap();
             assert_eq!(matches!(event, ProviderEvent::DirSize { idx: 4, .. }), enabled == kind);
             assert_eq!(matches!(event, ProviderEvent::SizesSkipped { .. }), enabled != kind);

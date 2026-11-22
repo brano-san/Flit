@@ -99,7 +99,10 @@ fn fs(p: &std::path::Path) -> FsPath {
 fn on_worker(dest: FsPath, moving: bool) -> OpOutcome {
     let worker = std::thread::spawn(move || {
         crate::com_sta();
-        paste_dropped(&dest, moving, &Job::detached(flit_core::provider::Resolve::Skip))
+        let job = Job::detached(flit_core::provider::Resolve::Skip);
+        let out = paste_dropped(&dest, moving, &job);
+        assert!(!job.ctl().copy_limit_available());
+        out
     });
     while !worker.is_finished() {
         unsafe {

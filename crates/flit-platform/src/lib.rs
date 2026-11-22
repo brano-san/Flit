@@ -4,6 +4,9 @@ mod local;
 pub mod parse_process;
 pub mod walk;
 mod wsl;
+mod pace;
+pub mod conflicts;
+pub mod scheduler;
 
 pub use digest::hash_file;
 pub use flit_core::provider::PlatformErrorKind;
@@ -301,6 +304,15 @@ pub trait Fs: Send + Sync + 'static {
     fn volume_size(&self, _path: &FsPath) -> u64 {
         0
     }
+    fn server_key(&self, path: &FsPath) -> Option<scheduler::ServerKey> {
+        path.unc_parts().map(|(server, _, _)| server.to_ascii_lowercase())
+    }
+    fn operation_meta(&self, _path: &FsPath) -> Option<Meta> {
+        None
+    }
+    fn read_background_dir(&self, dir: &FsPath, out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
+        self.read_dir(dir, out)
+    }
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
         path.root_bytes().to_ascii_lowercase()
     }
@@ -441,8 +453,10 @@ struct JobState {
     progress: Sink<OpProgress>,
     conflict: Sink<Conflict>,
     failure: Option<Sink<Failure>>,
+    conflicts: Option<Sink<Vec<Conflict>>>,
     now: std::sync::Mutex<Shown>,
     performed: std::sync::Mutex<Option<FileOp>>,
+    copy_bucket: std::sync::Mutex<pace::Bucket>,
 }
 
 #[derive(Clone)]
@@ -450,11 +464,45 @@ pub struct Job(Arc<JobState>);
 
 impl Job {
     pub fn new(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: None, conflicts: None, now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
     }
 
     pub fn asking(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>) -> Self {
-        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), now: Default::default(), performed: Default::default() }))
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), conflicts: None, now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
+    }
+
+    pub fn asking_with_conflicts(ctl: OpCtl, progress: Sink<OpProgress>, conflict: Sink<Conflict>, failure: Sink<Failure>, conflicts: Sink<Vec<Conflict>>) -> Self {
+        Self(Arc::new(JobState { ctl, progress, conflict, failure: Some(failure), conflicts: Some(conflicts), now: Default::default(), performed: Default::default(), copy_bucket: Default::default() }))
+    }
+
+    pub fn preflight_conflicts(&self, collect: impl FnOnce() -> Vec<Conflict>) -> bool {
+        if self.cancelled() {
+            return false;
+        }
+        self.0.conflicts.as_ref().is_none_or(|sink| self.ctl().preflight(collect(), sink))
+    }
+
+    pub fn confirm_conflicts(&self, conflicts: Vec<Conflict>) -> Option<Vec<Resolve>> {
+        if self.cancelled() {
+            return None;
+        }
+        let Some(sink) = &self.0.conflicts else {
+            return conflicts.into_iter().map(|conflict| self.resolve(conflict)).collect();
+        };
+        let mut known = Vec::with_capacity(conflicts.len());
+        let mut pending = Vec::new();
+        for conflict in conflicts {
+            let choice = self.ctl().planned_conflict(&conflict);
+            known.push(choice);
+            if choice.is_none() {
+                pending.push(conflict);
+            }
+        }
+        if pending.is_empty() {
+            return known.into_iter().collect();
+        }
+        let mut choices = self.ctl().confirm_conflicts(pending, sink)?.into_iter();
+        known.into_iter().map(|choice| choice.or_else(|| choices.next())).collect()
     }
 
     pub fn performed(&self, op: FileOp) {
@@ -475,6 +523,12 @@ impl Job {
 
     pub fn cancelled(&self) -> bool {
         self.0.ctl.is_cancelled()
+    }
+
+    pub fn set_copy_limit_available(&self, available: bool) {
+        if self.ctl().set_copy_limit_available(available) {
+            (self.0.progress)(self.progress());
+        }
     }
 
     pub fn progress(&self) -> OpProgress {
@@ -578,6 +632,9 @@ impl Pasted {
 }
 
 pub trait FileOps {
+    fn reviews_transfer_conflicts() -> bool where Self: Sized {
+        false
+    }
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome;
     fn clipboard_files(&mut self) -> Result<(Vec<FsPath>, bool), PlatformError>;
     fn clear_clipboard(&mut self);

@@ -47,6 +47,7 @@ mod watcher;
 mod window;
 mod winsearch;
 mod wsl;
+mod io_priority;
 
 pub use d3d::{D3dDevice, D3dRenderer};
 pub use dwrite::DWriteText;

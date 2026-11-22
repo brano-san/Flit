@@ -262,6 +262,9 @@ unsafe extern "system" fn on_chunk(msg: *const COPYFILE2_MESSAGE, ctx: *const c_
     if c.job.cancelled() {
         return COPYFILE2_PROGRESS_CANCEL;
     }
+    if (*msg).Type == COPYFILE2_CALLBACK_CHUNK_STARTED && !c.job.pace_copy((*msg).Info.ChunkStarted.uliChunkSize) {
+        return COPYFILE2_PROGRESS_CANCEL;
+    }
     if (*msg).Type == COPYFILE2_CALLBACK_CHUNK_FINISHED {
         let done = (*msg).Info.ChunkFinished.uliTotalBytesTransferred;
         c.job.update(|p| p.bytes = c.base + done);
@@ -290,7 +293,7 @@ fn quick(job: &Job, files: &[(FsPath, FsPath, u64)], across: bool) -> Vec<bool> 
             s.spawn(|| loop {
                 let k = next.fetch_add(1, Relaxed);
                 let Some((from, to, size)) = files.get(k) else { break };
-                if job.cancelled() {
+                if !job.pace_copy(*size) {
                     break;
                 }
                 if quick_copy(from, to).is_err() {
@@ -808,7 +811,14 @@ impl<'a> Engine<'a> {
         let metas = self.stat_all(items);
         let mut total = Tally::default();
         let native: Vec<bool> = items.iter().zip(&metas).map(|(p, m)| m.is_none_or(|m| self.measure(p, &m, true, &mut total))).collect();
+        self.job.set_copy_limit_available(native.iter().zip(&metas).any(|(&supported, meta)| supported && meta.is_some()));
         if !self.room(dest, total.bytes) {
+            return None;
+        }
+        if !self.job.preflight_conflicts(|| {
+            let items = items.iter().zip(&native).filter(|(_, supported)| **supported).map(|(item, _)| item.clone()).collect();
+            flit_platform::conflicts::collect(&crate::NtFs, &FileOp::Copy { items, dest: dest.clone() }, self.job.ctl())
+        }) {
             return None;
         }
         self.running(total);
@@ -854,12 +864,19 @@ impl<'a> Engine<'a> {
         let across = |(f, t): &(FsPath, FsPath)| !f.root_bytes().eq_ignore_ascii_case(t.root_bytes());
         let mut far = Tally::default();
         let native: Vec<bool> = pairs.iter().zip(&metas).map(|(pair, m)| m.is_none_or(|m| if across(pair) { self.measure(&pair.0, &m, true, &mut far) } else { self.measure(&pair.0, &m, false, &mut total) })).collect();
+        self.job.set_copy_limit_available(native.iter().zip(&metas).any(|(&supported, meta)| supported && meta.is_some()));
         let far_dest = pairs.iter().find(|p| across(p)).and_then(|(_, to)| to.parent());
         if far_dest.is_some_and(|d| !self.room(&d, far.bytes)) {
             return None;
         }
         total.entries += far.entries;
         total.bytes += far.bytes;
+        if !self.job.preflight_conflicts(|| {
+            let pairs = pairs.iter().zip(&native).filter(|(_, supported)| **supported).map(|(pair, _)| pair.clone()).collect();
+            flit_platform::conflicts::collect(&crate::NtFs, &FileOp::MoveTo(pairs), self.job.ctl())
+        }) {
+            return None;
+        }
         self.running(total);
         let mut shell = Vec::new();
         for (k, (from, to)) in pairs.iter().enumerate() {

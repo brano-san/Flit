@@ -36,6 +36,7 @@ fn roundtrip_every_message() {
         Request::Recover { id: 6, choice: Some(Recover::Skip), all: true },
         Request::Recover { id: 6, choice: None, all: false },
         Request::Pause { id: 6, paused: true },
+        Request::CopyLimit { id: 6, megabytes_per_second: 12 },
     ];
     for m in requests {
         let mut buf = Vec::new();

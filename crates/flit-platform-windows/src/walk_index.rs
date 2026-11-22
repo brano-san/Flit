@@ -209,6 +209,7 @@ thread_local! {
 static BACKGROUND_WALK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 fn list(h: &Handle, parent: u64, synthetic: &AtomicU64) -> Batch {
+    crate::io_priority::idle(h.0);
     let mut batch = Batch { parent, ..Default::default() };
     LIST_BUFFER.with_borrow_mut(|buf| {
         if buf.is_empty() {
@@ -300,6 +301,7 @@ enum Live {
 
 fn open_journal(root: &FsPath) -> Option<(Handle, USN_JOURNAL_DATA_V0)> {
     let h = Handle(open_dir(root, FILE_READ_ATTRIBUTES.0, false).ok()?);
+    crate::io_priority::idle(h.0);
     let j = query_journal(h.0).ok()?;
     Some((h, j))
 }

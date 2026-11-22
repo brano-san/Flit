@@ -561,6 +561,9 @@ fn empty_bin() -> OpOutcome {
 }
 
 fn with_rest(mut items: Vec<(FsPath, FsPath)>, error: Option<PlatformError>, rest: Option<FileOp>, job: &Job) -> OpOutcome {
+    if rest.is_some() {
+        job.set_copy_limit_available(false);
+    }
     let out = match rest {
         None => return OpOutcome { items, error },
         Some(FileOp::Restore(pairs)) => unsafe { restore(&pairs) },
@@ -586,6 +589,10 @@ fn device_op(op: &FileOp, job: &Job) -> OpOutcome {
 }
 
 impl FileOps for ShellCom {
+    fn reviews_transfer_conflicts() -> bool {
+        true
+    }
+
     fn file_op(&mut self, op: &FileOp, job: &Job) -> OpOutcome {
         if !op.all_paths(|p| p.kind() != flit_core::path::PathKind::Shell) {
             return device_op(op, job);

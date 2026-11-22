@@ -256,6 +256,9 @@ fn pump(stream: &IStream, target: &Path, job: &Job) -> Result<(), PlatformError>
         if read == 0 {
             return Ok(());
         }
+        if !job.pace_copy(u64::from(read)) {
+            return Err(PlatformError::new(-1, S::ErrorsEngineCancelled.en()));
+        }
         file.write_all(&buf[..read as usize]).map_err(io)?;
     }
 }
@@ -274,13 +277,18 @@ unsafe fn save(data: &IDataObject, index: usize, d: &Described, path: &FsPath, j
     }
     let wanted = (TYMED_ISTREAM.0 | TYMED_HGLOBAL.0 | TYMED_ISTORAGE.0) as u32;
     let mut medium = data.GetData(&etc(format(CFSTR_FILECONTENTS), index as i32, wanted)).map_err(err)?;
+    job.set_copy_limit_available(medium.tymed == TYMED_HGLOBAL.0 as u32 || medium.tymed == TYMED_ISTREAM.0 as u32);
     let saved = match medium.tymed {
         t if t == TYMED_HGLOBAL.0 as u32 => match global_bytes(medium.u.hGlobal) {
             Some(mut b) => {
                 if let Some(n) = d.size.and_then(|n| usize::try_from(n).ok()) {
                     b.truncate(n);
                 }
-                std::fs::File::create_new(&target).and_then(|mut f| f.write_all(&b)).map_err(io)
+                if job.pace_copy(b.len() as u64) {
+                    std::fs::File::create_new(&target).and_then(|mut f| f.write_all(&b)).map_err(io)
+                } else {
+                    Err(PlatformError::new(-1, S::ErrorsEngineCancelled.en()))
+                }
             }
             None => Err(nothing()),
         },

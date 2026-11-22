@@ -8,13 +8,16 @@ use flit_core::provider::{Conflict, Failure, FileOp, Recover, Resolve, Stage, Te
 use flit_core::FsPath;
 use flit_platform::{Fs, Job, OpOutcome, PlatformError, CANCELLED};
 use flit_proto::listing::check_name;
+use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::io::{self, Write};
-use std::os::fd::{AsRawFd, OwnedFd, RawFd};
+use std::os::fd::{AsRawFd, BorrowedFd, OwnedFd, RawFd};
 use std::os::unix::ffi::OsStrExt;
 use std::path::Path;
+use std::time::Instant;
 
 mod access;
+mod writeback;
 
 type Pairs = Vec<(FsPath, FsPath)>;
 
@@ -39,7 +42,9 @@ enum Res {
 struct Pump {
     base: u64,
     kernel: bool,
+    deferred: bool,
     buf: Vec<u8>,
+    ranges: Option<writeback::Ranges>,
 }
 
 #[derive(Default)]
@@ -297,13 +302,14 @@ struct Engine<'a> {
     denied: bool,
     untrashable: Vec<FsPath>,
     dest_fs: Option<(u64, Option<String>)>,
+    volumes: RefCell<writeback::Volumes>,
     lang: Lang,
     free: fn(RawFd) -> Option<u64>,
 }
 
 impl<'a> Engine<'a> {
     fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, first_kind: Default::default(), fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, lang: flit_core::i18n::lang(), free: free_space }
+        Self { job, done: Vec::new(), failed: 0, first: None, first_kind: Default::default(), fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, volumes: RefCell::default(), lang: flit_core::i18n::lang(), free: free_space }
     }
 
     fn stopped(&self) -> bool {
@@ -435,11 +441,15 @@ impl<'a> Engine<'a> {
     }
 
     fn dest_fs(&mut self, dir: RawFd) -> Option<String> {
-        let dev = node_at(dir, c".", false).ok()?.dev;
+        let Ok(node) = node_at(dir, c".", false) else {
+            self.dest_fs = None;
+            return None;
+        };
+        let dev = node.dev;
         match &self.dest_fs {
             Some((known, fs)) if *known == dev => fs.clone(),
             _ => {
-                let fs = crate::mounts::read().ok().and_then(|m| file_system(&m, dev));
+                let fs = self.volumes.get_mut().file_system(dev);
                 self.dest_fs = Some((dev, fs.clone()));
                 fs
             }
@@ -487,23 +497,37 @@ impl<'a> Engine<'a> {
         self.counted(node);
     }
 
-    fn copy_data(&self, from: RawFd, to: RawFd, sparse: bool) -> io::Result<()> {
-        let mut pump = Pump { base: self.job.progress().bytes, kernel: true, buf: Vec::new() };
+    fn copy_data(&self, from: RawFd, to: RawFd, sparse: bool, mode: writeback::CopyMode) -> io::Result<Option<usize>> {
+        let ranges = match mode {
+            writeback::CopyMode::Windowed(window) => Some(writeback::Ranges::new(window)),
+            _ => None,
+        };
+        let mut pump = Pump { base: self.job.progress().bytes, kernel: true, deferred: mode == writeback::CopyMode::Deferred, buf: Vec::new(), ranges };
+        self.copy_extents(from, to, sparse, &mut pump)?;
+        if let Some(ref mut ranges) = pump.ranges {
+            if let Some(end) = ranges.wait(|flush, offset, bytes| writeback::range(to, flush, offset, bytes), Instant::now)? {
+                self.job.update(|progress| progress.bytes = pump.base + end);
+            }
+        }
+        Ok(pump.ranges.and_then(|ranges| ranges.size()))
+    }
+
+    fn copy_extents(&self, from: RawFd, to: RawFd, sparse: bool, pump: &mut Pump) -> io::Result<()> {
         if !sparse {
-            return self.pump(from, to, 0, u64::MAX, &mut pump).map(drop);
+            return self.pump(from, to, 0, u64::MAX, pump).map(drop);
         }
         let mut at = 0;
         loop {
             let start = match seek(from, at, libc::SEEK_DATA) {
                 Ok(s) => s,
                 Err(e) if e.raw_os_error() == Some(libc::ENXIO) => break,
-                Err(e) if at == 0 && matches!(e.raw_os_error(), Some(libc::EINVAL | libc::EOPNOTSUPP)) => return self.pump(from, to, 0, u64::MAX, &mut pump).map(drop),
+                Err(e) if at == 0 && matches!(e.raw_os_error(), Some(libc::EINVAL | libc::EOPNOTSUPP)) => return self.pump(from, to, 0, u64::MAX, pump).map(drop),
                 Err(e) => return Err(e),
             };
             let end = seek(from, start, libc::SEEK_HOLE)?;
             seek(from, start, libc::SEEK_SET)?;
             seek(to, start, libc::SEEK_SET)?;
-            let copied = self.pump(from, to, start, end - start, &mut pump)?;
+            let copied = self.pump(from, to, start, end - start, pump)?;
             if copied < end - start {
                 break;
             }
@@ -516,12 +540,14 @@ impl<'a> Engine<'a> {
     fn pump(&self, from: RawFd, to: RawFd, offset: u64, limit: u64, p: &mut Pump) -> io::Result<u64> {
         let mut done = 0u64;
         loop {
+            self.job.ctl().wait_while_paused();
             if self.job.cancelled() {
                 return Err(errno(libc::ECANCELED));
             }
-            let want = (limit - done).min(CHUNK as u64) as usize;
+            let room = p.ranges.as_ref().map_or(CHUNK, |ranges| ranges.room().min(CHUNK));
+            let want = self.job.copy_chunk_size((limit - done).min(room as u64) as usize);
             if want == 0 {
-                return Ok(done);
+                break;
             }
             let n = if p.kernel {
                 let r = unsafe { libc::syscall(libc::SYS_copy_file_range, from, std::ptr::null_mut::<i64>(), to, std::ptr::null_mut::<i64>(), want, 0) };
@@ -563,20 +589,41 @@ impl<'a> Engine<'a> {
                 r as usize
             };
             if n == 0 {
-                return Ok(done);
+                break;
             }
+            if !self.job.pace_copy(n as u64) {
+                return Err(errno(libc::ECANCELED));
+            }
+            let start = offset + done;
             done += n as u64;
-            let at = p.base + offset + done;
-            self.job.update(|p| p.bytes = at);
+            if let Some(ranges) = p.ranges.as_mut().filter(|ranges| ranges.size().is_some()) {
+                ranges.add(start, n);
+                if ranges.room() == 0 {
+                    self.submit_window(to, p)?;
+                }
+            } else if !p.deferred {
+                self.job.update(|progress| progress.bytes = p.base + offset + done);
+            }
         }
+        self.submit_window(to, p)?;
+        Ok(done)
     }
 
-    fn placed(&self, dir: RawFd, name: &CStr, replace: bool, make: impl FnOnce(&CStr) -> io::Result<()>) -> io::Result<()> {
+    fn submit_window(&self, fd: RawFd, pump: &mut Pump) -> io::Result<()> {
+        if let Some(ranges) = &mut pump.ranges {
+            if let Some(end) = ranges.submit(|flush, offset, bytes| writeback::range(fd, flush, offset, bytes), Instant::now)? {
+                self.job.update(|progress| progress.bytes = pump.base + end);
+            }
+        }
+        Ok(())
+    }
+
+    fn placed<T>(&self, dir: RawFd, name: &CStr, replace: bool, make: impl FnOnce(&CStr) -> io::Result<T>) -> io::Result<T> {
         if !replace {
             return make(name);
         }
         let tmp = cstring(&numbered(dir, &[name.to_bytes(), b".flit-partial"].concat(), true, b"", true))?;
-        let r = make(&tmp).and_then(|()| rename_at(dir, &tmp, dir, name, true));
+        let r = make(&tmp).and_then(|result| rename_at(dir, &tmp, dir, name, true).map(|()| result));
         if r.is_err() {
             let _ = unlink_at(dir, &tmp, false);
         }
@@ -584,7 +631,7 @@ impl<'a> Engine<'a> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn copy_file(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode) -> io::Result<()> {
+    fn copy_file(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode, dest: &FsPath) -> io::Result<()> {
         let src = open_at(sdir, sname, libc::O_RDONLY | libc::O_NONBLOCK, 0)?;
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
         check(unsafe { libc::fstat(src.as_raw_fd(), &mut st) })?;
@@ -592,9 +639,22 @@ impl<'a> Engine<'a> {
             return Err(io::Error::other("the file changed while it was being copied"));
         }
         let base = self.job.progress().bytes;
-        self.placed(ddir, dname, replace, |name| {
+        let deferred = self.placed(ddir, dname, replace, |name| {
             let dst = open_at(ddir, name, libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL, 0o600)?;
-            let r = self.copy_data(src.as_raw_fd(), dst.as_raw_fd(), sparse(&st));
+            let r = (|| {
+                let dev = self.dest_fs.as_ref().map(|(dev, _)| *dev);
+                let writeback = if let Some(dev) = dev {
+                    let dir = unsafe { BorrowedFd::borrow_raw(ddir) };
+                    self.volumes.borrow_mut().open(dev, dir, dest, st.st_size as u64)?
+                } else {
+                    writeback::CopyMode::Buffered
+                };
+                let next = self.copy_data(src.as_raw_fd(), dst.as_raw_fd(), sparse(&st), writeback)?;
+                if let Some(dev) = dev.filter(|_| matches!(writeback, writeback::CopyMode::Windowed(_))) {
+                    self.volumes.borrow_mut().adjust(dev, next);
+                }
+                Ok(dev.filter(|_| writeback == writeback::CopyMode::Deferred))
+            })();
             if r.is_ok() {
                 keep_meta(src.as_raw_fd(), dst.as_raw_fd(), node, mode);
             }
@@ -604,18 +664,27 @@ impl<'a> Engine<'a> {
             }
             r
         })?;
+        if let Some(dev) = deferred {
+            self.volumes.borrow_mut().defer(dev, node.size);
+        }
         self.job.update(|p| {
-            p.bytes = base + node.size;
+            if deferred.is_none() {
+                p.bytes = base + node.size;
+            }
             p.items += 1;
         });
         Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn create(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode) -> io::Result<()> {
+    fn create(&self, sdir: RawFd, sname: &CStr, node: &Node, ddir: RawFd, dname: &CStr, replace: bool, mode: Mode, dest: &FsPath) -> io::Result<()> {
+        if let Some((dev, _)) = self.dest_fs.as_ref().filter(|_| node.kind() != libc::S_IFREG) {
+            let dir = unsafe { BorrowedFd::borrow_raw(ddir) };
+            self.volumes.borrow_mut().open(*dev, dir, dest, 0)?;
+        }
         match node.kind() {
             libc::S_IFDIR => check(unsafe { libc::mkdirat(ddir, dname.as_ptr(), 0o700) }),
-            libc::S_IFREG => self.copy_file(sdir, sname, node, ddir, dname, replace, mode),
+            libc::S_IFREG => self.copy_file(sdir, sname, node, ddir, dname, replace, mode, dest),
             libc::S_IFLNK => {
                 let target = read_link(sdir, sname, node.size)?;
                 self.placed(ddir, dname, replace, |name| {
@@ -665,7 +734,7 @@ impl<'a> Engine<'a> {
             };
             let tried = match mode {
                 Mode::Move => rename_at(sdir, sname, ddir, &dname, replace),
-                _ => self.create(sdir, sname, node, ddir, &dname, replace, mode),
+                _ => self.create(sdir, sname, node, ddir, &dname, replace, mode, &dst),
             };
             let Err(e) = tried else { break dname };
             if self.job.cancelled() {
@@ -1184,6 +1253,7 @@ pub fn run(op: &FileOp, job: &Job, trash: Option<&Trash>) -> OpOutcome {
 pub fn run_in(op: &FileOp, job: &Job, trash: Option<&Trash>, lang: Lang) -> OpOutcome {
     let mut e = Engine { lang, ..Engine::new(job) };
     let linux = op.all_paths(|p| p.kind() == PathKind::Unix);
+    job.set_copy_limit_available(linux && op.is_copy_or_move());
     match op {
         _ if !linux => e.note(NOT_LINUX.into()),
         FileOp::Copy { items, dest } => e.copy(items, dest),
@@ -1205,6 +1275,13 @@ pub fn run_in(op: &FileOp, job: &Job, trash: Option<&Trash>, lang: Lang) -> OpOu
         FileOp::Link { items, dest } => e.link(items, dest),
         FileOp::Flatten(dirs) => e.flatten(dirs),
         _ => e.note("The Linux agent does not run this operation".into()),
+    }
+    let (confirmed, failures) = e.volumes.get_mut().finish();
+    if confirmed != 0 {
+        job.update(|p| p.bytes += confirmed);
+    }
+    for (path, error) in failures {
+        e.fail(&path, &error);
     }
     OpOutcome { error: e.error().map(|err| err.untrashable(std::mem::take(&mut e.untrashable))), items: e.done }
 }

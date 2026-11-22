@@ -479,11 +479,12 @@ fn cancelling_removes_the_partial_copy() {
     let e = Engine::new(&job);
     let src = top(&fp(&big)).unwrap();
     let into = open_dir(&dst).unwrap();
-    let r = e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", false, Mode::Copy);
+    let dest = fp(&dst.join("big"));
+    let r = e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", false, Mode::Copy, &dest);
     assert_eq!(r.unwrap_err().raw_os_error(), Some(libc::ECANCELED));
     assert!(listing(&dst).is_empty(), "the half-written file is removed");
     write(&dst.join("big"), "old");
-    assert!(e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", true, Mode::Copy).is_err());
+    assert!(e.copy_file(src.dir.as_raw_fd(), &src.name, &src.node, into.as_raw_fd(), c"big", true, Mode::Copy, &dest).is_err());
     assert_eq!(listing(&dst), [b"big".to_vec()]);
     assert_eq!(read(&dst.join("big")), "old");
 }
@@ -764,4 +765,19 @@ fn renaming_to_another_name_of_the_same_file_goes_through_a_temporary_name() {
     let dir = open_dir(t.path()).unwrap();
     rename_through_temporary(dir.as_raw_fd(), c"A.txt", c"c.txt").unwrap();
     assert_eq!(listing(t.path()), [b"b.txt".to_vec(), b"c.txt".to_vec()]);
+}
+
+#[test]
+fn copying_a_small_file_writes_it_without_reporting_unflushed_bytes() {
+    let t = Temp::new("ops-small-writeback");
+    let source = t.file("source", 32 * 1024);
+    let dest = t.path().join("dest");
+    let from = std::fs::File::open(&source).unwrap();
+    let to = std::fs::File::create(&dest).unwrap();
+    let job = Job::detached(Resolve::Replace);
+    let engine = Engine::new(&job);
+
+    assert_eq!(engine.copy_data(from.as_raw_fd(), to.as_raw_fd(), false, writeback::CopyMode::Deferred).unwrap(), None);
+    assert_eq!(read(&source), read(&dest));
+    assert_eq!(job.progress().bytes, 0);
 }

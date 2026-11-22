@@ -1506,6 +1506,7 @@ impl App {
             }
             ProviderEvent::OpProgress { id, progress, .. } => self.job_progress(id, progress, now),
             ProviderEvent::OpConflict { id, conflict, .. } => self.job_conflict(id, conflict),
+            ProviderEvent::OpConflicts { id, conflicts, .. } => self.job_conflicts(id, conflicts),
             ProviderEvent::OpFailure { id, failure, .. } => self.job_failure(id, failure),
             ProviderEvent::Untrashable { id, items, .. } => self.offer_delete(id, items),
             ProviderEvent::Navigate { tab, path } => {

@@ -73,6 +73,11 @@ notify_done = ["{title} terminado: {n} elemento", "{title} terminado: {n} elemen
 notify_failed = "{title} terminado con errores"
 trash_bar = ["Enviado a la papelera: {n} elemento", "Enviado a la papelera: {n} elemento", "Enviado a la papelera: {n} elementos"]
 cancelled_detail = "Se canceló antes de terminar; los elementos restantes se quedaron en su lugar"
+copy_limit = "Limitar velocidad…"
+copy_limit_title = "Límite de velocidad de copia"
+copy_limit_unit = "MB/s (0 = sin límite)"
+copy_limit_invalid = "Introduce un número entero no negativo."
+copy_limit_active = "Límite {rate} MB/s"
 
 [job_title]
 copying = "Copiando {what} en {dest}"
@@ -126,6 +131,14 @@ unreadable_title = "Algunos elementos no se pueden comprimir"
 unreadable = "No se puede leer {name}."
 unreadable_hint = "Puede que otro programa lo esté usando o que leerlo requiera permisos que Flit no tiene."
 skip_all = "Omitir todos los elementos que no se pueden leer"
+review_title = "Revisar conflictos de nombres"
+all_files = "Todos los archivos"
+all_folders = "Todas las carpetas"
+per_item = "Por elemento"
+rename_incoming = "Renombrar entrante"
+compare = "Comparar"
+choose_actions = "Elige una acción para cada elemento."
+merge_folders = "Combinar"
 
 [export]
 replace_title = "¿Reemplazar {name}?"

@@ -14,7 +14,7 @@ use crate::git::{GitIndexLock, GitJob, GitPhase, GitProgress};
 use crate::render::Rect;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::Theme;
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::time::{Duration, Instant};
 
 const PANEL_W: f32 = 420.0;
@@ -39,6 +39,51 @@ const G_CLOSE: &str = "\u{E8BB}";
 const G_MORE: &str = "\u{E712}";
 const G_PAUSE: &str = "\u{E769}";
 const G_PLAY: &str = "\u{E768}";
+
+const REVIEW_CHOICES: [Resolve; 3] = [Resolve::Replace, Resolve::Skip, Resolve::KeepBoth];
+
+pub(super) struct ConflictReview {
+    conflicts: Vec<Conflict>,
+    choices: Vec<usize>,
+    visible: Vec<usize>,
+}
+
+impl ConflictReview {
+    fn new(conflicts: Vec<Conflict>) -> Self {
+        let choices = conflicts.iter().map(review_default).collect();
+        let visible = (0..conflicts.len()).collect();
+        Self { conflicts, choices, visible }
+    }
+
+    fn visible_rows(&self) -> Vec<usize> {
+        let blocked: HashSet<_> = self.conflicts.iter().zip(&self.choices)
+            .filter(|(conflict, choice)| review_merge(conflict) && **choice != 0)
+            .map(|(conflict, _)| (&conflict.source, &conflict.target)).collect();
+        if blocked.is_empty() {
+            return (0..self.conflicts.len()).collect();
+        }
+        self.conflicts.iter().enumerate().filter(|(_, conflict)| {
+            let mut parents = conflict.source.parent().zip(conflict.target.parent());
+            while let Some((source, target)) = parents {
+                if blocked.contains(&(&source, &target)) {
+                    return false;
+                }
+                parents = source.parent().zip(target.parent());
+            }
+            true
+        }).map(|(row, _)| row).collect()
+    }
+
+    fn controls(&self) -> impl Iterator<Item = Control> + '_ {
+        self.visible.iter().map(|&row| {
+            let c = &self.conflicts[row];
+            let label = format!("{} · {}", name::display(c.target.file_name()), c.target.parent().unwrap_or_else(|| c.target.clone()).display());
+            let actions = review_actions(c);
+            let choices = actions.iter().map(|&choice| review_label(choice, review_merge(c))).chain([S::UiConflictCompare.t().to_owned()]).collect();
+            Control::choice(&label, choices, self.choices[row])
+        })
+    }
+}
 
 const CONFLICT_ANSWERS: [S; 3] = [S::UiButtonReplace, S::UiButtonKeepBoth, S::UiButtonSkip];
 const POLICY_BUTTONS: [S; 2] = [S::UiButtonSkipSame, S::UiButtonReplaceOlder];
@@ -87,6 +132,10 @@ enum JobKind {
 }
 
 impl Job {
+    fn can_limit_speed(&self) -> bool {
+        self.state == JobState::Running && self.ctl.copy_limit_available()
+    }
+
     fn title(&self) -> String {
         match (&self.kind, self.wsl) {
             (JobKind::File(FileOp::Trash(items)), true) => crate::tr!(S::UiJobTitleTrashingLinux, what = count(items)),
@@ -195,6 +244,11 @@ impl Job {
             JobState::Cancelled if matches!(self.kind, JobKind::Git { .. }) => s.push_str(S::GitOpCancelled.t()),
             JobState::Cancelled => s.push_str(S::UiJobCancelledDetail.t()),
         }
+        let rate = self.ctl.copy_limit();
+        if rate != 0 && self.can_limit_speed() {
+            s.push_str(" · ");
+            crate::tr_into!(&mut s, S::UiJobCopyLimitActive, rate = crate::i18n::num(rate as u64));
+        }
         s
     }
 }
@@ -256,6 +310,8 @@ pub(super) struct Jobs {
     pub open: bool,
     pub menu: Option<usize>,
     pub asks: VecDeque<Ask>,
+    conflict_batches: VecDeque<(OpId, Vec<Conflict>)>,
+    pub(super) suspended_conflicts: Option<Form>,
     pub form: Option<Form>,
     pub all: bool,
     pub sel: usize,
@@ -521,6 +577,119 @@ impl App {
         self.push_ask(Ask::Conflict { id, conflict });
     }
 
+    pub(super) fn job_conflicts(&mut self, id: OpId, conflicts: Vec<Conflict>) {
+        let Some(job) = self.job_mut(id) else {
+            if let Some(ctl) = self.op_ctl(id) {
+                ctl.cancel();
+            }
+            return;
+        };
+        if job.state != JobState::Running {
+            job.ctl.cancel();
+            return;
+        }
+        if job.ctl.is_cancelled() {
+            return;
+        }
+        if conflicts.is_empty() {
+            job.ctl.answer_conflicts(Vec::new());
+            return;
+        }
+        job.asking = true;
+        self.jobs.conflict_batches.push_back((id, conflicts));
+        if !self.active {
+            self.effects.push(super::Effect::Window(super::WindowCmd::Attention));
+        }
+        self.show_conflict_table();
+        self.layout();
+        self.dirty = true;
+    }
+
+    pub(super) fn show_conflict_table(&mut self) {
+        if self.jobs.form.is_some() || !self.jobs.asks.is_empty() {
+            return;
+        }
+        if let Some(form) = self.jobs.suspended_conflicts.take() {
+            self.jobs.form = Some(form);
+            return;
+        }
+        let Some((id, conflicts)) = self.jobs.conflict_batches.pop_front() else { return };
+        let bulk = |folders| std::iter::once(S::UiConflictPerItem.t().to_owned())
+            .chain(REVIEW_CHOICES.iter().map(|&choice| review_label(choice, folders))).collect();
+        let review = ConflictReview::new(conflicts);
+        let mut controls = vec![
+            Control::choice(S::UiConflictAllFiles.t(), bulk(false), 0),
+            Control::choice(S::UiConflictAllFolders.t(), bulk(true), 0),
+        ];
+        controls.extend(review.controls());
+        self.jobs.form = Some(Form::new(
+            super::archive::Kind::ConflictTable { id, review },
+            S::UiConflictReviewTitle.t(),
+            controls,
+            vec![S::ArchiveOk.t(), S::UiButtonCancel.t()],
+        ));
+    }
+
+    pub(super) fn conflict_table_changed(&mut self, index: usize) {
+        let Some(form) = self.jobs.form.as_mut() else { return };
+        let selected = form.choice(index);
+        let super::archive::Kind::ConflictTable { review, .. } = &mut form.kind else { return };
+        let mut detail = String::new();
+        let mut folder_change = index == 1;
+        if index < 2 && selected > 0 {
+            let choice = REVIEW_CHOICES[selected - 1];
+            for (c, selection) in review.conflicts.iter().zip(&mut review.choices) {
+                if usize::from(review_folder(c)) == index && (index == 0 || choice != Resolve::Replace || review_merge(c)) {
+                    let actions = review_actions(c);
+                    *selection = actions.iter().position(|&action| action == choice).unwrap_or(actions.len() - 1);
+                }
+            }
+        } else if let Some(&row) = index.checked_sub(2).and_then(|row| review.visible.get(row)) {
+            let c = &review.conflicts[row];
+            review.choices[row] = selected;
+            folder_change = review_merge(c);
+            if selected == review_actions(c).len() {
+                let incoming = meta_line(S::UiConflictNew, &c.from, self.utc_offset_min, &self.style);
+                let current = meta_line(S::UiConflictExisting, &c.to, self.utc_offset_min, &self.style);
+                detail = format!("{incoming} · {current}");
+            }
+        }
+        if folder_change {
+            let visible = review.visible_rows();
+            if visible != review.visible {
+                review.visible = visible;
+                form.controls.truncate(2);
+                form.controls.extend(review.controls());
+            }
+        }
+        if index < 2 && selected > 0 {
+            for (&row, control) in review.visible.iter().zip(form.controls.iter_mut().skip(2)) {
+                if let Control::Choice { sel, .. } = control {
+                    *sel = review.choices[row];
+                }
+            }
+        }
+        form.say(detail, false);
+        self.layout_form();
+    }
+
+    pub(super) fn submit_conflict_table(&mut self, mut form: Form, id: OpId) -> Option<Form> {
+        let super::archive::Kind::ConflictTable { review, .. } = &form.kind else { return None };
+        if review.visible.iter().any(|&row| review.choices[row] == review_actions(&review.conflicts[row]).len()) {
+            form.say(S::UiConflictChooseActions.t(), true);
+            return Some(form);
+        }
+        let answers = review.conflicts.iter().zip(&review.choices).map(|(c, &choice)| {
+            let actions = review_actions(c);
+            actions.get(choice).copied().unwrap_or_else(|| actions[review_default(c)])
+        }).collect();
+        if let Some(job) = self.job_mut(id) {
+            job.asking = false;
+            job.ctl.answer_conflicts(answers);
+        }
+        None
+    }
+
     pub(super) fn job_failure(&mut self, id: OpId, failure: Failure) {
         if let Some(j) = self.job_mut(id) {
             (j.asking, j.erred) = (true, true);
@@ -548,6 +717,14 @@ impl App {
             self.jobs.sel = self.jobs.asks.iter().find(|a| !asked(a)).map_or(0, Ask::first_button);
         }
         self.jobs.asks.retain(|a| !asked(a));
+        self.jobs.conflict_batches.retain(|(job, _)| *job != id);
+        let matches_job = |f: &Form| matches!(f.kind, super::archive::Kind::ConflictTable { id: job, .. } if job == id);
+        if self.jobs.form.as_ref().is_some_and(matches_job) {
+            self.jobs.form = None;
+        }
+        if self.jobs.suspended_conflicts.as_ref().is_some_and(matches_job) {
+            self.jobs.suspended_conflicts = None;
+        }
         let Some(j) = self.job_mut(id) else { return };
         j.state = match error {
             _ if cancelled || (matches!(j.kind, JobKind::File(_)) && j.ctl.is_cancelled()) => JobState::Cancelled,
@@ -576,6 +753,7 @@ impl App {
             self.tab_mut().stats.op = Some(took);
         }
         self.jobs.unseen_failure |= failed && !self.jobs.open;
+        self.show_conflict_table();
         self.layout();
         self.dirty = true;
     }
@@ -723,6 +901,9 @@ impl App {
             items.push(S::GitLockRemove);
         }
         items.push(if j.state == JobState::Running { S::UiButtonCancel } else { S::UiJobRemove });
+        if j.can_limit_speed() {
+            items.push(S::UiJobCopyLimit);
+        }
         items
     }
 
@@ -751,6 +932,13 @@ impl App {
                     self.open_form(Form::new(kind, S::GitLockTitle.t(), controls, vec![S::UiButtonDelete.t(), S::UiButtonCancel.t()]));
                 }
             }
+            Some(S::UiJobCopyLimit) => {
+                if let Some(job) = self.jobs.list.get(i) {
+                    let value = job.ctl.copy_limit().to_string();
+                    let controls = vec![Control::text(S::UiJobCopyLimitUnit.t(), &value, "")];
+                    self.open_form(Form::new(super::archive::Kind::CopyLimit(job.id), S::UiJobCopyLimitTitle.t(), controls, vec![S::ArchiveOk.t(), S::UiButtonCancel.t()]));
+                }
+            }
             Some(_) => {
                 self.jobs.list.remove(i);
                 self.jobs.first = self.jobs.first.min(self.jobs.list.len().saturating_sub(MAX_ROWS));
@@ -759,6 +947,17 @@ impl App {
         }
         self.layout();
         self.dirty = true;
+    }
+
+    pub(super) fn submit_copy_limit(&mut self, mut form: Form, id: OpId) -> Option<Form> {
+        let job = self.job_mut(id).filter(|j| j.can_limit_speed())?;
+        let Ok(rate) = form.text(0).trim().parse::<u32>() else {
+            form.say(S::UiJobCopyLimitInvalid.t(), true);
+            return Some(form);
+        };
+        job.ctl.set_copy_limit(rate);
+        self.dirty = true;
+        None
     }
 
     fn answer(&mut self, button: usize) {
@@ -824,6 +1023,7 @@ impl App {
         }
         self.jobs.all = false;
         self.jobs.sel = self.jobs.asks.front().map_or(0, Ask::first_button);
+        self.show_conflict_table();
         self.layout();
         self.dirty = true;
     }
@@ -950,7 +1150,12 @@ impl App {
             if let Some(row) = j.menu.filter(|r| j.visible().contains(r)) {
                 let more = Jobs::more_rect(j.r.rows[row - j.first], s);
                 let n = self_menu_len(j, row);
-                j.r.menu = (0..n).map(|k| Rect::new(more.right() - s(MENU_W), more.bottom() + s(2.0) + k as f32 * s(MENU_ROW), s(MENU_W), s(MENU_ROW))).collect();
+                let row_height = s(MENU_ROW);
+                let mut top = more.bottom() + s(2.0);
+                if top + n as f32 * row_height > h {
+                    top = (more.y - s(2.0) - n as f32 * row_height).max(s(4.0));
+                }
+                j.r.menu = (0..n).map(|k| Rect::new(more.right() - s(MENU_W), top + k as f32 * row_height, s(MENU_W), row_height)).collect();
             }
         }
         if let Some(ask) = j.asks.front() {
@@ -1389,8 +1594,38 @@ impl App {
     }
 }
 
+fn review_actions(conflict: &Conflict) -> &'static [Resolve] {
+    if (conflict.from.attrs ^ conflict.to.attrs) & crate::listing::attr::DIR == 0 {
+        &REVIEW_CHOICES
+    } else {
+        &REVIEW_CHOICES[1..]
+    }
+}
+
+fn review_label(choice: Resolve, merge: bool) -> String {
+    match choice {
+        Resolve::Replace if merge => S::UiConflictMergeFolders,
+        Resolve::Replace => S::UiButtonReplace,
+        Resolve::Skip => S::UiButtonSkip,
+        _ => S::UiConflictRenameIncoming,
+    }.t().to_owned()
+}
+
+fn review_default(conflict: &Conflict) -> usize {
+    if review_merge(conflict) { 0 } else { review_actions(conflict).len() - 1 }
+}
+
+fn review_merge(conflict: &Conflict) -> bool {
+    use crate::listing::attr::{DIR, LINK};
+    conflict.from.attrs & (DIR | LINK) == DIR && conflict.to.attrs & (DIR | LINK) == DIR
+}
+
+fn review_folder(conflict: &Conflict) -> bool {
+    conflict.from.attrs & crate::listing::attr::DIR != 0
+}
+
 fn self_menu_len(j: &Jobs, row: usize) -> usize {
-    j.list.get(j.row_of(row)).map_or(0, |job| 1 + usize::from(job.dest.is_some()) + usize::from(job.state == JobState::Running))
+    j.list.get(j.row_of(row)).map_or(0, |job| 1 + usize::from(job.dest.is_some()) + usize::from(job.state == JobState::Running) + usize::from(job.can_limit_speed()))
 }
 
 #[cfg(test)]

@@ -80,6 +80,8 @@ pub(super) enum Kind {
     GitSwitch { tab: TabId, dir: FsPath, from: String, branch: String, confirm_discard: bool },
     GitStashDrop { tab: TabId, dir: FsPath, oid: String },
     GitRemoveIndexLock { id: crate::provider::OpId, lock: crate::git::GitIndexLock },
+    CopyLimit(OpId),
+    ConflictTable { id: OpId, review: super::jobs::ConflictReview },
 }
 
 impl Kind {
@@ -108,6 +110,8 @@ impl Kind {
             Kind::GitSwitch { .. } => "git_switch",
             Kind::GitStashDrop { .. } => "git_stash_drop",
             Kind::GitRemoveIndexLock { .. } => "git_remove_index_lock",
+            Kind::CopyLimit(_) => "copy_limit",
+            Kind::ConflictTable { .. } => "conflict_table",
         }
     }
 }
@@ -748,6 +752,7 @@ impl App {
         self.extract_changed(k);
         self.permissions_changed(k);
         self.batch_rename_changed(k);
+        self.conflict_table_changed(k);
         self.sync_form_buttons();
     }
 
@@ -780,10 +785,13 @@ impl App {
             Kind::GitSwitch { .. } => self.submit_git_switch(f),
             Kind::GitStashDrop { .. } => self.submit_git_drop_stash(f),
             Kind::GitRemoveIndexLock { .. } => self.submit_git_remove_index_lock(f),
+            Kind::CopyLimit(id) => self.submit_copy_limit(f, id),
+            Kind::ConflictTable { id, .. } => self.submit_conflict_table(f, id),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;
         }
+        self.show_conflict_table();
     }
 
     pub(super) fn form_closed(&mut self, f: Form) {
@@ -791,9 +799,15 @@ impl App {
             Kind::Hashes(Hashing { run: Some(r), .. }) => r.ctl.cancel(),
             Kind::Properties(m) => m.ctl.cancel(),
             Kind::Update(u) => self.cancel_update(u),
+            Kind::ConflictTable { id, .. } => {
+                if let Some(ctl) = self.op_ctl(*id) {
+                    ctl.cancel();
+                }
+            }
             _ => {}
         }
         super::network::mount_form_closed(f);
+        self.show_conflict_table();
     }
 }
 

@@ -444,6 +444,30 @@ fn a_replace_older_answer_reaches_the_agent_as_its_decision_and_its_policy() {
 }
 
 #[test]
+fn the_agent_receives_one_conflict_review_answer_and_the_live_copy_limit() {
+    let make_events = |request: &Request| Some(match request {
+        Request::Op { id, .. } => vec![Event::OpConflicts { id: *id, conflicts: vec![Conflict {
+            source: unix("/src/a"), target: unix("/dst/a"), from: Meta::default(), to: Meta::default(),
+        }] }],
+        Request::ConflictAnswers { id, choices: Some(_) } => vec![Event::OpDone { id: *id, error: None, items: Vec::new() }],
+        _ => Vec::new(),
+    });
+    let s = setup(Fake::new(make_events), Timing::default());
+    let ctl = OpCtl::default();
+    s.wsl.submit(ProviderRequest::Op { tab: 1, id: 4, op: copy(), ctl: ctl.clone() });
+    let batch = event(&s.events, |e| if let ProviderEvent::OpConflicts { tab: 1, id: 4, conflicts } = e { Some(conflicts) } else { None });
+    assert_eq!(batch.len(), 1);
+    ctl.set_copy_limit(13);
+    until("copy limit", || s.fake.seen().contains(&Request::CopyLimit { id: 1, megabytes_per_second: 13 }));
+    ctl.set_copy_limit(0);
+    until("unlimited", || s.fake.seen().contains(&Request::CopyLimit { id: 1, megabytes_per_second: 0 }));
+    ctl.answer_conflicts(vec![Resolve::Skip]);
+    let error = event(&s.events, |e| if let ProviderEvent::OpDone { tab: 1, id: 4, error, .. } = e { Some(error) } else { None });
+    assert_eq!(error, None);
+    assert!(s.fake.seen().contains(&Request::ConflictAnswers { id: 1, choices: Some(vec![Resolve::Skip]) }));
+}
+
+#[test]
 fn pausing_and_resuming_an_operation_reaches_the_agent() {
     let s = setup(Fake::new(|req| if matches!(req, Request::Op { .. }) { Some(Vec::new()) } else { op_events(req) }), Timing::default());
     let ctl = OpCtl::default();

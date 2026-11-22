@@ -7,7 +7,7 @@ use flit_core::{FsError, FsPath, Meta};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-pub const VERSION: u32 = 8;
+pub const VERSION: u32 = 9;
 pub const MAX_FAILURE_TEXT: usize = 4096;
 
 pub type ReqId = u64;
@@ -25,6 +25,8 @@ pub enum Request {
     Recover { id: ReqId, choice: Option<Recover>, all: bool },
     Lang { code: String },
     Pause { id: ReqId, paused: bool },
+    CopyLimit { id: ReqId, megabytes_per_second: u32 },
+    ConflictAnswers { id: ReqId, choices: Option<Vec<Resolve>> },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -40,6 +42,7 @@ pub enum Event {
     OpDone { id: ReqId, error: Option<OpError>, items: Vec<(FsPath, FsPath)> },
     OpFailure { id: ReqId, failure: Failure },
     OpPerformed { id: ReqId, op: FileOp },
+    OpConflicts { id: ReqId, conflicts: Vec<Conflict> },
 }
 
 impl Event {
@@ -52,6 +55,7 @@ impl Event {
             }),
             Event::Stat { result: Ok(meta), .. } => check_meta(meta),
             Event::OpConflict { conflict, .. } => check_meta(&conflict.from).and_then(|()| check_meta(&conflict.to)),
+            Event::OpConflicts { conflicts, .. } => conflicts.iter().try_for_each(|c| check_meta(&c.from).and_then(|()| check_meta(&c.to))),
             Event::OpFailure { failure, .. } if failure.error.message.len() > MAX_FAILURE_TEXT => Err(ProtoError::Invalid("a failure message is too long")),
             _ => Ok(()),
         }
@@ -121,6 +125,17 @@ pub fn check_conflict(op: &FileOp, c: &Conflict) -> Result<(), ProtoError> {
     let scope = scope(op).filter(|_| asks).ok_or(ProtoError::Invalid("a conflict for an operation that cannot have one"))?;
     let (sources, targets) = sets(&scope);
     if under(&sources, &c.source) && under(&targets, &c.target) { Ok(()) } else { Err(ProtoError::Invalid("a conflict path lies outside the operation")) }
+}
+
+pub fn check_conflicts(op: &FileOp, conflicts: &[Conflict]) -> Result<(), ProtoError> {
+    let scope = scope(op).filter(|_| matches!(op, FileOp::Copy { .. } | FileOp::Move { .. } | FileOp::MoveTo(_)))
+        .ok_or(ProtoError::Invalid("a conflict review for an operation that cannot have one"))?;
+    let (sources, targets) = sets(&scope);
+    if !conflicts.is_empty() && conflicts.iter().all(|c| under(&sources, &c.source) && under(&targets, &c.target)) {
+        conflicts.iter().try_for_each(|c| check_meta(&c.from).and_then(|()| check_meta(&c.to)))
+    } else {
+        Err(ProtoError::Invalid("invalid conflict review"))
+    }
 }
 
 pub fn check_failure(op: &FileOp, f: &Failure) -> Result<(), ProtoError> {

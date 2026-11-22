@@ -1,4 +1,13 @@
 use super::*;
+
+#[test]
+fn server_keys_share_mounts_on_the_same_host() {
+    let mounts = parse(b"1 0 0:11 / /smb rw - cifs //NAS/share rw\n2 0 0:12 / /ssh rw - fuse.sshfs ann@nas: rw\n3 0 0:13 / /gvfs rw - fuse.gvfsd-fuse gvfsd-fuse rw\n4 0 0:14 / /dav rw - davfs https://nas/team rw\n5 0 8:1 / /local rw - ext4 /dev/sda1 rw\n");
+    for path in ["/smb/photos", "/ssh/docs", "/gvfs/sftp:host=Nas,user=ann/home", "/dav/data"] {
+        assert_eq!(server_key(Path::new(path), &mounts).as_deref(), Some(b"nas".as_slice()));
+    }
+    assert_eq!(server_key(Path::new("/local"), &mounts), None);
+}
 use crate::temp::Temp;
 
 #[test]
@@ -228,4 +237,12 @@ fn shares_are_probed_side_by_side_within_one_wait() {
     assert!(started.elapsed() < Duration::from_millis(1500), "{:?}", started.elapsed());
     assert_eq!(spaces_within(&[], Duration::from_secs(5), side_space), []);
     assert_eq!(spaces_within(&[PathBuf::from("/nonexistent/flit-share")], Duration::from_secs(5), space), [None]);
+}
+
+#[test]
+fn background_volume_keys_group_aliases_and_separate_nested_mounts() {
+    let mounts = parse(b"20 1 8:1 / / rw - ext4 /dev/sda1 rw\n21 20 8:1 /data /alias rw - ext4 /dev/sda1 rw\n22 20 8:2 / /data/archive rw - ext4 /dev/sda2 rw\n");
+    let key = |path| volume_key(Path::new(path), &mounts).unwrap();
+    assert_eq!(key("/data/folder"), key("/alias/folder"));
+    assert_ne!(key("/data/folder"), key("/data/archive/folder"));
 }

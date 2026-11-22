@@ -336,6 +336,7 @@ impl App {
         let ours = self.jobs.form.as_ref().is_some_and(|f| matches!(&f.kind, Kind::Login(l) if l.answer.id() == id) || matches!(&f.kind, Kind::MountQuestion(q) if q.answer.id() == id));
         if let Some(mut f) = ours.then(|| self.jobs.form.take()).flatten() {
             f.wipe_secrets();
+            self.show_conflict_table();
             self.layout();
             self.dirty = true;
         }
