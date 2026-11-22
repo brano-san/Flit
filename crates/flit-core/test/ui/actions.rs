@@ -203,7 +203,7 @@ const SECTION_9: &[(&str, &[(&str, &str)])] = &[
             ("Quick Commands", "MouseMiddle"),
             ("Clear Bookmarks", ""),
             ("Clear Recents", ""),
-            ("Clear Folders Views", ""),
+            ("Clear Folder Views", ""),
             ("Save Layout", ""),
             ("Load Layout", ""),
             ("Minimize Window", "Alt+M"),
