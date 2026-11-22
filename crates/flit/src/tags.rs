@@ -370,7 +370,7 @@ pub fn search(t: &Tags, q: &Query, sort: SearchSort) -> Result<Vec<SearchRow>, S
         let (lower_path, lower_name) = (lowercase(path), lowercase(name));
         let plain = Plain { name, lower_name: &lower_name, path, lower_path: &lower_path, size: f.meta.size, modified: f.meta.modified, dir: f.meta.attrs & flit_core::attr::DIR != 0 };
         let facts = flit_search::query::Facts { attrs: f.meta.attrs, created: f.meta.created, depth: Some(f.path.components().count() as u32), ..Default::default() };
-        if q.matches_with(&plain, facts, &|n| wanted.get(n).is_some_and(|&b| f.mask & b != 0)) {
+        if q.matches_with(&plain, facts, &|n| wanted.get(n).is_some_and(|&b| f.mask & b != 0), &|_| false) {
             let dir = f.path.parent().map(|p| p.as_bytes().to_vec()).unwrap_or_default();
             rows.push((lower_name, lowercase(&dir), SearchRow { name: name.to_vec(), dir, meta: f.meta }));
         }

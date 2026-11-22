@@ -608,7 +608,7 @@ impl<P: Platform> Worker<P> {
             let (name, path) = (f.path.file_name(), f.path.as_bytes());
             let plain = query::Plain { name, lower_name: &lowercase(name), path, lower_path: &lowercase(path), size: f.meta.size, modified: f.meta.modified, dir: f.meta.attrs & flit_core::attr::DIR != 0 };
             let facts = query::Facts { attrs: f.meta.attrs, created: f.meta.created, depth: Some(f.path.components().count() as u32), ..Default::default() };
-            if query.matches_with(&plain, facts, &|n| flit_core::tags::find(&tags.defs, n).is_some_and(|k| f.mask & (1 << k) != 0) || (n.is_empty() && f.mask != 0)) {
+            if query.matches_with(&plain, facts, &|n| flit_core::tags::find(&tags.defs, n).is_some_and(|k| f.mask & (1 << k) != 0) || (n.is_empty() && f.mask != 0), &|_| false) {
                 for k in flit_core::tags::bits(f.mask) {
                     if let Some(count) = counts.get_mut(k) { *count += 1; }
                 }

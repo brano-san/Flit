@@ -25,7 +25,6 @@ ed25519-compact.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-tracy = { workspace = true, optional = true }
-quick-xml = { version = "0.41", default-features = false }
 toml_edit = { version = "0.25", default-features = false, features = ["parse", "display"] }
 pretty_yaml = { version = "0.6", default-features = false }
 resvg = { version = "0.50", default-features = false, features = ["text", "system-fonts"] }

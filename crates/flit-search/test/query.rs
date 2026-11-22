@@ -210,7 +210,7 @@ fn portable_metadata_terms_match_rating_comment_and_tag() {
     assert!(query.has_metadata());
     let file = Plain { name: b"photo.jpg", lower_name: b"photo.jpg", path: b"", lower_path: b"", size: 10, modified: 0, dir: false };
     let meta = flit_core::portable_meta::Metadata { rating: 9, comment: "A Summer day".into(), tags: vec!["Travel".into()] };
-    assert!(query.matches_with(&file, &|_| false, &|filter| filter.matches_metadata(&meta)));
+    assert!(query.matches_with(&file, Facts::default(), &|_| false, &|filter| filter.matches_metadata(&meta)));
     assert!(!query.matches(&file, &|_| false));
     assert!(parse("rating:6", Clock::system(0)).is_err());
 }
