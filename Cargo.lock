@@ -776,6 +776,7 @@ dependencies = [
  "flit-platform-windows",
  "flit-proto",
  "flit-search",
+ "jpeg-decoder",
  "libc",
  "postcard",
  "pretty_yaml",

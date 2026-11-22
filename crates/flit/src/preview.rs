@@ -1,6 +1,7 @@
 pub(crate) mod pretty;
 pub(crate) mod svg;
 mod child;
+mod raw;
 
 use flit_core::preview::{self, FolderSummary, Kind, Note, PreviewData, PreviewRequest, FOLDER_SCAN, IMAGE_FILE_LIMIT, POSTER_PX, RTF_BYTES, SNIFF_LIMIT, TEXT_BYTES};
 use flit_core::FsPath;
@@ -107,6 +108,19 @@ pub fn load<S: Shell>(shell: &mut S, req: &PreviewRequest) -> Option<PreviewData
         };
         return Some(result.map_or_else(fallback, PreviewData::Image));
     }
+    if preview::is_raw(ext) && req.kind != Kind::Folder {
+        let path = std_path(&req.path);
+        let result = raw::load(&path, req.px, raw::Source::Inspector, || req.cancel.is_current(req.gen));
+        return req.cancel.is_current(req.gen).then(|| {
+            result.map_or_else(|| {
+                if cfg!(windows) && std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+                    shell.preview_image(&req.path, req.px).map_or_else(|| basic(shell, req, None), PreviewData::Image)
+                } else {
+                    PreviewData::Basic { poster: None, note: None }
+                }
+            }, PreviewData::Image)
+        });
+    }
     match req.kind {
         Kind::Folder => folder(req).map(PreviewData::Folder),
         Kind::Image if req.size > IMAGE_FILE_LIMIT => Some(basic(shell, req, Some(Note::TooLarge))),
@@ -132,6 +146,15 @@ pub(crate) fn thumbnail<S: Shell>(shell: &mut S, req: &flit_core::ui::IconReques
     let ext = &file[file.len() - flit_core::name::ext_len(file)..];
     if preview::is_svg(ext) {
         return svg::load(&req.path, req.size, current);
+    }
+    if preview::is_raw(ext) {
+        let path = std_path(&req.path);
+        if let Some(image) = raw::load(&path, req.size, raw::Source::Thumbnail, &current) {
+            return Some(image);
+        }
+        if !cfg!(windows) || !std::fs::metadata(path).is_ok_and(|m| m.is_file()) {
+            return None;
+        }
     }
     if current() { shell.thumbnail(req) } else { None }
 }

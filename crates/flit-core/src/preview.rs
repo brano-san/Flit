@@ -49,6 +49,11 @@ pub enum PrettyError {
 }
 
 pub const IMAGES: &[&str] = &["jpg", "jpeg", "jpe", "jfif", "png", "gif", "bmp", "dib", "tif", "tiff", "ico", "webp", "heic", "heif", "avif", "jxr", "wdp", "dds", "jxl"];
+const RAW: &[&[u8]] = &[b"dng", b"cr2", b"nef", b"nrw", b"arw", b"sr2", b"pef", b"rw2", b"orf"];
+
+pub fn is_raw(ext: &[u8]) -> bool {
+    RAW.iter().any(|s| ext.eq_ignore_ascii_case(s))
+}
 
 pub fn is_svg(ext: &[u8]) -> bool {
     ext.eq_ignore_ascii_case(b"svg") || ext.eq_ignore_ascii_case(b"svgz")
