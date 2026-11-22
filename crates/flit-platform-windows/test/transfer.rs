@@ -135,7 +135,9 @@ fn a_dropped_link_and_dropped_shell_items_are_saved_later_by_the_operation_on_it
     let dest = fs(&root.join("dest"));
     let data = url_data("https://example.com/page");
     assert_eq!(content_of(&data), Some(Content::Url));
-    assert!(hold_drop(&data, Content::Url, &dest).is_some());
+    let cached = read_drop_url(&data).unwrap();
+    assert!(flit_core::git::dropped_repo_url(&cached).is_none());
+    assert!(hold_drop(&data, Content::Url, &dest, Some(cached)).is_some());
     let out = on_worker(dest.clone(), false);
     assert!(out.error.is_none(), "{:?}", out.error);
     let [(made, _)] = out.items.try_into().unwrap();
@@ -143,7 +145,7 @@ fn a_dropped_link_and_dropped_shell_items_are_saved_later_by_the_operation_on_it
     assert!(std::fs::read_to_string(root.join("dest").join("example.com.url")).unwrap().contains("URL=https://example.com/page"));
     std::fs::write(root.join("photo.jpg"), "jpeg").unwrap();
     let items: IDataObject = crate::context_menu::Pidls::parse(&[fs(&root.join("photo.jpg"))]).unwrap().ui_object(windows::Win32::Foundation::HWND::default()).unwrap();
-    assert!(hold_drop(&items, Content::Items, &dest).is_some());
+    assert!(hold_drop(&items, Content::Items, &dest, None).is_some());
     let out = on_worker(dest.clone(), false);
     assert!(out.error.is_none(), "{:?}", out.error);
     assert_eq!(std::fs::read_to_string(root.join("dest").join("photo.jpg")).unwrap(), "jpeg");
@@ -156,10 +158,19 @@ fn a_drop_flit_declined_is_released_and_never_saved() {
     crate::com_sta();
     let root = temp("declined");
     let dest = fs(&root.join("dest"));
-    let ticket = hold_drop(&url_data("https://example.org/"), Content::Url, &dest).unwrap();
+    let ticket = hold_drop(&url_data("https://example.org/"), Content::Url, &dest, None).unwrap();
     release_drop(ticket);
     let out = on_worker(dest, false);
     assert!(out.error.is_some());
     assert_eq!(std::fs::read_dir(root.join("dest")).unwrap().count(), 0);
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn repository_urls_come_from_the_native_link_format() {
+    crate::com_sta();
+    let data = url_data("https://github.com/owner/repo?tab=readme");
+    let url = read_drop_url(&data).unwrap();
+    assert_eq!(flit_core::git::dropped_repo_url(&url), Some("https://github.com/owner/repo"));
+    assert!(read_drop_url(&url_data(&format!("https://example.org/{}.git", "a".repeat(MAX_REPO_URL)))).is_none());
 }

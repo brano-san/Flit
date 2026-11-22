@@ -272,7 +272,8 @@ impl App {
             }
             None => (None, Vec::new()),
         };
-        Some(TipText { line, command, keys, details: Vec::new() })
+        let details = if h == Hit::Branch { self.git_branch_label().into_iter().collect() } else { Vec::new() };
+        Some(TipText { line, command, keys, details })
     }
 
     pub(super) fn draw_tooltip<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {

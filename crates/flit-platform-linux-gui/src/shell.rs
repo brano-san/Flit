@@ -273,6 +273,10 @@ pub fn run_in_terminal_argv(dir: Option<&Path>, argv: Vec<OsString>) -> Result<(
     spawn_terminal(dir, Some(argv))
 }
 
+pub fn github_cli_package() -> &'static str {
+    crate::tools::package_for("gh", &crate::tools::os_release()).unwrap_or("gh")
+}
+
 pub fn elf_program(head: &[u8]) -> bool {
     if head.len() < 52 || &head[..4] != b"\x7fELF" {
         return false;
@@ -653,6 +657,7 @@ fn launch(l: &Launch) -> Result<(), PlatformError> {
         Launch::Terminal { dirs, admin: true } => dirs.iter().try_for_each(|d| open_root_terminal(Path::new(os(d)))),
         Launch::Terminal { dirs, .. } => dirs.iter().try_for_each(|d| open_terminal(Path::new(os(d)))),
         Launch::RunInTerminal { program } => run_in_terminal(Path::new(os(program))),
+        Launch::RunInTerminalCommand { dir, argv } => run_in_terminal_argv(host(dir), argv.iter().map(OsString::from).collect()),
         Launch::Execute(program) => run_directly(Path::new(os(program))),
         Launch::Display(file) => xdg_open(os(file)),
         Launch::Print(files) => print_files(&files.iter().filter_map(|f| host(f).map(Path::to_path_buf)).collect::<Vec<_>>()),

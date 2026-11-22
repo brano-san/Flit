@@ -233,7 +233,7 @@ impl Target_Impl {
             DragEvent::Enter { .. } => "enter",
             DragEvent::Over { .. } => "over",
             DragEvent::Leave => "leave",
-            DragEvent::Drop { .. } | DragEvent::DropData { .. } => "drop",
+            DragEvent::Drop { .. } | DragEvent::DropData { .. } | DragEvent::DropRepository { .. } => "drop",
         };
         let hovering = matches!(ev, DragEvent::Enter { .. } | DragEvent::Over { .. });
         let reply = unsafe { (self.call)(self.node, ev) };
@@ -332,8 +332,25 @@ impl IDropTarget_Impl for Target_Impl {
         let source_extracts = self.active.get() && self.source_took_folder.get() && data.as_ref().is_some_and(seven_zip_extracts_itself);
         let shown = self.effect.get();
         let (content, folder) = (self.content.take(), self.offered.borrow().clone());
+        let copy_allowed = unsafe { (*effect).0 & DROPEFFECT_COPY.0 != 0 };
+        let mut dropped_url = None;
+        if content == Some(crate::transfer::Content::Url) && folder.is_some() && self.active.get() && copy_allowed && !source_extracts {
+            dropped_url = data.as_ref().and_then(crate::transfer::read_drop_url);
+            if let Some(url) = dropped_url.as_deref().and_then(flit_core::git::dropped_repo_url) {
+                if self.deliver(DragEvent::DropRepository { x, y, url: url.to_owned() }, None) == DROPEFFECT_COPY {
+                    self.finish(DragEvent::Leave);
+                    unsafe {
+                        *effect = DROPEFFECT_COPY;
+                        if let (Some(h), Some(d)) = (&self.helper, data.as_ref()) {
+                            let _ = h.Drop(d, &POINT { x: pt.x, y: pt.y }, *effect);
+                        }
+                    }
+                    return Ok(());
+                }
+            }
+        }
         let ticket = match (content, &folder, data.as_ref()) {
-            (Some(kind), Some(folder), Some(d)) if !source_extracts => crate::transfer::hold_drop(d, kind, folder),
+            (Some(kind), Some(folder), Some(d)) if !source_extracts => crate::transfer::hold_drop(d, kind, folder, dropped_url),
             _ => None,
         };
         unsafe {

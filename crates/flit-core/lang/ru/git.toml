@@ -13,6 +13,15 @@ creating = "Создание ветки…"
 deleting = "Удаление ветки…"
 created = "Ветка {branch} создана"
 deleted = "Ветка {branch} удалена"
+switch_title = "Локальные изменения"
+switch_blocked = "При переключении на ветку {branch} будут перезаписаны локальные изменения."
+switch_choice = "Действие"
+switch_merge = "Перенести изменения"
+switch_stash = "Спрятать и переключиться"
+switch_discard = "Отбросить изменения"
+switch_continue = "Продолжить"
+switch_discard_confirm = "Безвозвратно отбросить локальные изменения и переключиться на ветку {branch}?"
+switch_changed = "Текущая ветка изменилась. Повторите переключение ветки."
 
 [sequence]
 merge = "Идёт слияние"
@@ -54,6 +63,9 @@ initializing = "Создание репозитория Git…"
 cloning = "Клонирование {url}…"
 switching = "Переключение на {branch}…"
 
+cancelled = "Операция Git отменена"
+cloning_name = "Клонирование {name}…"
+
 [done]
 sync = "Синхронизация завершена"
 fetch = "Изменения получены"
@@ -62,6 +74,8 @@ push = "Изменения отправлены"
 init = "Создан репозиторий Git"
 clone = "Клонировано в {name}"
 switch = "Переключено на {branch}"
+
+notify = "{title} — завершено"
 
 [error]
 no_upstream = "Нет вышестоящей ветки"
@@ -75,6 +89,11 @@ auth_title = "Вход на сервер Git"
 auth_text = "Для команды {command} Git нужны имя пользователя, пароль или ключ. Выполните её в терминале, где Git сможет их запросить."
 auth_open = "Открыть терминал"
 
+github_login = "Войти в GitHub"
+github_install = "Установите {package}, чтобы войти в GitHub отсюда."
+
+unknown = "Git не сообщил причину ошибки"
+
 [clone]
 title = "Клонировать репозиторий"
 url = "Адрес репозитория"
@@ -82,3 +101,41 @@ hint = "https://github.com/owner/repo.git"
 button = "Клонировать"
 integration = "Интеграция Git"
 integration_help = "Показывать состояние Git на файлах и информацию о репозитории"
+
+destination = "Папка назначения"
+cleanup_failed = "Не удалось удалить папку отменённого клонирования {path}: {error}"
+in_progress = "Другая операция клонирования уже использует {path}."
+
+[stash]
+restore = "Вернуть спрятанные изменения"
+restoring = "Возврат спрятанных изменений…"
+restored = "Спрятанные изменения возвращены"
+missing = "Этой записи stash больше нет."
+switched = "Ветка {branch} открыта. Спрятанные изменения можно вернуть через git stash pop."
+switch_failed = "Изменения спрятаны. Их можно вернуть через git stash pop. Ошибка переключения: {error}"
+count = ["{n} запись stash","{n} записи stash","{n} записей stash"]
+apply = "Применить"
+drop = "Удалить…"
+drop_confirm = "Безвозвратно удалить запись stash? {stash}"
+applying = "Применение stash…"
+applied = "Stash применён"
+dropping = "Удаление stash…"
+dropped = "Запись stash удалена"
+
+[progress]
+counting = "Подсчёт объектов"
+compressing = "Сжатие объектов"
+receiving = "Получение объектов"
+resolving = "Разрешение дельт"
+writing = "Запись объектов"
+updating = "Обновление файлов"
+filtering = "Фильтрация содержимого"
+unpacking = "Распаковка объектов"
+
+[lock]
+warning = "Git мог оставить index.lock"
+remove = "Удалить index.lock…"
+title = "Удаление блокировки индекса Git"
+confirm = "Удалить {path}? Перед удалением завершите остальные операции Git в этом репозитории."
+changed = "Файл блокировки изменился или больше не существует."
+remove_failed = "Не удалось удалить блокировку индекса Git: {error}"

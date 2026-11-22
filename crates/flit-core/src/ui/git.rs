@@ -2,13 +2,14 @@ use super::archive::Kind;
 use super::form::{Control, Form};
 use super::{App, Column, Effect, Tab};
 use crate::fmt as format;
-use crate::git::{GitEvent, GitInfo, GitOp, GitRequest, GitStatus, Sequence};
+use crate::git::{GitEvent, GitInfo, GitJob, GitOp, GitRequest, GitResult, GitStatus, Sequence, SwitchChoice};
 use crate::i18n::S;
 use crate::location::{Location, ProviderId};
 use crate::path::{FsPath, PathKind};
 use crate::provider::{Launch, TabId};
 use crate::render::{Color, Rect};
 use std::sync::Arc;
+use std::time::Instant;
 
 const COMMIT_COLUMNS: u8 = 0b11110;
 
@@ -50,10 +51,13 @@ fn git_dir(loc: &Location) -> Option<FsPath> {
 impl Tab {
     pub(super) fn keep_git_root(&mut self) {
         let loc = self.location();
-        let root = self.git.as_ref().and_then(|g| g.root.clone()).filter(|r| loc.path().is_inside(r) || loc.path().same(r));
-        self.git = root.map(|root| {
-            let branch = self.git.as_ref().map(|g| g.branch.clone()).unwrap_or_default();
-            Arc::new(GitInfo { root: Some(root), branch, ..GitInfo::default() })
+        self.git = self.git.as_ref().and_then(|g| {
+            let root = g.root.as_ref().filter(|r| loc.path().is_inside(r) || loc.path().same(r))?;
+            Some(Arc::new(GitInfo {
+                root: Some(root.clone()), branch: g.branch.clone(), upstream: g.upstream.clone(),
+                ahead: g.ahead, behind: g.behind, insertions: g.insertions, deletions: g.deletions,
+                stashes: g.stashes.clone(), ..Default::default()
+            }))
         });
     }
 
@@ -193,6 +197,23 @@ impl App {
         self.tab().git.as_ref().filter(|g| g.root.is_some()).map(|g| g.branch.as_str())
     }
 
+    pub(super) fn git_branch_label(&self) -> Option<String> {
+        use std::fmt::Write;
+        let g = self.git_info().filter(|g| g.root.is_some() && !g.branch.is_empty())?;
+        let mut label = g.branch.clone();
+        if g.ahead != 0 || g.behind != 0 {
+            let _ = write!(label, "  ↑{} ↓{}", g.ahead, g.behind);
+        }
+        if g.insertions != 0 || g.deletions != 0 {
+            let _ = write!(label, "  +{} −{}", g.insertions, g.deletions);
+        }
+        if !g.stashes.is_empty() {
+            label.push_str("  ");
+            label.push_str(&crate::trn!(crate::i18n::P::GitStashCount, g.stashes.len()));
+        }
+        Some(label)
+    }
+
     pub fn git_info(&self) -> Option<&GitInfo> {
         self.tab().git.as_deref()
     }
@@ -226,6 +247,41 @@ impl App {
             GitEvent::Started { tab, op } => {
                 if self.tab().id == tab {
                     self.status(started_text(&op));
+                }
+            }
+            GitEvent::SwitchBlocked { tab, dir, from, branch } => {
+                if self.tab().id == tab && git_dir(self.tab().location()).as_ref() == Some(&dir) {
+                    if self.jobs.form.is_none() {
+                        self.ask_git_switch(tab, dir, from, branch);
+                    } else {
+                        self.status(crate::tr!(S::GitBranchSwitchBlocked, branch = branch));
+                    }
+                }
+            }
+            GitEvent::AuthFailed { tab, dir, op, error, github } => {
+                if self.tab().id == tab {
+                    self.open_git_auth(&op, dir, &error, github);
+                }
+                self.each_pane(|a, k| a.git_refresh(k, true));
+            }
+            GitEvent::Progress { id, progress, .. } => self.git_job_progress(id, progress),
+            GitEvent::IndexLockRemoved { id, error, .. } => {
+                self.git_index_lock_removed(id, error.as_deref());
+                if error.is_none() { self.each_pane(|a, k| a.git_refresh(k, true)); }
+            }
+            GitEvent::TrackedDone { tab, id, op, result } => {
+                let now = Instant::now();
+                let error = match &result { GitResult::Failed { error, .. } => Some(error.as_str()), _ => None };
+                self.job_done(id, error, matches!(result, GitResult::Cancelled | GitResult::CancelledWithLock(_)), now);
+                match result {
+                    GitResult::Success => self.on_git(GitEvent::Done { tab, op, error: None, url: None }),
+                    GitResult::Failed { error, auth: Some((dir, github)) } => self.on_git(GitEvent::AuthFailed { tab, dir, op, error, github }),
+                    GitResult::Failed { error, auth: None } => self.on_git(GitEvent::Done { tab, op, error: Some(error), url: None }),
+                    result @ (GitResult::Cancelled | GitResult::CancelledWithLock(_)) => {
+                        if let GitResult::CancelledWithLock(lock) = result { self.git_job_lock(id, lock); }
+                        if self.tab().id == tab { self.status(S::GitOpCancelled.t()); }
+                        self.each_pane(|a, k| a.git_refresh(k, true));
+                    }
                 }
             }
             GitEvent::Done { tab, op, error, url } => {
@@ -284,8 +340,23 @@ impl App {
         }
         let need_repo = !matches!(op, GitOp::Init | GitOp::Clone { .. });
         if let Some((tab, dir)) = self.git_target(need_repo) {
-            self.effects.push(Effect::Git(GitRequest::Run { tab, dir, op }));
+            self.git_run_in(tab, dir, op);
         }
+    }
+
+    fn git_run_in(&mut self, tab: TabId, dir: FsPath, op: GitOp) {
+        let request = if op.is_network() {
+            let job = GitJob { id: self.allocate_op_id(), ctl: Default::default() };
+            let title = match &op {
+                GitOp::Clone { url } => crate::tr!(S::GitOpCloningName, name = crate::git::repo_name(url).unwrap_or_default()),
+                _ => started_text(&op),
+            };
+            self.track_git_job(&job, &dir, title);
+            GitRequest::RunTracked { tab, dir, op, job }
+        } else {
+            GitRequest::Run { tab, dir, op }
+        };
+        self.effects.push(Effect::Git(request));
     }
 
     pub(super) fn git_branches_menu(&mut self) {
@@ -302,6 +373,61 @@ impl App {
         if let Some(b) = self.git_branches.get(k).cloned() {
             self.git_run(GitOp::Switch(b.name));
         }
+    }
+
+    fn ask_git_switch(&mut self, tab: TabId, dir: FsPath, from: String, branch: String) {
+        let controls = vec![
+            Control::paragraph(crate::tr!(S::GitBranchSwitchBlocked, branch = branch)),
+            Control::choice(S::GitBranchSwitchChoice.t(), [S::GitBranchSwitchMerge, S::GitBranchSwitchStash, S::GitBranchSwitchDiscard].map(|s| s.t().to_owned()).to_vec(), 0),
+        ];
+        let kind = Kind::GitSwitch { tab, dir, from, branch, confirm_discard: false };
+        self.open_form(Form::new(kind, S::GitBranchSwitchTitle.t(), controls, vec![S::GitBranchSwitchContinue.t(), S::WidgetsCancel.t()]));
+    }
+
+    pub(super) fn submit_git_switch(&mut self, mut f: Form) -> Option<Form> {
+        let selected = f.choice(1);
+        let Kind::GitSwitch { tab, dir, from, branch, confirm_discard } = &mut f.kind else { return None };
+        let choice = if *confirm_discard {
+            SwitchChoice::Discard
+        } else {
+            match selected {
+                0 => SwitchChoice::Merge,
+                1 => SwitchChoice::Stash,
+                _ => {
+                    *confirm_discard = true;
+                    f.controls = vec![Control::paragraph(crate::tr!(S::GitBranchSwitchDiscardConfirm, branch = branch))];
+                    f.buttons[0] = S::GitBranchSwitchDiscard.t();
+                    f.focus = f.controls.len() + 1;
+                    return Some(f);
+                }
+            }
+        };
+        let op = GitOp::RetrySwitch { from: from.clone(), branch: branch.clone(), choice };
+        self.effects.push(Effect::Git(GitRequest::Run { tab: *tab, dir: dir.clone(), op }));
+        None
+    }
+
+    pub(super) fn flit_stash(&self) -> Option<&crate::git::Stash> {
+        let g = self.git_info()?;
+        let ours = || g.stashes.iter().filter(|s| s.flit_branch().is_some());
+        ours().find(|s| s.flit_branch() == Some(g.branch.as_str())).or_else(|| ours().next())
+    }
+
+    pub(super) fn ask_git_drop_stash(&mut self, stash: crate::git::Stash) {
+        if self.jobs.form.is_some() { return; }
+        let Some((tab, dir)) = self.git_target(true) else { return };
+        let kind = Kind::GitStashDrop { tab, dir, oid: stash.oid };
+        let controls = vec![Control::paragraph(crate::tr!(S::GitStashDropConfirm, stash = stash.message))];
+        let mut f = Form::new(kind, S::GitStashDrop.t(), controls, vec![S::GitStashDrop.t(), S::WidgetsCancel.t()]);
+        f.focus = f.controls.len() + 1;
+        self.open_form(f);
+    }
+
+    pub(super) fn submit_git_drop_stash(&mut self, f: Form) -> Option<Form> {
+        if let Kind::GitStashDrop { tab, dir, oid } = f.kind {
+            self.effects.push(Effect::Git(GitRequest::Run { tab, dir, op: GitOp::DropStash(oid) }));
+        }
+        None
     }
 
     pub(super) fn ask_git_branch(&mut self) {
@@ -394,11 +520,18 @@ impl App {
     }
 
     pub(super) fn ask_clone(&mut self) {
-        if self.git_target(false).is_none() || self.jobs.form.is_some() {
-            return;
+        if let Some((tab, dir)) = self.git_target(false) {
+            self.ask_clone_in(tab, dir, "");
         }
-        let controls = vec![Control::text(S::GitCloneUrl.t(), "", S::GitCloneHint.t())];
-        self.open_form(Form::new(Kind::GitClone, S::GitCloneTitle.t(), controls, vec![S::GitCloneButton.t(), S::SettingsPageDialogCancel.t()]));
+    }
+
+    pub(super) fn ask_clone_in(&mut self, tab: TabId, dir: FsPath, url: &str) -> bool {
+        if self.jobs.form.is_some() || git_dir(&Location::from_local(dir.clone())).is_none() {
+            return false;
+        }
+        let controls = vec![Control::text(S::GitCloneUrl.t(), url, S::GitCloneHint.t()), Control::value(S::GitCloneDestination.t(), &dir.display())];
+        self.open_form(Form::new(Kind::GitClone { tab, dir }, S::GitCloneTitle.t(), controls, vec![S::GitCloneButton.t(), S::SettingsPageDialogCancel.t()]));
+        true
     }
 
     pub(super) fn submit_clone(&mut self, f: Form) -> Option<Form> {
@@ -406,7 +539,16 @@ impl App {
         if crate::git::repo_name(&url).is_none() {
             return Some(f);
         }
-        self.git_run(GitOp::Clone { url });
+        if let Kind::GitClone { tab, dir } = f.kind {
+            self.git_run_in(tab, dir, GitOp::Clone { url });
+        }
+        None
+    }
+
+    pub(super) fn submit_git_remove_index_lock(&mut self, f: Form) -> Option<Form> {
+        if let Kind::GitRemoveIndexLock { id, lock } = f.kind {
+            self.effects.push(Effect::Git(GitRequest::RemoveIndexLock { tab: self.tab().id, id, lock }));
+        }
         None
     }
 }
@@ -420,6 +562,10 @@ fn started_text(op: &GitOp) -> String {
         GitOp::Init => S::GitOpInitializing.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitOpCloning, url = url),
         GitOp::Switch(b) => crate::tr!(S::GitOpSwitching, branch = b),
+        GitOp::RetrySwitch { branch, .. } => crate::tr!(S::GitOpSwitching, branch = branch),
+        GitOp::PopStash(_) => S::GitStashRestoring.t().into(),
+        GitOp::ApplyStash(_) => S::GitStashApplying.t().into(),
+        GitOp::DropStash(_) => S::GitStashDropping.t().into(),
         GitOp::CreateBranch { .. } => S::GitBranchCreating.t().into(),
         GitOp::DeleteBranch { .. } => S::GitBranchDeleting.t().into(),
         GitOp::Abort(_) => S::GitSequenceAborting.t().into(),
@@ -432,12 +578,32 @@ impl App {
         match crate::git::failure(e) {
             crate::git::Failure::Missing => self.status(if self.caps.unix_paths { S::GitErrorInstallLinux } else { S::GitErrorInstallWindows }.t()),
             crate::git::Failure::Auth if self.jobs.form.is_none() => {
-                let (Some(command), Some(dir)) = (crate::git::op_command(op), self.git_dir_of(tab)) else { return self.status(crate::tr!(S::GitErrorFailed, error = e)) };
-                let controls = vec![Control::line(&crate::tr!(S::GitErrorAuthText, command = command)), Control::line(e)];
-                self.open_form(Form::new(Kind::GitAuth { dir }, S::GitErrorAuthTitle.t(), controls, vec![S::GitErrorAuthOpen.t(), S::WidgetsCancel.t()]));
+                let Some(dir) = self.git_dir_of(tab) else { return self.status(crate::tr!(S::GitErrorFailed, error = e)) };
+                self.open_git_auth(op, dir, e, None);
             }
             _ => self.status(crate::tr!(S::GitErrorFailed, error = e)),
         }
+    }
+
+    fn open_git_auth(&mut self, op: &GitOp, dir: FsPath, error: &str, github: Option<crate::git::GithubLogin>) {
+        use crate::git::GithubLogin;
+        self.status(crate::tr!(S::GitErrorFailed, error = error));
+        let Some(command) = crate::git::op_command(op).filter(|_| self.jobs.form.is_none()) else { return };
+        let mut controls = vec![Control::paragraph(crate::tr!(S::GitErrorAuthText, command = command)), Control::line(error)];
+        let mut buttons = vec![S::GitErrorAuthOpen.t()];
+        let login = match github {
+            Some(GithubLogin::Command(argv)) => {
+                buttons.push(S::GitErrorGithubLogin.t());
+                Some(argv)
+            }
+            Some(GithubLogin::Install(package)) => {
+                controls.push(Control::paragraph(crate::tr!(S::GitErrorGithubInstall, package = package)));
+                None
+            }
+            None => None,
+        };
+        buttons.push(S::WidgetsCancel.t());
+        self.open_form(Form::new(Kind::GitAuth { dir, login }, S::GitErrorAuthTitle.t(), controls, buttons));
     }
 
     fn git_dir_of(&self, tab: TabId) -> Option<FsPath> {
@@ -446,8 +612,10 @@ impl App {
     }
 
     pub(super) fn submit_git_auth(&mut self, f: Form, b: usize) -> Option<Form> {
-        if let (Kind::GitAuth { dir }, 0) = (f.kind, b) {
-            self.launch(Launch::Terminal { dirs: vec![dir], admin: false });
+        match (f.kind, b) {
+            (Kind::GitAuth { dir, .. }, 0) => self.launch(Launch::Terminal { dirs: vec![dir], admin: false }),
+            (Kind::GitAuth { dir, login: Some(argv) }, 1) => self.launch(Launch::RunInTerminalCommand { dir, argv }),
+            _ => {}
         }
         None
     }
@@ -462,6 +630,11 @@ fn done_text(op: &GitOp) -> String {
         GitOp::Init => S::GitDoneInit.t().to_owned(),
         GitOp::Clone { url } => crate::tr!(S::GitDoneClone, name = crate::git::repo_name(url).unwrap_or_default()),
         GitOp::Switch(b) => crate::tr!(S::GitDoneSwitch, branch = b),
+        GitOp::RetrySwitch { branch, choice: SwitchChoice::Stash, .. } => crate::tr!(S::GitStashSwitched, branch = branch),
+        GitOp::RetrySwitch { branch, .. } => crate::tr!(S::GitDoneSwitch, branch = branch),
+        GitOp::PopStash(_) => S::GitStashRestored.t().into(),
+        GitOp::ApplyStash(_) => S::GitStashApplied.t().into(),
+        GitOp::DropStash(_) => S::GitStashDropped.t().into(),
         GitOp::CreateBranch { name, .. } => crate::tr!(S::GitBranchCreated, branch = name),
         GitOp::DeleteBranch { name, .. } => crate::tr!(S::GitBranchDeleted, branch = name),
         GitOp::Abort(_) => S::GitSequenceAborted.t().into(),

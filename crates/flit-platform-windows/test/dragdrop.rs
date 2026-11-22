@@ -209,7 +209,7 @@ unsafe fn folder_view_call(node: *const (), ev: DragEvent) -> DropReply {
             accept
         }
         DragEvent::Over { .. } => accept,
-        DragEvent::Drop { .. } | DragEvent::DropData { .. } => {
+        DragEvent::Drop { .. } | DragEvent::DropData { .. } | DragEvent::DropRepository { .. } => {
             view.queued_copies.borrow_mut().extend(view.entered.borrow().iter().cloned());
             accept
         }
@@ -311,7 +311,7 @@ unsafe fn onto_view_call(node: *const (), ev: DragEvent) -> DropReply {
         DragEvent::Enter { .. } => "enter",
         DragEvent::Over { .. } => "over",
         DragEvent::Leave => "leave",
-        DragEvent::Drop { .. } | DragEvent::DropData { .. } => "drop",
+        DragEvent::Drop { .. } | DragEvent::DropData { .. } | DragEvent::DropRepository { .. } => "drop",
     });
     DropReply { effect: DROPEFFECT_COPY.0, caption: None, folder: Some(view.dest.clone()), onto: Some(view.onto.clone()) }
 }

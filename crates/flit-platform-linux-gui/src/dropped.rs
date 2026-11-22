@@ -15,6 +15,7 @@ pub enum Content {
     Url(String),
     Text(String),
     Image(Vec<u8>),
+    Repository(String),
 }
 
 pub fn web_urls(uri_list: &[u8]) -> Vec<String> {
@@ -50,7 +51,15 @@ pub fn link_file(url: &str, name: &str) -> String {
 }
 
 impl Content {
-    pub fn file(self, text_stem: &str, image_stem: &str) -> DroppedFile {
+    pub fn repository_url(&self) -> Option<&str> {
+        match self {
+            Self::Repository(url) => Some(url),
+            Self::Url(url) | Self::Text(url) => flit_core::git::dropped_repo_url(url),
+            Self::Image(_) => None,
+        }
+    }
+
+    pub fn file(self, text_stem: &str, image_stem: &str) -> Option<DroppedFile> {
         let (stem, extension, bytes) = match self {
             Self::Url(url) => {
                 let stem = url_stem(&url).unwrap_or_else(|| clean(text_stem));
@@ -59,8 +68,9 @@ impl Content {
             }
             Self::Text(text) => (clean(text_stem), "txt", text.into_bytes()),
             Self::Image(png) => (clean(image_stem), "png", png),
+            Self::Repository(_) => return None,
         };
-        DroppedFile { name: format!("{stem}.{extension}").into_bytes(), bytes }
+        Some(DroppedFile { name: format!("{stem}.{extension}").into_bytes(), bytes })
     }
 }
 
@@ -187,7 +197,10 @@ pub fn interpret(kind: Option<TypeHint>, bytes: &[u8]) -> Option<Dragged> {
             if !paths.is_empty() {
                 return Some(Dragged::Files(paths));
             }
-            web_urls(bytes).into_iter().next().map(|u| Dragged::Content(Content::Url(u)))
+            let content = web_urls(bytes).into_iter().next().map(Content::Url).or_else(|| {
+                String::from_utf8_lossy(bytes).lines().find_map(flit_core::git::dropped_repo_url).map(|url| Content::Repository(url.to_owned()))
+            })?;
+            Some(Dragged::Content(content))
         }
         TypeHint::Plaintext => {
             let text = String::from_utf8_lossy(bytes).into_owned();

@@ -31,6 +31,115 @@ fn git_requests(fx: &[Effect]) -> Vec<GitRequest> {
 }
 
 #[test]
+fn switching_with_changes_asks_twice_before_discard_and_can_be_cancelled() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let tab = app.tab().id;
+    let dir = app.tab().location().path().clone();
+    let blocked = GitEvent::SwitchBlocked { tab, dir, from: "main".into(), branch: "dev".into() };
+    for (selected, choice) in [(0, SwitchChoice::Merge), (1, SwitchChoice::Stash), (2, SwitchChoice::Discard)] {
+        app.on_git(blocked.clone());
+        let f = app.jobs.form.as_mut().unwrap();
+        let Control::Choice { sel, .. } = &mut f.controls[1] else { panic!("switch choices") };
+        *sel = selected;
+        app.form_submit(0);
+        if choice == SwitchChoice::Discard {
+            assert!(matches!(app.jobs.form.as_ref().unwrap().kind, Kind::GitSwitch { confirm_discard: true, .. }));
+            assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+            app.form_submit(1);
+            assert!(git_requests(&app.drain_effects().collect::<Vec<_>>()).is_empty());
+            app.on_git(blocked.clone());
+            let Control::Choice { sel, .. } = &mut app.jobs.form.as_mut().unwrap().controls[1] else { panic!("switch choices") };
+            *sel = selected;
+            app.form_submit(0);
+            app.form_submit(0);
+        }
+        assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(),
+            [GitRequest::Run { op: GitOp::RetrySwitch { branch, choice: got, .. }, .. }] if branch == "dev" && *got == choice));
+    }
+}
+
+#[test]
+fn dropping_a_repository_prefills_clone_and_other_urls_still_save_a_link() {
+    use super::super::{drop_effect, DragEvent, Mods};
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let (x, y) = (300.0, app.layout.list.y + 200.0);
+    let now = Instant::now();
+    let enter = DragEvent::Enter { paths: vec![], x, y, mods: Mods::default(), allowed: drop_effect::COPY, right: false };
+    let url = "https://github.com/owner/repo";
+    let dropped = DragEvent::DropRepository { x, y, url: url.into() };
+    app.drag(&enter, now);
+    assert_eq!(app.drag(&dropped, now), drop_effect::COPY);
+    let f = app.jobs.form.as_ref().unwrap();
+    assert_eq!(f.text(0), url);
+    assert!(matches!(&f.kind, Kind::GitClone { dir, .. } if dir.display() == r"C:\x"));
+    app.form_submit(1);
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::Git(GitRequest::RunTracked { .. }) | Effect::Provider { req: ProviderRequest::Op { .. }, .. })));
+    app.drag(&enter, now);
+    app.drag(&dropped, now);
+    app.form_submit(0);
+    assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(),
+        [GitRequest::RunTracked { op: GitOp::Clone { url: got }, dir, .. }] if got == url && dir.display() == r"C:\x"));
+    app.drag(&enter, now);
+    app.drag(&DragEvent::Drop { x, y, mods: Mods::default(), allowed: drop_effect::COPY }, now);
+    assert!(app.jobs.form.is_none());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Op { op: crate::provider::FileOp::PasteDropped { .. }, .. }, .. })));
+}
+
+#[test]
+fn git_drop_uses_the_destination_tab_and_leaves_archive_links_to_the_platform() {
+    use super::super::{drop_effect, DragEvent, Hit};
+    let (mut app, _) = app_in(r"C:\x", &["pack.zip"]);
+    let now = Instant::now();
+    let mut gfx = Gfx::new(crate::text::tests::Mono, 2048);
+    app.frame(&mut gfx, now);
+    let (x, y) = (app.layout.list.x + 30.0, app.layout.list.y + 5.0);
+    assert_eq!(app.hit(x, y), Hit::Row(0));
+    let url = "https://github.com/owner/repo";
+    assert_eq!(app.drag(&DragEvent::DropRepository { x, y, url: url.into() }, now), drop_effect::NONE);
+    assert!(app.jobs.form.is_none());
+    let current = app.cur;
+    app.dispatch(vec![crate::open::Route { folder: Location::parse(r"C:\other").unwrap(), select: None }], crate::open::OpenTarget::NewTab, now);
+    let other = app.tab().id;
+    let slot = app.cur;
+    app.select_tab(current);
+    app.frame(&mut gfx, now);
+    let r = app.layout.tabs[slot].0;
+    let (x, y) = (r.x + 10.0, r.y + r.h / 2.0);
+    assert_eq!(app.hit(x, y), Hit::Tab(slot));
+    assert_eq!(app.drag(&DragEvent::DropRepository { x, y, url: url.into() }, now), drop_effect::COPY);
+    assert!(matches!(&app.jobs.form.as_ref().unwrap().kind, Kind::GitClone { tab, dir } if *tab == other && dir.display() == r"C:\other"));
+}
+
+#[test]
+fn git_clone_status_uses_the_url_while_operations_show_the_repository_name() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let tab = app.tab().id;
+    let url = "https://example.test/owner/project.git";
+    let op = GitOp::Clone { url: url.into() };
+    app.git_run(op.clone());
+    assert!(app.job_states()[0].0.contains("project"));
+    assert!(!app.job_states()[0].0.contains(url));
+    app.on_git(GitEvent::Started { tab, op });
+    assert!(app.tab().error.as_deref().is_some_and(|status| status.contains(url)));
+}
+
+#[test]
+fn git_narrow_bottom_bar_keeps_files_folders_and_the_filter_minimum() {
+    use super::super::bottom::BottomHit;
+    let (mut app, _) = app_in(r"C:\x", &["one", "two"]);
+    app.on_event(&crate::input::Event::Resized { width: 480, height: 360 }, Instant::now());
+    let mut gfx = Gfx::new(crate::text::tests::Mono, 2048);
+    app.frame(&mut gfx, Instant::now());
+    let baseline_width = app.nav.filter.field.w;
+    app.on_git(repo(&app));
+    app.frame(&mut gfx, Instant::now());
+    for hit in [BottomHit::Files, BottomHit::Folders] {
+        assert!(app.layout.bar.iter().any(|(kind, _)| *kind == hit), "{hit:?}");
+    }
+    assert_eq!(app.nav.filter.field.w, baseline_width);
+}
+
+#[test]
 fn an_in_progress_git_sequence_offers_abort_without_running_it_immediately() {
     let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
     let mut ev = repo(&app);
@@ -306,6 +415,28 @@ fn branch_forms_fit_a_narrow_window_with_every_translation() {
 }
 
 #[test]
+fn git_branch_summary_fits_alongside_the_filter_at_narrow_widths() {
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let mut status = repo(&app);
+    if let GitEvent::Status { info: Some(i), .. } = &mut status {
+        let g = Arc::make_mut(i);
+        g.branch = "feature/a-long-name-for-the-current-branch".into();
+        (g.ahead, g.behind, g.insertions, g.deletions) = (3, 12, 40, 24);
+        g.stashes = vec![crate::git::Stash { oid: "first".into(), message: "On main: Flit: main".into() }].into();
+    }
+    app.on_git(status);
+    app.on_event(&crate::input::Event::Resized { width: 680, height: 360 }, Instant::now());
+    let mut gfx = Gfx::new(crate::text::tests::Mono, 2048);
+    app.frame(&mut gfx, Instant::now());
+    let branch = app.layout.branch;
+    assert!(branch.w > 0.0 && branch.right() <= 680.0, "branch {branch:?}, status {:?}", app.layout.status);
+    assert!(branch.x >= app.nav.filter.field.right());
+    let label = app.git_branch_label().unwrap();
+    assert!(label.contains("↑3 ↓12  +40 −24"));
+    assert!(label.contains(&crate::trn!(crate::i18n::P::GitStashCount, 1)));
+}
+
+#[test]
 fn commit_hash_is_opt_in_and_only_available_in_a_repository() {
     let (mut app, _) = app_in(r"C:\x", &["a.txt"]);
     assert!(!app.column_kinds().iter().any(|c| c.title() == "Commit hash"));
@@ -496,7 +627,7 @@ fn sync_uses_the_active_tabs_upstream_and_does_not_leak_to_other_windows() {
     assert!(app.available("git.sync"));
     assert!(app.build_branch_menu().iter().any(|m| matches!(m, MenuItem::Command { label, disabled: false, .. } if label == "Git: Sync")));
     app.run_action("git.sync", Instant::now());
-    assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::Run { op: GitOp::Sync, tab, .. }] if *tab == app.tab().id));
+    assert!(matches!(git_requests(&app.drain_effects().collect::<Vec<_>>()).as_slice(), [GitRequest::RunTracked { op: GitOp::Sync, tab, .. }] if *tab == app.tab().id));
     let (other, _) = app_in(r"C:\x", &[]);
     assert!(!other.available("git.sync"));
     app.run_action("tab.new", Instant::now());
@@ -630,7 +761,7 @@ fn a_sign_in_failure_offers_a_terminal_in_the_repository() {
     let auth = "fatal: could not read Username for 'https://github.com': terminal prompts disabled";
     app.on_git(GitEvent::Done { tab, op: GitOp::Push, error: Some(auth.into()), url: None });
     let form = app.jobs.form.as_ref().expect("a sign-in failure asks what to do");
-    assert!(matches!(&form.kind, Kind::GitAuth { dir } if *dir == FsPath::parse(r"C:\x").unwrap()));
+    assert!(matches!(&form.kind, Kind::GitAuth { dir, .. } if *dir == FsPath::parse(r"C:\x").unwrap()));
     app.drain_effects().for_each(drop);
     app.form_submit(0);
     assert_eq!(terminals(&mut app), [vec![FsPath::parse(r"C:\x").unwrap()]], "the terminal opens at the repository root");
@@ -658,4 +789,92 @@ fn a_missing_git_says_how_to_install_it_and_other_failures_stay_as_they_were() {
     assert_eq!(crate::git::failure("remote: Invalid username or password."), crate::git::Failure::Auth);
     assert_eq!(crate::git::failure("fatal: not a git repository"), crate::git::Failure::Other);
     assert_eq!(crate::git::op_command(&GitOp::Clone { url: "https://h/r.git".into() }).as_deref(), Some("git clone https://h/r.git"));
+}
+
+#[test]
+fn github_sign_in_launches_the_selected_command_and_missing_tools_only_show_the_hint() {
+    use crate::git::GithubLogin;
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    let tab = app.tab().id;
+    let dir = app.tab().location().path().clone();
+    let event = |github| GitEvent::AuthFailed { tab, dir: dir.clone(), op: GitOp::Fetch, error: "fatal: Authentication failed".into(), github };
+    let argv = ["gh", "auth", "login", "--web"].map(str::to_owned).to_vec();
+    app.on_git(event(Some(GithubLogin::Command(argv.clone()))));
+    assert!(app.jobs.form.as_ref().unwrap().buttons.contains(&S::GitErrorGithubLogin.t()));
+    app.form_submit(1);
+    assert!(app.drain_effects().any(|e| matches!(e,
+        Effect::Provider { req: ProviderRequest::Launch { launch: Launch::RunInTerminalCommand { dir: folder, argv: args }, .. }, .. }
+        if folder == dir && args == argv)));
+    for github in [Some(GithubLogin::Install("github-cli")), None] {
+        let show_hint = github.is_some();
+        app.on_git(event(github));
+        let f = app.jobs.form.as_ref().unwrap();
+        assert_eq!(f.buttons, [S::GitErrorAuthOpen.t(), S::WidgetsCancel.t()]);
+        assert_eq!(f.controls.iter().any(|c| matches!(c, Control::Paragraph { text, .. } if text.contains("github-cli"))), show_hint);
+        app.form_submit(1);
+    }
+}
+
+#[test]
+fn network_git_records_progress_errors_and_cancellation_in_operations() {
+    use crate::git::{GitPhase, GitProgress};
+    use crate::ui::JobState;
+    for op in [GitOp::Fetch, GitOp::Pull, GitOp::Push, GitOp::Sync, GitOp::Clone { url: "https://example.test/project.git".into() }] {
+        let (mut app, _) = app_in(r"C:\x", &[]);
+        let mut ev = repo(&app);
+        if let GitEvent::Status { info: Some(i), .. } = &mut ev { Arc::make_mut(i).upstream = Some("origin/main".into()); }
+        app.on_git(ev);
+        app.git_run(op.clone());
+        let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+        let [GitRequest::RunTracked { tab, job, .. }] = requests.as_slice() else { panic!("tracked git operation") };
+        assert_eq!(app.job_states()[0].1, JobState::Running);
+        app.on_git(GitEvent::Progress { tab: *tab, id: job.id, progress: GitProgress { phase: GitPhase::Receiving, percent: 61 } });
+        assert_eq!(app.job_states()[0].2.items, 61);
+        assert_eq!(app.job_states()[0].2.total_items, 100);
+        app.pause_job(0);
+        assert!(!job.ctl.is_paused());
+        if op == GitOp::Pull {
+            app.cancel_job(0);
+            assert!(job.ctl.is_cancelled());
+            app.on_git(GitEvent::TrackedDone { tab: *tab, id: job.id, op, result: GitResult::Cancelled });
+            assert_eq!(app.job_states()[0].1, JobState::Cancelled);
+        } else {
+            let error = "fatal: upstream unavailable".to_owned();
+            let result = GitResult::Failed { error: error.clone(), auth: None };
+            app.on_git(GitEvent::TrackedDone { tab: *tab, id: job.id, op, result });
+            assert_eq!(app.job_states()[0].1, JobState::Failed(error));
+            assert_eq!(app.tab().error.as_deref(), Some("Git: fatal: upstream unavailable"));
+        }
+    }
+}
+
+#[test]
+fn git_leftover_index_lock_requires_an_operations_action_and_confirmation() {
+    use crate::git::GitIndexLock;
+    use super::super::Hit;
+    let (mut app, _) = app_in(r"C:\x", &[]);
+    app.on_git(repo(&app));
+    app.git_run(GitOp::Pull);
+    let requests = git_requests(&app.drain_effects().collect::<Vec<_>>());
+    let [GitRequest::RunTracked { tab, job, .. }] = requests.as_slice() else { panic!("tracked pull") };
+    let lock = GitIndexLock { path: r"C:\x\.git\index.lock".into(), file_id: (1, 2), modified: std::time::SystemTime::UNIX_EPOCH, len: 0 };
+    app.on_git(GitEvent::TrackedDone { tab: *tab, id: job.id, op: GitOp::Pull, result: GitResult::CancelledWithLock(lock.clone()) });
+    assert_eq!(app.job_states()[0].1, crate::ui::JobState::Cancelled);
+    assert!(app.jobs.form.is_none());
+    assert!(app.drain_effects().all(|e| !matches!(e, Effect::Git(GitRequest::RemoveIndexLock { .. }))));
+    let now = Instant::now();
+    app.jobs_click(Hit::OpsButton, now);
+    for button in [1, 0] {
+        app.jobs_click(Hit::OpsMore(0), now);
+        app.jobs_click(Hit::OpsMenu(1), now);
+        assert!(matches!(&app.jobs.form.as_ref().unwrap().kind, Kind::GitRemoveIndexLock { lock: offered, .. } if *offered == lock));
+        assert!(app.drain_effects().all(|e| !matches!(e, Effect::Git(GitRequest::RemoveIndexLock { .. }))));
+        app.form_submit(button);
+        let removed = app.drain_effects().any(|e| matches!(e, Effect::Git(GitRequest::RemoveIndexLock { id, lock: requested, .. }) if id == job.id && requested == lock));
+        assert_eq!(removed, button == 0);
+    }
+    app.on_git(GitEvent::IndexLockRemoved { tab: *tab, id: job.id, error: None });
+    app.jobs_click(Hit::OpsMore(0), now);
+    app.jobs_click(Hit::OpsMenu(1), now);
+    assert!(app.jobs.form.is_none());
 }

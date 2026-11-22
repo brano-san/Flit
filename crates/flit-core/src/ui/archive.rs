@@ -63,7 +63,7 @@ pub(super) enum Kind {
     Unlock { device: FsPath },
     Hashes(Hashing),
     Properties(super::properties::Measuring),
-    GitClone,
+    GitClone { tab: TabId, dir: FsPath },
     GitNewBranch { tab: crate::provider::TabId, dir: FsPath, bases: Vec<String>, pending: Option<crate::git::GitOp> },
     GitDeleteBranch { tab: crate::provider::TabId, dir: FsPath, name: String, force: bool, pending: bool },
     GitAbort { tab: crate::provider::TabId, dir: FsPath, sequence: crate::git::Sequence, pending: bool },
@@ -71,12 +71,15 @@ pub(super) enum Kind {
     Update(super::update::Updating),
     AllowRun { tab: crate::provider::TabId, path: FsPath },
     RunScript { tab: crate::provider::TabId, path: FsPath },
-    GitAuth { dir: FsPath },
+    GitAuth { dir: FsPath, login: Option<Vec<String>> },
     BatchRename(super::batch_rename::Batch),
     Login(super::network::Login),
     ConnectServer,
     RenameServer(String),
     MountQuestion(super::network::Question),
+    GitSwitch { tab: TabId, dir: FsPath, from: String, branch: String, confirm_discard: bool },
+    GitStashDrop { tab: TabId, dir: FsPath, oid: String },
+    GitRemoveIndexLock { id: crate::provider::OpId, lock: crate::git::GitIndexLock },
 }
 
 impl Kind {
@@ -92,7 +95,7 @@ impl Kind {
             Kind::Unlock { .. } => "unlock",
             Kind::Hashes(_) => "hashes",
             Kind::Properties(_) => "properties",
-            Kind::GitClone => "git_clone",
+            Kind::GitClone { .. } => "git_clone",
             Kind::GitNewBranch { .. } => "git_new_branch",
             Kind::GitDeleteBranch { .. } => "git_delete_branch",
             Kind::GitAbort { .. } => "git_abort",
@@ -102,6 +105,9 @@ impl Kind {
             Kind::ConnectServer => "connect_server",
             Kind::RenameServer(_) => "rename_server",
             Kind::MountQuestion(_) => "mount_question",
+            Kind::GitSwitch { .. } => "git_switch",
+            Kind::GitStashDrop { .. } => "git_stash_drop",
+            Kind::GitRemoveIndexLock { .. } => "git_remove_index_lock",
         }
     }
 }
@@ -760,7 +766,7 @@ impl App {
             Kind::AllowRun { .. } => self.submit_allow_run(f, b),
             Kind::RunScript { .. } => self.submit_run_script(f, b),
             Kind::GitAuth { .. } => self.submit_git_auth(f, b),
-            Kind::GitClone => self.submit_clone(f),
+            Kind::GitClone { .. } => self.submit_clone(f),
             Kind::GitNewBranch { .. } => self.submit_git_branch(f),
             Kind::GitDeleteBranch { .. } => self.submit_git_delete(f),
             Kind::GitAbort { .. } => self.submit_git_abort(f),
@@ -771,6 +777,9 @@ impl App {
             Kind::ConnectServer => self.submit_server(f),
             Kind::RenameServer(_) => self.submit_server_name(f),
             Kind::MountQuestion(_) => self.submit_mount_question(f),
+            Kind::GitSwitch { .. } => self.submit_git_switch(f),
+            Kind::GitStashDrop { .. } => self.submit_git_drop_stash(f),
+            Kind::GitRemoveIndexLock { .. } => self.submit_git_remove_index_lock(f),
         };
         if self.jobs.form.is_none() {
             self.jobs.form = keep;

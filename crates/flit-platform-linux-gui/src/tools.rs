@@ -13,6 +13,7 @@ enum When {
     X11,
     Wayland,
     Terminal,
+    OnDemand,
 }
 
 struct Need {
@@ -22,7 +23,7 @@ struct Need {
     when: When,
 }
 
-const NEEDS: [Need; 21] = [
+const NEEDS: [Need; 22] = [
     Need { tools: &["xdg-open"], purpose: S::SettingsPageToolOpen, packages: ["xdg-utils", "xdg-utils", "xdg-utils", "xdg-utils"], when: When::Always },
     Need { tools: &["gdbus"], purpose: S::SettingsPageToolDesktop, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
     Need { tools: &["gio"], purpose: S::SettingsPageToolDrives, packages: ["libglib2.0-bin", "glib2", "glib2", "glib2-tools"], when: When::Always },
@@ -44,6 +45,7 @@ const NEEDS: [Need; 21] = [
     Need { tools: &["libmpv"], purpose: S::SettingsPageToolMediaInside, packages: ["libmpv2", "mpv-libs", "mpv", "libmpv2"], when: When::Always },
     Need { tools: &["lp"], purpose: S::SettingsPageToolPrint, packages: ["cups-client", "cups-client", "cups", "cups-client"], when: When::Always },
     Need { tools: &["xterm"], purpose: S::SettingsPageToolTerminal, packages: ["xterm", "xterm", "xterm", "xterm"], when: When::Terminal },
+    Need { tools: &["gh"], purpose: S::GitErrorGithubLogin, packages: ["gh", "gh", "github-cli", "gh"], when: When::OnDemand },
 ];
 
 const LIBRARIES: [(&str, &[&str]); 1] = [("libmpv", &crate::mpv::LIBRARIES)];
@@ -121,6 +123,7 @@ pub fn missing_from(found: impl Fn(&str) -> bool, os_release: &str, wayland: boo
         When::X11 => !wayland,
         When::Wayland => wayland,
         When::Terminal => !terminal,
+        When::OnDemand => false,
     };
     NEEDS
         .iter()
