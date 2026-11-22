@@ -676,14 +676,24 @@ impl App {
         let Some(i) = self.keymap.owner(Chord { key, mods }).filter(|&i| self.supports(ACTIONS[i].id)) else {
             return self.focus == super::Focus::List && self.nav.palette.is_none() && !self.jobs.modal() && self.user_shortcut(key, mods);
         };
-        if let Some(run) = ACTIONS[i].run {
-            run(self, now);
+        let id = ACTIONS[i].id;
+        if self.mru_tabs && key == Key::Tab && mods.ctrl && !mods.alt
+            && matches!((id, mods.shift), ("tab.next", false) | ("tab.previous", true))
+        {
+            self.cycle_recent_tabs(mods.shift);
+        } else {
+            self.invoke_action(i, now);
         }
         true
     }
 
     pub fn run_action(&mut self, id: &str, now: Instant) -> bool {
-        let Some(run) = ACTIONS.iter().find(|a| a.id == id && self.supports(id)).and_then(|a| a.run) else { return false };
+        index(id).filter(|_| self.supports(id)).is_some_and(|i| self.invoke_action(i, now))
+    }
+
+    pub(super) fn invoke_action(&mut self, i: usize, now: Instant) -> bool {
+        let action = &ACTIONS[i];
+        let Some(run) = action.run else { return false };
         self.dirty = true;
         run(self, now);
         true

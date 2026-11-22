@@ -91,12 +91,14 @@ pub struct Tab {
     pub(super) hidden_types: FxHashSet<u64>,
     pub(super) retain_filter: bool,
     pub(super) sizing: (u64, FxHashSet<u32>),
+    pub(super) last_used: u64,
 }
 
 impl Tab {
     pub(super) fn new(id: TabId, at: Location, view_spec: ViewSpec) -> Self {
         Self {
             id,
+            last_used: 0,
             view_loc: at.clone(),
             trail: at.clone(),
             ghosts: Vec::new(),

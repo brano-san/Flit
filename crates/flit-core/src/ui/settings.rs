@@ -427,6 +427,7 @@ pub static SETTINGS: &[Setting] = &[
     toggle("files.select_previous", Page::Input, S::SettingsTitleFilesSelectPrevious, S::SettingsHelpFilesSelectPrevious, |a| a.select_previous, |a, on| a.select_previous = on),
     toggle("general.smooth_scroll", Page::Input, S::SettingsTitleGeneralSmoothScroll, S::SettingsHelpGeneralSmoothScroll, |a| a.smooth_scroll, |a, on| a.smooth_scroll = on),
     toggle("general.tab_wheel_reversed", Page::Input, S::SettingsTitleGeneralTabWheelReversed, S::SettingsHelpGeneralTabWheelReversed, |a| a.tab_wheel_reversed, |a, on| a.tab_wheel_reversed = on),
+    toggle("general.mru_tabs", Page::Input, S::SettingsTitleGeneralMruTabs, S::SettingsHelpGeneralMruTabs, |a| a.mru_tabs, |a, on| { a.finish_tab_cycle(); a.mru_tabs = on; }),
     choice("windows.inspector_layout", Page::Windows, S::OptionsTitleInspectorLayout, S::OptionsHelpInspectorLayout, INSPECTOR_CHOICES, |a| pos(&INSPECTORS, &a.opts.inspector_at), |a, i| a.opts.inspector_at = INSPECTORS[i]),
     choice("general.startup", Page::Windows, S::OptionsTitleLoadOnStartup, S::OptionsHelpLoadOnStartup, STARTUP, |a| match a.startup {
         Startup::Continue => 0,

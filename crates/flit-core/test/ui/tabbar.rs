@@ -78,6 +78,42 @@ fn listed(app: &mut App) -> Vec<String> {
 }
 
 #[test]
+fn mru_tab_cycle_keeps_the_same_order_until_control_is_released() {
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c", r"C:\d"]);
+    for i in [2, 0, 1] {
+        app.select_tab(i);
+    }
+    key(&mut app, Key::Tab, CTRL);
+    assert_eq!(app.cur, 0);
+    ev(&mut app, Event::Key { key: Key::Tab, mods: CTRL, pressed: false });
+    key(&mut app, Key::Tab, CTRL);
+    assert_eq!(app.cur, 2);
+    key(&mut app, Key::Tab, Mods { shift: true, ..CTRL });
+    assert_eq!(app.cur, 0);
+    ev(&mut app, Event::Key { key: Key::Other, mods: NO, pressed: false });
+    key(&mut app, Key::Tab, CTRL);
+    assert_eq!(app.cur, 1);
+}
+
+#[test]
+fn mru_tab_cycle_can_be_disabled_and_control_page_keys_use_the_tab_strip() {
+    use crate::ui::settings::{self, Value, SETTINGS};
+    let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c", r"C:\d"]);
+    app.set_caps(crate::caps::Caps { unix_paths: true });
+    for i in [2, 0, 1] {
+        app.select_tab(i);
+    }
+    key(&mut app, Key::PageDown, CTRL);
+    assert_eq!(app.cur, 2);
+    key(&mut app, Key::PageUp, CTRL);
+    assert_eq!(app.cur, 1);
+    let row = settings::index("general.mru_tabs").unwrap();
+    assert!(SETTINGS[row].set(&mut app, Value::Bool(false)));
+    key(&mut app, Key::Tab, CTRL);
+    assert_eq!(app.cur, 2);
+}
+
+#[test]
 fn tab_menu_closes_other_left_and_right_tabs_and_remembers_them() {
     let mut app = app_with(&[r"C:\a", r"C:\b", r"C:\c", r"C:\d", r"C:\e"]);
     let (x, y) = tab_xy(&app, 2);
@@ -840,8 +876,8 @@ fn the_current_tab_is_scrolled_into_view_whenever_it_changes() {
     arrow_click(&mut app, true);
     key(&mut app, Key::Tab, CTRL);
     app.layout();
-    assert_eq!(app.cur, 1);
-    assert!(shown(&app).contains(&1), "Ctrl+Tab brings the next tab back into view");
+    assert_eq!(app.cur, 29);
+    assert!(shown(&app).contains(&29), "Ctrl+Tab brings the most recently used tab back into view");
 
     app.select_tab(29);
     app.layout();
