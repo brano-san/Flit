@@ -671,6 +671,9 @@ fn smart_quote(text: &str) -> String {
 
 impl App {
     pub(super) fn run_bound(&mut self, key: Key, mods: Mods, now: Instant) -> bool {
+        if self.tabs.is_empty() {
+            return false;
+        }
         if key == Key::Space && mods == Mods::default() && self.tab().typing(now) {
             return false;
         }
@@ -691,6 +694,9 @@ impl App {
     }
 
     pub fn supports(&self, id: &str) -> bool {
+        if self.tabs.is_empty() {
+            return false;
+        }
         if id == "drive.add_server" {
             let path = self.current_location().path();
             return self.caps.supports(id) && path.is_network() && path.is_root();
