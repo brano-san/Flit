@@ -3,7 +3,7 @@ use flit_core::library::LibraryOp;
 use flit_core::ui::{Bitmap, IconKind, IconRequest, KnownFolder, Places};
 use flit_core::path::PathKind;
 use flit_core::{FsPath, Location};
-use flit_platform::{DevicePlatform, FilePlatform, ShellPlatform, Wake};
+use flit_platform::{DevicePlatform, FilePlatform, Fs, ShellPlatform, Wake};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -65,6 +65,8 @@ impl PlacesWorker {
                 wake();
                 sent
             };
+            let fs = P::fs();
+            let missing = |p: &FsPath| !fs.remote(p) && gone(p);
             let mut cached = (*start).clone();
             let mut stored = cached.clone();
             let mut templates = false;
@@ -82,12 +84,12 @@ impl PlacesWorker {
                             }
                         },
                         Job::Check(paths) => {
-                            let gone: Vec<FsPath> = paths.into_iter().filter(gone).collect();
+                            let gone: Vec<FsPath> = paths.into_iter().filter(missing).collect();
                             if !gone.is_empty() && !send(Reply::Missing(gone)) {
                                 return;
                             }
                             let before = cached.recent.len();
-                            cached.recent.retain(|r| !self::gone(&r.target));
+                            cached.recent.retain(|r| !missing(&r.target));
                             if cached.recent.len() != before && !send(Reply::Places(Arc::new(cached.clone()))) {
                                 return;
                             }
@@ -116,7 +118,7 @@ impl PlacesWorker {
                 let libraries = t.elapsed();
                 let t = Instant::now();
                 (cached.recent, cached.recent_off) = P::recent(RECENT_LIMIT);
-                cached.recent.retain(|r| !gone(&r.target));
+                cached.recent.retain(|r| !missing(&r.target));
                 let recent = t.elapsed();
                 let t = Instant::now();
                 if !templates {

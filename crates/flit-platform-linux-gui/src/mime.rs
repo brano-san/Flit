@@ -262,7 +262,7 @@ fn content_readable(path: &std::path::Path, mounts: &[flit_platform_linux::mount
     !(mount.is_network() || (mount.is_pseudo() && !LOCAL_MEMORY.contains(&mount.fstype.as_str())))
 }
 
-fn current_mounts() -> std::sync::Arc<Vec<flit_platform_linux::mounts::Mount>> {
+pub(crate) fn current_mounts() -> std::sync::Arc<Vec<flit_platform_linux::mounts::Mount>> {
     static MOUNTS: Mutex<Option<(std::time::Instant, std::sync::Arc<Vec<flit_platform_linux::mounts::Mount>>)>> = Mutex::new(None);
     let mut slot = MOUNTS.lock().unwrap_or_else(|e| e.into_inner());
     if let Some((_, mounts)) = slot.as_ref().filter(|(at, _)| at.elapsed() < MOUNTS_FRESH) {

@@ -98,7 +98,7 @@ fn recent_files_come_from_the_xbel_newest_first_existing_and_unique() {
   <bookmark href="https://example.com/x" modified="2025-02-01T00:00:00Z"/>
   <bookmark href="file:///home/ann/old.txt" modified="2019-01-01T00:00:00Z"/>
 </xbel>"#;
-    let exists = |p: &Path| match p.as_os_str().as_bytes() {
+    let exists = |p: &Path, _: Option<bool>| match p.as_os_str().as_bytes() {
         b"/home/ann/old.txt" => Some(false),
         b"/home/ann/Tom & Jerry" => Some(true),
         _ => None,
@@ -155,7 +155,7 @@ fn this_computer_lists_mounted_unmounted_and_network_volumes_under_their_labels(
 2 1 8:17 / /media/ann/STICK rw - vfat /dev/sdb1 rw
 ",
     );
-    let mut volumes: Vec<Volume> = table.into_iter().map(|mount| Volume { label: name_of(&mount, flit_core::i18n::Lang::En), mount, total: 0, free: 0 }).collect();
+    let mut volumes: Vec<Volume> = table.into_iter().map(|mount| Volume { label: name_of(&mount, flit_core::i18n::Lang::En), mount, total: 0, free: 0, offline: false }).collect();
     volumes[0].total = 1000;
     volumes[0].free = 400;
     volumes[1].label = "STICK".into();
@@ -333,12 +333,12 @@ fn a_network_drive_shows_its_free_space_and_a_hanging_one_does_not_hold_the_list
     let t = Temp::new("net-space");
     let share = format!("2 1 0:40 / {} rw - cifs //server/share rw", t.path().display());
     let table = parse(format!("1 0 8:1 / / rw - ext4 /dev/sda1 rw\n{share}\n").as_bytes());
-    let live = spaces_of(&table, Duration::from_secs(5), mounts::space);
+    let live = spaces_of(&table, &mut FailedShares::new(), Duration::from_secs(5), mounts::space);
     assert!(live[1].is_some_and(|(total, free)| total > 0 && free <= total), "{live:?}");
-    assert_eq!(spaces_of(&table, Duration::from_secs(5), answering_share), [Some((500, 200)), Some((500, 200))]);
+    assert_eq!(spaces_of(&table, &mut FailedShares::new(), Duration::from_secs(5), answering_share), [Some((500, 200)), Some((500, 200))]);
     let stuck = parse(b"1 0 8:1 / / rw - ext4 /dev/sda1 rw\n2 1 0:40 / /media/ann/NAS rw - cifs //nas/a rw\n3 1 0:41 / /media/ann/BOX rw - nfs box:/b rw\n");
     let started = Instant::now();
-    let got = spaces_of(&stuck, Duration::from_millis(300), hanging_share);
+    let got = spaces_of(&stuck, &mut FailedShares::new(), Duration::from_millis(300), hanging_share);
     assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
     assert_eq!(got, [Some((900, 100)), None, None]);
 }
@@ -452,7 +452,7 @@ fn opened_files_are_added_to_the_desktop_recent_list_and_counted() {
     let fresh = remember_in_xbel("", b"/home/u/new file.pdf", "application/pdf", &stamp).unwrap();
     assert!(fresh.starts_with("<?xml") && fresh.trim_end().ends_with("</xbel>"));
     assert!(fresh.contains("href=\"file:///home/u/new%20file.pdf\"") && fresh.contains("<mime:mime-type type=\"application/pdf\"/>") && fresh.contains("name=\"Flit\"") && fresh.contains("count=\"1\""), "{fresh}");
-    let listed = recent_from(fresh.as_bytes(), 5, |_| Some(false));
+    let listed = recent_from(fresh.as_bytes(), 5, |_, kind| kind);
     assert_eq!(listed[0].target.as_bytes(), b"/home/u/new file.pdf");
     let once = remember_in_xbel(GTK_XBEL, b"/home/u/a b's.txt", "text/plain", &stamp).unwrap();
     let twice = remember_in_xbel(&once, b"/home/u/a b's.txt", "text/plain", &stamp).unwrap();
@@ -461,7 +461,7 @@ fn opened_files_are_added_to_the_desktop_recent_list_and_counted() {
     assert!(twice.contains(&format!("name=\"Flit\" exec=\"&apos;flit %u&apos;\" modified=\"{stamp}\" count=\"2\"")), "{twice}");
     assert!(twice.contains(&format!("added=\"2026-01-01T00:00:00.000000Z\" modified=\"{stamp}\" visited=\"{stamp}\"")), "{twice}");
     let both = remember_in_xbel(&twice, b"/home/u/other.txt", "text/plain", &stamp).unwrap();
-    assert_eq!(recent_from(both.as_bytes(), 5, |_| Some(false)).len(), 2);
+    assert_eq!(recent_from(both.as_bytes(), 5, |_, _| Some(false)).len(), 2);
 }
 
 #[test]
@@ -652,4 +652,56 @@ fn gio_mount_always_uses_the_locale_expected_by_error_matching() {
         assert_eq!(cmd.get_args().collect::<Vec<_>>(), ["mount", "smb://nas/"]);
         assert_eq!(cmd.get_envs().collect::<Vec<_>>(), [(std::ffi::OsStr::new("LANGUAGE"), Some(std::ffi::OsStr::new(""))), (std::ffi::OsStr::new("LC_ALL"), Some(std::ffi::OsStr::new("C"))),]);
     });
+}
+
+#[test]
+fn dormant_fstab_share_survives_refresh_until_the_kernel_mounts_it() {
+    let point = b"10 1 0:80 / /home/ann/My\\040Media rw - autofs systemd-1 rw\n";
+    let fstab = b"ann@server:/media /home/ann/My\\040Media fuse.sshfs noauto,x-systemd.automount 0 0\n";
+    let mut table = parse(point);
+    let dormant = dormant_shares(&table, fstab);
+    assert_eq!(dormant.len(), 1);
+    assert!(dormant[0].offline());
+    assert_eq!(dormant[0].path.as_bytes(), b"/home/ann/My Media");
+    assert_eq!(dormant[0].remote.as_deref(), Some("ann@server:/media"));
+    table.extend(parse(b"11 10 0:81 / /home/ann/My\\040Media rw - fuse.sshfs ann@server:/media rw\n"));
+    assert!(dormant_shares(&table, fstab).is_empty());
+}
+
+#[test]
+fn repeated_refreshes_skip_a_failed_share_until_retry_or_remount() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CALLS: AtomicUsize = AtomicUsize::new(0);
+    let mut mounts = parse(b"12 1 0:41 / /offline-test rw - fuse.sshfs ann@server:/ rw\n");
+    let mut failed = FailedShares::new();
+    let probe: Probe = |_| {
+        CALLS.fetch_add(1, Ordering::SeqCst);
+        None
+    };
+    for _ in 0..3 {
+        assert_eq!(spaces_of(&mounts, &mut failed, std::time::Duration::from_secs(2), probe), [None]);
+    }
+    assert_eq!(CALLS.load(Ordering::SeqCst), 1);
+    mounts[0].id += 1;
+    assert_eq!(spaces_of(&mounts, &mut failed, std::time::Duration::from_secs(2), answering_share), [Some((500, 200))]);
+}
+
+#[test]
+fn retry_uses_the_enclosing_mount_for_pinned_subfolders() {
+    let table = parse(b"1 0 8:1 / / rw - ext4 /dev/sda rw\n2 1 0:80 / /home/ann/Media rw - autofs systemd-1 rw\n3 2 8:2 / /home/ann/Media/local rw - ext4 /dev/sdb rw\n");
+    assert_eq!(retry_root(Path::new("/home/ann/Media/photos/2026"), &table), Some(Path::new("/home/ann/Media")));
+    assert_eq!(retry_root(Path::new("/home/ann/Media-backup"), &table), None);
+    assert_eq!(retry_root(Path::new("/home/ann/Media/local"), &table), None);
+}
+
+#[test]
+fn explicit_share_probe_checks_the_requested_path_and_preserves_file_mounts() {
+    let dir = Temp::new("retry-target");
+    let nested = dir.path().join("nested folder");
+    std::fs::create_dir(&nested).unwrap();
+    let file = dir.file("image.iso", 1);
+    assert!(probe_share(dir.path(), dir.path()).unwrap());
+    assert!(probe_share(&nested, dir.path()).unwrap());
+    assert!(!probe_share(&file, dir.path()).unwrap());
+    assert!(probe_share(&nested.join("gone"), dir.path()).is_err());
 }

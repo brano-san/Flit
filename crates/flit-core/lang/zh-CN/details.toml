@@ -33,6 +33,8 @@ drive = "驱动器"
 folder = "文件夹"
 file = "文件"
 ext_file = "{ext} 文件"
+executable = "可执行文件"
+elf = "Linux 可执行文件 (ELF)"
 
 [group]
 unknown_location = "未知位置"

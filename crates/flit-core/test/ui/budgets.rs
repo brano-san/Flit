@@ -276,7 +276,7 @@ fn twenty_thousand_files_sorted_by_length_keep_every_frame_fast_while_all_length
                         read += names.len();
                         let rows = names
                             .into_iter()
-                            .map(|n| {
+                            .map(|(n, _)| {
                                 let k = n.iter().filter(|d| d.is_ascii_digit()).fold(0u64, |a, &d| a * 10 + u64::from(d - b'0'));
                                 let text = vec![String::new(), format!("{k}"), String::new(), String::new()];
                                 (n, crate::listing::ColumnValues { text, duration: Some(k * 7919 % 36_000 * 10_000_000), ..Default::default() })

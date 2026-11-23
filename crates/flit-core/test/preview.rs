@@ -145,3 +145,28 @@ fn review_pdf_accepts_a_large_document_with_only_the_first_size_available() {
     assert_eq!(pages[..4], [Some(pdf::Size { width: 160.0, height: 240.0 }), None, Some(pdf::Size { width: 500.0, height: 320.0 }), None]);
     assert_eq!(pages[4999], None);
 }
+
+#[test]
+fn elf_program_recognizes_executables_and_pie_but_excludes_shared_objects() {
+    let mut elf = [0u8; 160];
+    elf[..7].copy_from_slice(b"\x7fELF\x02\x01\x01");
+    elf[16] = 2;
+    assert!(elf_program(&elf));
+    elf[16] = 3;
+    elf[32] = 64;
+    elf[54] = 56;
+    elf[56] = 1;
+    assert!(!elf_program(&elf));
+    elf[64] = 3;
+    assert!(elf_program(&elf));
+    elf[64] = 2;
+    elf[72] = 128;
+    elf[96] = 32;
+    elf[128..136].copy_from_slice(&0x6fff_fffbu64.to_le_bytes());
+    assert!(!elf_program(&elf));
+    elf[136..144].copy_from_slice(&0x0800_0000u64.to_le_bytes());
+    assert!(elf_program(&elf));
+    elf[32..40].fill(0xff);
+    assert!(!elf_program(&elf));
+    assert!(!elf_program(b"plain file"));
+}

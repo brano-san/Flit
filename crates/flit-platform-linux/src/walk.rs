@@ -113,12 +113,13 @@ impl Tree {
     }
 
     fn reread<S: IndexSink>(&mut self, changed: Vec<Job>, sink: &mut S) {
+        let remote = mounts::remote_points(&mounts::read().unwrap_or_default());
         let mut seen = HashSet::new();
         let mut stale = Vec::new();
         let mut queue = Vec::new();
         let mut subdirs = Vec::new();
         for job in changed {
-            let batch = read_dir(&job, self.dev, &mut subdirs);
+            let batch = read_dir(&job, self.dev, &mut subdirs, &remote);
             for sub in subdirs.drain(..) {
                 if self.dirs.get(&sub.id).is_none_or(|d| d.path != sub.dir) {
                     queue.push(sub);
@@ -130,7 +131,7 @@ impl Tree {
             self.take(batch, &mut seen, sink);
         }
         while let Some(job) = queue.pop() {
-            let batch = read_dir(&job, self.dev, &mut queue);
+            let batch = read_dir(&job, self.dev, &mut queue, &remote);
             self.take(batch, &mut seen, sink);
         }
         for id in stale {
@@ -179,11 +180,18 @@ fn indexable(node: &crate::fs::Node, dev: u64, parent: u64) -> bool {
     node.dev == dev && !node.mounted_on(dev) && node.ino != parent
 }
 
-fn read_dir(job: &Job, dev: u64, subdirs: &mut Vec<Job>) -> Batch {
+fn read_dir(job: &Job, dev: u64, subdirs: &mut Vec<Job>, remote: &[PathBuf]) -> Batch {
     let mut batch = Batch { parent: job.id, dir: job.dir.clone(), modified: job.modified, ..Default::default() };
+    if remote.iter().any(|p| job.dir.starts_with(p)) {
+        return batch;
+    }
+    let children = mounts::remote_children(&job.dir, remote);
     let Ok(dir) = open_dir(&job.dir) else { return batch };
     let fd = dir.as_raw_fd();
     let _ = dents(fd, |name, _| {
+        if children.contains(&name.to_bytes()) {
+            return true;
+        }
         let Ok(node) = node_at(fd, name, false) else { return true };
         if !indexable(&node, dev, job.id) {
             return true;
@@ -214,7 +222,8 @@ fn walk_with<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree, throttle:
     tree.dev = top.dev;
     tree.dirs.clear();
     let first = Job { dir: root.to_path_buf(), id: top.ino, modified: top.meta(b".").modified };
-    let list = |job: &Job, subdirs: &mut Vec<Job>| read_dir(job, top.dev, subdirs);
+    let remote = mounts::remote_points(&mounts::read().unwrap_or_default());
+    let list = |job: &Job, subdirs: &mut Vec<Job>| read_dir(job, top.dev, subdirs, &remote);
     let throttle = throttle.unwrap_or_else(|| Throttle::new(media(Path::new(SYS_BLOCK), top.dev), DENTS_BUFFER));
     flit_platform::walk::walk(first, throttle, list, |batch, done, total| {
         let mut start = 0;

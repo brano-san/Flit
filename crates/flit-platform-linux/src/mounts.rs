@@ -67,6 +67,10 @@ impl Mount {
         NETWORK.contains(&self.fstype.as_str())
     }
 
+    pub fn remote_access(&self) -> bool {
+        self.is_network() || matches!(self.fstype.as_str(), "autofs" | "fuse.gvfsd-fuse")
+    }
+
     pub fn is_storage(&self) -> bool {
         !self.is_pseudo() && !self.is_network() && !self.point.starts_with(b"/snap/")
     }
@@ -118,8 +122,8 @@ pub fn read() -> io::Result<Vec<Mount>> {
     Ok(parse(&std::fs::read(MOUNTINFO)?))
 }
 
-fn enclosing<'a>(path: &Path, mounts: &'a [Mount]) -> Option<&'a Mount> {
-    mounts.iter().rev().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len())
+pub fn enclosing<'a>(path: &Path, mounts: &'a [Mount]) -> Option<&'a Mount> {
+    mounts.iter().filter(|m| path.starts_with(m.path())).max_by_key(|m| m.point.len())
 }
 
 pub(crate) fn volume_key(path: &Path, mounts: &[Mount]) -> Option<Vec<u8>> {
@@ -127,8 +131,16 @@ pub(crate) fn volume_key(path: &Path, mounts: &[Mount]) -> Option<Vec<u8>> {
     Some(libc::makedev(major, minor).to_le_bytes().to_vec())
 }
 
+pub fn remote_points(mounts: &[Mount]) -> Vec<PathBuf> {
+    mounts.iter().filter(|m| m.remote_access()).map(|m| m.path().to_path_buf()).collect()
+}
+
+pub(crate) fn remote_children<'a>(dir: &Path, points: &'a [PathBuf]) -> Vec<&'a [u8]> {
+    points.iter().filter(|p| p.parent() == Some(dir)).filter_map(|p| p.file_name().map(OsStrExt::as_bytes)).collect()
+}
+
 pub fn remote_path(path: &Path, mounts: &[Mount]) -> bool {
-    enclosing(path, mounts).is_some_and(|m| m.is_network() || m.fstype == "fuse.gvfsd-fuse")
+    enclosing(path, mounts).is_some_and(Mount::remote_access)
 }
 
 pub(crate) fn server_key(path: &Path, mounts: &[Mount]) -> Option<Vec<u8>> {
@@ -264,7 +276,7 @@ pub fn labels(dir: &Path) -> HashMap<PathBuf, String> {
 }
 
 pub fn label_of(m: &Mount, labels: &HashMap<PathBuf, String>) -> Option<String> {
-    if !m.source.starts_with(b"/") {
+    if m.is_network() || !m.source.starts_with(b"/") {
         return None;
     }
     let dev = std::fs::canonicalize(OsStr::from_bytes(&m.source)).ok()?;
@@ -273,8 +285,13 @@ pub fn label_of(m: &Mount, labels: &HashMap<PathBuf, String>) -> Option<String> 
 
 pub fn space(point: &Path) -> Option<(u64, u64)> {
     let c = CString::new(point.as_os_str().as_bytes()).ok()?;
+    let raw = unsafe { libc::open(c.as_ptr(), libc::O_PATH | libc::O_CLOEXEC) };
+    if raw < 0 {
+        return None;
+    }
+    let fd = unsafe { OwnedFd::from_raw_fd(raw) };
     let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
-    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+    if unsafe { libc::fstatvfs(fd.as_raw_fd(), &mut st) } != 0 {
         return None;
     }
     let unit = st.f_frsize as u64;

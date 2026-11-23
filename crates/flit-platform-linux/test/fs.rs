@@ -103,7 +103,7 @@ fn folder_sizes_skip_links_and_honour_cancellation() {
     symlink(outside.path(), t.path().join("a/link")).unwrap();
     std::fs::create_dir(t.path().join("b")).unwrap();
     t.file("b/three", 300);
-    let st = tree_size(&t.path().join("a"), &|| true);
+    let st = tree_size(&t.path().join("a"), &[], &|| true);
     assert_eq!((st.size, st.folders, st.partial), (300, 3, false), "a link to a folder counts but is not followed");
     let got = std::sync::Mutex::new(Vec::new());
     let items = vec![(4, PathBuf::from("a")), (9, PathBuf::from("b"))];
@@ -392,4 +392,17 @@ fn launchers_are_named_only_when_a_folder_is_listed_for_display() {
     assert_eq!(walk.listing.len(), 1);
     assert!(walk.listing.labeled(0).is_none(), "searches, sizes and tree walks do not open launchers");
     assert_eq!(launcher_listing(t.path()).labeled(0), Some("Firefox"));
+}
+
+#[test]
+fn parent_folder_size_does_not_enter_a_network_mount() {
+    let t = Temp::new("sizes-mount");
+    let mount = t.path().join("Media");
+    std::fs::create_dir(&mount).unwrap();
+    t.file("Media/remote", 1234);
+    t.file("local", 10);
+    let points = [mount.clone()];
+    let result = tree_size(t.path(), &points, &|| true);
+    assert_eq!((result.size, result.folders, result.partial), (10, 1, true));
+    assert!(tree_size(&mount, &points, &|| true).partial);
 }

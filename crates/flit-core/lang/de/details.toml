@@ -33,6 +33,8 @@ drive = "Laufwerk"
 folder = "Ordner"
 file = "Datei"
 ext_file = "{ext}-Datei"
+executable = "Ausführbare Datei"
+elf = "Ausführbare Linux-Datei (ELF)"
 
 [group]
 unknown_location = "Unbekannter Ort"

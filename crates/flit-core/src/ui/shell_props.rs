@@ -17,7 +17,8 @@ pub(super) struct ShellProps {
     gen: u64,
     portable: bool,
     system: bool,
-    values: FxHashMap<Vec<u8>, Vec<String>>,
+    probe: bool,
+    values: FxHashMap<Vec<u8>, ColumnValues>,
     asked: FxHashMap<Vec<u8>, u64>,
     next_ask: u64,
     bulk: Vec<u64>,
@@ -27,6 +28,10 @@ pub(super) struct ShellProps {
 }
 
 impl ShellProps {
+    pub(super) fn is_elf(&self, gen: u64, name: &[u8]) -> bool {
+        self.gen == gen && self.values.get(name).is_some_and(|v| v.elf)
+    }
+
     pub(super) fn is_idle(&self) -> bool {
         self.asked.is_empty() && self.values.is_empty() && self.pending.is_empty()
     }
@@ -44,9 +49,9 @@ impl ShellProps {
         }
     }
 
-    fn ask(&mut self, names: &[Vec<u8>]) -> u64 {
+    fn ask(&mut self, names: &[(Vec<u8>, bool)]) -> u64 {
         self.next_ask += 1;
-        for n in names {
+        for (n, _) in names {
             self.asked.insert(n.clone(), self.next_ask);
         }
         self.next_ask
@@ -72,25 +77,32 @@ impl App {
         let portable = kinds.contains(&Column::Rating) && self.metadata_enabled() && PORTABLE_COLUMNS.iter().any(|&c| self.tab().columns.shown(c));
         let visible_system = shell && SHELL_COLUMNS.iter().any(|&c| self.tab().columns.shown(c));
         let system = visible_system || (shell && self.tab().view_spec.needs_props());
-        if !system && !portable {
+        let tab = self.tab();
+        let show_type = tab.look == super::LayoutMode::Cards || (tab.look == super::LayoutMode::Details && tab.columns.shown(Column::Type));
+        let probe = !self.caps.unix_paths && show_type && tab.view_loc.path().kind() == PathKind::Drive && !self.network_place(&tab.view_loc);
+        if !system && !portable && !probe {
             return;
         }
         let Some(dir) = self.props_dir() else { return };
         let (gen, first, last) = self.visible_rows();
         let k = self.tabs.cur;
-        if self.tabs.items[k].props.gen != gen || self.tabs.items[k].props.portable != portable || self.tabs.items[k].props.system != system {
+        if self.tabs.items[k].props.gen != gen || self.tabs.items[k].props.portable != portable || self.tabs.items[k].props.system != system || self.tabs.items[k].props.probe != probe {
             let next_ask = self.tabs.items[k].props.next_ask;
-            self.tabs.items[k].props = ShellProps { gen, portable, system, next_ask, ..Default::default() };
+            self.tabs.items[k].props = ShellProps { gen, portable, system, probe, next_ask, ..Default::default() };
         }
         self.apply_shell_props(k, now);
         let t = &mut self.tabs.items[k];
         let (tab, spec) = (t.id, t.view_spec);
-        let Some(v) = &t.view else { return };
+        let Some(v) = t.view.as_ref().filter(|v| v.snap().gen == gen) else { return };
         let l = v.listing();
-        if visible_system || portable {
+        let candidate = |i: u32| {
+            let e = &l.entries[i as usize];
+            probe && e.size >= 52 && e.attrs & (attr::DIR | attr::LINK | attr::NOT_LOCAL | attr::EXEC | attr::STREAM | attr::UNREADABLE) == 0 && crate::name::executable_suffix(l.ext(i))
+        };
+        if visible_system || portable || probe {
             let rows = v.rows();
             let shown = rows.get(first as usize..(last as usize + 1).min(rows.len())).unwrap_or_default();
-            let names: Vec<Vec<u8>> = shown.iter().filter(|&&i| readable(l.entries[i as usize].attrs)).map(|&i| l.name(i)).filter(|n| !t.props.asked.contains_key(*n)).take(MAX_ASK).map(<[u8]>::to_vec).collect();
+            let names: Vec<_> = shown.iter().copied().filter(|&i| readable(l.entries[i as usize].attrs) && (visible_system || portable || candidate(i)) && !t.props.asked.contains_key(l.name(i))).take(MAX_ASK).map(|i| (l.name(i).to_vec(), candidate(i))).collect();
             if !names.is_empty() {
                 let ask = t.props.ask(&names);
                 self.effects.push(Effect::ShellProps { tab, gen, ask, dir: dir.clone(), names, shell: system, portable });
@@ -102,7 +114,7 @@ impl App {
         let (mut names, mut i) = (Vec::new(), t.props.cursor);
         while (i as usize) < l.len() && names.len() < BULK {
             if readable(l.entries[i as usize].attrs) && sort::visible(l, i, &spec) && !t.props.asked.contains_key(l.name(i)) {
-                names.push(l.name(i).to_vec());
+                names.push((l.name(i).to_vec(), candidate(i)));
             }
             i += 1;
         }
@@ -151,16 +163,19 @@ impl App {
             if t.props.asked.get(&name) != Some(&ask) {
                 continue;
             }
-            let key = PropKey::new(&values, case);
-            t.props.values.insert(name.clone(), values.text);
-            t.props.pending.push((name, key));
+            if t.props.system {
+                t.props.pending.push((name.clone(), PropKey::new(&values, case)));
+            }
+            if values.elf || !values.text.is_empty() {
+                t.props.values.insert(name, values);
+            }
         }
         self.dirty = true;
     }
 
     pub(super) fn shell_prop_text(&self, s: &mut impl std::fmt::Write, name: &[u8], col: Column) {
         let Some(k) = SHELL_COLUMNS.iter().chain(&PORTABLE_COLUMNS).position(|&c| c == col) else { return };
-        if let Some(text) = self.tab().props.values.get(name).and_then(|v| v.get(k)) {
+        if let Some(text) = self.tab().props.values.get(name).and_then(|v| v.text.get(k)) {
             let _ = s.write_str(text);
         }
     }

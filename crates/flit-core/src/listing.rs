@@ -124,6 +124,7 @@ const VERSION_AT: usize = 3;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ColumnValues {
+    pub elf: bool,
     pub text: Vec<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,

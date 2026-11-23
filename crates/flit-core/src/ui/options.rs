@@ -494,6 +494,9 @@ impl App {
     }
 
     pub(super) fn sizes_allowed(&self, loc: &Location) -> bool {
+        if self.nav.sidebar.places.offline_location(loc) {
+            return false;
+        }
         if self.network_place(loc) {
             self.settings.opts.sizes_network
         } else {

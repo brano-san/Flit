@@ -120,6 +120,10 @@ pub fn ext_len(name: &[u8]) -> usize {
     }
 }
 
+pub fn executable_suffix(ext: &[u8]) -> bool {
+    ext.iter().all(u8::is_ascii_digit) || ext.eq_ignore_ascii_case(b"elf") || ext.eq_ignore_ascii_case(b"appimage")
+}
+
 pub fn link_name(target: &[u8]) -> Vec<u8> {
     link_name_in(target, crate::i18n::lang())
 }

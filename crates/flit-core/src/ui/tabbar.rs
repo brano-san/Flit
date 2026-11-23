@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 #[derive(Default)]
 pub(super) struct Tabs {
     pub(super) items: Vec<Tab>,
+    pub(super) closing_all: bool,
     pub(super) cur: usize,
     pub(super) tab_use: u64,
     pub(super) tab_cycle: bool,

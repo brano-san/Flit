@@ -185,7 +185,7 @@ enum PreviewJob {
     QuickView { window: WindowId, path: FsPath },
     Backdrop { window: WindowId, gen: u64, path: FsPath },
     Browse { window: WindowId, exts: &'static [&'static str], folder: bool, start: Option<FsPath> },
-    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>>, system: bool, portable: bool },
+    ColumnProps { window: WindowId, tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<(Vec<u8>, bool)>, system: bool, portable: bool },
 }
 
 enum Done {
@@ -255,9 +255,10 @@ fn start_workers<P: ShellPlatform + 'static>(wake: Wake, cache: Cache, refresh: 
                     PreviewJob::ColumnProps { window, tab, gen, ask, dir, names, system, portable } => {
                         let rows = names
                             .into_iter()
-                            .map(|n| {
+                            .map(|(n, probe)| {
                                 let item = dir.join(&n);
                                 let mut values = if system { shell.column_props(&item) } else { flit_core::listing::ColumnValues::default() };
+                                values.elf = probe && crate::preview::is_elf_program(&item);
                                 if portable {
                                     values.text.resize(flit_core::listing::SHELL_PROPS.len(), String::new());
                                     if let Ok(meta) = crate::portable_meta::read(&item) {

@@ -54,27 +54,33 @@ impl Poll {
             let (tx, rx) = unbounded();
             let (events, wake, period) = (self.events.clone(), self.wake.clone(), self.period);
             let spawned = std::thread::Builder::new().name("flit-poll".into()).spawn(move || {
-                let mut dirs: HashMap<TabId, (u64, PathBuf, Option<Stamp>)> = HashMap::new();
+                let mut dirs: HashMap<TabId, (u64, PathBuf, Stamp)> = HashMap::new();
                 let mut next = Instant::now() + period;
                 loop {
                     match rx.recv_timeout(next.saturating_duration_since(Instant::now())) {
                         Ok(Cmd::Watch(tab, gen, dir)) => {
-                            let now = stamp(&dir);
-                            dirs.insert(tab, (gen, dir, now));
+                            dirs.remove(&tab);
+                            if let Some(now) = (!crate::places::inactive_share(&dir)).then(|| stamp(&dir)).flatten() {
+                                dirs.insert(tab, (gen, dir, now));
+                            }
                         }
                         Ok(Cmd::Forget(tab)) => {
                             dirs.remove(&tab);
                         }
                         Err(RecvTimeoutError::Timeout) => {
-                            for (&tab, (gen, dir, seen)) in dirs.iter_mut() {
-                                let now = stamp(dir);
-                                if now != *seen {
-                                    *seen = now;
-                                    if events.send(ProviderEvent::Rescan { tab, gen: *gen }).is_ok() {
-                                        wake();
-                                    }
+                            dirs.retain(|&tab, (gen, dir, seen)| {
+                                if crate::places::inactive_share(dir) {
+                                    return false;
                                 }
-                            }
+                                let now = stamp(dir);
+                                if now != Some(*seen) && events.send(ProviderEvent::Rescan { tab, gen: *gen }).is_ok() {
+                                    wake();
+                                }
+                                if let Some(stamp) = now {
+                                    *seen = stamp;
+                                }
+                                now.is_some()
+                            });
                             next = Instant::now() + period;
                         }
                         Err(RecvTimeoutError::Disconnected) => return,

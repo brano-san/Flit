@@ -442,7 +442,7 @@ pub enum Effect {
     ShellWarm(Vec<ShellMenu>),
     Properties(Vec<FsPath>),
     StartDrag(Vec<FsPath>),
-    ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<Vec<u8>>, shell: bool, portable: bool },
+    ShellProps { tab: TabId, gen: u64, ask: u64, dir: FsPath, names: Vec<(Vec<u8>, bool)>, shell: bool, portable: bool },
     PortableMetadata { id: u64, req: crate::portable_meta::Request },
     DiskChanges { id: u64, request: crate::disk_changes::Request },
     Pinned(Vec<Location>),
@@ -984,7 +984,8 @@ impl App {
 
     pub fn persisted(&self) -> Persisted {
         let t = self.tab();
-        Persisted { path: t.location().clone(), show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.settings.folders.clone(), archive: self.archive.prefs.clone(), startup: self.startup.clone() }
+        let path = if self.tabs.closing_all { Location::home_page() } else { t.location().clone() };
+        Persisted { path, show_hidden: t.view_spec.show_hidden, view: t.folder_view(), prefs: self.prefs.clone(), folders: self.settings.folders.clone(), archive: self.archive.prefs.clone(), startup: self.startup.clone() }
     }
 
     pub fn tab(&self) -> &Tab {

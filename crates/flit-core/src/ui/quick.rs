@@ -69,7 +69,7 @@ pub(super) fn compact_count(n: u64) -> String {
 impl App {
     fn quick_subject(&self, i: usize) -> Option<(Location, Subject)> {
         let sb = &self.nav.sidebar;
-        let it = sb.items.get(i).filter(|it| it.section != Section::Tags)?;
+        let it = sb.items.get(i).filter(|it| it.section != Section::Tags && !it.offline)?;
         let loc = it.loc.clone();
         if loc.is_home_page() || matches!(loc.path().kind(), PathKind::Computer | PathKind::RecycleBin | PathKind::Home | PathKind::Shell) {
             return None;
@@ -110,7 +110,7 @@ impl App {
             let at = q.at;
             return self.arm_timer(now, at);
         }
-        if self.hover != Hit::Side(q.item) {
+        if self.hover != Hit::Side(q.item) || self.nav.sidebar.places.offline_location(&q.loc) {
             self.quick = None;
             return;
         }
@@ -162,7 +162,7 @@ impl App {
                 let e = &l.entries[i as usize];
                 let arena = bumpalo::Bump::new();
                 let file = !e.is_dir();
-                found = ((e.created > 0).then_some(e.created), file.then_some(e.size), file.then(|| self.type_text(&arena, l, i).to_owned()));
+                found = ((e.created > 0).then_some(e.created), file.then_some(e.size), file.then(|| self.type_of(&arena, e.attrs, l.ext(i)).to_owned()));
             }
         }
         if let Some(q) = self.quick.as_mut() {

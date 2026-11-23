@@ -242,10 +242,11 @@ pub fn run_gio(program: &Path, dirs: &[PathBuf]) -> Option<Vec<u8>> {
 
 pub fn prepare(dirs: &[PathBuf]) {
     let now = Instant::now();
+    let mounts = crate::mime::current_mounts();
     let mut stale: Vec<PathBuf> = {
         let mut guard = known();
         let map = guard.get_or_insert_with(HashMap::new);
-        dirs.iter().filter(|d| !map.get(*d).and_then(|k| k.gvfs.as_ref()).is_some_and(|(_, at)| now.duration_since(*at) < GIO_FRESH)).cloned().collect()
+        dirs.iter().filter(|d| !flit_platform_linux::mounts::remote_path(d, &mounts)).filter(|d| !map.get(*d).and_then(|k| k.gvfs.as_ref()).is_some_and(|(_, at)| now.duration_since(*at) < GIO_FRESH)).cloned().collect()
     };
     stale.sort();
     stale.dedup();
@@ -338,7 +339,7 @@ pub fn render(source: &Source, size: u32) -> Option<Bitmap> {
 }
 
 pub fn icon(dir: &Path, size: u32) -> Option<Bitmap> {
-    if !std::fs::metadata(dir).is_ok_and(|m| m.is_dir()) {
+    if flit_platform_linux::mounts::remote_path(dir, &crate::mime::current_mounts()) || !std::fs::metadata(dir).is_ok_and(|m| m.is_dir()) {
         return None;
     }
     sources(dir).iter().find_map(|s| render(s, size))

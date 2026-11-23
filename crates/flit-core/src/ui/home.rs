@@ -1,6 +1,6 @@
-use super::sidebar::{location_icon, recent_icon, KnownFolder, PlaceCmd, G_HOME, PLACE_ICON};
+use super::sidebar::{location_icon, recent_icon, KnownFolder, PlaceCmd, G_HOME, G_NET_OFFLINE, PLACE_ICON};
 use super::tags::G_TAG;
-use super::{centered, App, Effect, Hit, IconRequest, Route, G_DRIVE, G_FILE, G_FOLDER};
+use super::{centered, App, Effect, Hit, IconRequest, Route, G_FILE, G_FOLDER};
 use crate::fmt as format;
 use crate::i18n::S;
 use crate::location::Location;
@@ -254,7 +254,7 @@ impl App {
         }
         let Some(loc) = self.card_location(i) else { return };
         let file = matches!(self.nav.home.cards[i].1, Card::Recent(r) if !self.nav.sidebar.places.recent[r].dir);
-        if !file && self.mount_drive(loc.path()) {
+        if !file && matches!(&loc, Location::Local(p) if self.mount_drive(p)) {
             return;
         }
         match (file, new_tab) {
@@ -346,22 +346,32 @@ impl App {
                 Card::Folder { label, loc } => {
                     g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     let ir = Rect::new(r.x + s4, r.y, s40, r.h);
+                    let offline = places.offline_location(loc);
                     if !self.system_icon(g, location_icon(loc, places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
-                        centered(g, ir, if loc.is_home_page() { G_HOME } else { G_FOLDER }, big_icons, t.accent);
+                        let glyph = if offline {
+                            G_NET_OFFLINE
+                        } else if loc.is_home_page() {
+                            G_HOME
+                        } else {
+                            G_FOLDER
+                        };
+                        centered(g, ir, glyph, big_icons, if offline { t.text_dim } else { t.accent });
                     }
-                    g.text(r.x + s40 + s8, mid(*r, m), label, font, t.text, r.w - s40 - s12);
+                    g.text(r.x + s40 + s8, mid(*r, m), label, font, if offline { t.text_dim } else { t.text }, r.w - s40 - s12);
                 }
                 Card::Drive(d) => {
                     let Some(d) = places.drives.get(*d) else { continue };
                     g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     let ir = Rect::new(r.x + s4, r.y, s40, r.h);
                     if !self.system_icon(g, location_icon(&Location::Local(d.path.clone()), places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
-                        centered(g, ir, G_DRIVE, big_icons, t.text_dim);
+                        centered(g, ir, d.glyph(), big_icons, t.text_dim);
                     }
                     let tx = r.x + s40 + s8;
                     let tw = r.right() - s12 - tx;
-                    g.text(tx, r.y + s8 + m.ascent, &d.title(), font, t.text, tw);
-                    if d.total > 0 {
+                    g.text(tx, r.y + s8 + m.ascent, &d.title(), font, if d.offline() { t.text_dim } else { t.text }, tw);
+                    if d.offline() {
+                        g.text(tx, r.bottom() - s6 - ms.descent, S::SidebarDriveLoginConnect.t(), small, t.accent, tw);
+                    } else if d.total > 0 {
                         let used = d.total.saturating_sub(d.free) as f32 / d.total as f32;
                         let bar = Rect::new(tx, r.y + (r.h / 2.0).round() + s4 - self.s(2.0), tw.max(0.0), self.s(6.0));
                         g.dl.round_rect(bar, t.separator, bar.h / 2.0);

@@ -299,10 +299,8 @@ impl App {
 
     fn type_label(&self, s: &Subject) -> String {
         let Some(e) = s.entry else { return S::DetailsTypeFolder.t().into() };
-        if e.attrs & attr::VOLUME != 0 {
-            return S::DetailsTypeDrive.t().into();
-        }
-        self.ext_type_label(&s.ext.to_ascii_lowercase(), e.is_dir())
+        let name = s.path.as_ref().map_or(&[][..], |p| p.file_name());
+        self.item_type(&bumpalo::Bump::new(), name, e.attrs, &s.ext).to_owned()
     }
 
     fn draw_icon<B: TextBackend>(&mut self, g: &mut Gfx<B>, s: &Subject, r: Rect) {

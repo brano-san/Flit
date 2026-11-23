@@ -76,6 +76,41 @@ fn a_mounted_drive_can_be_unmounted_and_the_system_and_network_drives_cannot() {
 }
 
 #[test]
+fn offline_share_rows_stay_idle_until_connected() {
+    let path = "/home/ann/Media";
+    let child = Location::Local(p("/home/ann/Media/Music"));
+    let neighbor = Location::Local(p("/home/ann/Media2"));
+    let mut share = disk(path, "Media", "fuse.sshfs", true, false, Some("server:/media"));
+    share.total = 100;
+    let mut app = linux_app(vec![share]);
+    app.set_pinned(vec![child.clone(), neighbor.clone()]);
+    app.check_places();
+    let checks: Vec<_> = app.drain_effects().filter_map(|e| if let Effect::CheckPlaces(paths) = e { Some(paths) } else { None }).flatten().collect();
+    assert_eq!(checks, [neighbor.path().clone()]);
+    app.forget_missing(&[child.path().clone()]);
+    assert!(app.nav_state().pinned.contains(&child));
+    for label in [path, "/home/ann/Media/Music"] {
+        let i = side(&app, label);
+        let row = &app.nav.sidebar.items[i];
+        assert!(row.offline && row.usage.is_none());
+        assert!(super::super::sidebar::place_icon_request(row, &app.nav.sidebar.places, 20).is_none());
+        app.quick_hover(Hit::Side(i), Instant::now());
+        assert!(app.quick.is_none());
+    }
+    assert!(!app.nav.sidebar.items[side(&app, "/home/ann/Media2")].offline);
+    let i = side(&app, "/home/ann/Media/Music");
+    app.open_side_item(i, false, Instant::now());
+    assert_eq!(launches(&mut app), [Launch::Mount(child.path().clone())]);
+    let menu = menu_for(&mut app, path);
+    assert!(!menu.shell && menu.items.is_empty());
+    assert_eq!(labels(&menu.menu)[0], S::SidebarDriveLoginConnect.t());
+    app.on_event(&Event::MenuCommand(0), Instant::now());
+    assert_eq!(launches(&mut app), [Launch::Mount(p(path))]);
+    app.on_provider_event(crate::provider::ProviderEvent::Navigate { tab: app.tab().id, path: p(path) }, Instant::now());
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::RefreshPlaces)));
+}
+
+#[test]
 fn unmount_from_the_menu_asks_the_platform_to_unmount_that_drive_only() {
     let mut app = machine();
     let m = menu_for(&mut app, "/media/ann/STICK");

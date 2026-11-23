@@ -33,6 +33,8 @@ drive = "Unidad"
 folder = "Carpeta"
 file = "Archivo"
 ext_file = "Archivo {ext}"
+executable = "Archivo ejecutable"
+elf = "Ejecutable de Linux (ELF)"
 
 [group]
 unknown_location = "Ubicación desconocida"

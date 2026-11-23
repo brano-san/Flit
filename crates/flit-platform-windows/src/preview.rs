@@ -146,7 +146,7 @@ pub(crate) fn column_props(path: &FsPath) -> ColumnValues {
         let side = |k: usize| number_value(&store, keys.get(SHELL_PROPS.len() + k).copied().flatten()).and_then(|n| u32::try_from(n).ok());
         let (width, height) = if shown(0) { (side(0), side(1)) } else { (None, None) };
         let duration = if shown(1) { number_value(&store, keys.get(1).copied().flatten()) } else { None };
-        ColumnValues { text, width, height, duration }
+        ColumnValues { text, width, height, duration, ..Default::default() }
     }
 }
 

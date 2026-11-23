@@ -125,6 +125,9 @@ impl App {
             ProviderEvent::OpFailure { id, failure, .. } => self.job_failure(id, failure),
             ProviderEvent::Untrashable { id, items, .. } => self.offer_delete(id, items),
             ProviderEvent::Navigate { tab, path } => {
+                if self.nav.sidebar.places.offline_path(&path) {
+                    self.effects.push(Effect::RefreshPlaces);
+                }
                 if self.tab().id == tab {
                     if network::network_address(&path).is_some() {
                         self.route_here(Route { folder: Location::from_local(path), select: None }, now);

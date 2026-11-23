@@ -396,7 +396,7 @@ dependencies = [
 
 [[package]]
 name = "flit-archive"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "crc32fast",
  "delharc",
@@ -414,7 +414,7 @@ dependencies = [
 
 [[package]]
 name = "flit-core"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "arc-swap",
  "bumpalo",
@@ -440,7 +440,7 @@ dependencies = [
 
 [[package]]
 name = "flit-platform"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "crc32fast",
  "crossbeam-channel",
@@ -456,7 +456,7 @@ dependencies = [
 
 [[package]]
 name = "flit-proto"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "flit-core",
  "postcard",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "flit-search"
-version = "0.12.0"
+version = "0.12.1"
 dependencies = [
  "flit-core",
  "flit-proto",

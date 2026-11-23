@@ -32,13 +32,12 @@ impl App {
         self.nav.sidebar.places.drives.iter().find(|d| d.path == *path)
     }
 
-    pub(super) fn unmounted_drive(&self, path: &FsPath) -> bool {
-        self.drive_at(path).is_some_and(|d| d.unmounted)
-    }
-
     pub(super) fn mount_drive(&mut self, path: &FsPath) -> bool {
-        let Some(d) = self.drive_at(path).filter(|d| d.unmounted) else { return false };
-        if d.locked() {
+        let drive = self.drive_at(path);
+        if !drive.is_some_and(|d| d.unmounted) && !(path.kind() == PathKind::Unix && self.nav.sidebar.places.offline_path(path)) {
+            return false;
+        }
+        if let Some(d) = drive.filter(|d| d.locked()) {
             let (device, title) = (d.path.clone(), d.title());
             self.ask_unlock(device, &title, false);
             return true;
@@ -56,7 +55,9 @@ impl App {
         if !d.unmounted && d.remote.is_some() && d.path.kind() == PathKind::Unix {
             m.place(S::SidebarDriveDisconnect.t(), PlaceCmd::Launch(Launch::Disconnect(Some(d.path.clone()))), false);
         }
-        if d.mountable() {
+        if d.offline() {
+            m.place(S::SidebarDriveLoginConnect.t(), PlaceCmd::Mount(path.clone()), false);
+        } else if d.mountable() {
             m.place(if d.locked() { S::SidebarDriveUnlock.t() } else { S::MenuMount.t() }, PlaceCmd::Mount(d.path.clone()), false);
         }
     }

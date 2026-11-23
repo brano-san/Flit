@@ -1248,7 +1248,14 @@ impl App {
     }
 
     pub(super) fn type_text<'a>(&self, arena: &'a Bump, l: &Listing, i: u32) -> &'a str {
-        self.type_of(arena, l.entries[i as usize].attrs, l.ext(i))
+        self.item_type(arena, l.name(i), l.entries[i as usize].attrs, l.ext(i))
+    }
+
+    pub(super) fn item_type<'a>(&self, arena: &'a Bump, name: &[u8], attrs: u32, ext: &[u8]) -> &'a str {
+        if attrs & (attr::DIR | attr::NESTED) == 0 && self.tab().props.is_elf(self.tab().gen, name) {
+            return S::DetailsTypeElf.t();
+        }
+        self.type_of(arena, attrs, ext)
     }
 
     pub(super) fn type_of<'a>(&self, arena: &'a Bump, attrs: u32, ext: &[u8]) -> &'a str {
@@ -1257,6 +1264,9 @@ impl App {
         }
         if attrs & attr::DIR != 0 {
             return S::DetailsTypeFolder.t();
+        }
+        if attrs & attr::EXEC != 0 && name::executable_suffix(ext) {
+            return S::DetailsTypeExecutable.t();
         }
         match self.type_names.get(&ext.to_ascii_lowercase()) {
             Some(Some(n)) if !n.is_empty() => arena.alloc_str(n),
@@ -1336,7 +1346,7 @@ impl App {
         match spec.group.field {
             GroupField::None => {}
             GroupField::Name => bucket_label(&mut s, &NAME_GROUPS, key),
-            GroupField::Type => return self.type_text(arena, l, i),
+            GroupField::Type => return self.type_of(arena, e.attrs & !attr::EXEC, l.ext(i)),
             GroupField::Size | GroupField::Free => bucket_label(&mut s, &SIZE_GROUPS, key),
             GroupField::Modified | GroupField::Created | GroupField::Accessed => bucket_label(&mut s, &DATE_GROUPS, key),
             GroupField::Items => bucket_label(&mut s, &ITEM_GROUPS, key),

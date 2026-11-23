@@ -33,6 +33,10 @@ fn head(path: &FsPath, limit: usize) -> Option<Vec<u8>> {
     Some(buf)
 }
 
+pub(crate) fn is_elf_program(path: &FsPath) -> bool {
+    regular_file(&std_path(path)).is_some_and(|file| preview::read_elf_program(&mut std::io::BufReader::new(file)))
+}
+
 fn regular_file(path: &Path) -> Option<File> {
     if !std::fs::metadata(path).ok()?.is_file() {
         return None;

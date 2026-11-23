@@ -514,7 +514,7 @@ fn media_listing() -> (Listing, SortKeys) {
     for (name, dims, minutes, artist, version) in props {
         let i = (0..l.len() as u32).find(|&i| l.name(i) == name.as_bytes()).unwrap();
         let text = vec![dims.map(|(w, h)| format!("{w} x {h}")).unwrap_or_default(), minutes.map(|m| format!("{m}:00")).unwrap_or_default(), artist.to_owned(), version.to_owned()];
-        let values = ColumnValues { text, width: dims.map(|d| d.0), height: dims.map(|d| d.1), duration: minutes.map(|m| m * 600_000_000) };
+        let values = ColumnValues { elf: false, text, width: dims.map(|d| d.0), height: dims.map(|d| d.1), duration: minutes.map(|m| m * 600_000_000) };
         if let Some(key) = PropKey::new(&values, CaseMode::Insensitive) {
             l.props.insert(i, key);
         }
@@ -598,6 +598,7 @@ fn fast_sort_matches_comparator_for_shell_properties() {
     for i in 0..l.len() as u32 {
         let r = u64::from(i).wrapping_mul(2654435761) >> 7;
         let values = ColumnValues {
+            elf: false,
             text: vec![
                 if r % 3 == 0 { String::new() } else { "d".into() },
                 if r % 4 == 0 { String::new() } else { "t".into() },

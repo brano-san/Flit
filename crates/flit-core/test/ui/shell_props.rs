@@ -17,7 +17,7 @@ fn app_in(path: &str, items: &[(&str, bool)]) -> App {
     let mut listing = Listing::default();
     let mut keys = SortKeys::new(CaseMode::Insensitive);
     for &(n, dir) in items {
-        let i = listing.push(n.as_bytes(), Meta { attrs: if dir { attr::DIR } else { 0 }, ..Default::default() });
+        let i = listing.push(n.as_bytes(), Meta { size: 128, attrs: if dir { attr::DIR } else { 0 }, ..Default::default() });
         keys.push(listing.name(i));
     }
     let mut order = Vec::new();
@@ -34,7 +34,7 @@ fn frame_at(app: &mut App, now: Instant) -> Vec<Ask> {
     let mut asks = Vec::new();
     for e in app.drain_effects().collect::<Vec<_>>() {
         match e {
-            Effect::ShellProps { tab, gen, ask, dir, names, .. } => asks.push((tab, gen, ask, dir, names)),
+            Effect::ShellProps { tab, gen, ask, dir, names, .. } => asks.push((tab, gen, ask, dir, names.into_iter().map(|(name, _)| name).collect())),
             Effect::Resort { tab, gen, view, snap } => {
                 let mut order = Vec::new();
                 sort::sort(&snap.listing, &snap.keys, view, &mut order);
@@ -304,4 +304,29 @@ fn property_columns_read_nothing_inside_archives_the_recycle_bin_or_on_linux() {
         assert!(!linux.caps.supports(id), "{id}");
         assert!(crate::caps::Caps::default().supports(id), "{id}");
     }
+}
+
+#[test]
+fn elf_files_with_numeric_suffixes_get_individual_type_labels() {
+    let mut app = app_in(r"C:\Tools", &[("program.129788", false), ("data.129788", false), ("tool", false), ("notes.txt", false), ("dir.129788", true)]);
+    app.pump_shell_props(Instant::now());
+    let Some(Effect::ShellProps { tab, gen, ask, names, .. }) = app.drain_effects().find(|e| matches!(e, Effect::ShellProps { .. })) else { panic!("missing ELF header request") };
+    assert_eq!(names.len(), 3);
+    assert!(names.iter().all(|(name, probe)| *probe && [b"program.129788".as_slice(), b"data.129788", b"tool"].contains(&name.as_slice())));
+    let values = names
+        .into_iter()
+        .map(|(name, _)| {
+            let elf = name.starts_with(b"program");
+            (name, ColumnValues { elf, ..Default::default() })
+        })
+        .collect();
+    app.on_shell_props(tab, gen, ask, values);
+    app.on_type_name(b"129788".to_vec(), Some("numeric extension".into()));
+    let v = app.tab().view.as_ref().unwrap();
+    let arena = bumpalo::Bump::new();
+    let label = |name: &[u8]| app.type_text(&arena, v.listing(), v.rows().iter().copied().find(|&i| v.listing().name(i) == name).unwrap());
+    assert_eq!(label(b"program.129788"), crate::i18n::S::DetailsTypeElf.t());
+    assert_eq!(label(b"data.129788"), "numeric extension");
+    assert_eq!(app.type_of(&arena, attr::EXEC, b"129788"), crate::i18n::S::DetailsTypeExecutable.t());
+    assert!(frame(&mut app).is_empty());
 }

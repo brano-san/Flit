@@ -1,5 +1,6 @@
 use crate::{fs, places};
 use flit_core::i18n::S;
+pub use flit_core::preview::elf_program;
 use flit_core::provider::{FileOp, Launch, OpenAsk};
 use flit_core::ui::{Bitmap, IconKind, IconRequest};
 use flit_core::path::PathKind;
@@ -35,7 +36,10 @@ fn spawn_error(what: &str, e: &io::Error) -> PlatformError {
 
 pub fn detach(mut cmd: Command) -> io::Result<()> {
     cmd.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).process_group(0);
-    let mut child = cmd.spawn()?;
+    reap(cmd.spawn()?)
+}
+
+pub(crate) fn reap(mut child: Child) -> io::Result<()> {
     std::thread::Builder::new().name("flit-reap".into()).spawn(move || {
         let _ = child.wait();
     })?;
@@ -271,34 +275,6 @@ pub fn run_in_terminal_argv(dir: Option<&Path>, argv: Vec<OsString>) -> Result<(
 
 pub fn github_cli_package() -> &'static str {
     crate::tools::package_for("gh", &crate::tools::os_release()).unwrap_or("gh")
-}
-
-pub fn elf_program(head: &[u8]) -> bool {
-    if head.len() < 52 || &head[..4] != b"\x7fELF" {
-        return false;
-    }
-    let (wide, le) = (head[4] == 2, head[5] == 1);
-    let u16_at = |at: usize| head.get(at..at + 2).map(|b| if le { u16::from_le_bytes([b[0], b[1]]) } else { u16::from_be_bytes([b[0], b[1]]) });
-    let u32_at = |at: usize| head.get(at..at + 4).map(|b| if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) });
-    let u64_at = |at: usize| {
-        head.get(at..at + 8).map(|b| {
-            let a: [u8; 8] = b.try_into().unwrap_or_default();
-            if le {
-                u64::from_le_bytes(a)
-            } else {
-                u64::from_be_bytes(a)
-            }
-        })
-    };
-    match u16_at(16) {
-        Some(2) => true,
-        Some(3) => {
-            let (phoff, phentsize, phnum) = if wide { (u64_at(32).map(|v| v as usize), u16_at(54), u16_at(56)) } else { (u32_at(28).map(|v| v as usize), u16_at(42), u16_at(44)) };
-            let (Some(phoff), Some(size), Some(count)) = (phoff, phentsize, phnum) else { return false };
-            (0..count as usize).any(|k| phoff.checked_add(k * size as usize).and_then(u32_at) == Some(3))
-        }
-        _ => false,
-    }
 }
 
 pub fn runs_directly(path: &Path) -> bool {
@@ -852,6 +828,11 @@ impl Shell for LinuxShell {
             return self.connect(&uri);
         }
         let local = Path::new(os(device));
+        if let Some(result) = crate::places::retry_share(local) {
+            if result.map_err(|e| crate::places::drive_error(S::ErrorsFsMountFailed, local, &e))? {
+                return Ok(device.clone());
+            }
+        }
         if std::fs::metadata(local).is_ok_and(|m| m.is_file()) {
             let point = mount_image(local).map_err(|e| PlatformError::new(-1, format!("cannot mount {}: {e}", device.display())))?;
             return crate::xdg::fs_path(&point).ok_or_else(|| PlatformError::new(-1, "the mount point is not a valid path"));

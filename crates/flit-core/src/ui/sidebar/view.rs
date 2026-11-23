@@ -385,16 +385,23 @@ impl App {
                 g.dl.outline(row, t.focus_ring, s4, 1.0);
             }
             let lit = glow >= 0.5 && drop != Some(i);
-            let ink = if lit { ink_on(t.accent_fill) } else { t.text };
+            let ink = if lit {
+                ink_on(t.accent_fill)
+            } else if it.offline {
+                t.text_dim
+            } else {
+                t.text
+            };
+            let glyph = if it.offline { G_NET_OFFLINE } else { it.glyph };
             let color = match tag {
                 Some(tag) => Color::rgb(tag.color),
-                None if lit => ink,
+                None if lit || it.offline => ink,
                 None if it.section == Section::Storage || it.section == Section::Wsl => t.text_dim,
                 None => t.accent,
             };
             if compact {
                 if !self.place_icon(g, it, r, &mut requests) {
-                    centered(g, r, it.glyph, icons, color);
+                    centered(g, r, glyph, icons, color);
                 }
                 if let Some(used) = it.usage {
                     let bar = Rect::new(r.x + s8, r.bottom() - self.s(5.0), (r.w - 2.0 * s8).max(0.0), self.s(3.0));
@@ -405,12 +412,13 @@ impl App {
             let text_h = self.s(ROW_H);
             let (icon_r, text_x) = (item_icon(r, self.scale, it.usage.is_some()), item_parts(r, self.scale).1);
             if !self.place_icon(g, it, icon_r, &mut requests) {
-                centered(g, icon_r, it.glyph, icons, color);
+                centered(g, icon_r, glyph, icons, color);
             }
             let baseline = (r.y + (text_h + m.ascent - m.descent) / 2.0).round();
             let pin_r = sb.pin_rect(Rect::new(r.x, r.y, r.w, text_h), self.scale);
             let trash = hovered && sb.removable(i);
-            let text_right = if trash { pin_r.x - s4 } else { r.right() - s8 };
+            let connect = it.offline && it.section == Section::Storage;
+            let text_right = if trash || connect { pin_r.x - s4 } else { r.right() - s8 };
             let mark = if lit { ink } else { t.accent };
             let w = Paint::new(g, t, self.scale).marked((text_x, baseline), &it.label, &it.marks, font, (ink, mark), text_right - text_x);
             if sb.prefs.quick.show_paths && !it.path.is_empty() {
@@ -426,7 +434,9 @@ impl App {
                 let bar = self.drive_bar(r);
                 self.draw_usage(g, t, bar, used);
             }
-            if trash {
+            if connect {
+                Paint::new(g, t, self.scale).icon_button(pin_r, "\u{E72C}", pin_font, self.button(Hit::Side(i), false, true), ink);
+            } else if trash {
                 let open = self.dialogs.confirm.as_ref().is_some_and(|c| c.anchor == pin_r);
                 Paint::new(g, t, self.scale).icon_button(pin_r, G_TRASH, pin_font, self.button(Hit::SidePin(i), open, true), ink);
             }

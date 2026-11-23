@@ -184,7 +184,7 @@ fn a_hanging_gio_is_stopped() {
 #[test]
 fn the_cache_stays_bounded() {
     let t = Temp::new("bounded");
-    let dirs: Vec<PathBuf> = (0..KEEP + 200).map(|i| t.path().join(format!("{i}"))).collect();
+    let dirs: Vec<PathBuf> = (0..KEEP + 200).map(|i| t.path().join(format!("{i:04}"))).collect();
     with_tool_dir(&t.path().join("no-tools"), || prepare(&dirs));
     assert!(remembered_count() <= KEEP);
     assert!(remembered(dirs.last().unwrap()));

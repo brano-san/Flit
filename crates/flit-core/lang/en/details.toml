@@ -33,6 +33,8 @@ drive = "Drive"
 folder = "File folder"
 file = "File"
 ext_file = "{ext} File"
+executable = "Executable file"
+elf = "Linux executable (ELF)"
 
 [group]
 unknown_location = "Unknown location"

@@ -887,6 +887,7 @@ impl App {
 
     pub(super) fn close_panel(&mut self) {
         if self.tabs.panels.list.len() == 1 {
+            self.tabs.closing_all = true;
             return self.effects.push(Effect::Window(WindowCmd::Close));
         }
         let gone = self.tabs.panels.active;
@@ -1012,6 +1013,9 @@ impl App {
     }
 
     pub fn session(&self) -> super::WindowSession {
+        if self.tabs.closing_all {
+            return super::WindowSession::default();
+        }
         let (mut tabs, mut trails, mut cur) = (Vec::new(), Vec::new(), 0);
         let order = self.order();
         for &id in &order {

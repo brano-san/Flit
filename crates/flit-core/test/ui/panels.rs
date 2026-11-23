@@ -436,6 +436,27 @@ fn closing_the_last_tab_closes_the_panel_and_the_last_panel_closes_the_window() 
 }
 
 #[test]
+fn closing_tabs_excludes_them_from_the_next_session() {
+    for action in ["tab.close", "tab.close_all"] {
+        let mut app = app_at(r"C:\a");
+        if action == "tab.close_all" {
+            key(&mut app, Key::Char('T'), CTRL);
+            assert_eq!(app.tabs().len(), 2);
+        }
+        assert!(app.run_action(action, t0()));
+        assert!(app.drain_effects().any(|e| matches!(e, Effect::Window(WindowCmd::Close))));
+        assert_eq!(app.session(), WindowSession::default());
+        let restarted = App::new(app.persisted(), Vec::new(), 0, false, 1.0, (1200, 800), t0());
+        assert_eq!(restarted.session().tabs, [Location::home_page()]);
+    }
+
+    let mut app = app_at(r"C:\a");
+    app.close_window(t0());
+    assert_eq!(app.session().tabs, [loc(r"C:\a")]);
+    assert_eq!(app.persisted().path, loc(r"C:\a"));
+}
+
+#[test]
 fn separators_drag_with_a_minimum_and_a_double_click_centres_them() {
     let mut app = app_at(r"C:\a");
     key(&mut app, Key::Char('S'), CTRL_SHIFT);

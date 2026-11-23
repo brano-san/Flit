@@ -346,7 +346,7 @@ impl App {
             Hit::Tab(i) | Hit::TabClose(i) => into(self.tabs.items.get(i)?.location(), Spot::Tab(i)),
             Hit::Crumb(i) => into(&t.crumb(i)?.1, Spot::Crumb(i)),
             Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.dragging_out && self.nav.sidebar.items.get(i).is_some_and(|it| it.section == Section::Bookmarks) => Some(Target::Pin),
-            Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.items.get(i).is_some_and(|it| it.glyph != crate::ui::G_FILE) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
+            Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.items.get(i).is_some_and(|it| !it.offline && it.glyph != crate::ui::G_FILE) => into(&self.nav.sidebar.items.get(i)?.loc, Spot::Side(i)),
             Hit::Side(_) | Hit::SidePin(_) => None,
             Hit::NewTab => Some(Target::NewTab),
             Hit::Header(_) | Hit::HeaderEmpty | Hit::ColSep(_) | Hit::Encoding | Hit::Bin(_) => None,
@@ -482,7 +482,7 @@ impl App {
                 let v = t.view.as_ref()?;
                 v.listing().entries[*v.rows().get(row)? as usize].is_dir().then_some(Spot::Row(row))
             }
-            Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.items.get(i).is_some_and(|it| it.glyph != crate::ui::G_FILE && it.loc != *self.current_location()) => Some(Spot::Side(i)),
+            Hit::Side(i) | Hit::SidePin(i) if self.nav.sidebar.items.get(i).is_some_and(|it| !it.offline && it.glyph != crate::ui::G_FILE && it.loc != *self.current_location()) => Some(Spot::Side(i)),
             Hit::SideHeader(s) if self.nav.sidebar.is_collapsed(s) => Some(Spot::SideHeader(s)),
             _ => None,
         }

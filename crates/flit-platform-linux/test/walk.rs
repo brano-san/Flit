@@ -73,7 +73,7 @@ fn mount_roots_and_foreign_inodes_cannot_replace_local_parents() {
     let t = Temp::new("foreign-index");
     t.file("a", 1);
     let mut children = Vec::new();
-    let batch = read_dir(&Job { dir: t.path().to_owned(), id: 5, modified: 0 }, u64::MAX, &mut children);
+    let batch = read_dir(&Job { dir: t.path().to_owned(), id: 5, modified: 0 }, u64::MAX, &mut children, &[]);
     assert!(batch.items.is_empty() && children.is_empty());
     assert!(WalkIndex::with_roots(Vec::new()).snapshot_key("/").starts_with("walk-v2:"));
 }
@@ -297,4 +297,18 @@ fn the_shallowest_folders_get_the_watches_when_the_budget_is_short() {
     let watched = &w.live.as_ref().unwrap().watched["v"];
     assert_eq!(watched.len(), 2);
     assert!(watched.contains(&ino(t.path())) && watched.contains(&ino(&t.path().join("top"))));
+}
+
+#[test]
+fn indexing_a_parent_leaves_automount_entries_out_of_the_job_queue() {
+    let t = Temp::new("index-automount");
+    let mount = t.path().join("Media");
+    std::fs::create_dir(&mount).unwrap();
+    t.file("local", 1);
+    let fd = open_dir(t.path()).unwrap();
+    let top = node_at(fd.as_raw_fd(), c".", false).unwrap();
+    let mut children = Vec::new();
+    let batch = read_dir(&Job { dir: t.path().to_owned(), id: top.ino, modified: 0 }, top.dev, &mut children, &[mount]);
+    assert!(children.is_empty());
+    assert_eq!(batch.names, b"local");
 }

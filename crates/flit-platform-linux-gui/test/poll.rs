@@ -32,6 +32,8 @@ fn a_polled_folder_reloads_once_after_something_changes_in_it() {
     assert_eq!(rescans(&rx, FAST * 6), [(4, 7)]);
     std::fs::remove_dir_all(t.path()).unwrap();
     assert_eq!(rescans(&rx, FAST * 6), [(4, 7)], "a folder that went away reloads once to show the error");
+    std::fs::create_dir(t.path()).unwrap();
+    assert!(rescans(&rx, FAST * 6).is_empty(), "a missing folder is not polled again until opened");
 }
 
 #[test]

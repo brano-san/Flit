@@ -149,7 +149,7 @@ pub fn node_at(dir: libc::c_int, name: &CStr, follow: bool) -> io::Result<Node> 
     let nofollow = if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
     if !NO_STATX.load(Ordering::Relaxed) {
         let mut sx = Statx::default();
-        let r = unsafe { libc::syscall(libc::SYS_statx, dir, name.as_ptr(), nofollow, STATX_BASIC_STATS | STATX_BTIME, &mut sx as *mut Statx) };
+        let r = unsafe { libc::syscall(libc::SYS_statx, dir, name.as_ptr(), nofollow | libc::AT_NO_AUTOMOUNT, STATX_BASIC_STATS | STATX_BTIME, &mut sx as *mut Statx) };
         if r == 0 {
             let btime = if sx.mask & STATX_BTIME != 0 { filetime(sx.btime.sec, sx.btime.nsec as i64) } else { 0 };
             let mount_root = (sx.attributes_mask & STATX_ATTR_MOUNT_ROOT != 0).then_some(sx.attributes & STATX_ATTR_MOUNT_ROOT != 0);
@@ -346,20 +346,29 @@ pub fn mark_listed_hidden(meta: &mut Meta, name: &[u8], hidden: &HashSet<Vec<u8>
     }
 }
 
-pub fn scan(dir: &Path, mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result<()> {
+pub fn scan(dir: &Path, each: impl FnMut(&[u8], Meta) -> bool) -> io::Result<()> {
+    scan_with_mounts(dir, &crate::mounts::remote_points(&crate::mounts::read().unwrap_or_default()), each)
+}
+
+fn mount_meta(name: &[u8]) -> Meta {
+    Meta { attrs: attr::DIR | if name.starts_with(b".") { attr::HIDDEN } else { 0 }, ..Default::default() }
+}
+
+fn scan_with_mounts(dir: &Path, points: &[PathBuf], mut each: impl FnMut(&[u8], Meta) -> bool) -> io::Result<()> {
+    let children = crate::mounts::remote_children(dir, points);
     let fd = open_dir(dir)?;
     let hidden = hidden_list(fd.as_raw_fd());
     dents(fd.as_raw_fd(), |name, d_type| {
         if flit_platform::pending::is_stage_name(name.to_bytes()) {
             return true;
         }
-        let mut meta = entry_meta(fd.as_raw_fd(), name, d_type);
+        let mut meta = if children.contains(&name.to_bytes()) { mount_meta(name.to_bytes()) } else { entry_meta(fd.as_raw_fd(), name, d_type) };
         mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
         each(name.to_bytes(), meta)
     })
 }
 
-pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> DirStats {
+fn tree_size(root: &Path, points: &[PathBuf], keep_going: &dyn Fn() -> bool) -> DirStats {
     let _idle = crate::io_priority::IdleIo::enter();
     let mut s = DirStats::default();
     let mut stack = vec![root.to_path_buf()];
@@ -367,7 +376,11 @@ pub fn tree_size(root: &Path, keep_going: &dyn Fn() -> bool) -> DirStats {
         if !keep_going() {
             break;
         }
-        let read = scan(&dir, |name, m| {
+        if points.contains(&dir) {
+            s.partial = true;
+            continue;
+        }
+        let read = scan_with_mounts(&dir, points, |name, m| {
             if m.attrs & attr::DIR != 0 {
                 s.folders += 1;
                 if m.attrs & attr::LINK == 0 {
@@ -466,6 +479,7 @@ pub fn measure(items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, r
 }
 
 pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
+    let points = crate::mounts::remote_points(&crate::mounts::read().unwrap_or_default());
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).min(items.len()).max(1);
     std::thread::scope(|s| {
@@ -475,7 +489,7 @@ pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() ->
                     if !keep_going() {
                         return;
                     }
-                    let stats = tree_size(&dir.join(name), keep_going);
+                    let stats = tree_size(&dir.join(name), &points, keep_going);
                     if keep_going() {
                         report(*idx, stats);
                     }
@@ -535,7 +549,7 @@ pub fn read_deep(root: &Path, b: &mut ListingBuilder<'_>, walls: &HashMap<Vec<u8
             if b.listing.len() >= limit {
                 return false;
             }
-            let (mut meta, accessed) = entry_meta_at(fd.as_raw_fd(), name, d_type);
+            let (mut meta, accessed) = if matches!(d_type, DT_DIR | 0) && walls.get(&joined(&abs, name.to_bytes())) == Some(&true) { (mount_meta(name.to_bytes()), 0) } else { entry_meta_at(fd.as_raw_fd(), name, d_type) };
             mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
             b.push_nested(name.to_bytes(), meta, accessed, &rel);
             if meta.attrs & (attr::DIR | attr::LINK) == attr::DIR {
@@ -562,9 +576,11 @@ impl Fs for LinuxFs {
             Some((dev, out.tagging()?))
         });
         let hidden = hidden_list(fd.as_raw_fd());
+        let points = crate::mounts::remote_points(&crate::mounts::read().unwrap_or_default());
+        let children = crate::mounts::remote_children(path, &points);
         let launchers = out.wants_labels().then(|| (crate::desktop::data_dirs(), flit_core::i18n::lang().code(), std::env::var("LANG").unwrap_or_default()));
         dents(fd.as_raw_fd(), |name, d_type| {
-            let (mut meta, accessed, node) = entry_at(fd.as_raw_fd(), name, d_type);
+            let (mut meta, accessed, node) = if children.contains(&name.to_bytes()) { (mount_meta(name.to_bytes()), 0, None) } else { entry_at(fd.as_raw_fd(), name, d_type) };
             mark_listed_hidden(&mut meta, name.to_bytes(), &hidden);
             let candidate = |n: &Node| tagged.as_ref().is_some_and(|(dev, (tags, volume))| *dev == n.dev && tags.may_tag(*volume, n.ino as u32));
             match node.filter(candidate) {

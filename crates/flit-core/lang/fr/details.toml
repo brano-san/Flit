@@ -33,6 +33,8 @@ drive = "Lecteur"
 folder = "Dossier"
 file = "Fichier"
 ext_file = "Fichier {ext}"
+executable = "Fichier exécutable"
+elf = "Exécutable Linux (ELF)"
 
 [group]
 unknown_location = "Emplacement inconnu"

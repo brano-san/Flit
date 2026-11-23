@@ -60,7 +60,7 @@ const G_VIDEOS: &str = "\u{E714}";
 const G_LINUX: &str = "\u{E756}";
 const G_RECYCLE_BIN: &str = "\u{E74D}";
 const G_LIBRARY: &str = "\u{E8F1}";
-const G_NET_OFFLINE: &str = "\u{E7BA}";
+pub(super) const G_NET_OFFLINE: &str = "\u{E7BA}";
 const G_NETWORK: &str = "\u{E72D}";
 pub(super) const G_PIN: &str = "\u{E718}";
 const G_TRASH: &str = "\u{E74D}";
@@ -178,10 +178,10 @@ impl Drive {
         Some(self.label.strip_suffix(suffix.as_str()).unwrap_or(&self.label).to_owned())
     }
 
-    fn glyph(&self) -> &'static str {
+    pub(super) fn glyph(&self) -> &'static str {
         match () {
-            _ if self.path.is_network() => G_NETWORK,
             _ if self.offline() => G_NET_OFFLINE,
+            _ if self.path.is_network() || self.remote.is_some() => G_NETWORK,
             _ => G_DRIVE,
         }
     }
@@ -200,6 +200,16 @@ pub struct Places {
     pub never_shown: Vec<String>,
     #[serde(skip)]
     pub business_onedrive: Vec<(String, Location)>,
+}
+
+impl Places {
+    pub(super) fn offline_path(&self, path: &FsPath) -> bool {
+        self.drives.iter().filter(|d| path.same(&d.path) || path.is_inside(&d.path)).max_by_key(|d| d.path.as_bytes().len()).is_some_and(Drive::offline)
+    }
+
+    pub(super) fn offline_location(&self, loc: &Location) -> bool {
+        matches!(loc, Location::Local(path) if self.offline_path(path))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -423,6 +433,7 @@ pub(super) struct Item {
     pub glyph: &'static str,
     pub loc: Location,
     pub usage: Option<f32>,
+    pub offline: bool,
     pub path: String,
     pub marks: Vec<Range<usize>>,
 }
@@ -532,7 +543,7 @@ impl Sidebar {
     pub(super) fn section_items(&self, section: Section) -> Vec<Item> {
         let p = &self.places;
         let home = self.known(KnownFolder::Home).filter(|_| !self.full_paths);
-        let item = |label: String, glyph, loc: Location, usage| Item { section, label, glyph, path: short_path(&loc, home), loc, usage, marks: Vec::new() };
+        let item = |label: String, glyph, loc: Location, usage| Item { section, label, glyph, offline: p.offline_location(&loc), path: short_path(&loc, home), loc, usage, marks: Vec::new() };
         match section {
             Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(crate::redact::passwords(&r.name).into_owned(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
             Section::Bookmarks => {
@@ -540,7 +551,7 @@ impl Sidebar {
                 let glyph = |l: &Location| if self.state.files.contains(l) { G_FILE } else { pinned_glyph(l) };
                 self.state.pinned.iter().map(|l| item(library_name(l).unwrap_or_else(|| pinned_label(l)), glyph(l), l.clone(), None)).collect()
             }
-            Section::Storage => p.drives.iter().map(|d| item(d.title(), d.glyph(), Location::Local(d.path.clone()), (d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32))).collect(),
+            Section::Storage => p.drives.iter().map(|d| item(d.title(), d.glyph(), Location::Local(d.path.clone()), (!d.offline() && d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32))).collect(),
             Section::Places => {
                 let computer = Location::computer();
                 let mut out = vec![item(pinned_label(&computer), G_DRIVE, computer, None)];
@@ -571,7 +582,7 @@ impl Sidebar {
             }
             Section::Libraries => p.libraries.iter().map(|l| item(l.name.clone(), G_LIBRARY, Location::Local(l.path.clone()), None)).collect(),
             Section::Wsl => p.wsl.iter().filter_map(|d| Some(item(d.clone(), G_LINUX, Location::parse(&format!("wsl://{d}/"))?, None))).collect(),
-            Section::Tags => self.tags.defs.iter().map(|t| Item { section, label: t.name.clone(), glyph: G_TAG, loc: Location::computer(), usage: None, path: String::new(), marks: Vec::new() }).collect(),
+            Section::Tags => self.tags.defs.iter().map(|t| Item { section, label: t.name.clone(), glyph: G_TAG, loc: Location::computer(), offline: false, usage: None, path: String::new(), marks: Vec::new() }).collect(),
         }
     }
 
@@ -724,14 +735,15 @@ impl Sidebar {
 
 impl App {
     pub(super) fn check_places(&mut self) {
-        let paths: Vec<FsPath> = self.nav.sidebar.state.pinned.iter().filter_map(Location::to_windows).collect();
+        let paths: Vec<FsPath> = self.nav.sidebar.state.pinned.iter().filter(|l| !self.nav.sidebar.places.offline_location(l)).filter_map(Location::to_windows).collect();
         if !paths.is_empty() {
             self.effects.push(Effect::CheckPlaces(paths));
         }
     }
 
     pub fn forget_missing(&mut self, gone: &[FsPath]) {
-        let missing = |l: &Location| l.to_windows().is_some_and(|p| gone.iter().any(|g| g.same(&p)));
+        let places = self.nav.sidebar.places.clone();
+        let missing = |l: &Location| !places.offline_location(l) && l.to_windows().is_some_and(|p| gone.iter().any(|g| g.same(&p)));
         let sb = &mut self.nav.sidebar;
         if !sb.state.pinned.iter().any(missing) {
             return;
@@ -754,8 +766,11 @@ impl App {
     }
 
     pub fn set_places(&mut self, places: Arc<Places>) {
-        self.check_places();
         let old = std::mem::replace(&mut self.nav.sidebar.places, places);
+        self.check_places();
+        if self.quick.as_ref().is_some_and(|q| self.nav.sidebar.places.offline_location(&q.loc)) {
+            self.quick_hide();
+        }
         self.nav.sidebar.rebuild();
         self.places_changed(&old, Instant::now());
         if self.settings.opts.view_rules.location_rules() {
@@ -1210,7 +1225,7 @@ impl App {
             return self.place_command(PlaceCmd::OpenFile(file), now);
         }
         let Some(folder) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) else { return };
-        if self.mount_drive(folder.path()) {
+        if matches!(&folder, Location::Local(p) if self.mount_drive(p)) {
             return;
         }
         match new_tab {
@@ -1252,6 +1267,9 @@ fn item_icon(r: Rect, scale: f32, drive: bool) -> Rect {
 }
 
 pub(super) fn place_icon_request(it: &Item, places: &Places, px: u32) -> Option<SystemIcon> {
+    if it.offline {
+        return None;
+    }
     match (&it.loc, it.section) {
         #[cfg(windows)]
         (_, Section::Places) if it.glyph == G_CLOUD => {
@@ -1270,12 +1288,11 @@ pub(super) type SystemIcon = (u64, IconKind, FsPath);
 pub(super) fn location_icon(loc: &Location, places: &Places, px: u32) -> Option<SystemIcon> {
     let place = |path: &FsPath, kind| Some((hash::hash(&("place", path.as_bytes(), px)), kind, path.clone()));
     match loc {
-        _ if loc.is_home_page() => None,
+        _ if loc.is_home_page() || places.offline_location(loc) => None,
         Location::Wsl { distro, path } if path.is_root() => Some((hash::hash(&("vol", distro.as_bytes(), px)), IconKind::Volume, loc.to_windows()?)),
         Location::Wsl { .. } => Some((hash::hash(&("dir", px)), IconKind::Folder, loc.to_windows()?)),
         Location::Admin(_) => None,
         Location::Local(path) => match places.drives.iter().find(|d| d.path == *path) {
-            Some(d) if d.offline() => None,
             Some(_) => place(path, IconKind::Volume),
             None if matches!(path.kind(), PathKind::Drive | PathKind::Unix) && path.is_root() => place(path, IconKind::Volume),
             None => place(path, IconKind::Place),
@@ -1284,6 +1301,9 @@ pub(super) fn location_icon(loc: &Location, places: &Places, px: u32) -> Option<
 }
 
 pub(super) fn recent_icon(r: &Recent, places: &Places, px: u32) -> Option<SystemIcon> {
+    if places.offline_path(&r.target) {
+        return None;
+    }
     match Location::from_local(r.target.clone()) {
         Location::Wsl { .. } => None,
         _ if !r.dir => Some((hash::hash(&("place", r.target.as_bytes(), px)), IconKind::File, r.target.clone())),
@@ -1294,6 +1314,9 @@ pub(super) fn recent_icon(r: &Recent, places: &Places, px: u32) -> Option<System
 pub(super) fn folder_icon(loc: &Location, sb: &Sidebar, px: u32) -> Option<SystemIcon> {
     let path = loc.path();
     let special = loc.is_root() || matches!(path.kind(), PathKind::Computer | PathKind::RecycleBin | PathKind::Home | PathKind::Shell) || library::is_library(path) || sb.is_pinned(loc) || sb.places.folders.iter().any(|(_, l)| l == loc);
+    if sb.places.offline_location(loc) {
+        return None;
+    }
     if special {
         return location_icon(loc, &sb.places, px);
     }

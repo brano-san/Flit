@@ -5,9 +5,7 @@ impl App {
         let tab = self.tab().id;
         let launch = |launch| Effect::Provider { provider: ProviderId::Local, req: ProviderRequest::Launch { tab, launch } };
         match c {
-            PlaceCmd::Open(folder, _) if self.unmounted_drive(folder.path()) => {
-                self.mount_drive(folder.path());
-            }
+            PlaceCmd::Open(Location::Local(path), _) if self.mount_drive(&path) => {}
             PlaceCmd::Open(folder, target) => self.dispatch(vec![Route { folder, select: None }], target, now),
             PlaceCmd::Mount(device) => {
                 self.mount_drive(&device);
@@ -76,15 +74,21 @@ impl App {
     pub(in crate::ui) fn place_menu(&mut self, x: f32, y: f32, loc: Location, extra: impl FnOnce(&Self, &mut Menu)) {
         let path = loc.to_windows();
         let lib = library::is_library(loc.path());
+        let offline = self.nav.sidebar.places.offline_location(&loc);
         let menu = self.collect(|a, m| {
-            m.place(S::MenuOpen.t(), PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
-            m.place(S::MenuOpenInNewTab.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
-            m.place(S::MenuOpenInNewWindow.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
-            a.place_pane_items(m, &loc);
+            if offline {
+                let open = if a.nav.sidebar.state.files.contains(&loc) { PlaceCmd::OpenFile(loc.path().clone()) } else { PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab) };
+                m.place(S::SidebarDriveLoginConnect.t(), open, false);
+            } else {
+                m.place(S::MenuOpen.t(), PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
+                m.place(S::MenuOpenInNewTab.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
+                m.place(S::MenuOpenInNewWindow.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
+                a.place_pane_items(m, &loc);
+            }
             m.separator();
             if let Some(p) = &path {
                 m.place(S::MenuCopyPath.t(), PlaceCmd::CopyPath(loc.clone()), false);
-                if !lib {
+                if !lib && !offline {
                     m.place(S::MenuOpenInTerminal.t(), PlaceCmd::Terminal(p.clone()), false);
                 }
             }
@@ -115,7 +119,9 @@ impl App {
             if a.nav.sidebar.places.drives.iter().any(|d| d.removable && !d.unmounted && d.path == *loc.path()) {
                 m.place(S::MenuEject.t(), PlaceCmd::Eject(loc.path().clone()), false);
             }
-            a.drive_items(m, loc.path());
+            if !offline {
+                a.drive_items(m, loc.path());
+            }
             if a.side_label(loc.path()).is_some() {
                 m.place(S::MenuRename.t(), PlaceCmd::Label(loc.path().clone()), false);
             }
@@ -131,7 +137,7 @@ impl App {
             }
             extra(a, m);
             m.separator();
-            if let Some(p) = &path {
+            if let Some(p) = path.as_ref().filter(|_| !offline) {
                 m.place(S::MenuProperties.t(), PlaceCmd::Properties(p.clone()), false);
             }
         });
@@ -139,6 +145,7 @@ impl App {
     }
 
     pub(in crate::ui) fn show_place_menu(&mut self, x: f32, y: f32, path: Option<FsPath>, menu: Vec<crate::ui::MenuItem>, kind: crate::ui::MenuKind) {
+        let path = path.filter(|p| !self.nav.sidebar.places.offline_path(p));
         let Some(p) = path else { return self.context_flit_menu(x, y, menu, kind) };
         let shift = self.mods.shift;
         let dir = p.parent().unwrap_or_else(FsPath::computer);

@@ -138,10 +138,13 @@ impl Fs for LinuxGuiFs {
     }
 
     fn volume_key(&self, path: &FsPath) -> Vec<u8> {
-        match host(path).and_then(device) {
-            Some(dev) => format!("dev:{dev}").into_bytes(),
-            None => path.root_bytes().to_vec(),
-        }
+        let Some(local) = host(path) else { return path.root_bytes().to_vec() };
+        let table = crate::mime::current_mounts();
+        let dev = match flit_platform_linux::mounts::enclosing(local, &table).filter(|m| m.remote_access()) {
+            Some(m) => Some(libc::makedev(m.dev.0, m.dev.1)),
+            None => device(local),
+        };
+        dev.map_or_else(|| path.root_bytes().to_vec(), |dev| format!("dev:{dev}").into_bytes())
     }
 }
 
@@ -283,6 +286,9 @@ impl Watcher for LinuxGuiWatcher {
         }
         let Some(path) = dir.and_then(host) else { return };
         if dir.is_some_and(self.remote) {
+            if places::inactive_share(path) {
+                return;
+            }
             self.poll.watch(tab, gen, path);
         }
         match self.notify.watch((tab, gen, Spot::Folder), path) {

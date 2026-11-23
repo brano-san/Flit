@@ -33,6 +33,8 @@ drive = "Диск"
 folder = "Папка"
 file = "Файл"
 ext_file = "Файл {ext}"
+executable = "Виконуваний файл"
+elf = "Програма Linux (ELF)"
 
 [group]
 unknown_location = "Невідоме розташування"

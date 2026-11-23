@@ -12,6 +12,7 @@ use flit_platform_linux::mounts::{self, Mount};
 use flit_platform_linux::Trash;
 use std::os::unix::ffi::OsStrExt;
 use std::collections::HashMap;
+use std::sync::{LazyLock, Mutex};
 use std::path::{Path, PathBuf};
 
 pub struct Volume {
@@ -19,6 +20,7 @@ pub struct Volume {
     pub label: String,
     pub total: u64,
     pub free: u64,
+    pub offline: bool,
 }
 
 fn name_of(m: &Mount, l: flit_core::i18n::Lang) -> String {
@@ -30,38 +32,105 @@ fn name_of(m: &Mount, l: flit_core::i18n::Lang) -> String {
 
 type Probe = fn(&Path) -> Option<(u64, u64)>;
 
-fn spaces_of(ms: &[Mount], wait: std::time::Duration, probe: Probe) -> Vec<Option<(u64, u64)>> {
-    let remote: Vec<PathBuf> = ms.iter().filter(|m| m.is_network()).map(|m| m.path().to_path_buf()).collect();
+type FailedShares = HashMap<PathBuf, u32>;
+static FAILED_SHARES: LazyLock<Mutex<FailedShares>> = LazyLock::new(Mutex::default);
+
+fn spaces_of(ms: &[Mount], failed: &mut FailedShares, wait: std::time::Duration, probe: Probe) -> Vec<Option<(u64, u64)>> {
+    failed.retain(|path, id| ms.iter().any(|m| m.id == *id && m.path() == path));
+    let remote: Vec<PathBuf> = ms.iter().filter(|m| m.is_network() && !failed.contains_key(m.path())).map(|m| m.path().to_path_buf()).collect();
     let mut probed = mounts::spaces_within(&remote, wait, probe).into_iter();
-    ms.iter().map(|m| if m.is_network() { probed.next().flatten() } else { probe(m.path()) }).collect()
+    ms.iter()
+        .map(|m| {
+            if !m.is_network() {
+                return probe(m.path());
+            }
+            if failed.contains_key(m.path()) {
+                return None;
+            }
+            let space = probed.next().flatten();
+            if space.is_none() {
+                failed.insert(m.path().to_owned(), m.id);
+            }
+            space
+        })
+        .collect()
 }
 
 pub fn volumes_from(table: &[Mount], user: &[u8], by_label: &Path) -> Vec<Volume> {
     let labels = mounts::labels(by_label);
     let disks = mounts::disks(table, user);
-    let spaces = spaces_of(&disks, mounts::NETWORK_SPACE_WAIT, mounts::space);
+    let spaces = spaces_of(&disks, &mut FAILED_SHARES.lock().unwrap_or_else(|e| e.into_inner()), mounts::NETWORK_SPACE_WAIT, mounts::space);
     disks
         .into_iter()
         .zip(spaces)
         .map(|(m, space)| {
             let (total, free) = space.unwrap_or_default();
             let label = mounts::label_of(&m, &labels).filter(|_| m.point != b"/").unwrap_or_else(|| name_of(&m, flit_core::i18n::lang()));
-            Volume { mount: m, label, total, free }
+            Volume { offline: m.is_network() && space.is_none(), mount: m, label, total, free }
         })
         .collect()
 }
 
-pub fn volumes() -> Vec<Volume> {
-    volumes_from(&mounts::read().unwrap_or_default(), &mounts::user_name(), Path::new(mounts::BY_LABEL))
+fn dormant_shares(table: &[Mount], fstab: &[u8]) -> Vec<Drive> {
+    let mut drives = Vec::new();
+    for line in fstab.split(|&b| b == b'\n') {
+        let mut fields = line.split(u8::is_ascii_whitespace).filter(|f| !f.is_empty());
+        let (Some(source), Some(target), Some(fs)) = (fields.next(), fields.next(), fields.next()) else { continue };
+        if source.starts_with(b"#") {
+            continue;
+        }
+        let point = mounts::unescape(target);
+        let Some(m) = table.iter().rev().find(|m| m.point == point).filter(|m| m.fstype == "autofs") else { continue };
+        let remote = Mount { fstype: String::from_utf8_lossy(fs).into_owned(), source: mounts::unescape(source), ..m.clone() };
+        if remote.is_network() {
+            let volume = Volume { label: name_of(&remote, flit_core::i18n::lang()), mount: remote, total: 0, free: 0, offline: true };
+            drives.extend(drive_of(&volume));
+        }
+    }
+    drives
+}
+
+fn other_drives(table: &[Mount]) -> Vec<Drive> {
+    let dormant = dormant_shares(table, &std::fs::read("/etc/fstab").unwrap_or_default());
+    dormant.into_iter().chain(unmounted()).chain(gvfs(&gvfs_root())).chain(phones(&gvfs_root())).collect()
+}
+
+fn retry_root<'a>(point: &Path, table: &'a [Mount]) -> Option<&'a Path> {
+    mounts::enclosing(point, table).filter(|m| m.is_network() || m.fstype == "autofs").map(Mount::path)
+}
+
+pub fn inactive_share(path: &Path) -> bool {
+    let table = mounts::read().unwrap_or_default();
+    let Some(m) = mounts::enclosing(path, &table) else { return false };
+    m.fstype == "autofs" || (m.is_network() && FAILED_SHARES.lock().unwrap_or_else(|e| e.into_inner()).get(m.path()) == Some(&m.id))
+}
+
+pub fn retry_share(point: &Path) -> Option<std::io::Result<bool>> {
+    let table = mounts::read().ok()?;
+    let root = retry_root(point, &table)?;
+    Some(probe_share(point, root))
+}
+
+fn probe_share(point: &Path, root: &Path) -> std::io::Result<bool> {
+    let mut cmd = crate::tools::command("stat")?;
+    cmd.args(["-L", "-c", "%f", "--"]).arg(if point == root { root.join(".") } else { point.to_owned() });
+    let out = run_within(cmd, CONNECT_WAIT)?;
+    if !out.status.success() {
+        return Err(std::io::Error::other(String::from_utf8_lossy(&out.stderr).trim().to_owned()));
+    }
+    let mode = u32::from_str_radix(String::from_utf8_lossy(&out.stdout).trim(), 16).map_err(std::io::Error::other)?;
+    FAILED_SHARES.lock().unwrap_or_else(|e| e.into_inner()).remove(root);
+    Ok(mode & libc::S_IFMT == libc::S_IFDIR)
 }
 
 pub fn drive_of(v: &Volume) -> Option<Drive> {
     let remote = v.mount.is_network().then(|| String::from_utf8_lossy(&v.mount.source).into_owned());
-    Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label.clone(), total: v.total, free: v.free, file_system: v.mount.fstype.clone(), removable: v.mount.removable(), unmounted: false, kind: None, remote })
+    Some(Drive { path: crate::xdg::fs_path(v.mount.path())?, label: v.label.clone(), total: v.total, free: v.free, file_system: v.mount.fstype.clone(), removable: v.mount.removable(), unmounted: v.offline, kind: None, remote })
 }
 
 pub fn drives() -> Vec<Drive> {
-    volumes().iter().filter_map(drive_of).chain(unmounted()).chain(gvfs(&gvfs_root())).chain(phones(&gvfs_root())).chain([network_drive()]).collect()
+    let table = mounts::read().unwrap_or_default();
+    volumes_from(&table, &mounts::user_name(), Path::new(mounts::BY_LABEL)).iter().filter_map(drive_of).chain(other_drives(&table)).chain([network_drive()]).collect()
 }
 
 pub fn network_drive() -> Drive {
@@ -202,7 +271,7 @@ fn run_command(mut cmd: std::process::Command, wait: std::time::Duration, each: 
     })();
     if result.is_err() {
         let _ = child.kill();
-        let _ = child.wait();
+        crate::shell::reap(child)?;
     }
     result
 }
@@ -351,7 +420,7 @@ pub fn eject_error(drive: &Path, e: &std::io::Error) -> PlatformError {
 pub fn list_computer(out: &mut ListingBuilder<'_>) -> Result<(), FsError> {
     let table = mounts::read().map_err(|e| FsError { kind: FsErrorKind::Unavailable, code: e.raw_os_error().unwrap_or(-1) as i64 })?;
     let volumes = volumes_from(&table, &mounts::user_name(), Path::new(mounts::BY_LABEL));
-    computer_from(out, &volumes, &unmounted().into_iter().chain(gvfs(&gvfs_root())).chain(phones(&gvfs_root())).collect::<Vec<_>>());
+    computer_from(out, &volumes, &other_drives(&table));
     Ok(())
 }
 
@@ -370,7 +439,13 @@ pub fn computer_from(out: &mut ListingBuilder<'_>, volumes: &[Volume], others: &
         if v.total > 0 {
             out.listing.push_drive_info(v.free, &v.mount.fstype);
         }
-        labelled(out, &v.label);
+        if v.offline {
+            if let Some(d) = drive_of(v) {
+                labelled(out, &d.title());
+            }
+        } else {
+            labelled(out, &v.label);
+        }
     }
     for d in others {
         out.push(d.path.as_bytes(), Meta { attrs: attr::DIR | attr::VOLUME, ..Default::default() });
@@ -483,7 +558,8 @@ pub fn bookmarks() -> Vec<flit_core::Location> {
     let home = std::env::var_os("HOME").unwrap_or_default();
     let gtk = read(crate::xdg::config_home().map(|c| c.join("gtk-3.0/bookmarks")));
     let kde = read(crate::xdg::data_home().map(|d| d.join("user-places.xbel")));
-    bookmarks_from(&gtk, &kde, &[home.as_bytes(), b"/"], Path::is_dir)
+    let mounts = mounts::read().unwrap_or_default();
+    bookmarks_from(&gtk, &kde, &[home.as_bytes(), b"/"], |p| mounts::remote_path(p, &mounts) || p.is_dir())
 }
 
 const XBEL_HEAD: &str = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<xbel version=\"1.0\"\n      xmlns:bookmark=\"http://www.freedesktop.org/standards/desktop-bookmarks\"\n      xmlns:mime=\"http://www.freedesktop.org/standards/shared-mime-info\"\n>\n";
@@ -609,18 +685,24 @@ pub fn remember_recent(paths: Vec<PathBuf>) {
     });
 }
 
-pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path) -> Option<bool>) -> Vec<flit_core::ui::Recent> {
-    let mut found: Vec<(i64, Vec<u8>)> = bookmark_tags(xbel)
-        .filter_map(|tag| {
+pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path, Option<bool>) -> Option<bool>) -> Vec<flit_core::ui::Recent> {
+    let xbel = String::from_utf8_lossy(xbel);
+    let mut found: Vec<_> = xbel
+        .match_indices("<bookmark ")
+        .filter_map(|(start, _)| {
+            let (tag, tail) = xbel[start..].split_once('>')?;
+            let body = if tag.ends_with('/') { "" } else { tail.split_once("</bookmark>").map_or("", |(body, _)| body) };
+            let tag = tag.as_bytes();
             let href = bookmark_href(tag)?;
             let path = crate::instance::decode_uri(&href).filter(|p| p.starts_with(b"/"))?;
             let at = attribute(tag, b"modified").or_else(|| attribute(tag, b"visited")).and_then(utc_ticks).unwrap_or(0);
-            Some((at, path))
+            let dir = body.split_once("<mime:mime-type").and_then(|(_, tail)| tail.split_once('>')).and_then(|(attrs, _)| attribute(attrs.as_bytes(), b"type")).map(|mime| mime == b"inode/directory");
+            Some((at, path, dir))
         })
         .collect();
     found.sort_by_key(|f| std::cmp::Reverse(f.0));
     let mut out: Vec<flit_core::ui::Recent> = Vec::new();
-    for (at, path) in found {
+    for (at, path, saved_dir) in found {
         if out.len() == limit {
             break;
         }
@@ -628,7 +710,7 @@ pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path) -> Option<b
         if out.iter().any(|r| r.target == target) {
             continue;
         }
-        let Some(dir) = exists(Path::new(std::ffi::OsStr::from_bytes(&path))) else { continue };
+        let Some(dir) = exists(Path::new(std::ffi::OsStr::from_bytes(&path)), saved_dir) else { continue };
         let name = flit_core::name::display(target.file_name()).into_owned();
         out.push(flit_core::ui::Recent { name, target, dir, at });
     }
@@ -638,7 +720,8 @@ pub fn recent_from(xbel: &[u8], limit: usize, exists: impl Fn(&Path) -> Option<b
 pub fn recent(limit: usize) -> (Vec<flit_core::ui::Recent>, bool) {
     let file = crate::xdg::data_home().map(|d| d.join("recently-used.xbel"));
     let bytes = file.and_then(|f| std::fs::read(f).ok()).unwrap_or_default();
-    (recent_from(&bytes, limit, |p| std::fs::metadata(p).ok().map(|m| m.is_dir())), false)
+    let mounts = mounts::read().unwrap_or_default();
+    (recent_from(&bytes, limit, |p, saved_dir| if mounts::remote_path(p, &mounts) { saved_dir } else { std::fs::metadata(p).ok().map(|m| m.is_dir()) }), false)
 }
 
 fn escape_xml(s: &str) -> String {

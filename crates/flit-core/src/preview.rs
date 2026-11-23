@@ -666,6 +666,67 @@ pub enum HostEvent {
     Released { gen: u64 },
 }
 
+pub fn elf_program(head: &[u8]) -> bool {
+    read_elf_program(&mut std::io::Cursor::new(head))
+}
+
+pub fn read_elf_program(reader: &mut (impl std::io::Read + std::io::Seek)) -> bool {
+    use std::io::SeekFrom;
+
+    let mut header = [0; 64];
+    if reader.read_exact(&mut header[..52]).is_err() || &header[..4] != b"\x7fELF" || !matches!(header[4], 1 | 2) || !matches!(header[5], 1 | 2) {
+        return false;
+    }
+    let wide = header[4] == 2;
+    if wide && reader.read_exact(&mut header[52..]).is_err() {
+        return false;
+    }
+    let little = header[5] == 1;
+    let number = |bytes: &[u8]| -> u64 {
+        if little {
+            bytes.iter().rev().fold(0, |n, &b| n << 8 | u64::from(b))
+        } else {
+            bytes.iter().fold(0, |n, &b| n << 8 | u64::from(b))
+        }
+    };
+    match number(&header[16..18]) {
+        2 => return true,
+        3 => {}
+        _ => return false,
+    }
+    let (offset, stride, count, word) = if wide { (number(&header[32..40]), number(&header[54..56]), number(&header[56..58]), 8) } else { (number(&header[28..32]), number(&header[42..44]), number(&header[44..46]), 4) };
+    if stride != if wide { 56 } else { 32 } || count > 128 || reader.seek(SeekFrom::Start(offset)).is_err() {
+        return false;
+    }
+    let mut entry = [0; 56];
+    let mut dynamic = None;
+    for _ in 0..count {
+        if reader.read_exact(&mut entry[..stride as usize]).is_err() {
+            return false;
+        }
+        match number(&entry[..4]) {
+            3 => return true,
+            2 => dynamic = Some((number(&entry[word..word * 2]), number(&entry[word * 4..word * 5]))),
+            _ => {}
+        }
+    }
+    let Some((offset, size)) = dynamic else { return false };
+    if reader.seek(SeekFrom::Start(offset)).is_err() {
+        return false;
+    }
+    for _ in 0..(size / (2 * word as u64)).min(256) {
+        if reader.read_exact(&mut entry[..word * 2]).is_err() {
+            break;
+        }
+        match number(&entry[..word]) {
+            0 => break,
+            0x6fff_fffb => return number(&entry[word..word * 2]) & 0x0800_0000 != 0,
+            _ => {}
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 #[path = "../test/preview.rs"]
 mod tests;

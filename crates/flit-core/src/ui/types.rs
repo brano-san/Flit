@@ -18,7 +18,7 @@ impl App {
                 Some(&k) => out[k].2 += 1,
                 None => {
                     seen.insert(key, out.len());
-                    out.push((key, self.type_text(&arena, l, i).to_owned(), 1));
+                    out.push((key, self.type_of(&arena, l.entries[i as usize].attrs & !crate::attr::EXEC, l.ext(i)).to_owned(), 1));
                 }
             }
         }
