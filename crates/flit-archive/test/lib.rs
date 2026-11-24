@@ -185,6 +185,23 @@ pub fn raw_zip(entries: &[(&[u8], &[u8], u16)]) -> Vec<u8> {
 }
 
 #[test]
+fn zip_listing_handles_entries_separated_by_a_full_zip_comment() {
+    let t = Temp::new("large-zip-comment");
+    let mut zip = raw_zip(&[(b"Photos/one", b"xy", 0), (b"photos/two", b"z", 0)]);
+    let eocd = zip.len() - 22;
+    let cd = u32::from_le_bytes(zip[eocd + 16..eocd + 20].try_into().unwrap()) as usize;
+    let comment_len = u16::MAX;
+    zip[cd + 32..cd + 34].copy_from_slice(&comment_len.to_le_bytes());
+    let cd_len = (eocd - cd) as u32 + u32::from(comment_len);
+    zip[eocd + 12..eocd + 16].copy_from_slice(&cd_len.to_le_bytes());
+    let comment_at = cd + 46 + b"Photos/one".len();
+    zip.splice(comment_at..comment_at, std::iter::repeat_n(b'x', usize::from(comment_len)));
+    t.write("comments.zip", &zip);
+    assert_eq!(names(&t.fs("comments.zip")).unwrap(), [("Photos".to_owned(), 3, true)]);
+    assert_eq!(names(&t.fs("comments.zip/photos")).unwrap(), [("one".to_owned(), 2, false), ("two".to_owned(), 1, false)]);
+}
+
+#[test]
 fn hostile_names_never_leave_the_target() {
     let t = Temp::new("slip");
     let bad: [&[u8]; 9] = [b"../evil.txt", b"..\\evil2.txt", b"/abs.txt", b"C:/Windows/evil.dll", b"\\\\server\\share\\x", b"ok/file.txt:stream", b"ok/CON", b"ok/trailing. ", b"ok/link"];

@@ -1,6 +1,7 @@
 use crate::index::{lowercase, Order, VolumeIndex, KEPT_ATTRS, MAX_DEPTH, NONE, ROOT};
 use crate::proto::{Sort, SortKey};
 use crate::query::{glob, Filter, Pattern, Query, Scope};
+use flit_core::hash::FxHashMap;
 use flit_core::{attr, query_attrs::SearchPaths, FsPath, Meta};
 use flit_proto::listing::EntryBatch;
 use memchr::memmem::Finder;
@@ -459,22 +460,6 @@ fn chunks(n: usize, tasks: usize) -> Vec<(usize, usize)> {
     (0..n).step_by(size).map(|a| (a, (a + size).min(n))).collect()
 }
 
-struct Found {
-    hits: Vec<u32>,
-    bits: Vec<u64>,
-    ranks: (u32, u32),
-}
-
-fn mark(part: Vec<u32>, rank: &[u32], bits: &[AtomicU64]) -> (Vec<u32>, u32, u32) {
-    let (mut lo, mut hi) = (u32::MAX, 0);
-    for &e in &part {
-        bits[e as usize / 64].fetch_or(1 << (e % 64), Relaxed);
-        lo = lo.min(rank[e as usize]);
-        hi = hi.max(rank[e as usize]);
-    }
-    (part, lo, hi)
-}
-
 fn depth(v: &VolumeIndex, mut i: u32) -> u32 {
     let mut n = 0;
     while i != NONE && v.attrs[i as usize] & ROOT == 0 && n < MAX_DEPTH as u32 {
@@ -484,14 +469,13 @@ fn depth(v: &VolumeIndex, mut i: u32) -> u32 {
     n
 }
 
-fn scan(v: &VolumeIndex, p: &Prepared<'_>, scope: &PathScope, rank: &[u32], access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<Found> {
-    let bits: Vec<AtomicU64> = (0..v.len().div_ceil(64)).map(|_| AtomicU64::new(0)).collect();
+fn scan(v: &VolumeIndex, p: &Prepared<'_>, scope: &PathScope, access: Option<&dyn Visibility>, cancel: Cancel<'_>) -> Option<Vec<Vec<u32>>> {
     let visible = |i: u32| access.is_none_or(|a| a.can_list(v, v.parents[i as usize]));
     let paths = p.path_memo(v);
     let children = if p.query.uses(&|f| matches!(f, Filter::Children(..))) { Some(v.child_counts(cancel)?) } else { None };
     let children = children.as_deref().map_or(&[][..], Vec::as_slice);
     let memo = &FilterMemo { paths: &paths, scope, children, depth: p.query.uses(&|f| matches!(f, Filter::Depth(..))) };
-    let parts: Vec<Option<(Vec<u32>, u32, u32)>> = match &p.driver {
+    let parts: Vec<Option<Vec<u32>>> = match &p.driver {
         Some((k, finder, exact)) => {
             let skip = exact.then_some(*k);
             let ns = v.seg_start.len();
@@ -518,7 +502,7 @@ fn scan(v: &VolumeIndex, p: &Prepared<'_>, scope: &PathScope, rank: &[u32], acce
                             out.push(e);
                         }
                     }
-                    Some(mark(out, rank, &bits))
+                    Some(out)
                 })
                 .collect()
         }
@@ -532,20 +516,49 @@ fn scan(v: &VolumeIndex, p: &Prepared<'_>, scope: &PathScope, rank: &[u32], acce
                 if access.is_some() {
                     hits.retain(|&i| visible(i));
                 }
-                Some(mark(hits, rank, &bits))
+                Some(hits)
             })
             .collect(),
     };
-    let mut found = Found { hits: Vec::with_capacity(parts.iter().flatten().map(|p| p.0.len()).sum()), bits: Vec::new(), ranks: (u32::MAX, 0) };
-    for part in parts {
-        let (hits, lo, hi) = part?;
-        found.hits.extend(hits);
-        found.ranks = (found.ranks.0.min(lo), found.ranks.1.max(hi));
-    }
-    found.bits = bits.into_iter().map(AtomicU64::into_inner).collect();
-    Some(found)
+    parts.into_iter().collect()
 }
 
+fn ranked_bits(parts: Vec<Vec<u32>>, rank: &[u32], n: usize, descending: bool) -> (Vec<u64>, usize) {
+    let bits: Vec<_> = (0..rank.len().div_ceil(64)).map(|_| AtomicU64::new(0)).collect();
+    let initial = if descending { 0u32 } else { u32::MAX };
+    let earlier = |a: u32, b| if descending { a.max(b) } else { a.min(b) };
+    let first = parts
+        .into_par_iter()
+        .map(|part| {
+            let mut first = initial;
+            let (mut word, mut mask) = (0, 0);
+            for i in part {
+                let next = i as usize / 64;
+                if next != word {
+                    if mask != 0 {
+                        bits[word].fetch_or(mask, Relaxed);
+                    }
+                    word = next;
+                    mask = 0;
+                }
+                mask |= 1 << (i % 64);
+                first = earlier(first, rank[i as usize]);
+            }
+            if mask != 0 {
+                bits[word].fetch_or(mask, Relaxed);
+            }
+            first
+        })
+        .reduce(|| initial, earlier) as usize;
+    let pos = if first >= n {
+        0
+    } else if descending {
+        n - 1 - first
+    } else {
+        first
+    };
+    (bits.into_iter().map(AtomicU64::into_inner).collect(), pos)
+}
 enum Kind {
     List(Vec<u32>),
     Perm(Option<Vec<u64>>),
@@ -659,6 +672,7 @@ impl Engine {
             if scope.skips_volume() {
                 continue;
             }
+            let before = total;
             let (kind, pos) = if query.terms.is_empty() && access.is_none() {
                 let perm = &v.perms[order as usize];
                 if scope.is_empty() {
@@ -679,9 +693,15 @@ impl Engine {
                 }
             } else {
                 let rank = &v.ranks[order as usize];
-                let Found { mut hits, bits, ranks } = scan(v, &p, &scope, rank, access, cancel)?;
-                total += hits.len() as u64;
-                if hits.len() <= SMALL {
+                let parts = scan(v, &p, &scope, access, cancel)?;
+                if cancel() {
+                    return None;
+                }
+                let count = parts.iter().map(Vec::len).sum::<usize>();
+                total += count as u64;
+                if count <= SMALL {
+                    let mut hits = Vec::with_capacity(count);
+                    hits.extend(parts.into_iter().flatten());
                     hits.par_sort_unstable_by_key(|&i| rank[i as usize]);
                     if sort.descending {
                         hits.reverse();
@@ -689,15 +709,13 @@ impl Engine {
                     (Kind::List(hits), 0)
                 } else {
                     let n = v.perms[order as usize].len();
-                    let first = match ranks {
-                        (_, hi) if hi as usize >= n => 0,
-                        (_, hi) if sort.descending => n - 1 - hi as usize,
-                        (lo, _) => lo as usize,
-                    };
-                    (Kind::Perm(Some(bits)), first)
+                    let (bits, pos) = ranked_bits(parts, rank, n, sort.descending);
+                    (Kind::Perm(Some(bits)), pos)
                 }
             };
-            streams.push(Stream { vol, kind, pos });
+            if total > before {
+                streams.push(Stream { vol, kind, pos });
+            }
         }
         if cancel() {
             return None;
@@ -714,22 +732,52 @@ impl Engine {
         if from >= to {
             return (batch, dirs);
         }
-        rs.ensure(self, to as usize);
         let mut chain = Vec::new();
-        let end = (to as usize).min(rs.rows.len());
-        for &(vol, i) in rs.rows.get(from as usize..end).unwrap_or(&[]) {
-            let v = &self.volumes[vol as usize];
+        let mut push = |v: &VolumeIndex, i: u32| {
             let k = i as usize;
             batch.push(v.name(i), Meta { size: v.sizes[k], modified: v.modified[k], created: 0, attrs: v.attrs[k] & KEPT_ATTRS });
             let mut dir = Vec::new();
             v.dir_into(i, &mut chain, &mut dir);
             dirs.push(dir);
+        };
+        let (from, to) = (from as usize, to as usize);
+        let direct = if let [stream] = &rs.streams[..] {
+            let volume = &self.volumes[stream.vol];
+            match &stream.kind {
+                Kind::List(ids) => Some((volume, &ids[from..to], false)),
+                Kind::Perm(None) => {
+                    let perm = &volume.perms[order_of(rs.sort.key) as usize];
+                    let to = to.min(perm.len());
+                    let from = from.min(to);
+                    if rs.sort.descending {
+                        Some((volume, &perm[perm.len() - to..perm.len() - from], true))
+                    } else {
+                        Some((volume, &perm[from..to], false))
+                    }
+                }
+                Kind::Perm(Some(_)) => None,
+            }
+        } else {
+            None
+        };
+        if let Some((volume, ids, reverse)) = direct {
+            if reverse {
+                ids.iter().rev().for_each(|&i| push(volume, i));
+            } else {
+                ids.iter().for_each(|&i| push(volume, i));
+            }
+        } else {
+            rs.ensure(self, to);
+            let end = to.min(rs.rows.len());
+            for &(vol, i) in rs.rows.get(from..end).unwrap_or(&[]) {
+                push(&self.volumes[vol as usize], i);
+            }
         }
         (batch, dirs)
     }
 
     pub fn result_folders(&self, rs: &ResultSet, cancel: Cancel<'_>) -> Option<flit_core::query_attrs::FolderCounts> {
-        let mut counts = std::collections::HashMap::<(usize, u32), (u32, u64)>::new();
+        let mut counts = FxHashMap::<(usize, u32), (u32, u64)>::default();
         for stream in &rs.streams {
             let v = &self.volumes[stream.vol];
             let visit = |(at, i): (usize, u32)| {
@@ -753,12 +801,16 @@ impl Engine {
                 })?,
             }
         }
-        let mut chain = Vec::new();
+        const MAX_FOLDERS: usize = 256;
+        let key = |&((vol, parent), (_, count)): &((usize, u32), (u32, u64))| (std::cmp::Reverse(count), vol, parent);
         let mut counts: Vec<_> = counts.into_iter().collect();
-        counts.sort_unstable_by_key(|&((vol, parent), (_, count))| (std::cmp::Reverse(count), vol, parent));
+        if counts.len() > MAX_FOLDERS {
+            counts.select_nth_unstable_by_key(MAX_FOLDERS, key);
+            counts.truncate(MAX_FOLDERS);
+        }
+        let mut chain = Vec::new();
         let folders = counts
             .into_iter()
-            .take(256)
             .map(|((vol, _), (i, count))| {
                 let mut path = Vec::new();
                 self.volumes[vol].dir_into(i, &mut chain, &mut path);

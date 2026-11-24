@@ -18,9 +18,9 @@ const MIGRATIONS: [crate::schema::Step; 0] = [];
 const RECHECK_EVERY: Duration = Duration::from_secs(120);
 
 #[derive(Serialize, Deserialize)]
-struct TagFile {
+struct TagFile<T> {
     version: u32,
-    store: TagStore,
+    store: T,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -56,7 +56,7 @@ fn moved_path(path: &FsPath, from: &FsPath, to: &FsPath) -> Option<FsPath> {
 
 impl Book {
     pub fn load(file: Option<PathBuf>, key_of: fn(&FsPath) -> Option<FileKey>, resolve: fn(&[(FileKey, &FsPath)]) -> Vec<Resolved>) -> Self {
-        let decode = |b: &[u8]| postcard::from_bytes::<TagFile>(b).ok().filter(|t| t.version == FILE_VERSION && t.store.tags.len() <= tags::MAX_TAGS).map(|t| t.store);
+        let decode = |b: &[u8]| postcard::from_bytes::<TagFile<TagStore>>(b).ok().filter(|t| t.version == FILE_VERSION && t.store.tags.len() <= tags::MAX_TAGS).map(|t| t.store);
         let store = file.as_deref().and_then(|f| crate::schema::load(f, FILE_VERSION, &MIGRATIONS, decode)).unwrap_or_default();
         Self { store, seen: FxHashMap::default(), version: 0, file, key_of, resolve, unix: false, sync: |_, _, _| {} }
     }
@@ -84,7 +84,7 @@ impl Book {
 
     fn save(&self) {
         let Some(f) = &self.file else { return };
-        let Ok(bytes) = postcard::to_stdvec(&TagFile { version: FILE_VERSION, store: self.store.clone() }) else { return };
+        let Ok(bytes) = postcard::to_stdvec(&TagFile { version: FILE_VERSION, store: &self.store }) else { return };
         if let Some(dir) = f.parent() {
             let _ = std::fs::create_dir_all(dir);
         }

@@ -113,7 +113,7 @@ impl Tree {
     }
 
     fn reread<S: IndexSink>(&mut self, changed: Vec<Job>, sink: &mut S) {
-        let remote = mounts::remote_points(&mounts::read().unwrap_or_default());
+        let remote = mounts::read_remote_points();
         let mut seen = HashSet::new();
         let mut stale = Vec::new();
         let mut queue = Vec::new();
@@ -222,7 +222,7 @@ fn walk_with<S: IndexSink>(root: &Path, sink: &mut S, tree: &mut Tree, throttle:
     tree.dev = top.dev;
     tree.dirs.clear();
     let first = Job { dir: root.to_path_buf(), id: top.ino, modified: top.meta(b".").modified };
-    let remote = mounts::remote_points(&mounts::read().unwrap_or_default());
+    let remote = mounts::read_remote_points();
     let list = |job: &Job, subdirs: &mut Vec<Job>| read_dir(job, top.dev, subdirs, &remote);
     let throttle = throttle.unwrap_or_else(|| Throttle::new(media(Path::new(SYS_BLOCK), top.dev), DENTS_BUFFER));
     flit_platform::walk::walk(first, throttle, list, |batch, done, total| {

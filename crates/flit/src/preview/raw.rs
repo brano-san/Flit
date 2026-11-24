@@ -20,7 +20,7 @@ pub(super) enum Source {
 }
 
 pub(super) fn load(path: &Path, px: u32, source: Source, current: impl Fn() -> bool) -> Option<Bitmap> {
-    let mut r = super::regular_file(path)?;
+    let (mut r, _) = super::regular_file(path)?;
     let meta = r.metadata().ok()?;
     if !meta.is_file() {
         return None;

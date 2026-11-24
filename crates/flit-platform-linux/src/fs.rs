@@ -347,7 +347,7 @@ pub fn mark_listed_hidden(meta: &mut Meta, name: &[u8], hidden: &HashSet<Vec<u8>
 }
 
 pub fn scan(dir: &Path, each: impl FnMut(&[u8], Meta) -> bool) -> io::Result<()> {
-    scan_with_mounts(dir, &crate::mounts::remote_points(&crate::mounts::read().unwrap_or_default()), each)
+    scan_with_mounts(dir, &crate::mounts::read_remote_points(), each)
 }
 
 fn mount_meta(name: &[u8]) -> Meta {
@@ -479,7 +479,7 @@ pub fn measure(items: &[(FsPath, Option<u64>)], keep_going: &dyn Fn() -> bool, r
 }
 
 pub fn dir_sizes(dir: &Path, items: &[(u32, PathBuf)], keep_going: &(dyn Fn() -> bool + Sync), report: &(dyn Fn(u32, DirStats) + Sync)) {
-    let points = crate::mounts::remote_points(&crate::mounts::read().unwrap_or_default());
+    let points = crate::mounts::read_remote_points();
     let next = AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get()).min(items.len()).max(1);
     std::thread::scope(|s| {
@@ -576,7 +576,7 @@ impl Fs for LinuxFs {
             Some((dev, out.tagging()?))
         });
         let hidden = hidden_list(fd.as_raw_fd());
-        let points = crate::mounts::remote_points(&crate::mounts::read().unwrap_or_default());
+        let points = crate::mounts::read_remote_points();
         let children = crate::mounts::remote_children(path, &points);
         let launchers = out.wants_labels().then(|| (crate::desktop::data_dirs(), flit_core::i18n::lang().code(), std::env::var("LANG").unwrap_or_default()));
         dents(fd.as_raw_fd(), |name, d_type| {

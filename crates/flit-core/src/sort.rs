@@ -755,9 +755,44 @@ fn primary(l: &Listing, field: SortField, i: u32) -> u64 {
     }
 }
 
+#[derive(Clone, Copy)]
+struct NameItem {
+    name: u64,
+    name2: u64,
+    idx: u32,
+    folder: u16,
+}
+
+fn sort_names(l: &Listing, k: &SortKeys, view: &ViewSpec, out: &mut Vec<u32>) {
+    let spec = view.sort;
+    let invert = |word: u64| if spec.descending { !word } else { word };
+    let item = |i: u32| NameItem { name: invert(k.prefix[i as usize]), name2: invert(key_word(k.key(i), 8)), idx: i, folder: folder_rank(spec.folders, &l.entries[i as usize]) };
+    let cmp = |a: &NameItem, b: &NameItem| {
+        (a.folder, a.name, a.name2).cmp(&(b.folder, b.name, b.name2)).then_with(|| {
+            let order = k.key(a.idx).cmp(k.key(b.idx)).then_with(|| l.name(a.idx).cmp(l.name(b.idx)));
+            let order = if spec.descending { order.reverse() } else { order };
+            order.then(a.idx.cmp(&b.idx))
+        })
+    };
+    let shown = |&i: &u32| visible(l, i, view);
+    let mut items: Vec<NameItem>;
+    if l.len() < PARALLEL_SORT {
+        items = (0..l.len() as u32).filter(shown).map(item).collect();
+        items.sort_unstable_by(cmp);
+    } else {
+        items = (0..l.len() as u32).into_par_iter().filter(shown).map(item).collect();
+        items.par_sort_unstable_by(cmp);
+    }
+    out.clear();
+    out.extend(items.into_iter().map(|item| item.idx));
+}
+
 pub fn sort(l: &Listing, k: &SortKeys, view: ViewSpec, out: &mut Vec<u32>) {
     let _s = tracing::trace_span!("sort", n = l.len()).entered();
     let spec = view.sort;
+    if spec.field == SortField::Name && view.group.field == GroupField::None && l.saved_servers == 0 {
+        return sort_names(l, k, &view, out);
+    }
     let inv = |x: u64| if spec.descending { !x } else { x };
     let item = |i: u32| {
         let e = &l.entries[i as usize];

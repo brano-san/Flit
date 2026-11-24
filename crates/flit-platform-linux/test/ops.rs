@@ -938,6 +938,27 @@ fn copying_a_small_file_writes_it_without_reporting_unflushed_bytes() {
 }
 
 #[test]
+fn copy_fallback_reuses_its_buffer_and_writes_only_the_bytes_read() {
+    let temp = Temp::new("ops-copy-buffer");
+    let job = quiet(Resolve::Replace);
+    let engine = Engine::new(&job);
+    let copy = |name: &str, payload: &[u8]| {
+        let (from, mut writer) = std::os::unix::net::UnixStream::pair().unwrap();
+        writer.write_all(payload).unwrap();
+        drop(writer);
+        let path = temp.path().join(name);
+        let to = std::fs::File::create(&path).unwrap();
+        engine.copy_data(from.as_raw_fd(), to.as_raw_fd(), false, writeback::CopyMode::Deferred).unwrap();
+        assert_eq!(std::fs::read(path).unwrap(), payload);
+    };
+    copy("longer", b"this is the larger payload");
+    assert_eq!(engine.copy_buffer.borrow().len(), BUFFER);
+    let first_buffer = engine.copy_buffer.borrow().as_ptr();
+    copy("shorter", b"new");
+    assert_eq!(engine.copy_buffer.borrow().as_ptr(), first_buffer);
+}
+
+#[test]
 fn a_linux_move_uses_the_resolved_primary_name_and_skip_keeps_the_group_at_source() {
     let temp = Temp::new("ops-companions");
     let source = temp.path().join("source");

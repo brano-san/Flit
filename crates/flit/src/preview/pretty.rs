@@ -1,6 +1,7 @@
 use flit_core::preview::{self, Doc, PrettyError, PrettyFormat, PreviewRequest, PRETTY_FILE_LIMIT};
 use quick_xml::events::Event;
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -40,20 +41,17 @@ pub(crate) fn serve(path: Option<&OsStr>) -> i32 {
 
 pub(super) fn format_file(path: &Path) -> Result<String, PrettyError> {
     let format = path.extension().and_then(|e| PrettyFormat::for_ext(e.as_encoded_bytes())).ok_or(PrettyError::Invalid)?;
-    let file = super::regular_file(path).ok_or(PrettyError::Unavailable)?;
-    let meta = file.metadata().map_err(|_| PrettyError::Unavailable)?;
-    if !meta.is_file() {
-        return Err(PrettyError::Unavailable);
-    }
+    let (file, meta) = super::regular_file(path).ok_or(PrettyError::Unavailable)?;
     if meta.len() > PRETTY_FILE_LIMIT {
         return Err(PrettyError::TooLarge);
     }
-    let mut bytes = Vec::new();
+    let mut bytes = Vec::with_capacity(meta.len() as usize + 1);
     file.take(PRETTY_FILE_LIMIT + 1).read_to_end(&mut bytes).map_err(|_| PrettyError::Unavailable)?;
     if bytes.len() as u64 > PRETTY_FILE_LIMIT {
         return Err(PrettyError::TooLarge);
     }
-    let text = preview::decode(&bytes);
+    let utf8 = bytes.strip_prefix(b"\xef\xbb\xbf").unwrap_or(&bytes);
+    let text = std::str::from_utf8(utf8).map_or_else(|_| Cow::Owned(preview::decode(&bytes)), Cow::Borrowed);
     let formatted = match format {
         PrettyFormat::Json => json(&text),
         PrettyFormat::Yaml => pretty_yaml::format_text(&text, &Default::default()).map_err(|_| PrettyError::Invalid),

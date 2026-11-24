@@ -66,6 +66,14 @@ fn pretty_formats_structured_files_and_preserves_mixed_xml_content() {
         assert!(super::pretty::format_file(&file).unwrap().contains(part), "{name}");
         assert_eq!(std::fs::read_to_string(file).unwrap(), input);
     }
+    let file = d.0.join("encoded.json");
+    let source = r#"{"file":"пример"}"#;
+    let utf8 = [b"\xef\xbb\xbf".as_slice(), source.as_bytes()].concat();
+    let utf16 = [0xff, 0xfe].into_iter().chain(source.encode_utf16().flat_map(u16::to_le_bytes)).collect::<Vec<_>>();
+    for bytes in [utf8, utf16] {
+        std::fs::write(&file, bytes).unwrap();
+        assert_eq!(super::pretty::format_file(&file).unwrap(), "{\n  \"file\": \"пример\"\n}\n");
+    }
 }
 
 #[test]

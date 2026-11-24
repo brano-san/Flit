@@ -1,6 +1,23 @@
 use super::*;
 
 #[test]
+fn reading_only_remote_mounts_matches_the_full_table() {
+    for table in [
+        DESKTOP,
+        WSL,
+        CACHYOS,
+        r"1 0 0:2 / /my\040share rw shared:1 - cif\163 //nas/share rw
+2 0 0:3 / /auto rw - autofs automount rw
+3 0 0:4 / /gvfs rw - fuse.gvfsd-fuse gvfs rw
+4 0 0:5 / /local rw - ext4 /dev/sda1 rw
+broken 0 0:6 / /malformed rw - nfs4 nas:/ rw
+",
+    ] {
+        assert_eq!(parse_remote_points(table.as_bytes()), remote_points(&parse(table.as_bytes())));
+    }
+}
+
+#[test]
 fn server_keys_share_mounts_on_the_same_host() {
     let mounts = parse(b"1 0 0:11 / /smb rw - cifs //NAS/share rw\n2 0 0:12 / /ssh rw - fuse.sshfs ann@nas: rw\n3 0 0:13 / /gvfs rw - fuse.gvfsd-fuse gvfsd-fuse rw\n4 0 0:14 / /dav rw - davfs https://nas/team rw\n5 0 8:1 / /local rw - ext4 /dev/sda1 rw\n");
     for path in ["/smb/photos", "/ssh/docs", "/gvfs/sftp:host=Nas,user=ann/home", "/dav/data"] {

@@ -68,8 +68,8 @@ pub fn read_dir(dir: &FsPath, out: &mut ListingBuilder<'_>, utc_offset: i32) -> 
     Some(list(&archive, &inner, out, utc_offset))
 }
 
-struct Child {
-    name: String,
+struct Child<'a> {
+    name: &'a str,
     size: u64,
     modified: i64,
     dir: bool,
@@ -78,8 +78,8 @@ struct Child {
 fn list(archive: &FsPath, inner: &str, out: &mut ListingBuilder<'_>, utc_offset: i32) -> Result<(), FsError> {
     let index = index::open(archive, utc_offset).map_err(fs_error)?;
     let prefix = if inner.is_empty() { String::new() } else { format!("{}/", names::fold(inner)) };
-    let mut children: Vec<Child> = Vec::new();
-    let mut at: HashMap<String, usize> = HashMap::new();
+    let mut children = Vec::new();
+    let mut at = HashMap::<&str, usize>::new();
     let mut found = inner.is_empty();
     for item in &index.items {
         let Some(rest) = item.key.strip_prefix(prefix.as_str()) else {
@@ -91,8 +91,8 @@ fn list(archive: &FsPath, inner: &str, out: &mut ListingBuilder<'_>, utc_offset:
         let name_len = cut.unwrap_or(rest.len());
         let key = &rest[..name_len];
         let name = &item.path[prefix.len()..prefix.len() + name_len];
-        let k = *at.entry(key.to_owned()).or_insert_with(|| {
-            children.push(Child { name: name.to_owned(), size: 0, modified: 0, dir: cut.is_some() });
+        let k = *at.entry(key).or_insert_with(|| {
+            children.push(Child { name, size: 0, modified: 0, dir: cut.is_some() });
             children.len() - 1
         });
         let c = &mut children[k];

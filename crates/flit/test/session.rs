@@ -170,6 +170,11 @@ fn panels_ride_after_the_session_and_files_with_per_tab_panes_still_load() {
     assert_eq!(back.windows().next().unwrap().0, w);
     let older = postcard::to_stdvec(&s).unwrap();
     assert!(bytes.starts_with(&older) && bytes.len() > older.len());
+    let mut previous_encoding = older.clone();
+    previous_encoding.extend(postcard::to_stdvec(&[Vec::<Option<SplitSession>>::new(), Vec::new()][..]).unwrap());
+    previous_encoding.extend(postcard::to_stdvec(&[w.trails.clone(), Vec::new()][..]).unwrap());
+    previous_encoding.extend(postcard::to_stdvec(&[w.panels.clone(), None][..]).unwrap());
+    assert_eq!(bytes, previous_encoding);
     let old = Session::decode(&older).unwrap();
     assert_eq!(old.windows().next().unwrap().0, window(&[r"C:\a", r"C:\b"], 1));
     assert_eq!(postcard::from_bytes::<Session>(&bytes).unwrap().windows().next().unwrap().0.tabs, w.tabs, "older builds read the tabs and skip the panels");

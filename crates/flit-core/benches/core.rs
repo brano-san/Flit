@@ -5,7 +5,7 @@ use flit_core::view::DirView;
 use flit_core::FsPath;
 use std::hint::black_box;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 fn names(n: usize) -> Vec<Vec<u16>> {
     let mut seed = 0x2545F4914F6CDD1Du64;
@@ -44,6 +44,10 @@ fn listing(names: &[Vec<u16>]) -> (Listing, SortKeys) {
 }
 
 fn benches(c: &mut Criterion) {
+    let Some(path) = FsPath::parse(r"C:\bench") else {
+        eprintln!("invalid synthetic directory path");
+        std::process::exit(1);
+    };
     let n100k = names(100_000);
     let (l, k) = listing(&n100k);
 
@@ -61,19 +65,43 @@ fn benches(c: &mut Criterion) {
     let (a, z) = ("file0123 copy (2).txt".as_bytes(), "file123 copy (10).txt".as_bytes());
     c.bench_function("natural_cmp_pair", |b| b.iter(|| sort::natural_cmp(black_box(a), black_box(z), CaseMode::Insensitive)));
 
-    filter_benches(c, l, k);
+    let mut grouped = Listing::default();
+    let mut grouped_keys = SortKeys::new(CaseMode::Insensitive);
+    for i in 0..100_000 {
+        let n = format!("file{i}.ext{}", i % 4000);
+        grouped.push(n.as_bytes(), Meta::default());
+        grouped_keys.push(n.as_bytes());
+    }
+    let grouped_view = ViewSpec { group: sort::GroupSpec { field: sort::GroupField::Type, ..Default::default() }, ..Default::default() };
+    let mut order = Vec::new();
+    sort::sort(&grouped, &grouped_keys, grouped_view, &mut order);
+    let mut grouped = DirView::new(Arc::new(DirSnapshot { gen: 1, path: path.clone(), listing: grouped, keys: grouped_keys, order, view: grouped_view, done: true, error: None, elapsed: Duration::ZERO }));
+    c.bench_function("fold_4000_groups_100k", |b| {
+        b.iter_custom(|iterations| {
+            let mut elapsed = Duration::ZERO;
+            for _ in 0..iterations {
+                grouped.fold_all(false);
+                let start = Instant::now();
+                grouped.fold_all(true);
+                elapsed += start.elapsed();
+            }
+            elapsed
+        });
+    });
+
+    filter_benches(c, path, l, k);
 }
 
-fn filter_benches(c: &mut Criterion, listing: Listing, keys: SortKeys) {
+fn filter_benches(c: &mut Criterion, path: FsPath, listing: Listing, keys: SortKeys) {
     let view = ViewSpec::default();
     let mut order = Vec::new();
     sort::sort(&listing, &keys, view, &mut order);
-    let Some(path) = FsPath::parse(r"C:\bench") else {
-        eprintln!("invalid synthetic directory path");
-        std::process::exit(1);
-    };
     let snap = DirSnapshot { gen: 1, path, listing, keys, order, view, done: true, error: None, elapsed: Duration::ZERO };
     let mut v = DirView::new(Arc::new(snap));
+    let order = v.snap().order.clone();
+    c.bench_function("merge_sort_100k_unchanged", |b| {
+        b.iter_batched(|| order.clone(), |order| v.merge_order(order, view, 100_000), BatchSize::LargeInput);
+    });
     c.bench_function("filter_100k_ascii (keystroke from no filter)", |b| {
         b.iter(|| {
             v.set_filter("");
@@ -84,6 +112,12 @@ fn filter_benches(c: &mut Criterion, listing: Listing, keys: SortKeys) {
         b.iter(|| {
             v.set_filter("");
             v.set_filter(black_box("копия"));
+        })
+    });
+    c.bench_function("filter_100k_ext", |b| {
+        b.iter(|| {
+            v.set_filter("");
+            v.set_filter(black_box("ext:jpg;png"));
         })
     });
     c.bench_function("filter_100k_wildcard", |b| {

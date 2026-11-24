@@ -190,6 +190,55 @@ fn cancelled_search_returns_nothing() {
 }
 
 #[test]
+fn single_volume_pages_can_be_read_out_of_order() {
+    let mut e = sample();
+    e.volumes.pop();
+    for text in ["", "report"] {
+        for key in [SortKey::Name, SortKey::Path, SortKey::Size, SortKey::Modified] {
+            for descending in [false, true] {
+                let q = parse(text, clock()).unwrap();
+                let sort = Sort { key, descending };
+                let mut rs = e.search(&q, sort, &|| false).unwrap();
+                let mut expected = e.search(&q, sort, &|| false).unwrap();
+                expected.ensure(&e, rs.total as usize);
+                for (from, to) in [(rs.total - 1, u64::MAX), (0, 1)] {
+                    let (batch, dirs) = e.rows(&mut rs, from, to);
+                    let (name, _) = batch.entries(true).unwrap().next().unwrap();
+                    let (vol, index) = expected.rows[from as usize];
+                    let v = &e.volumes[vol as usize];
+                    let mut dir = Vec::new();
+                    v.dir_into(index, &mut Vec::new(), &mut dir);
+                    assert_eq!(name, v.name(index));
+                    assert_eq!(dirs, [dir]);
+                }
+                assert_eq!(rs.materialized(), 1);
+            }
+        }
+    }
+}
+
+#[test]
+fn folder_summary_keeps_only_the_highest_counts_and_earliest_ties() {
+    let mut v = VolumeIndex::new("C:", b"C:\\", b'\\');
+    put(&mut v, 5, 5, ".", 0, 0, true);
+    for k in 0..260 {
+        let id = 100 + k;
+        put(&mut v, id, 5, &format!("dir{k:03}"), 0, 0, true);
+        put(&mut v, id + 1000, id, "one", 0, 0, false);
+    }
+    put(&mut v, 2000, 359, "two", 0, 0, false);
+    v.commit();
+    let e = Engine { volumes: vec![v], version: 1 };
+    let q = parse("", clock()).unwrap();
+    let rs = e.search(&q, Sort { key: SortKey::Name, descending: false }, &|| false).unwrap();
+    let got = e.result_folders(&rs, &|| false).unwrap();
+    assert_eq!(got.len(), 256);
+    assert_eq!(got[0], (br"C:\".to_vec(), 260));
+    assert_eq!(got[1], (br"C:\dir259".to_vec(), 2));
+    assert_eq!(got[2..], (0..254).map(|k| (format!(r"C:\dir{k:03}").into_bytes(), 1)).collect::<Vec<_>>());
+}
+
+#[test]
 fn large_result_sets_walk_the_permutation() {
     let mut v = VolumeIndex::new("C:", b"C:\\", b'\\');
     put(&mut v, 5, 5, ".", 0, 0, true);

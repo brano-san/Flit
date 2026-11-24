@@ -98,7 +98,7 @@ pub struct DirView {
     filter: Option<NameFilter>,
     pick: Option<(bool, Option<Arc<crate::pick::Filter>>)>,
     groups: Vec<Group>,
-    collapsed: Vec<u64>,
+    collapsed: FxHashSet<u64>,
     shown: Option<Vec<u32>>,
     tree: Option<FxHashSet<Vec<u8>>>,
     hidden_types: FxHashSet<u64>,
@@ -126,7 +126,7 @@ impl DirView {
             filter: None,
             pick: None,
             groups: Vec::new(),
-            collapsed: Vec::new(),
+            collapsed: FxHashSet::default(),
             shown: None,
             tree: None,
             hidden_types: FxHashSet::default(),
@@ -329,18 +329,22 @@ impl DirView {
 
     pub fn toggle_group(&mut self, g: usize) {
         let Some(id) = self.groups.get(g).map(|gr| gr.id) else { return };
-        match self.collapsed.iter().position(|&c| c == id) {
-            Some(k) => {
-                self.collapsed.swap_remove(k);
-            }
-            None => self.collapsed.push(id),
+        if !self.collapsed.remove(&id) {
+            self.collapsed.insert(id);
+        } else if self.collapsed.is_empty() {
+            self.collapsed = FxHashSet::default();
         }
         self.regroup();
         self.prune();
     }
 
     pub fn fold_all(&mut self, collapsed: bool) {
-        self.collapsed = if collapsed { self.groups.iter().map(|g| g.id).collect() } else { Vec::new() };
+        if collapsed {
+            self.collapsed.clear();
+            self.collapsed.extend(self.groups.iter().map(|g| g.id));
+        } else {
+            self.collapsed = FxHashSet::default();
+        }
         self.regroup();
         self.prune();
     }
@@ -788,20 +792,23 @@ impl DirView {
 
     pub fn merge_order(&mut self, mut order: Vec<u32>, view: ViewSpec, base_len: usize) {
         if view.group != self.snap.view.group {
-            self.collapsed.clear();
+            self.collapsed = FxHashSet::default();
         }
         let snap = Arc::make_mut(&mut self.snap);
         let l = &snap.listing;
-        order.retain(|&i| sort::visible(l, i, &view));
-        let sorted = sort::is_sorted(l, &snap.keys, &view, &order);
+        let len = l.len();
+        let mergeable = sort::incremental(&view) && {
+            order.retain(|&i| sort::visible(l, i, &view));
+            sort::is_sorted(l, &snap.keys, &view, &order)
+        };
         snap.order = order;
         snap.view = view;
-        if sorted {
-            self.reorder((base_len as u32..self.snap.listing.len() as u32).collect());
-        } else {
+        if !mergeable {
             let mut o = std::mem::take(&mut snap.order);
             sort::sort_apart(&snap.listing, &snap.keys, view, &mut o);
             snap.order = o;
+        } else if base_len < len {
+            self.reorder((base_len as u32..len as u32).collect());
         }
         self.rows_changed();
         self.prune();

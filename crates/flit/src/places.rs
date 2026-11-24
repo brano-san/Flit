@@ -236,9 +236,7 @@ fn read_snapshot<T>(path: &Path, decode: impl FnOnce(&[u8]) -> Option<T>) -> Opt
 }
 
 fn encode<T: Serialize>(value: &T) -> Option<Vec<u8>> {
-    let mut bytes = postcard::to_stdvec(&SNAPSHOT_VERSION).ok()?;
-    bytes.extend(postcard::to_stdvec(value).ok()?);
-    Some(bytes)
+    postcard::to_stdvec(&(SNAPSHOT_VERSION, value)).ok()
 }
 
 fn store(path: &Path, bytes: &[u8]) {
@@ -253,7 +251,7 @@ pub struct KeptIcon {
     pub kind: IconKind,
     pub path: FsPath,
     pub size: u32,
-    pub image: Bitmap,
+    pub image: Arc<Bitmap>,
 }
 
 impl KeptIcon {
@@ -310,7 +308,7 @@ impl KeptIcons {
         if !worth_keeping(req) {
             return;
         }
-        let icon = KeptIcon { key: req.key, kind: req.kind, path: req.path.clone(), size: req.size, image: image.clone() };
+        let icon = KeptIcon { key: req.key, kind: req.kind, path: req.path.clone(), size: req.size, image: Arc::new(image.clone()) };
         if let Some((w, _)) = &self.writer {
             let _ = w.send(icon.clone());
         }

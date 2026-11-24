@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::{CString, OsStr};
 use std::io;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -68,7 +68,7 @@ impl Mount {
     }
 
     pub fn remote_access(&self) -> bool {
-        self.is_network() || matches!(self.fstype.as_str(), "autofs" | "fuse.gvfsd-fuse")
+        remote_access(&self.fstype)
     }
 
     pub fn is_storage(&self) -> bool {
@@ -103,15 +103,35 @@ pub fn unescape(field: &[u8]) -> Vec<u8> {
     out
 }
 
-fn parse_line(line: &[u8]) -> Option<Mount> {
-    let fields: Vec<&[u8]> = line.split(|&b| b == b' ').filter(|f| !f.is_empty()).collect();
-    let dash = fields.iter().position(|f| *f == b"-")?;
-    if dash < 6 || fields.len() < dash + 3 {
+struct MountFields<'a> {
+    id: u32,
+    dev: (u32, u32),
+    root: &'a [u8],
+    point: &'a [u8],
+    fstype: &'a [u8],
+    source: &'a [u8],
+}
+
+fn mount_fields(line: &[u8]) -> Option<MountFields<'_>> {
+    let mut fields = line.split(|&b| b == b' ').filter(|f| !f.is_empty());
+    let mut head = [&[][..]; 6];
+    for field in &mut head {
+        *field = fields.next()?;
+    }
+    if head.contains(&b"-".as_slice()) {
         return None;
     }
+    fields.find(|&field| field == b"-")?;
+    let fstype = fields.next()?;
+    let source = fields.next()?;
     let number = |f: &[u8]| std::str::from_utf8(f).ok()?.parse::<u32>().ok();
-    let (major, minor) = fields[2].split_at(fields[2].iter().position(|&b| b == b':')?);
-    Some(Mount { id: number(fields[0])?, dev: (number(major)?, number(&minor[1..])?), root: unescape(fields[3]), point: unescape(fields[4]), fstype: String::from_utf8_lossy(&unescape(fields[dash + 1])).into_owned(), source: unescape(fields[dash + 2]) })
+    let (major, minor) = head[2].split_at(head[2].iter().position(|&b| b == b':')?);
+    Some(MountFields { id: number(head[0])?, dev: (number(major)?, number(&minor[1..])?), root: head[3], point: head[4], fstype, source })
+}
+
+fn parse_line(line: &[u8]) -> Option<Mount> {
+    let fields = mount_fields(line)?;
+    Some(Mount { id: fields.id, dev: fields.dev, root: unescape(fields.root), point: unescape(fields.point), fstype: String::from_utf8_lossy(&unescape(fields.fstype)).into_owned(), source: unescape(fields.source) })
 }
 
 pub fn parse(text: &[u8]) -> Vec<Mount> {
@@ -133,6 +153,24 @@ pub(crate) fn volume_key(path: &Path, mounts: &[Mount]) -> Option<Vec<u8>> {
 
 pub fn remote_points(mounts: &[Mount]) -> Vec<PathBuf> {
     mounts.iter().filter(|m| m.remote_access()).map(|m| m.path().to_path_buf()).collect()
+}
+
+fn remote_access(fstype: &str) -> bool {
+    NETWORK.contains(&fstype) || matches!(fstype, "autofs" | "fuse.gvfsd-fuse")
+}
+
+fn parse_remote_points(text: &[u8]) -> Vec<PathBuf> {
+    text.split(|&b| b == b'\n')
+        .filter_map(mount_fields)
+        .filter_map(|fields| {
+            let fstype = if fields.fstype.contains(&b'\\') { std::borrow::Cow::Owned(unescape(fields.fstype)) } else { std::borrow::Cow::Borrowed(fields.fstype) };
+            remote_access(&String::from_utf8_lossy(&fstype)).then(|| PathBuf::from(std::ffi::OsString::from_vec(unescape(fields.point))))
+        })
+        .collect()
+}
+
+pub(crate) fn read_remote_points() -> Vec<PathBuf> {
+    std::fs::read(MOUNTINFO).map_or_else(|_| Vec::new(), |text| parse_remote_points(&text))
 }
 
 pub(crate) fn remote_children<'a>(dir: &Path, points: &'a [PathBuf]) -> Vec<&'a [u8]> {

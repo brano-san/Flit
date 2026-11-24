@@ -99,14 +99,10 @@ impl Session {
     }
 
     fn encode(&self) -> Option<Vec<u8>> {
-        let mut bytes = postcard::to_stdvec(self).ok()?;
         let splits: Vec<Vec<Option<SplitSession>>> = self.windows.iter().map(|_| Vec::new()).collect();
-        bytes.extend(postcard::to_stdvec(&splits).ok()?);
         let trails: Vec<&Vec<Location>> = self.windows.iter().map(|(w, _)| &w.trails).collect();
-        bytes.extend(postcard::to_stdvec(&trails).ok()?);
         let panels: Vec<&Option<PanelsSession>> = self.windows.iter().map(|(w, _)| &w.panels).collect();
-        bytes.extend(postcard::to_stdvec(&panels).ok()?);
-        Some(bytes)
+        postcard::to_stdvec(&(self, splits, trails, panels)).ok()
     }
 }
 

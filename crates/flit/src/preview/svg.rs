@@ -47,9 +47,8 @@ pub(crate) fn serve(path: Option<&OsStr>, size: Option<&OsStr>) -> i32 {
 }
 
 pub(super) fn render_file(path: &Path, size: u32) -> Option<Bitmap> {
-    let file = super::regular_file(path)?;
-    let meta = file.metadata().ok()?;
-    if !meta.is_file() || meta.len() > FILE_LIMIT {
+    let (file, meta) = super::regular_file(path)?;
+    if meta.len() > FILE_LIMIT {
         return None;
     }
     let mut bytes = Vec::new();

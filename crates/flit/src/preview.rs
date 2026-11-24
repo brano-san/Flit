@@ -28,16 +28,18 @@ fn ticks(m: &std::fs::Metadata) -> i64 {
 }
 
 fn head(path: &FsPath, limit: usize) -> Option<Vec<u8>> {
-    let mut buf = Vec::with_capacity(limit.min(1 << 20));
-    regular_file(&std_path(path))?.take(limit as u64).read_to_end(&mut buf).ok()?;
+    let (file, meta) = regular_file(&std_path(path))?;
+    let capacity = meta.len().saturating_add(1).min(limit.min(1 << 20) as u64) as usize;
+    let mut buf = Vec::with_capacity(capacity);
+    file.take(limit as u64).read_to_end(&mut buf).ok()?;
     Some(buf)
 }
 
 pub(crate) fn is_elf_program(path: &FsPath) -> bool {
-    regular_file(&std_path(path)).is_some_and(|file| preview::read_elf_program(&mut std::io::BufReader::new(file)))
+    regular_file(&std_path(path)).is_some_and(|(file, _)| preview::read_elf_program(&mut std::io::BufReader::new(file)))
 }
 
-fn regular_file(path: &Path) -> Option<File> {
+fn regular_file(path: &Path) -> Option<(File, std::fs::Metadata)> {
     if !std::fs::metadata(path).ok()?.is_file() {
         return None;
     }
@@ -49,7 +51,8 @@ fn regular_file(path: &Path) -> Option<File> {
         options.custom_flags(libc::O_NONBLOCK);
     }
     let file = options.open(path).ok()?;
-    file.metadata().ok()?.is_file().then_some(file)
+    let meta = file.metadata().ok()?;
+    meta.is_file().then_some((file, meta))
 }
 
 fn folder(req: &PreviewRequest) -> Option<FolderSummary> {

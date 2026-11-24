@@ -52,6 +52,17 @@ fn w3_folder_attributes_intersect_with_masks_and_recheck_changed_entries() {
 }
 
 #[test]
+fn extension_filter_matches_ascii_and_contextual_unicode_case() {
+    let mut snapshot = snap(&["cover.JpG", "greek.ΟΣ", "notes.txt", "directory.JPG"]);
+    Arc::make_mut(&mut snapshot).listing.entries[3].attrs |= attr::DIR;
+    let mut v = DirView::new(snapshot);
+    v.set_filter("ext:.jpg;ος");
+    assert_eq!(rows(&v), ["cover.JpG", "greek.ΟΣ"]);
+    v.set_filter("ext:οσ");
+    assert!(v.rows().is_empty());
+}
+
+#[test]
 fn fuzzy_match_ignores_case_in_any_script() {
     assert!(NameFilter::new("").is_none());
     assert!(hit("REP", "annual report.pdf"));

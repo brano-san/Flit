@@ -39,11 +39,11 @@ enum Res {
     Nothing,
 }
 
-struct Pump {
+struct Pump<'a> {
     base: u64,
     kernel: bool,
     deferred: bool,
-    buf: Vec<u8>,
+    buf: &'a mut Vec<u8>,
     ranges: Option<writeback::Ranges>,
 }
 
@@ -365,6 +365,7 @@ struct Engine<'a> {
     untrashable: Vec<FsPath>,
     dest_fs: Option<(u64, Option<String>)>,
     volumes: RefCell<writeback::Volumes>,
+    copy_buffer: RefCell<Vec<u8>>,
     lang: Lang,
     free: fn(RawFd) -> Option<u64>,
     trash: Option<&'a Trash>,
@@ -372,7 +373,22 @@ struct Engine<'a> {
 
 impl<'a> Engine<'a> {
     fn new(job: &'a Job) -> Self {
-        Self { job, done: Vec::new(), failed: 0, first: None, first_kind: Default::default(), fatal: false, denied: false, untrashable: Vec::new(), dest_fs: None, volumes: RefCell::default(), lang: flit_core::i18n::lang(), free: free_space, trash: None }
+        Self {
+            job,
+            done: Vec::new(),
+            failed: 0,
+            first: None,
+            first_kind: Default::default(),
+            fatal: false,
+            denied: false,
+            untrashable: Vec::new(),
+            dest_fs: None,
+            volumes: RefCell::default(),
+            copy_buffer: RefCell::default(),
+            lang: flit_core::i18n::lang(),
+            free: free_space,
+            trash: None,
+        }
     }
 
     fn stopped(&self) -> bool {
@@ -561,7 +577,8 @@ impl<'a> Engine<'a> {
             writeback::CopyMode::Windowed(window) => Some(writeback::Ranges::new(window)),
             _ => None,
         };
-        let mut pump = Pump { base: self.job.progress().bytes, kernel: true, deferred: mode == writeback::CopyMode::Deferred, buf: Vec::new(), ranges };
+        let mut buffer = self.copy_buffer.borrow_mut();
+        let mut pump = Pump { base: self.job.progress().bytes, kernel: true, deferred: mode == writeback::CopyMode::Deferred, buf: &mut buffer, ranges };
         self.copy_extents(from, to, sparse, &mut pump)?;
         if let Some(ref mut ranges) = pump.ranges {
             if let Some(end) = ranges.wait(|flush, offset, bytes| writeback::range(to, flush, offset, bytes), Instant::now)? {
@@ -571,7 +588,7 @@ impl<'a> Engine<'a> {
         Ok(pump.ranges.and_then(|ranges| ranges.size()))
     }
 
-    fn copy_extents(&self, from: RawFd, to: RawFd, sparse: bool, pump: &mut Pump) -> io::Result<()> {
+    fn copy_extents(&self, from: RawFd, to: RawFd, sparse: bool, pump: &mut Pump<'_>) -> io::Result<()> {
         if !sparse {
             return self.pump(from, to, 0, u64::MAX, pump).map(drop);
         }
@@ -596,7 +613,7 @@ impl<'a> Engine<'a> {
         check(unsafe { libc::ftruncate(to, size as libc::off_t) })
     }
 
-    fn pump(&self, from: RawFd, to: RawFd, offset: u64, limit: u64, p: &mut Pump) -> io::Result<u64> {
+    fn pump(&self, from: RawFd, to: RawFd, offset: u64, limit: u64, p: &mut Pump<'_>) -> io::Result<u64> {
         let mut done = 0u64;
         loop {
             self.job.ctl().wait_while_paused();
@@ -624,8 +641,11 @@ impl<'a> Engine<'a> {
                 }
                 r as usize
             } else {
-                p.buf.resize(BUFFER.min(want), 0);
-                let r = unsafe { libc::read(from, p.buf.as_mut_ptr().cast(), p.buf.len()) };
+                let len = BUFFER.min(want);
+                if p.buf.len() < len {
+                    p.buf.resize(len, 0);
+                }
+                let r = unsafe { libc::read(from, p.buf.as_mut_ptr().cast(), len) };
                 if r < 0 {
                     let e = io::Error::last_os_error();
                     if e.kind() == io::ErrorKind::Interrupted {
@@ -668,7 +688,7 @@ impl<'a> Engine<'a> {
         Ok(done)
     }
 
-    fn submit_window(&self, fd: RawFd, pump: &mut Pump) -> io::Result<()> {
+    fn submit_window(&self, fd: RawFd, pump: &mut Pump<'_>) -> io::Result<()> {
         if let Some(ranges) = &mut pump.ranges {
             if let Some(end) = ranges.submit(|flush, offset, bytes| writeback::range(fd, flush, offset, bytes), Instant::now)? {
                 self.job.update(|progress| progress.bytes = pump.base + end);

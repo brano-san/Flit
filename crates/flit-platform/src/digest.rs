@@ -61,6 +61,24 @@ fn fill(f: &mut File, buf: &mut [u8]) -> std::io::Result<usize> {
     Ok(n)
 }
 
+fn hash_single(f: &mut File, kind: HashKind, total: u64, job: &Job) -> Result<Vec<String>, PlatformError> {
+    let mut hasher = Hasher::new(kind);
+    let mut buf = vec![0; total.clamp(8 << 10, CHUNK as u64) as usize];
+    loop {
+        if job.cancelled() {
+            return Err(PlatformError::cancelled(-1, CANCELLED));
+        }
+        let n = fill(f, &mut buf).map_err(|e| PlatformError::from_io(&e, e.to_string()))?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        job.update(|p| p.bytes += n as u64);
+    }
+    job.update(|p| p.items = 1);
+    Ok(vec![hasher.finish()])
+}
+
 pub fn hash_file(file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<String>, PlatformError> {
     let io = |e: std::io::Error| PlatformError::from_io(&e, e.to_string());
     let mut f = File::open(std_path(file)).map_err(io)?;
@@ -70,6 +88,9 @@ pub fn hash_file(file: &FsPath, kinds: &[HashKind], job: &Job) -> Result<Vec<Str
         p.total_bytes = total;
         p.total_items = 1;
     });
+    if let [kind] = kinds {
+        return hash_single(&mut f, *kind, total, job);
+    }
     let workers = kinds
         .iter()
         .map(|&k| {

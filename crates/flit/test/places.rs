@@ -67,6 +67,8 @@ fn chrome_and_file_type_icons_are_kept_and_they_survive_a_restart() {
     icons.keep(&request(6, 5, IconKind::CustomFolder), &icon(6));
     icons.keep(&request(1, 0, IconKind::Place), &icon(9));
     icons.finish();
+    let previous: Vec<_> = icons.kept.iter().map(|i| (i.key, i.kind, &i.path, i.size, i.image.as_ref())).collect();
+    assert_eq!(std::fs::read(&file).unwrap(), postcard::to_stdvec(&(SNAPSHOT_VERSION, previous)).unwrap());
     let back = KeptIcons::load(Some(file));
     assert_eq!(back.kept.iter().map(|k| (k.key, k.image.rgba[0])).collect::<Vec<_>>(), vec![(2, 2), (1, 9)]);
     assert!(back.kept.iter().all(|k| k.request().gen == 0));

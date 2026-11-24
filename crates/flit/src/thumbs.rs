@@ -3,7 +3,7 @@ use flit_core::ui::Bitmap;
 use std::collections::hash_map::Entry;
 use std::collections::VecDeque;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufReader, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, IoSlice, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 const HEAD: u64 = 16;
@@ -55,6 +55,20 @@ fn open_shared(path: &Path) -> std::io::Result<File> {
 
 fn sane(w: u32, h: u32) -> bool {
     (1..=MAX_SIDE).contains(&w) && (1..=MAX_SIDE).contains(&h)
+}
+
+fn write_record(out: &mut File, head: &[u8], rgba: &[u8]) -> io::Result<()> {
+    let mut chunks = [IoSlice::new(head), IoSlice::new(rgba)];
+    let mut rest = chunks.as_mut_slice();
+    while !rest.is_empty() {
+        match out.write_vectored(rest) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(written) => IoSlice::advance_slices(&mut rest, written),
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+    Ok(())
 }
 
 impl ThumbCache {
@@ -152,16 +166,13 @@ impl ThumbCache {
             return;
         }
         let Some((n, at)) = self.writer() else { return };
-        let mut rec = Vec::with_capacity(HEAD as usize + b.rgba.len());
-        rec.extend(header(key, b.width, b.height));
-        rec.extend(&b.rgba);
-        if self.out.as_mut().is_none_or(|f| f.write_all(&rec).is_err()) {
+        if self.out.as_mut().is_none_or(|f| write_record(f, &header(key, b.width, b.height), &b.rgba).is_err()) {
             self.out = None;
             return;
         }
         self.index.insert(key, Rec { seg: n, at, w: b.width, h: b.height });
         if let Some(s) = self.segs.back_mut() {
-            s.1 += rec.len() as u64;
+            s.1 += HEAD + b.rgba.len() as u64;
         }
         self.trim();
     }

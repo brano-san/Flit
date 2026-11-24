@@ -84,6 +84,57 @@ fn merge_after_concurrent_changes() {
 }
 
 #[test]
+fn merge_keeps_the_worker_order_buffer_when_no_rows_were_added() {
+    let mut v = DirView::new(snap(&["a", "c", "b"]));
+    v.focus = Some(1);
+    v.anchor = Some(0);
+    v.set_selected(1, true);
+    let view = ViewSpec { sort: SortSpec { descending: true, ..Default::default() }, ..Default::default() };
+    let mut order = Vec::new();
+    sort::sort(v.listing(), &v.snap.keys, view, &mut order);
+    let original = order.as_ptr();
+    v.merge_order(order, view, 3);
+    assert_eq!(rows(&v), ["c", "b", "a"]);
+    assert_eq!(v.snap.order.as_ptr(), original);
+    assert_eq!((v.focus, v.anchor, v.row_of(1)), (Some(1), Some(0), Some(0)));
+    assert_eq!(v.selected().collect::<Vec<_>>(), [1]);
+}
+
+#[test]
+fn merging_folder_usage_discovers_entries_shown_while_the_worker_sorted() {
+    let mut snapshot = snap(&["a", "b"]);
+    let initial = Arc::make_mut(&mut snapshot);
+    initial.listing.entries[0].attrs |= attr::HIDDEN;
+    initial.order.retain(|&i| i != 0);
+    let view = ViewSpec { group: sort::GroupSpec { field: GroupField::FolderUsage, ..Default::default() }, ..initial.view };
+    let mut order = Vec::new();
+    sort::sort(&initial.listing, &initial.keys, view, &mut order);
+    let mut v = DirView::new(snapshot);
+    v.apply(&change(ChangeKind::Modified, "a", 1));
+    v.merge_order(order, view, 2);
+    assert_eq!(rows(&v), ["a", "b"]);
+}
+
+#[test]
+fn opening_one_folded_group_keeps_other_groups_folded() {
+    let snapshot = snap(&["a.txt", "b.txt", "c.jpg", "d.png"]);
+    let view = ViewSpec { group: sort::GroupSpec { field: GroupField::Type, ..Default::default() }, ..snapshot.view };
+    let mut order = Vec::new();
+    sort::sort(&snapshot.listing, &snapshot.keys, view, &mut order);
+    let base = snapshot.listing.len();
+    let mut v = DirView::new(snapshot);
+    v.merge_order(order, view, base);
+    v.fold_all(true);
+    assert!(v.rows().is_empty());
+    v.toggle_group(2);
+    assert_eq!(rows(&v), ["a.txt", "b.txt"]);
+    v.toggle_group(2);
+    assert!(v.rows().is_empty());
+    v.fold_all(false);
+    assert_eq!(rows(&v), ["c.jpg", "d.png", "a.txt", "b.txt"]);
+}
+
+#[test]
 fn entries_that_turn_invisible_lose_selection_and_focus() {
     let mut v = DirView::new(snap(&["a", "b", "c"]));
     v.select_all();

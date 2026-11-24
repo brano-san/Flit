@@ -21,10 +21,18 @@ impl NamePattern {
     }
 
     fn matches(&self, name: &[u8], buf: &mut String) -> bool {
-        if !self.glob && (self.needle.is_ascii() || name.is_ascii()) {
-            return ascii_subsequence(name, self.needle.as_bytes());
+        if !self.glob {
+            if self.needle.is_ascii() {
+                return ascii_subsequence(name, self.needle.as_bytes());
+            }
+            if name.is_ascii() {
+                return false;
+            }
+            let display = name::display(name);
+            let mut hay = display.chars().flat_map(char::to_lowercase);
+            return self.needle.chars().all(|n| hay.any(|h| h == n));
         }
-        if self.glob && name.is_ascii() {
+        if name.is_ascii() {
             return glob(self.needle.as_bytes(), name);
         }
         buf.clear();
@@ -35,12 +43,7 @@ impl NamePattern {
                 buf.extend(c.to_lowercase());
             }
         }
-        if self.glob {
-            glob(self.needle.as_bytes(), buf.as_bytes())
-        } else {
-            let mut hay = buf.chars();
-            self.needle.chars().all(|n| hay.any(|h| h == n))
-        }
+        glob(self.needle.as_bytes(), buf.as_bytes())
     }
 }
 
@@ -87,8 +90,16 @@ impl Attribute {
         let e = &listing.entries[i as usize];
         match self {
             Self::Ext(exts) => {
-                let lower = std::str::from_utf8(listing.ext(i)).unwrap_or_default().to_lowercase();
-                !e.is_dir() && exts.iter().any(|p| p.as_slice() == lower.as_bytes())
+                if e.is_dir() {
+                    return false;
+                }
+                let ext = listing.ext(i);
+                if ext.is_ascii() {
+                    exts.iter().any(|p| p.eq_ignore_ascii_case(ext))
+                } else {
+                    let lower = std::str::from_utf8(ext).unwrap_or_default().to_lowercase();
+                    exts.iter().any(|p| p.as_slice() == lower.as_bytes())
+                }
             }
             Self::Kind(k) => match *k {
                 "file" => !e.is_dir(),

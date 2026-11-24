@@ -117,30 +117,44 @@ fn zip_entries(f: &mut (impl Read + Seek), len: u64, offset_min: i32) -> Result<
     if cd_size > MAX_CENTRAL_DIRECTORY || cd_size > cd_end {
         return Err(bad());
     }
-    let start = cd_end - cd_size;
-    let delta = start.saturating_sub(cd_off);
-    let cd = read_at(f, cd_off + delta, cd_size as usize).map_err(io_error)?;
+    let start = (cd_end - cd_size).max(cd_off);
+    if start > len.saturating_sub(cd_size) {
+        return Err(io_error(std::io::ErrorKind::UnexpectedEof.into()));
+    }
+    f.seek(SeekFrom::Start(start)).map_err(io_error)?;
+    let mut remaining = cd_size as usize;
+    let mut cd = BufReader::with_capacity(remaining.min(64 << 10), f);
+    let mut header = [0; 46];
+    let mut extra = Vec::new();
     let mut out = Vec::new();
-    let mut p = 0usize;
-    while out.len() < count as usize && le32(&cd, p) == 0x0201_4b50 {
-        let made_by = le16(&cd, p + 4) >> 8;
-        let flags = le16(&cd, p + 8);
-        let (time, date) = (le16(&cd, p + 12), le16(&cd, p + 14));
-        let mut size = le32(&cd, p + 24) as u64;
-        let (nlen, xlen, clen) = (le16(&cd, p + 28) as usize, le16(&cd, p + 30) as usize, le16(&cd, p + 32) as usize);
-        let ext = le32(&cd, p + 38);
-        let name_at = p + 46;
-        let raw = cd.get(name_at..name_at + nlen).ok_or_else(bad)?;
-        let extra = cd.get(name_at + nlen..name_at + nlen + xlen).unwrap_or(&[]);
-        let (mut name, mut utf8, mut modified) = (raw.to_vec(), flags & 0x800 != 0, 0i64);
+    while out.len() < count as usize && remaining >= 4 {
+        cd.read_exact(&mut header[..4]).map_err(io_error)?;
+        if le32(&header, 0) != 0x0201_4b50 {
+            break;
+        }
+        remaining = remaining.checked_sub(header.len()).ok_or_else(bad)?;
+        cd.read_exact(&mut header[4..]).map_err(io_error)?;
+        let made_by = le16(&header, 4) >> 8;
+        let flags = le16(&header, 8);
+        let (time, date) = (le16(&header, 12), le16(&header, 14));
+        let size32 = le32(&header, 24);
+        let mut size = size32 as u64;
+        let (nlen, xlen, clen) = (le16(&header, 28) as usize, le16(&header, 30) as usize, le16(&header, 32) as usize);
+        let ext = le32(&header, 38);
+        remaining = remaining.checked_sub(nlen).ok_or_else(bad)?;
+        let mut name = vec![0; nlen];
+        cd.read_exact(&mut name).map_err(io_error)?;
+        extra.resize(if xlen <= remaining { xlen } else { 0 }, 0);
+        cd.read_exact(&mut extra).map_err(io_error)?;
+        let (mut utf8, mut modified, mut unicode_name) = (flags & 0x800 != 0, 0i64, None);
         let mut q = 0usize;
         while q + 4 <= extra.len() {
-            let (id, sz) = (le16(extra, q), le16(extra, q + 2) as usize);
+            let (id, sz) = (le16(&extra, q), le16(&extra, q + 2) as usize);
             let data = extra.get(q + 4..q + 4 + sz).unwrap_or(&[]);
             match id {
-                0x0001 if le32(&cd, p + 24) == 0xFFFF_FFFF => size = le64(data, 0),
-                0x7075 if data.len() > 5 && le32(data, 1) == crc32fast::hash(raw) => {
-                    name = data[5..].to_vec();
+                0x0001 if size32 == 0xFFFF_FFFF => size = le64(data, 0),
+                0x7075 if data.len() > 5 && le32(data, 1) == crc32fast::hash(&name) => {
+                    unicode_name = Some(&data[5..]);
                     utf8 = true;
                 }
                 0x000A if le16(data, 4) == 1 && le16(data, 6) >= 24 => modified = le64(data, 8) as i64,
@@ -149,6 +163,9 @@ fn zip_entries(f: &mut (impl Read + Seek), len: u64, offset_min: i32) -> Result<
             }
             q += 4 + sz;
         }
+        if let Some(unicode_name) = unicode_name {
+            name = unicode_name.to_vec();
+        }
         let unix = (ext >> 16) & 0o170_000;
         let dir = name.last().is_some_and(|&c| c == b'/' || c == b'\\') || (made_by == 3 && unix == 0o040_000) || (made_by != 3 && ext & 0x10 != 0);
         let link = made_by == 3 && unix == 0o120_000;
@@ -156,7 +173,10 @@ fn zip_entries(f: &mut (impl Read + Seek), len: u64, offset_min: i32) -> Result<
             modified = dos_ticks(date, time, offset_min);
         }
         out.push(Raw { name, utf8, size, modified, dir, link });
-        p = name_at + nlen + xlen + clen;
+        remaining = remaining.saturating_sub(xlen);
+        let skip = clen.min(remaining);
+        cd.seek_relative(skip as i64).map_err(io_error)?;
+        remaining -= skip;
     }
     if out.len() < count as usize && count != 0xFFFF {
         return Err(bad());

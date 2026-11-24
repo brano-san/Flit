@@ -635,13 +635,14 @@ impl VolumeIndex {
         for k in 1..start.len() {
             start[k] += start[k - 1];
         }
-        let mut fill = start.clone();
         let mut kids = vec![0u32; by_name.len()];
         for &i in by_name {
             let s = slot(i);
-            kids[fill[s] as usize] = i;
-            fill[s] += 1;
+            kids[start[s] as usize] = i;
+            start[s] += 1;
         }
+        start.copy_within(..=n, 1);
+        start[0] = 0;
         let children = |s: usize| &kids[start[s] as usize..start[s + 1] as usize];
         let has_children = |i: u32| start[i as usize + 1] > start[i as usize];
         let mut out = Vec::with_capacity(by_name.len());
