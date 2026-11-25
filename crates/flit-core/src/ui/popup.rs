@@ -1,4 +1,4 @@
-use super::menu::{Mark, MenuItem};
+use super::menu::{paint_command_icon, Mark, MenuItem};
 use super::widgets::{baseline, Edge, Paint, Unfold};
 use crate::input::Key;
 use crate::render::Rect;
@@ -371,7 +371,7 @@ impl MenuView {
         p.g.text(label_x, text_y, node.label(), font, if matches!(node, Node::Header(_)) { t.text_dim } else { ink }, side.x - label_x);
         if let Node::Command { icon, .. } = node {
             if !icon.is_empty() {
-                p.centered(Rect::new(row.x, row.y, LABEL_X * s - (row.x - r.x), row.h), icon, icons, if off && !hot { dim } else { ink });
+                paint_command_icon(p, Rect::new(row.x, row.y, LABEL_X * s - (row.x - r.x), row.h), icon, icons, if off && !hot { dim } else { ink });
             }
         }
         match node {

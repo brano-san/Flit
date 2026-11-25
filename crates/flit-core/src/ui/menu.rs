@@ -1,13 +1,32 @@
+use super::home::Widget;
 use super::keymap::Keymap;
 use super::layouts::{layout_of_zoom, zoom_title, ZOOM_DETAILS, ZOOM_ICONS, ZOOM_LARGE, ZOOM_LIST, ZOOM_TREE, ZOOM_XL};
+use super::sidebar::PlaceCmd;
+use super::widgets::Paint;
 use super::{App, Column, LayoutMode, MENU_COLUMNS};
 use crate::archive::{self, Format};
 use crate::i18n::S;
 use crate::listing::attr;
 use crate::location::Location;
+use crate::open::OpenTarget;
 use crate::path::PathKind;
+use crate::provider::Launch;
+use crate::render::{Color, Rect};
 use crate::sort::{Folders, GroupField, SortField};
+use crate::text::{FontStyle, TextBackend};
 use std::time::Instant;
+
+const SPLIT_RIGHT_ICON: &str = "split-right";
+const SPLIT_BOTTOM_ICON: &str = "split-bottom";
+const OPEN_ICON: &str = "\u{E768}";
+const OPEN_TAB_ICON: &str = "\u{E923}";
+const OPEN_WINDOW_ICON: &str = "\u{E922}";
+const TERMINAL_ICON: &str = "\u{E756}";
+const PROPERTIES_ICON: &str = "\u{E946}";
+const COPY_ICON: &str = "\u{E8C8}";
+const PIN_ICON: &str = "\u{E718}";
+const PASTE_ICON: &str = "\u{E77F}";
+const TRASH_ICON: &str = "\u{E74D}";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Mark {
@@ -85,32 +104,106 @@ impl MenuItem {
 fn command_icon(cmd: &Cmd) -> &'static str {
     let Cmd::Action(id) = cmd else {
         return match cmd {
-            Cmd::FolderProperties(_) => "\u{E946}",
-            Cmd::CopyGitHash(_) => "\u{E8C8}",
+            Cmd::FolderProperties(_) => PROPERTIES_ICON,
+            Cmd::CopyGitHash(_) => COPY_ICON,
             Cmd::ToggleTag(_) | Cmd::ShowTag(_) | Cmd::OpenTagged(_) => "\u{E8EC}",
-            Cmd::User(_) => "\u{E756}",
+            Cmd::User(_) => TERMINAL_ICON,
+            Cmd::Place(cmd) => place_icon(cmd),
+            Cmd::NewItem(0) => "\u{E8F4}",
+            Cmd::NewItem(1) | Cmd::PasteAs(_) => "\u{E71B}",
             Cmd::NewItem(_) => "\u{E8A5}",
             _ => "\u{E8B7}",
         };
     };
     match *id {
-        "item.open" | "archive.open" => "\u{E768}",
-        "item.properties" | "file.hashes" => "\u{E946}",
-        "file.copy" | "item.copy_path" => "\u{E8C8}",
-        "file.rename" | "file.batch_rename" => "\u{E8AC}",
-        "item.trash" | "bin.empty" => "\u{E74D}",
+        "subfolders.toggle" => "\u{E8F4}",
+        "inspector.toggle" => PROPERTIES_ICON,
+        "panel.split_right" | "panel.open_right" => SPLIT_RIGHT_ICON,
+        "panel.split_bottom" | "panel.open_bottom" => SPLIT_BOTTOM_ICON,
+        "tab.new" => super::G_ADD,
+        "tab.close" => super::G_CLOSE,
+        "options.open" => super::actions::Group::Options.icon(),
+        "folder.explorer" | "folder.file_manager" => super::G_FOLDER,
+        "view.extensions" => "\u{E8D2}",
+        "view.hidden" => "\u{E890}",
+        "view.system" => "\u{E7F4}",
+        "item.open" | "archive.open" => OPEN_ICON,
+        "item.properties" | "file.hashes" => PROPERTIES_ICON,
+        "file.copy" | "item.copy_path" => COPY_ICON,
+        "file.cut" => "\u{E8C6}",
+        "file.paste" | "file.paste_into" => PASTE_ICON,
+        "file.rename" | "file.batch_rename" | "file.metadata" => "\u{E8AC}",
+        "item.trash" | "bin.empty" => TRASH_ICON,
+        "bin.restore" | "bin.restore_all" => "\u{E777}",
+        "file.folder_icon" => "\u{E8B9}",
+        "file.folder_icon_reset" => "\u{E72C}",
+        "file.flatten" => "\u{E8F1}",
+        "file.new_stream" => super::G_ADD,
+        "search.similar" => "\u{E721}",
         "file.shortcut" => "\u{E71B}",
         "nav.refresh" => "\u{E72C}",
-        "app.terminal" | "file.run_in_terminal" => "\u{E756}",
-        "item.open_tab" => "\u{E923}",
-        "item.open_window" => "\u{E922}",
-        "item.pin" | "folder.bookmark" => "\u{E718}",
+        "app.terminal" | "file.run_in_terminal" => TERMINAL_ICON,
+        "item.open_tab" => OPEN_TAB_ICON,
+        "item.open_window" => OPEN_WINDOW_ICON,
+        "item.pin" | "folder.bookmark" => PIN_ICON,
         "folder.open_admin" => super::admin::G_ADMIN,
         "file.new_folder" | "file.new_folder_with_selection" => "\u{E8F4}",
         id if id.starts_with("archive.") => "\u{E7B8}",
         id if id.starts_with("tags.") => "\u{E8EC}",
         id => super::actions::ACTIONS.iter().find(|a| a.id == id).map_or("\u{E8A5}", |a| a.group.icon()),
     }
+}
+
+fn place_icon(cmd: &PlaceCmd) -> &'static str {
+    match cmd {
+        PlaceCmd::Open(_, OpenTarget::NewTab) => OPEN_TAB_ICON,
+        PlaceCmd::Open(_, OpenTarget::NewWindow) => OPEN_WINDOW_ICON,
+        PlaceCmd::Open(..) | PlaceCmd::OpenFile(_) | PlaceCmd::Mount(_) | PlaceCmd::Launch(Launch::Mount(_) | Launch::Unlock { .. }) => OPEN_ICON,
+        PlaceCmd::Reveal(_) => super::G_FOLDER,
+        PlaceCmd::CopyPath(_) => COPY_ICON,
+        PlaceCmd::Terminal(_) => TERMINAL_ICON,
+        PlaceCmd::Pin(_) => PIN_ICON,
+        PlaceCmd::MovePin(_, by) | PlaceCmd::MovePlace(_, by) | PlaceCmd::Shift(_, by) => {
+            if *by < 0 {
+                "\u{E70E}"
+            } else {
+                "\u{E70D}"
+            }
+        }
+        PlaceCmd::HidePlace(_) | PlaceCmd::Forget(_) => super::G_CLOSE,
+        PlaceCmd::RestorePlaces | PlaceCmd::RestoreLibraries | PlaceCmd::RestoreAll | PlaceCmd::RestoreOrder | PlaceCmd::DefaultView => "\u{E777}",
+        PlaceCmd::Eject(_) | PlaceCmd::Launch(Launch::Eject(_) | Launch::Unmount(_) | Launch::Disconnect(_)) => "\u{E74A}",
+        PlaceCmd::Label(_) => "\u{E8AC}",
+        PlaceCmd::Properties(_) | PlaceCmd::FileProperties(_) => PROPERTIES_ICON,
+        PlaceCmd::Hide(section) => section.glyph(),
+        PlaceCmd::Compact => "\u{E8A0}",
+        PlaceCmd::NewLibrary | PlaceCmd::Library(_) => "\u{E8F1}",
+        PlaceCmd::EmptyBin | PlaceCmd::ClearRecent => TRASH_ICON,
+        PlaceCmd::Pane(_, false) => SPLIT_RIGHT_ICON,
+        PlaceCmd::Pane(_, true) => SPLIT_BOTTOM_ICON,
+        PlaceCmd::Fold(true) => "\u{E70E}",
+        PlaceCmd::Fold(false) => "\u{E70D}",
+        PlaceCmd::ShowPaths => "\u{E71B}",
+        PlaceCmd::ViewMode(mode) => super::details::view_mode_glyph(*mode),
+        PlaceCmd::Widget(Widget::QuickAccess) => PIN_ICON,
+        PlaceCmd::Widget(Widget::Drives) => super::G_DRIVE,
+        PlaceCmd::Widget(Widget::Tags) => "\u{E8EC}",
+        PlaceCmd::Widget(Widget::Recent) => "\u{E81C}",
+        PlaceCmd::Launch(_) => super::G_FOLDER,
+    }
+}
+
+pub(super) fn paint_command_icon<B: TextBackend>(p: &mut Paint<B>, slot: Rect, icon: &str, font: FontStyle, ink: Color) {
+    if !matches!(icon, SPLIT_RIGHT_ICON | SPLIT_BOTTOM_ICON) {
+        p.centered(slot, icon, font, ink);
+        return;
+    }
+    let (w, h) = (font.px().round(), (font.px() * 0.8).round());
+    let r = Rect::new(slot.x + (slot.w - w) / 2.0, slot.y + (slot.h - h) / 2.0, w, h).snap();
+    let stroke = p.s.round().max(1.0);
+    p.g.dl.outline(r, ink, 1.5 * p.s, stroke);
+    let divider = if icon == SPLIT_RIGHT_ICON { Rect::new(r.x + ((r.w - stroke) / 2.0).round(), r.y + stroke, stroke, r.h - 2.0 * stroke) } else { Rect::new(r.x + stroke, r.y + ((r.h - stroke) / 2.0).round(), r.w - 2.0 * stroke, stroke) };
+    p.g.dl.rect(divider, ink);
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -264,7 +357,7 @@ impl Menu<'_> {
     }
 
     pub(super) fn toggle(&mut self, label: &str, cmd: super::sidebar::PlaceCmd, checked: bool) {
-        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check, icon: "", image: None, disabled: false });
+        self.items.push(MenuItem::Command { label: label.to_owned(), keys: String::new(), checked, stay: true, mark: Mark::Check, icon: place_icon(&cmd), image: None, disabled: false });
         self.cmds.push(Cmd::Place(cmd));
     }
 
@@ -594,15 +687,17 @@ impl App {
         let folders = v.selected().filter(|&i| v.listing().entries[i as usize].is_dir()).count();
         let inside = self.archive_view().is_some();
         let files = t.view_loc.path().kind() != PathKind::Computer;
-        m.action("item.open", S::MenuOpen.t());
-        if folders > 0 {
+        if folders > 0 && (m.shown("item.open_tab") || m.shown("item.open_window") || m.shown("pane.menu")) {
             m.submenu(S::MenuOpenIn.t(), |m| {
+                m.action("item.open", S::MenuOpen.t());
                 m.action("item.open_tab", S::MenuOpenInNewTab.t());
                 m.action("item.open_window", S::MenuOpenInNewWindow.t());
                 if m.shown("pane.menu") {
                     self.item_pane_items(m);
                 }
             });
+        } else {
+            m.action("item.open", S::MenuOpen.t());
         }
         if count == 1 && self.caps.unix_paths && v.listing().saved_servers > 0 {
             let saved = v.selected().next().filter(|&i| i < v.listing().saved_servers);

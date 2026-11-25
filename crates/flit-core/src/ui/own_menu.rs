@@ -1,6 +1,6 @@
 use super::context::{ContextMenu, CtxHit, MenuKind};
 use super::edit::EditAction;
-use super::menu::MenuItem;
+use super::menu::{Cmd, MenuItem};
 use super::popup::{MenuOutcome, MenuView};
 use super::widgets::Ghost;
 use super::{App, Effect, ShellMenu};
@@ -69,6 +69,7 @@ pub struct OwnMenu {
     at: (f32, f32),
     launches: Vec<Launch>,
     shell: Vec<u32>,
+    terminals: Vec<u32>,
     kind: MenuKind,
     view: Option<View>,
     pub(super) shown: Option<Instant>,
@@ -95,7 +96,7 @@ impl OwnMenu {
         self.items.extend(rows.iter().map(|&r| if r == SHAPE_SEPARATOR { MenuItem::Separator } else { MenuItem::Header(String::new()) }));
     }
 
-    fn add_shell(&mut self, items: &[MenuItem], shell: &[u32]) {
+    fn add_shell(&mut self, items: &[MenuItem], shell: &[u32], terminals: &[u32]) {
         self.items.truncate(self.own);
         if let Some(View::Context(c)) = &self.view {
             self.carry = c.query.text().to_owned();
@@ -109,6 +110,7 @@ impl OwnMenu {
         self.tail = matches!(items.last(), Some(MenuItem::Submenu { .. }));
         self.items.extend_from_slice(items);
         self.shell = shell.to_vec();
+        self.terminals = terminals.to_vec();
         self.pending = false;
         self.view = None;
     }
@@ -169,6 +171,7 @@ impl App {
                 at: (*x, *y),
                 launches: launches.clone(),
                 shell: shell.clone(),
+                terminals: Vec::new(),
                 kind: *kind,
                 view: None,
                 shown: None,
@@ -194,9 +197,9 @@ impl App {
             self.dirty = true;
             return true;
         }
-        if let Event::ShellItems { items, shell } = ev {
+        if let Event::ShellItems { items, shell, terminals } = ev {
             if let Some(m) = self.own_menu.as_mut().filter(|m| m.pending) {
-                m.add_shell(items, shell);
+                m.add_shell(items, shell, terminals);
                 self.dirty = true;
             }
             return true;
@@ -425,6 +428,7 @@ impl App {
             self.request_menu_images(&files, super::context::image_px(scale), |k| g.has_image(k));
         }
         let roles = self.own_menu.as_ref().filter(|m| m.view.is_none()).map(|_| super::context::roles(&self.menu)).unwrap_or_default();
+        let terminal_fallback = self.own_menu.as_ref().filter(|m| m.view.is_none() && m.kind == MenuKind::Folder && !m.terminals.is_empty()).and_then(|_| self.menu.iter().position(|cmd| matches!(cmd, Cmd::Action("app.terminal"))));
         let Some(m) = self.own_menu.as_mut() else { return };
         let view = m.view.get_or_insert_with(|| match m.kind {
             MenuKind::None => {
@@ -444,6 +448,11 @@ impl App {
                     c.lift_shell(m.own, m.tail);
                 }
                 if let Some((hidden, order)) = &arrangement {
+                    if let Some(fallback) = terminal_fallback {
+                        let base = commands(&m.items[..m.own]);
+                        let terminals = m.shell.iter().enumerate().filter(|(_, id)| m.terminals.contains(id)).map(|(at, _)| base + at);
+                        c.prefer_shell_terminal(fallback, terminals, hidden);
+                    }
                     c.arrange(hidden, order);
                 }
                 if !m.pending {

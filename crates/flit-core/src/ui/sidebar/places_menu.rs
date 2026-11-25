@@ -80,10 +80,12 @@ impl App {
                 let open = if a.nav.sidebar.state.files.contains(&loc) { PlaceCmd::OpenFile(loc.path().clone()) } else { PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab) };
                 m.place(S::SidebarDriveLoginConnect.t(), open, false);
             } else {
-                m.place(S::MenuOpen.t(), PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
-                m.place(S::MenuOpenInNewTab.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
-                m.place(S::MenuOpenInNewWindow.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
-                a.place_pane_items(m, &loc);
+                m.submenu(S::MenuOpenIn.t(), |m| {
+                    m.place(S::MenuOpen.t(), PlaceCmd::Open(loc.clone(), OpenTarget::CurrentTab), false);
+                    m.place(S::MenuOpenInNewTab.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewTab), false);
+                    m.place(S::MenuOpenInNewWindow.t(), PlaceCmd::Open(loc.clone(), OpenTarget::NewWindow), false);
+                    a.place_pane_items(m, &loc);
+                });
             }
             m.separator();
             if let Some(p) = &path {

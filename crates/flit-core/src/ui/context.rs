@@ -1,7 +1,7 @@
 use super::edit::EditAction;
 use super::field::{is_menu_key, Field, FieldKey, TextCmd};
 use super::fuzzy::fuzzy;
-use super::menu::{Mark, MenuImage, MenuItem};
+use super::menu::{paint_command_icon, Mark, MenuImage, MenuItem};
 use super::popup::MenuOutcome;
 use super::widgets::{baseline, Button, Edge, Paint, Unfold};
 use crate::i18n::S;
@@ -159,6 +159,7 @@ pub struct ContextMenu {
     unfold: Option<(Instant, Instant)>,
     fresh: Option<(usize, usize, Option<Instant>)>,
     roles: Vec<Option<Role>>,
+    suppressed_terminal: Option<usize>,
     pub(super) field_menu: Option<FieldMenu>,
 }
 
@@ -243,6 +244,7 @@ impl ContextMenu {
             unfold: None,
             fresh: None,
             roles: Vec::new(),
+            suppressed_terminal: None,
         };
         m.arrange(&[], &[]);
         m
@@ -250,7 +252,7 @@ impl ContextMenu {
 
     pub fn arrange(&mut self, hidden: &[String], order: &[String]) {
         for n in &mut self.nodes {
-            n.hidden = !n.path.is_empty() && hidden.contains(&n.path);
+            n.hidden = matches!(n.what, What::Command { id, .. } if self.suppressed_terminal == Some(id)) || (!n.path.is_empty() && hidden.contains(&n.path));
         }
         let shell = if order.is_empty() { self.shell } else { None };
         let list_opening = self.roles.contains(&Some(Role::ListOpening));
@@ -296,6 +298,16 @@ impl ContextMenu {
             self.top.push(Some(node));
         }
         self.rebuild();
+    }
+
+    pub(super) fn prefer_shell_terminal(&mut self, fallback: usize, mut terminals: impl Iterator<Item = usize>, hidden: &[String]) {
+        let available = terminals.any(|terminal| {
+            self.nodes.iter().enumerate().any(|(at, node)| {
+                let command = matches!(node.what, What::Command { id, disabled: false, .. } if id == terminal);
+                command && !hidden.contains(&node.path) && !self.nodes[..at].iter().any(|parent| matches!(parent.what, What::Submenu { end } if at < end) && hidden.contains(&parent.path))
+            })
+        });
+        self.suppressed_terminal = available.then_some(fallback);
     }
 
     pub(super) fn set_roles(&mut self, roles: Vec<Option<Role>>) {
@@ -375,7 +387,11 @@ impl ContextMenu {
     }
 
     fn pinned_node(&self, key: &str) -> Option<usize> {
-        self.nodes.iter().position(|n| n.path == key && matches!(n.what, What::Command { .. }))
+        self.nodes.iter().position(|n| n.path == key && self.offered_command(n))
+    }
+
+    fn offered_command(&self, node: &Node) -> bool {
+        matches!(node.what, What::Command { id, .. } if self.suppressed_terminal != Some(id))
     }
 
     fn walk(&self, from: usize, end: usize, pinned: &[usize], rows: &mut Vec<Row>) {
@@ -427,7 +443,7 @@ impl ContextMenu {
                 }
             }
         } else {
-            let mut scored: Vec<(i32, usize, Vec<Range<usize>>)> = self.nodes.iter().enumerate().filter(|(_, n)| matches!(n.what, What::Command { .. })).filter_map(|(i, n)| fuzzy(&query, &n.path).map(|m| (m.score, i, m.ranges))).collect();
+            let mut scored: Vec<(i32, usize, Vec<Range<usize>>)> = self.nodes.iter().enumerate().filter(|(_, n)| self.offered_command(n)).filter_map(|(i, n)| fuzzy(&query, &n.path).map(|m| (m.score, i, m.ranges))).collect();
             scored.sort_by_key(|&(s, i, _)| (Reverse(s), i));
             rows.extend(scored.into_iter().map(|(_, i, marks)| Row::Node { node: i, marks, pinned: pinned.contains(&i), path: true }));
         }
@@ -1058,7 +1074,7 @@ impl ContextMenu {
         if let What::Command { icon, image, .. } = &n.what {
             let shown = image.as_ref().is_some_and(|i| draw_image(p.g, i, slot, s, if off && !hot { OFF } else { 0xFF }));
             if !shown {
-                p.centered(slot, if icon.is_empty() { "\u{E8A5}" } else { icon }, icons, if off && !hot { dim } else { ink });
+                paint_command_icon(p, slot, if icon.is_empty() { "\u{E8A5}" } else { icon }, icons, if off && !hot { dim } else { ink });
             }
         } else if matches!(n.what, What::Submenu { .. }) {
             p.centered(slot, "\u{E8B7}", icons, ink);

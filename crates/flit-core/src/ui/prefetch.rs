@@ -35,6 +35,9 @@ impl App {
     }
 
     pub(super) fn push_shell_menu(&mut self, menu: ShellMenu) {
+        self.menu_owner = None;
+        self.menu_right = None;
+        self.hover = Hit::None;
         self.remember_shape_key(&menu);
         self.prefetch.key = None;
         self.prefetch.sent = None;

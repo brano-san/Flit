@@ -161,7 +161,7 @@ fn pending(app: &mut App) {
 
 fn late_shell_items(app: &mut App) {
     let items = vec![cmd("Edit with Notepad++"), MenuItem::Submenu { label: "Show more options".into(), items: vec![cmd("Send to")] }];
-    app.on_event(&Event::ShellItems { items, shell: vec![7, 9] }, Instant::now());
+    app.on_event(&Event::ShellItems { items, shell: vec![7, 9], terminals: Vec::new() }, Instant::now());
     app.frame(&mut Gfx::new(Mono, 256), Instant::now());
 }
 
@@ -195,7 +195,7 @@ fn windows_items_join_the_open_group_and_show_more_options_stays_last() {
     app.on_event(&Event::ShowMenu { items: own, x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: true }, Instant::now());
     app.frame(&mut Gfx::new(Mono, 256), Instant::now());
     let shell = vec![cmd("Terminal"), MenuItem::Separator, MenuItem::Submenu { label: "7-Zip".into(), items: vec![cmd("Add")] }, MenuItem::Submenu { label: "Show more options".into(), items: vec![cmd("Send to")] }];
-    app.on_event(&Event::ShellItems { items: shell, shell: vec![4, 5, 6] }, Instant::now());
+    app.on_event(&Event::ShellItems { items: shell, shell: vec![4, 5, 6], terminals: Vec::new() }, Instant::now());
     app.frame(&mut Gfx::new(Mono, 256), Instant::now());
     let labels = app.context_menu_open().unwrap().labels();
     assert_eq!(labels, ["Open", "Open in >", "Terminal", "7-Zip >", "-", "Copy", "-", "Show more options >"]);
@@ -204,6 +204,44 @@ fn windows_items_join_the_open_group_and_show_more_options_stays_last() {
     }
     assert!(!app.own_menu_open());
     assert_eq!(picks(&mut app), [Some(4)], "a lifted Windows item still runs its own verb");
+}
+
+fn folder_terminal_menu(app: &mut App, hidden: &[&str]) {
+    let k = crate::ui::MenuKind::Folder.pins().unwrap();
+    app.settings.opts.pins[k] = vec!["Flit Terminal".into()];
+    app.settings.opts.menu.hidden[k] = hidden.iter().map(|s| (*s).into()).collect();
+    let items = vec![cmd("Flit Terminal"), cmd("Rename")];
+    app.menu = vec![crate::ui::menu::Cmd::Action("app.terminal"), crate::ui::menu::Cmd::Action("file.rename")];
+    app.on_event(&Event::ShowMenu { items, x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::Folder, shell: Vec::new(), pending: true }, Instant::now());
+    app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+    assert!(app.context_menu_open().unwrap().labels().contains(&"* Flit Terminal".to_owned()));
+}
+
+#[test]
+fn a_folder_shell_terminal_replaces_the_flit_command_including_pins_and_search() {
+    let mut app = app();
+    folder_terminal_menu(&mut app, &[]);
+    let items = vec![cmd("Scan"), cmd("Windows Terminal")];
+    app.on_event(&Event::ShellItems { items, shell: vec![7, 9], terminals: vec![9] }, Instant::now());
+    app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+    let ctx = app.context_menu_mut().unwrap();
+    assert!(!ctx.labels().iter().any(|s| s.contains("Flit Terminal")));
+    ctx.insert("terminal");
+    assert_eq!(ctx.labels(), ["Windows Terminal"]);
+    key(&mut app, Key::Enter);
+    assert_eq!(picks(&mut app), [Some(9)]);
+}
+
+#[test]
+fn a_folder_keeps_its_flit_terminal_when_the_native_command_or_parent_is_hidden() {
+    for hidden in ["More", "More › Windows Terminal"] {
+        let mut app = app();
+        folder_terminal_menu(&mut app, &[hidden]);
+        let items = vec![MenuItem::Submenu { label: "More".into(), items: vec![cmd("Windows Terminal")] }];
+        app.on_event(&Event::ShellItems { items, shell: vec![9], terminals: vec![9] }, Instant::now());
+        app.frame(&mut Gfx::new(Mono, 256), Instant::now());
+        assert!(app.context_menu_open().unwrap().labels().contains(&"* Flit Terminal".to_owned()));
+    }
 }
 
 #[test]
@@ -273,7 +311,7 @@ fn a_menu_opens_at_the_size_its_kind_had_and_text_typed_early_survives_the_shell
     };
     let arrive = |app: &mut App| {
         let items = vec![cmd("Scan"), MenuItem::Separator, MenuItem::Submenu { label: "Show more options".into(), items: vec![cmd("Send to")] }];
-        app.on_event(&Event::ShellItems { items, shell: vec![7, 9] }, Instant::now());
+        app.on_event(&Event::ShellItems { items, shell: vec![7, 9], terminals: Vec::new() }, Instant::now());
         app.frame(&mut Gfx::new(Mono, 256), Instant::now());
         app.context_menu_open().map(|c| c.rect).unwrap()
     };
@@ -549,7 +587,7 @@ fn a_menu_rebuilt_by_late_shell_items_keeps_unrolling_instead_of_starting_over()
     app.on_event(&Event::ShowMenu { items: vec![cmd("Open")], x: 100.0, y: 100.0, launches: Vec::new(), kind: crate::ui::MenuKind::File, shell: Vec::new(), pending: true }, t0);
     app.frame(&mut g, t0);
     app.frame(&mut g, ms(t0, 100));
-    app.on_event(&Event::ShellItems { items: vec![cmd("Scan"), cmd("Share")], shell: vec![7, 9] }, ms(t0, 110));
+    app.on_event(&Event::ShellItems { items: vec![cmd("Scan"), cmd("Share")], shell: vec![7, 9], terminals: Vec::new() }, ms(t0, 110));
     let (moving, rebuilt) = drawn(&mut app, &mut g, ms(t0, 120));
     assert!(moving);
     let full = app.context_menu_open().unwrap().rect;

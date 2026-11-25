@@ -1,5 +1,6 @@
 use super::sidebar::{location_icon, recent_icon, KnownFolder, PlaceCmd, G_HOME, G_NET_OFFLINE, PLACE_ICON};
 use super::tags::G_TAG;
+use super::widgets::faded;
 use super::{centered, App, Effect, Hit, IconRequest, Route, G_FILE, G_FOLDER};
 use crate::fmt as format;
 use crate::i18n::S;
@@ -342,9 +343,15 @@ impl App {
                 continue;
             }
             let hovered = self.lit(Hit::HomeItem(i));
+            let recent = matches!(card, Card::Recent(_));
+            if !recent {
+                g.dl.round_rect(*r, t.chrome, s6);
+            }
+            if hovered > 0.0 {
+                g.dl.round_rect(*r, faded(t.button_hover, hovered), if recent { s4 } else { s6 });
+            }
             match card {
                 Card::Folder { label, loc } => {
-                    g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     let ir = Rect::new(r.x + s4, r.y, s40, r.h);
                     let offline = places.offline_location(loc);
                     if !self.system_icon(g, location_icon(loc, places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
@@ -361,7 +368,6 @@ impl App {
                 }
                 Card::Drive(d) => {
                     let Some(d) = places.drives.get(*d) else { continue };
-                    g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     let ir = Rect::new(r.x + s4, r.y, s40, r.h);
                     if !self.system_icon(g, location_icon(&Location::Local(d.path.clone()), places, card_px as u32), ir, card_px, 0xFF, &mut requests) {
                         centered(g, ir, d.glyph(), big_icons, t.text_dim);
@@ -387,15 +393,11 @@ impl App {
                 }
                 Card::Tag(k) => {
                     let Some(tag) = self.nav.sidebar.tags.defs.get(*k) else { continue };
-                    g.dl.round_rect(*r, crate::theme::mix(t.chrome, t.button_hover, hovered), s6);
                     centered(g, Rect::new(r.x + s4, r.y, s40, r.h), G_TAG, big_icons, Color::rgb(tag.color));
                     g.text(r.x + s40 + s8, mid(*r, m), &tag.name, font, t.text, r.w - s40 - s12);
                 }
                 Card::Recent(k) => {
                     let Some(e) = places.recent.get(*k) else { continue };
-                    if hovered > 0.0 {
-                        g.dl.round_rect(*r, super::widgets::faded(t.button_hover, hovered), s4);
-                    }
                     let ir = Rect::new(r.x, r.y, self.s(28.0), r.h);
                     if !self.system_icon(g, recent_icon(e, places, row_px as u32), ir, row_px, 0xFF, &mut requests) {
                         let (glyph, color) = if e.dir { (G_FOLDER, t.accent) } else { (G_FILE, t.text_dim) };

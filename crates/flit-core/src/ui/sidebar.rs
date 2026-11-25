@@ -297,9 +297,9 @@ impl NavPrefs {
     }
 
     pub fn order(&self) -> Vec<Section> {
-        let mut out: Vec<Section> = self.quick.order.iter().filter_map(|id| Section::ALL.into_iter().find(|s| s.id() == id)).collect();
-        out.dedup();
-        for s in Section::ALL {
+        let saved = self.quick.order.iter().filter_map(|id| Section::ALL.into_iter().find(|s| s.id() == id));
+        let mut out = Vec::with_capacity(Section::ALL.len());
+        for s in saved.chain(Section::ALL) {
             if !out.contains(&s) {
                 out.push(s);
             }
@@ -662,6 +662,10 @@ impl Sidebar {
 
     pub(super) fn shown_sections(&self) -> Vec<Section> {
         self.prefs.order().into_iter().filter(|&s| !self.is_hidden(s) && self.available(s) && (!self.filtering() || self.items.iter().any(|it| it.section == s))).collect()
+    }
+
+    fn section_drop_slot(&self, x: f32, y: f32) -> Option<usize> {
+        (self.list.contains(x, y) && !self.filtering()).then(|| self.headers.iter().take_while(|(r, _)| r.y + r.h / 2.0 < y).count())
     }
 
     pub(super) fn recent(&self) -> impl Iterator<Item = (usize, &Recent)> {
@@ -1126,15 +1130,17 @@ impl App {
         }
     }
 
-    pub(super) fn start_pin_drag(&mut self, y: f32) -> bool {
-        let Hit::Side(i) = self.pressed else { return false };
+    pub(super) fn start_sidebar_drag(&mut self, y: f32) -> bool {
         let sb = &self.nav.sidebar;
-        if (y - sb.press_y).abs() < self.s(5.0) {
+        if (y - sb.press_y).abs() < self.s(5.0) || sb.filtering() {
             return false;
         }
-        if sb.filtering() {
-            return false;
+        if let Hit::SideHeader(from) = self.pressed {
+            self.drag = Drag::SectionMove { from };
+            self.dirty = true;
+            return true;
         }
+        let Hit::Side(i) = self.pressed else { return false };
         match sb.items.get(i).map(|it| it.section) {
             Some(Section::Bookmarks) => {
                 self.drag_pin(i - sb.first_bookmark(), y);
@@ -1146,6 +1152,36 @@ impl App {
             }
             _ => self.drag_out_of_quick_access(i),
         }
+    }
+
+    pub(super) fn cancel_section_drag(&mut self) -> bool {
+        if matches!(self.drag, Drag::SectionMove { .. }) || matches!(self.pressed, Hit::SideHeader(_)) {
+            self.drag = Drag::None;
+            self.pressed = Hit::None;
+            self.dirty = true;
+            return true;
+        }
+        false
+    }
+
+    pub(super) fn drop_section(&mut self, section: Section, x: f32, y: f32) {
+        let sb = &mut self.nav.sidebar;
+        let Some(to) = sb.section_drop_slot(x, y) else { return };
+        let Some(from) = sb.headers.iter().position(|&(_, s)| s == section) else { return };
+        let to = if to > from { to - 1 } else { to };
+        if to == from {
+            return;
+        }
+
+        let mut shown: Vec<_> = sb.headers.iter().map(|&(_, s)| s).collect();
+        shown.remove(from);
+        shown.insert(to, section);
+        let mut order = sb.prefs.order();
+        for (slot, section) in order.iter_mut().filter(|s| sb.headers.iter().any(|&(_, header)| header == **s)).zip(shown) {
+            *slot = section;
+        }
+        sb.prefs.quick.order = order.into_iter().map(|s| s.id().to_owned()).collect();
+        self.nav_prefs_changed();
     }
 
     pub(super) fn step_sidebar(&mut self, now: Instant) -> bool {

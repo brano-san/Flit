@@ -442,28 +442,37 @@ impl App {
             }
         }
         g.dl.set_clip(Some(list));
-        if let Some((first, n, to)) = match self.drag {
-            Drag::PinMove { to, .. } => Some((sb.first_bookmark(), sb.state.pinned.len(), to)),
-            Drag::PlaceMove { to, .. } => Some((sb.first_place(), sb.items.iter().filter(|it| it.section == Section::Places).count(), to)),
-            _ => None,
-        } {
+        let row_insert = |first: usize, n: usize, to: usize| {
             let n = n.min(sb.rects.len().saturating_sub(first));
             let before = sb.rects.get(first + to).filter(|_| to < n).map(|r| r.y);
-            let y = before.or_else(|| sb.rects.get((first + n).saturating_sub(1)).map(|r| r.bottom())).unwrap_or(list.y);
+            before.or_else(|| sb.rects.get((first + n).saturating_sub(1)).map(|r| r.bottom())).unwrap_or(list.y)
+        };
+        let insert_y = match self.drag {
+            Drag::PinMove { to, .. } => Some(row_insert(sb.first_bookmark(), sb.state.pinned.len(), to)),
+            Drag::PlaceMove { to, .. } => Some(row_insert(sb.first_place(), sb.items.iter().filter(|it| it.section == Section::Places).count(), to)),
+            Drag::SectionMove { .. } => self.tabs.strip.pointer.and_then(|(x, y)| sb.section_drop_slot(x, y)).map(|to| {
+                let gap = self.s(if compact { 2.0 } else { SECTION_GAP });
+                sb.headers.get(to).map_or(list.y - sb.scroll.pos.round() + sb.content_h - gap, |(r, _)| r.y)
+            }),
+            _ => None,
+        };
+        if let Some(y) = insert_y {
             g.dl.rect(Rect::new(area.x + s8, y - 1.0, area.w - 2.0 * s8, self.s(2.0)), t.accent);
         }
         g.dl.set_clip(None);
+        let item = |i: usize| sb.items.get(i).map(|it| (it.glyph, it.label.as_str()));
         let moving = match self.drag {
-            Drag::PinMove { from, .. } => sb.items.get(sb.first_bookmark() + from),
-            Drag::PlaceMove { from, .. } => sb.items.get(sb.first_place() + from),
+            Drag::PinMove { from, .. } => item(sb.first_bookmark() + from),
+            Drag::PlaceMove { from, .. } => item(sb.first_place() + from),
+            Drag::SectionMove { from } => Some((from.glyph(), from.title())),
             _ => None,
         };
-        if let (Some(it), Some((x, y))) = (moving, self.tabs.strip.pointer) {
+        if let (Some((glyph, label)), Some((x, y))) = (moving, self.tabs.strip.pointer) {
             let r = Rect::new(x + s8, y + s8, area.w.min(self.s(240.0)), self.s(ROW_H));
             g.dl.round_rect(r, t.bg, s4);
             g.dl.outline(r, t.accent, s4, 1.0);
-            centered(g, Rect::new(r.x, r.y, self.s(32.0), r.h), it.glyph, icons, t.accent);
-            g.text(r.x + self.s(34.0), r.y + (r.h + m.ascent - m.descent) / 2.0, &it.label, font, t.text, r.w - self.s(42.0));
+            centered(g, Rect::new(r.x, r.y, self.s(32.0), r.h), glyph, icons, t.accent);
+            g.text(r.x + self.s(34.0), r.y + (r.h + m.ascent - m.descent) / 2.0, label, font, t.text, r.w - self.s(42.0));
         }
         self.request_icons(requests);
     }

@@ -59,7 +59,7 @@ fn show_context(app: &mut App, menu: ShellMenu, shell: Vec<MenuItem>) -> Vec<Str
     let pending = !shell.is_empty();
     app.on_event(&Event::ShowMenu { items: menu.menu, x: menu.x, y: menu.y, launches: Vec::new(), kind: menu.kind, shell: Vec::new(), pending }, now);
     if pending {
-        app.on_event(&Event::ShellItems { items: shell, shell: vec![1, 2] }, now);
+        app.on_event(&Event::ShellItems { items: shell, shell: vec![1, 2], terminals: Vec::new() }, now);
     }
     harness::frame(app);
     app.context_menu_open().unwrap().labels()
@@ -75,10 +75,7 @@ fn opening_and_editing_share_the_first_block_for_files_and_folders() {
             let shell = if unix_paths { Vec::new() } else { vec![MenuItem::Submenu { label: S::MenuOpenWith.t().to_owned(), items: vec![cmd("Editor")] }, cmd("Shell extension")] };
             let folder = menu.kind == MenuKind::Folder;
             let labels = show_context(&mut app, menu, shell);
-            let mut expected = vec![S::MenuOpen.t().to_owned()];
-            if folder {
-                expected.push(format!("{} >", S::MenuOpenIn.t()));
-            }
+            let mut expected = vec![if folder { format!("{} >", S::MenuOpenIn.t()) } else { S::MenuOpen.t().to_owned() }];
             if !unix_paths {
                 expected.extend([format!("{} >", S::MenuOpenWith.t()), "Shell extension".to_owned()]);
             }
@@ -135,6 +132,7 @@ fn right_clicks_on_a_file_folder_and_background_request_distinct_menus() {
         assert!(folder.shell);
         assert_eq!(folder.kind, MenuKind::Folder);
         assert_eq!(folder.items, [folder.dir.join(b"folder")]);
+        assert!(!menu_labels(&folder.menu).contains(&S::MenuOpen.t()));
         let open_in = folder
             .menu
             .iter()
@@ -143,7 +141,7 @@ fn right_clicks_on_a_file_folder_and_background_request_distinct_menus() {
                 _ => None,
             })
             .unwrap();
-        assert!(menu_labels(open_in).contains(&S::MenuOpenInNewTab.t()));
+        assert!(menu_labels(open_in).starts_with(&[S::MenuOpen.t(), S::MenuOpenInNewTab.t(), S::MenuOpenInNewWindow.t()]));
 
         let background = right_click(&mut app, empty_at);
         assert!(background.shell);

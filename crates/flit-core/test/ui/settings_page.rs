@@ -1198,6 +1198,24 @@ fn the_context_menu_section_lists_every_kind_and_holds_its_options() {
 }
 
 #[test]
+fn toggling_an_unseen_builtin_keeps_its_row_and_focus() {
+    let mut a = app();
+    a.open_settings(Some(Page::Menu));
+    let k = menu_row(&mut a, S::MenuProperties.t());
+    let before = menu_lines(&a);
+    let mut hidden = before.clone();
+    let line = hidden.iter_mut().find(|line| **line == format!("menu [x] {}", S::MenuProperties.t())).unwrap();
+    *line = format!("menu [ ] {}", S::MenuProperties.t());
+    let target = center(menu_editor::check_rect(rect(&a, k), 0, s));
+    click_at(&mut a, target);
+    assert_eq!(menu_lines(&a), hidden);
+    assert_eq!(ui(&a).focus, k);
+    key(&mut a, Key::Space, NO);
+    assert_eq!(menu_lines(&a), before);
+    assert!(a.settings.opts.menu.order[0].is_empty());
+}
+
+#[test]
 fn space_hides_enter_pins_or_folds_and_the_mouse_does_the_same() {
     let mut a = menu_app();
     menu_row(&mut a, "Rename");

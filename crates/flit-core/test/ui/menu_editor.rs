@@ -27,7 +27,7 @@ fn show(a: &mut App, items: Vec<MenuItem>, pending: bool) {
 }
 
 fn shell_arrives(a: &mut App) {
-    a.on_event(&Event::ShellItems { items: vec![cmd("Git Bash"), cmd("Scan")], shell: vec![1, 2] }, Instant::now());
+    a.on_event(&Event::ShellItems { items: vec![cmd("Git Bash"), cmd("Scan")], shell: vec![1, 2], terminals: Vec::new() }, Instant::now());
     a.frame(&mut Gfx::new(Mono, 256), Instant::now());
 }
 
@@ -106,8 +106,33 @@ fn settings_list_builtin_actions_before_any_context_menu_is_opened() {
         a.settings.opts.menu.kind = kind;
         let rows = a.menu_rows();
         assert!(rows.iter().any(|r| r.label() == S::MenuProperties.t()), "kind {kind}");
-        assert!(rows.iter().any(|r| r.label() == if kind == 2 { S::MenuRefresh.t() } else { S::MenuOpen.t() }), "kind {kind}");
+        let opening = [S::MenuOpen, S::MenuOpenIn, S::MenuRefresh][kind];
+        assert!(rows.iter().any(|r| r.label() == opening.t()), "kind {kind}");
     }
+}
+
+#[test]
+fn legacy_folder_opening_settings_follow_the_commands_into_the_submenu() {
+    let mut a = app();
+    let group = S::MenuOpenIn.t();
+    let path = |label: S| format!("{group}{PATH_SEP}{}", label.t());
+    let settings = serde_json::json!({
+        "menu.edit_kind": "folder",
+        "menu.hidden_folder": [S::MenuOpen.t()],
+        "menu.pins_folder": [S::MenuOpenInNewTab.t(), path(S::MenuOpenInNewTab)],
+        "menu.order_folder": [S::MenuRename.t(), S::MenuOpen.t(), group],
+        "menu.seen_folder": [S::MenuOpen.t(), group, path(S::MenuOpenInNewTab), S::MenuRename.t()]
+    });
+    a.apply_doc(&settings::parse(&settings.to_string()));
+    a.fold_menu_item(group, Some(true));
+    assert_eq!(a.settings.opts.menu.order[1], [S::MenuRename.t(), group]);
+    let rows = a.menu_rows();
+    let open = rows.iter().find(|row| row.path == path(S::MenuOpen)).unwrap();
+    assert!(open.hidden && open.depth == 1);
+    let tab = rows.iter().find(|row| row.path == path(S::MenuOpenInNewTab)).unwrap();
+    assert!(tab.pinned && tab.depth == 1);
+    assert_eq!(a.settings.opts.pins[1], [path(S::MenuOpenInNewTab)]);
+    assert!(!rows.iter().any(|row| row.path == S::MenuOpen.t()));
 }
 
 #[test]

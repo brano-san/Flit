@@ -134,6 +134,26 @@ fn quick_access_lists_a_folder_once_even_when_it_is_recent_bookmarked_and_a_plac
 }
 
 #[test]
+fn home_drive_hover_keeps_the_card_surface_and_uses_the_theme_overlay() {
+    let mut app = home_app();
+    app.animations = false;
+    let mut g = Gfx::new(Mono, 1024);
+    for mode in [crate::theme::Mode::Dark, crate::theme::Mode::Light] {
+        app.set_theme_mode(mode);
+        app.frame(&mut g, Instant::now());
+        let r = card_rect(&app, "drive 0").snap();
+        let t = *app.look.palette.area(crate::theme::Area::Files);
+        let chrome = |g: &Gfx<Mono>| g.dl.instances.iter().filter(|i| i.kind == crate::render::kind::SOLID && i.rect == [r.x, r.y, r.w, r.h]).map(|i| i.color).collect::<Vec<_>>();
+        app.on_event(&Event::MouseMove { x: r.right() - 12.0, y: r.y + 12.0 }, Instant::now());
+        app.frame(&mut g, Instant::now());
+        assert_eq!(chrome(&g), [t.chrome.0, t.button_hover.0]);
+        app.on_event(&Event::MouseMove { x: app.nav.home.area.right() - 1.0, y: r.y + 12.0 }, Instant::now());
+        app.frame(&mut g, Instant::now());
+        assert_eq!(chrome(&g), [t.chrome.0]);
+    }
+}
+
+#[test]
 fn the_drives_widget_takes_the_quick_access_name() {
     assert_eq!(Widget::Drives.title(), super::super::sidebar::Section::Storage.title());
 }
@@ -181,6 +201,36 @@ fn recent_entries_hide_in_flit_until_they_are_used_again() {
     let p = app.nav_prefs();
     assert_eq!(p.recent_cleared, 400);
     assert!(p.recent_hidden.is_empty());
+}
+
+#[test]
+fn home_context_commands_have_distinct_icons_for_opening_and_managing_items() {
+    let mut app = home_app();
+    for (card, labels) in [
+        ("drive 0", &[S::MenuOpen, S::MenuOpenInNewTab, S::MenuOpenInNewWindow, S::MenuCopyPath, S::MenuOpenInTerminal, S::MenuPinToSidebar, S::MenuProperties][..]),
+        ("report.docx", &[S::MenuOpen, S::MenuOpenFileLocation, S::MenuCopyPath, S::HomeRemoveFromList, S::HomeClearList, S::MenuProperties][..]),
+    ] {
+        click(card_rect(&app, card), &mut app, MouseButton::Right);
+        let menu = menu_of(&mut app);
+        let opening = menu.menu.iter().find_map(|item| match item {
+            MenuItem::Submenu { label, items } if label == S::MenuOpenIn.t() => Some(items.as_slice()),
+            _ => None,
+        });
+        if card == "drive 0" {
+            assert!(opening.is_some());
+        }
+        let icons: std::collections::HashSet<_> = menu
+            .menu
+            .iter()
+            .chain(opening.unwrap_or_default())
+            .filter_map(|item| match item {
+                MenuItem::Command { label, icon, .. } if labels.iter().any(|s| s.t() == label) => Some(*icon),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(icons.len(), labels.len(), "{card} icons: {icons:?}");
+        assert!(!icons.contains(""));
+    }
 }
 
 #[test]

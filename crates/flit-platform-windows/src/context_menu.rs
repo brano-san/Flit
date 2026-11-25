@@ -32,7 +32,7 @@ const STALE_TIMER: usize = 3;
 const PREFETCH: usize = 1;
 const PREP_REST: Duration = Duration::from_millis(90);
 const PREP_STALE: Duration = Duration::from_secs(20);
-const COVERED: [&str; 15] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennewwindow", "opennewtab", "new", "newfolder", "newlink", "setdesktopwallpaper"];
+const COVERED: [&str; 16] = ["open", "cut", "copy", "paste", "delete", "rename", "link", "properties", "copyaspath", "opennew", "opennewwindow", "opennewtab", "new", "newfolder", "newlink", "setdesktopwallpaper"];
 const WINDOWS_VERBS: [&str; 28] = [
     "edit",
     "openas",
@@ -68,6 +68,7 @@ const LAST_MENU_BITMAP: isize = 11;
 const MAX_IMAGES: usize = 256;
 const THIS_PC: &str = "::{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
 const RECYCLE_BIN: &str = "::{645FF040-5081-101B-9F08-00AA002F954E}";
+const TERMINAL_VERBS: [&str; 5] = ["powershell", "cmd", "openpwsh", "OpenTerminalHere", "WindowsTerminalOpenHere"];
 
 pub(crate) enum ShellUi {
     Menu(ShellMenu),
@@ -132,9 +133,24 @@ struct Prepared {
 struct Ready {
     gen: u64,
     menu: ShellMenu,
+    entries: ShellItems,
+    at: Instant,
+}
+
+#[derive(Default)]
+struct ShellItems {
     items: Vec<MenuItem>,
     ids: Vec<u32>,
-    at: Instant,
+    terminals: Vec<u32>,
+}
+
+impl ShellItems {
+    fn event(self, ticket: Option<u64>) -> Event {
+        match ticket {
+            Some(ticket) => Event::PaletteShell { ticket, items: self.items, shell: self.ids },
+            None => Event::ShellItems { items: self.items, shell: self.ids, terminals: self.terminals },
+        }
+    }
 }
 
 struct Shown {
@@ -337,7 +353,7 @@ fn abandon(s: Stall) {
     }
     tracing::warn!("a shell extension stopped answering for {} ms, so shell menus move to a new thread", s.at.elapsed().as_millis());
     if let Some(gen) = s.gen.filter(|&g| g == CURRENT.load(Ordering::SeqCst)) {
-        deliver(s.owner, Some(gen), Event::ShellItems { items: Vec::new(), shell: Vec::new() });
+        deliver(s.owner, Some(gen), ShellItems::default().event(None));
     }
 }
 
@@ -447,14 +463,14 @@ unsafe fn prepare(worker: HWND) {
             return;
         }
     };
-    let (items, ids) = shell_items(active.menu.as_ref(), hmenu);
-    tracing::info!("context menu prepared in {:.1} ms, {} commands", started.elapsed().as_secs_f64() * 1e3, ids.len());
+    let entries = shell_items(active.menu.as_ref(), hmenu);
+    tracing::info!("context menu prepared in {:.1} ms, {} commands", started.elapsed().as_secs_f64() * 1e3, entries.ids.len());
     PREPARED.set(Some(Prepared { gen, menu: menu.clone(), hmenu, active }));
     if locked(&WANT).as_ref().is_none_or(|w| w.0 != gen) {
         drop_prepared();
         return;
     }
-    *locked(&READY) = Some(Ready { gen, menu, items, ids, at: Instant::now() });
+    *locked(&READY) = Some(Ready { gen, menu, entries, at: Instant::now() });
     SetTimer(Some(worker), STALE_TIMER, PREP_STALE.as_millis() as u32, None);
 }
 
@@ -491,13 +507,13 @@ fn serve() {
             Job::Menu { owner, gen, menu, pt } => {
                 if let Err(e) = unsafe { show_menu(owner, gen, &menu, pt, None) } {
                     tracing::warn!("shell menu: {e}");
-                    deliver(owner, Some(gen), Event::ShellItems { items: Vec::new(), shell: Vec::new() });
+                    deliver(owner, Some(gen), ShellItems::default().event(None));
                 }
             }
             Job::Palette { owner, gen, ticket, menu, pt } => {
                 if let Err(e) = unsafe { show_menu(owner, gen, &menu, pt, Some(ticket)) } {
                     tracing::warn!("shell menu: {e}");
-                    deliver(owner, Some(gen), Event::PaletteShell { ticket, items: Vec::new(), shell: Vec::new() });
+                    deliver(owner, Some(gen), ShellItems::default().event(Some(ticket)));
                 }
             }
             Job::PalettePick { owner, ticket, cmd } => {
@@ -708,8 +724,8 @@ fn warm(menus: &[ShellMenu]) {
         let _busy = Busy::start(0, None);
         let Ok(hmenu) = (unsafe { CreatePopupMenu() }) else { break };
         if let Ok(active) = unsafe { fill(HWND::default(), m, hmenu) } {
-            let (_, ids) = unsafe { shell_items(active.menu.as_ref(), hmenu) };
-            tracing::info!("shell menu warmed in {:.1} ms, {} commands", started.elapsed().as_secs_f64() * 1e3, ids.len());
+            let entries = unsafe { shell_items(active.menu.as_ref(), hmenu) };
+            tracing::info!("shell menu warmed in {:.1} ms, {} commands", started.elapsed().as_secs_f64() * 1e3, entries.ids.len());
         }
         let _ = unsafe { DestroyMenu(hmenu) };
     }
@@ -883,8 +899,9 @@ pub(crate) unsafe fn item_image(hmenu: HMENU, i: i32, label: &str) -> Option<Men
     image
 }
 
-pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i32, depth: usize, items: &mut Vec<MenuItem>, ids: &mut Vec<u32>) {
-    for i in from.max(0)..GetMenuItemCount(Some(hmenu)) {
+unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, depth: usize, enabled: bool, entries: &mut ShellItems) -> Vec<MenuItem> {
+    let mut items = Vec::new();
+    for i in 0..GetMenuItemCount(Some(hmenu)) {
         let mut info = MENUITEMINFOW { cbSize: size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_ID | MIIM_SUBMENU | MIIM_STATE | MIIM_FTYPE, ..Default::default() };
         if GetMenuItemInfoW(hmenu, i as u32, true, &mut info).is_err() {
             continue;
@@ -896,12 +913,14 @@ pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i3
             continue;
         }
         let (mut label, keys) = plain_label(&item_text(hmenu, i));
-        if menu.is_some_and(|m| matches!(id_verb(m, info.wID).to_ascii_lowercase().as_str(), "openas" | "openwith")) {
+        let verb = menu.map_or_else(String::new, |m| id_verb(m, info.wID));
+        if verb.eq_ignore_ascii_case("openas") || verb.eq_ignore_ascii_case("openwith") {
             label = flit_core::i18n::S::MenuOpenWith.t().to_owned();
         }
         if label.is_empty() {
             continue;
         }
+        let disabled = info.fState.0 & MFS_DISABLED.0 != 0;
         if !info.hSubMenu.is_invalid() {
             if depth > 4 {
                 continue;
@@ -916,30 +935,31 @@ pub(crate) unsafe fn convert(menu: Option<&IContextMenu>, hmenu: HMENU, from: i3
                     label = flit_core::i18n::S::MenuOpenWith.t().to_owned();
                 }
             }
-            let mut sub = Vec::new();
-            convert(menu, info.hSubMenu, 0, depth + 1, &mut sub, ids);
-            if matches!(sub.last(), Some(MenuItem::Separator)) {
-                sub.pop();
-            }
+            let sub = convert(menu, info.hSubMenu, depth + 1, enabled && !disabled, entries);
             if !sub.is_empty() {
                 items.push(MenuItem::Submenu { label, items: sub });
             }
             continue;
         }
-        let disabled = info.fState.0 & MFS_DISABLED.0 != 0;
         let image = item_image(hmenu, i, &label);
-        items.push(MenuItem::Command { label, keys, checked: info.fState.0 & MFS_CHECKED.0 != 0, stay: false, mark: flit_core::ui::Mark::None, icon: "", image, disabled });
-        ids.push(info.wID);
+        let terminal = named(&TERMINAL_VERBS, &verb);
+        let icon = if terminal { "\u{E756}" } else { "" };
+        items.push(MenuItem::Command { label, keys, checked: info.fState.0 & MFS_CHECKED.0 != 0, stay: false, mark: flit_core::ui::Mark::None, icon, image, disabled });
+        entries.ids.push(info.wID);
+        if enabled && !disabled && terminal {
+            entries.terminals.push(info.wID);
+        }
     }
     if matches!(items.last(), Some(MenuItem::Separator)) {
         items.pop();
     }
+    items
 }
 
-pub(crate) unsafe fn shell_items(menu: Option<&IContextMenu>, hmenu: HMENU) -> (Vec<MenuItem>, Vec<u32>) {
-    let (mut items, mut ids) = (Vec::new(), Vec::new());
-    convert(menu, hmenu, 0, 0, &mut items, &mut ids);
-    (items, ids)
+unsafe fn shell_items(menu: Option<&IContextMenu>, hmenu: HMENU) -> ShellItems {
+    let mut entries = ShellItems::default();
+    entries.items = convert(menu, hmenu, 0, true, &mut entries);
+    entries
 }
 
 unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT, ticket: Option<u64>) -> Result<(), PlatformError> {
@@ -957,20 +977,16 @@ unsafe fn show_menu(owner: isize, gen: u64, m: &ShellMenu, pt: POINT, ticket: Op
             return Err(e);
         }
     };
-    let (items, ids) = shell_items(active.menu.as_ref(), hmenu);
+    let entries = shell_items(active.menu.as_ref(), hmenu);
     drop(busy);
     ACTIVE.set(Some(active));
-    tracing::info!("context menu shell items ready in {:.1} ms, {} commands, {}", started.elapsed().as_secs_f64() * 1e3, ids.len(), if m.inline { "inline" } else { "in a submenu" });
+    tracing::info!("context menu shell items ready in {:.1} ms, {} commands, {}", started.elapsed().as_secs_f64() * 1e3, entries.ids.len(), if m.inline { "inline" } else { "in a submenu" });
     SHOWN.set(Some(Shown { hmenu, menu: m.clone(), pt, palette: ticket.map(|ticket| (owner, ticket)) }));
     if CURRENT.load(Ordering::SeqCst) != gen {
         release();
         return Ok(());
     }
-    let event = match ticket {
-        Some(ticket) => Event::PaletteShell { ticket, items, shell: ids },
-        None => Event::ShellItems { items, shell: ids },
-    };
-    deliver(owner, Some(gen), event);
+    deliver(owner, Some(gen), entries.event(ticket));
     Ok(())
 }
 
@@ -1079,8 +1095,8 @@ fn show(hwnd: HWND, m: &ShellMenu, send: &dyn Fn(Event)) {
     let owner = hwnd.0 as isize;
     match ready {
         Some(r) => {
-            tracing::info!("context menu complete from the prepared menu, {} commands", r.ids.len());
-            send(Event::ShellItems { items: r.items, shell: r.ids });
+            tracing::info!("context menu complete from the prepared menu, {} commands", r.entries.ids.len());
+            send(r.entries.event(None));
             send_job(Job::Adopt { owner, prep: r.gen, menu: m.clone(), pt });
         }
         None => send_job(Job::Menu { owner, gen, menu: m.clone(), pt }),

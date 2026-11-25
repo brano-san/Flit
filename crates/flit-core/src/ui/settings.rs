@@ -939,6 +939,7 @@ impl App {
                 applied += 1;
             }
         }
+        self.group_folder_opening();
         self.layout();
         self.dirty = true;
         applied

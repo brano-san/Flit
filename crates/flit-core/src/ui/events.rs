@@ -98,6 +98,7 @@ impl App {
                 self.mods = Mods::default();
                 if !*f {
                     self.cancel_tab_drag();
+                    self.cancel_section_drag();
                 }
                 self.focused_at = f.then_some(now);
                 self.ops_timer_cancel();
@@ -107,6 +108,7 @@ impl App {
             }
             Event::MouseMove { x, y } => self.mouse_move(*x, *y, now),
             Event::MouseLeave => {
+                self.cancel_section_drag();
                 self.hide_settings_tip();
                 self.hover_pick(Hit::None, now);
                 if self.hover != Hit::None {
@@ -229,6 +231,10 @@ impl App {
                 }
                 return self.drag_place(from, y);
             }
+            Drag::SectionMove { .. } => {
+                self.dirty = true;
+                return;
+            }
             Drag::Tab { .. } => return self.drag_tab(x, y),
             Drag::Network => {
                 return self.set_cursor(if self.network_drop_target(x, y) { CursorIcon::Hand } else { CursorIcon::Default });
@@ -240,7 +246,7 @@ impl App {
             Drag::MenuMove { from, .. } => return self.drag_menu_row(from, y),
             Drag::Marquee | Drag::None => {}
         }
-        if self.start_pin_drag(y) || self.move_header(x) {
+        if self.start_sidebar_drag(y) || self.move_header(x) {
             return;
         }
         let h = self.hit(x, y);
@@ -281,7 +287,7 @@ impl App {
     }
 
     pub(super) fn mouse_down(&mut self, x: f32, y: f32, button: MouseButton, clicks: u8, now: Instant) {
-        if matches!(self.drag, Drag::Tab { .. } | Drag::Network) {
+        if matches!(self.drag, Drag::Tab { .. } | Drag::Network | Drag::SectionMove { .. }) {
             return;
         }
         self.dirty = true;
@@ -386,7 +392,7 @@ impl App {
     }
 
     pub(super) fn mouse_up(&mut self, x: f32, y: f32, button: MouseButton, now: Instant) {
-        if button != MouseButton::Left && matches!(self.drag, Drag::Tab { .. } | Drag::Network) {
+        if button != MouseButton::Left && matches!(self.drag, Drag::Tab { .. } | Drag::Network | Drag::SectionMove { .. }) {
             return;
         }
         if let Some(f) = &mut self.dialogs.form {
@@ -418,6 +424,9 @@ impl App {
         }
         if let Drag::PlaceMove { from, to } = was {
             return self.drop_place(from, to);
+        }
+        if let Drag::SectionMove { from } = was {
+            return self.drop_section(from, x, y);
         }
         if let Drag::MenuMove { from, to } = was {
             return self.drop_menu_row(from, to);
@@ -579,6 +588,9 @@ impl App {
 
     pub(super) fn key(&mut self, key: Key, m: Mods, now: Instant) {
         self.dirty = true;
+        if key == Key::Escape && self.cancel_section_drag() {
+            return;
+        }
         if key == Key::Escape && self.drag == Drag::Network {
             self.drag = Drag::None;
             self.ops.network_drag.clear();

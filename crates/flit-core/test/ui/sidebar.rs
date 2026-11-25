@@ -236,6 +236,89 @@ fn headers_fold_and_the_empty_area_menu_hides_sections() {
     assert_eq!(side_labels(&app).len(), 8);
 }
 
+#[test]
+fn dragging_a_quick_access_header_reorders_whole_groups() {
+    let mut app = app_with_places();
+    app.animations = false;
+    app.toggle_section_shown(Section::Storage);
+    click(header(&app, Section::Places), &mut app, MouseButton::Left);
+    let start = header(&app, Section::Bookmarks);
+    let target = header(&app, Section::Places);
+    let (x, from, to) = (start.x + start.w / 2.0, start.y + start.h / 2.0, target.bottom() - 2.0);
+    let now = Instant::now();
+    let button = MouseButton::Left;
+    app.on_event(&Event::MouseDown { x, y: from, button, clicks: 1 }, now);
+    app.on_event(&Event::MouseMove { x, y: to }, now);
+    let mut gfx = Gfx::new(Mono, 1024);
+    app.frame(&mut gfx, now);
+    let line = header(&app, Section::Wsl).y - 1.0;
+    assert!(gfx.dl.instances.iter().any(|i| i.color == app.look.palette.base.accent.0 && i.rect[1] == line && i.rect[2] > 100.0 && i.rect[3] == 2.0));
+    assert!(app.nav_prefs().quick.order.is_empty());
+    app.on_event(&Event::MouseUp { x, y: to, button }, now);
+
+    let saved = app.nav_prefs();
+    assert_eq!(saved.quick.order, ["recent", "folders", "drives", "pinned", "libraries", "wsl", "tags"]);
+    assert_eq!(saved.collapsed, ["folders"]);
+    assert_eq!(saved.hidden, ["drives"]);
+    assert_eq!(app.nav_state().pinned, [loc(r"C:\a"), loc(r"C:\b")]);
+    let mut restored = app_with_places();
+    restored.set_nav_prefs(saved);
+    let headers: Vec<_> = restored.nav.sidebar.headers.iter().map(|&(_, s)| s).collect();
+    assert_eq!(headers, [Section::Recents, Section::Places, Section::Bookmarks, Section::Wsl, Section::Tags]);
+}
+
+#[test]
+fn a_quick_access_header_drag_can_be_cancelled_without_folding_the_group() {
+    let mut app = app_with_places();
+    app.animations = false;
+    let start = header(&app, Section::Bookmarks);
+    let (x, y) = (start.x + start.w / 2.0, start.y + 3.0);
+    let to = y + 8.0;
+    let now = Instant::now();
+    let button = MouseButton::Left;
+    let outside = app.nav.sidebar.rect.right() + 10.0;
+    for cancel in [Some(Event::Key { key: Key::Escape, mods: Mods::default(), pressed: true }), Some(Event::Focus(false)), None] {
+        app.on_event(&Event::MouseDown { x, y, button, clicks: 1 }, now);
+        app.on_event(&Event::MouseMove { x, y: to }, now);
+        let release_x = if let Some(cancel) = cancel {
+            app.on_event(&cancel, now);
+            x
+        } else {
+            app.on_event(&Event::MouseMove { x: outside, y: to }, now);
+            outside
+        };
+        app.on_event(&Event::MouseUp { x: release_x, y: to, button }, now);
+        assert!(app.nav_prefs().quick.order.is_empty());
+        assert!(app.nav_prefs().collapsed.is_empty());
+    }
+
+    app.on_event(&Event::MouseDown { x, y, button, clicks: 1 }, now);
+    app.on_event(&Event::MouseMove { x, y: y + 2.0 }, now);
+    app.on_event(&Event::MouseUp { x, y: y + 2.0, button }, now);
+    assert_eq!(app.nav_prefs().collapsed, ["pinned"]);
+}
+
+#[test]
+fn dragging_a_quick_access_header_scrolls_to_offscreen_groups() {
+    let mut app = app_with_places();
+    app.animations = false;
+    app.set_pinned((0..30).map(|i| loc(&format!(r"C:\folder{i}"))).collect());
+    let start = header(&app, Section::Recents);
+    let (x, from, to) = (start.x + start.w / 2.0, start.y + start.h / 2.0, app.nav.sidebar.list.bottom() - 6.0);
+    assert!(header(&app, Section::Places).y > to);
+    let now = Instant::now();
+    let button = MouseButton::Left;
+    app.on_event(&Event::MouseDown { x, y: from, button, clicks: 1 }, now);
+    app.on_event(&Event::MouseMove { x, y: to }, now);
+    let mut gfx = Gfx::new(Mono, 1024);
+    for frame in 0..120 {
+        app.frame(&mut gfx, now + Duration::from_millis(16 * frame));
+    }
+    assert!(header(&app, Section::Places).bottom() < to);
+    app.on_event(&Event::MouseUp { x, y: to, button }, now + Duration::from_secs(2));
+    assert_eq!(app.nav_prefs().quick.order, ["pinned", "drives", "folders", "wsl", "libraries", "tags", "recent"]);
+}
+
 fn stays(items: &[MenuItem]) -> Vec<String> {
     items
         .iter()
@@ -495,6 +578,7 @@ fn item_menus_offer_place_commands() {
     let m = menu(&mut app);
     assert!(m.shell, "items keep Show more options");
     assert_eq!(m.items, [FsPath::parse(r"E:\").unwrap()]);
+    assert!(matches!(&m.menu[0], MenuItem::Submenu { label, items } if label == S::MenuOpenIn.t() && labels(items) == ["Open", "Open in new tab", "Open in new window", "Open In Right Split", "Open In Bottom Split"]));
     assert_eq!(labels(&m.menu), ["Open", "Open in new tab", "Open in new window", "Open In Right Split", "Open In Bottom Split", "Copy path", "Open in terminal", "Pin to sidebar", "Eject", "Rename", "Properties"]);
     run(&mut app, &m, "Eject");
     assert!(app.drain_effects().any(|e| matches!(e, Effect::Provider { req: ProviderRequest::Launch { launch: Launch::Eject(d), .. }, .. } if d == FsPath::parse(r"E:\").unwrap())));

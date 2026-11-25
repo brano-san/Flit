@@ -62,6 +62,16 @@ fn the_panel_menu_lists_the_quick_group_in_sections_and_opens_at_a_middle_click_
     assert_eq!(l.iter().filter(|x| *x != "-").cloned().collect::<Vec<_>>(), quick);
     assert!(l.contains(&S::MenuShowInspector.t().to_owned()) && l.contains(&S::MenuShowHidden.t().to_owned()));
     assert!(l.iter().filter(|x| *x == "-").count() >= 4);
+    let icons: std::collections::HashSet<_> = m
+        .menu
+        .iter()
+        .filter_map(|item| match item {
+            MenuItem::Command { icon, .. } => Some(*icon),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(icons.len(), quick.len());
+    assert!(icons.iter().all(|icon| !icon.is_empty() && *icon != "\u{E718}"));
     let r = a.layout.list;
     let (x, y) = (r.x + 120.0, r.bottom() - 20.0);
     a.on_event(&Event::MouseDown { x, y, button: MouseButton::Middle, clicks: 1 }, Instant::now());
@@ -69,6 +79,27 @@ fn the_panel_menu_lists_the_quick_group_in_sections_and_opens_at_a_middle_click_
     let m = shell_menu(&mut a);
     assert_eq!((m.x, m.y), (x, y), "the menu opens at the cursor");
     assert_eq!(labels(&m.menu).iter().filter(|x| *x != "-").count(), quick.len());
+}
+
+#[test]
+fn opening_a_file_context_menu_releases_the_quick_commands_button() {
+    let mut a = harness::app(&["a.txt"]);
+    a.animations = false;
+    let r = a.layout.more;
+    a.on_event(&Event::MouseMove { x: r.x + r.w / 2.0, y: r.y + r.h / 2.0 }, Instant::now());
+    a.panel_quick_menu();
+    let quick = shell_menu(&mut a);
+    show(&mut a, quick);
+    assert!(a.menu_open_from(Hit::PanelMenu));
+    let (x, y) = (a.layout.list.x + 100.0, a.layout.list.y + a.layout.row_h / 2.0);
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Right, clicks: 1 }, Instant::now());
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Right }, Instant::now());
+    let context = shell_menu(&mut a);
+    assert_eq!(context.kind, MenuKind::File);
+    show(&mut a, context);
+    assert!(a.context_menu_open().is_some());
+    assert!(!a.menu_open_from(Hit::PanelMenu));
+    assert_eq!(a.lit(Hit::PanelMenu), 0.0);
 }
 
 #[test]

@@ -1,5 +1,7 @@
 use super::*;
 use std::path::PathBuf;
+use windows::core::{implement, HRESULT};
+use windows::Win32::Foundation::{E_INVALIDARG, E_NOTIMPL};
 
 static SERIAL: Mutex<()> = Mutex::new(());
 
@@ -72,6 +74,52 @@ fn shell_labels_lose_their_accelerators_and_split_off_their_keys() {
     assert_eq!(plain_label("R&&D"), ("R&D".to_owned(), String::new()));
 }
 
+#[implement(IContextMenu)]
+struct TerminalVerbs;
+
+impl IContextMenu_Impl for TerminalVerbs_Impl {
+    fn QueryContextMenu(&self, _: HMENU, _: u32, _: u32, _: u32, _: u32) -> HRESULT {
+        E_NOTIMPL
+    }
+
+    fn InvokeCommand(&self, _: *const CMINVOKECOMMANDINFO) -> windows::core::Result<()> {
+        Err(E_NOTIMPL.into())
+    }
+
+    fn GetCommandString(&self, id: usize, ty: u32, _: *const u32, out: PSTR, capacity: u32) -> windows::core::Result<()> {
+        let verb = ["PowerShell", "OpenTerminalHere", "wsl", "runpowershell", "openpwsh", "WindowsTerminalOpenHere"].get(id).ok_or(E_INVALIDARG)?;
+        let text: Vec<_> = verb.encode_utf16().chain(Some(0)).collect();
+        if ty != GCS_VERBW || text.len() > capacity as usize {
+            return Err(E_INVALIDARG.into());
+        }
+        unsafe { std::ptr::copy_nonoverlapping(text.as_ptr(), out.0.cast::<u16>(), text.len()) };
+        Ok(())
+    }
+}
+
+#[test]
+fn only_enabled_shell_terminal_verbs_are_candidates_for_deduplication() {
+    let menu: IContextMenu = TerminalVerbs.into();
+    unsafe {
+        let hmenu = CreatePopupMenu().unwrap();
+        let more = CreatePopupMenu().unwrap();
+        let blocked = CreatePopupMenu().unwrap();
+        for id in [1, 3, 4] {
+            AppendMenuW(hmenu, MF_STRING, id, w!("Open in Terminal")).unwrap();
+        }
+        AppendMenuW(hmenu, MF_GRAYED, 2, w!("Open in Terminal")).unwrap();
+        AppendMenuW(more, MF_STRING, 5, w!("PowerShell 7")).unwrap();
+        AppendMenuW(blocked, MF_STRING, 6, w!("Open in Terminal")).unwrap();
+        AppendMenuW(hmenu, MF_POPUP, more.0 as usize, w!("More")).unwrap();
+        AppendMenuW(hmenu, MF_POPUP | MF_GRAYED, blocked.0 as usize, w!("Disabled")).unwrap();
+        let converted = shell_items(Some(&menu), hmenu);
+        assert_eq!(converted.ids, [1, 3, 4, 2, 5, 6]);
+        assert_eq!(converted.terminals, [1, 5]);
+        assert!(matches!(&converted.items[..2], [MenuItem::Command { icon: "\u{E756}", .. }, MenuItem::Command { icon: "", .. }]));
+        let _ = DestroyMenu(hmenu);
+    }
+}
+
 fn count(items: &[MenuItem]) -> usize {
     items
         .iter()
@@ -92,7 +140,7 @@ fn shell_items_carry_one_shell_id_per_command() {
     unsafe {
         let hmenu = CreatePopupMenu().unwrap();
         let active = fill(HWND::default(), &m, hmenu).unwrap();
-        let (items, ids) = shell_items(active.menu.as_ref(), hmenu);
+        let ShellItems { items, ids, .. } = shell_items(active.menu.as_ref(), hmenu);
         assert!(!matches!(items.first(), None | Some(MenuItem::Separator)), "{items:?}");
         assert_eq!(count(&items), ids.len());
         assert!(ids.iter().all(|&id| id == 0 || (FIRST_ID..=LAST_ID).contains(&id)), "{ids:?}");
@@ -144,7 +192,7 @@ fn a_prepared_menu_opens_complete_and_a_different_target_takes_the_usual_path() 
     let seen = std::cell::RefCell::new(Vec::new());
     show(owner, &ShellMenu { x: 5.0, y: 7.0, ..target(&t, &["a.txt"]) }, &|ev| seen.borrow_mut().push(ev));
     let seen = seen.take();
-    assert!(matches!(&seen[..], [Event::ShowMenu { pending: true, .. }, Event::ShellItems { items, shell }] if !shell.is_empty() && count(items) == shell.len()), "{seen:?}");
+    assert!(matches!(&seen[..], [Event::ShowMenu { pending: true, .. }, Event::ShellItems { items, shell, .. }] if !shell.is_empty() && count(items) == shell.len()), "{seen:?}");
     assert!(READY.lock().unwrap().is_none() && WANT.lock().unwrap().is_none());
     pick_now(owner, None);
     let seen = std::cell::RefCell::new(Vec::new());
@@ -176,7 +224,7 @@ fn the_worker_thread_answers_only_the_latest_menu() {
     assert_ne!(stale, latest);
     let [(gen, ev)] = &done[..] else { panic!("only the latest menu is answered: {done:?}") };
     assert_eq!(*gen, Some(latest));
-    let Event::ShellItems { items, shell } = ev else { panic!("{ev:?}") };
+    let Event::ShellItems { items, shell, .. } = ev else { panic!("{ev:?}") };
     assert_eq!(count(items), shell.len());
     assert!(matches!(items.last(), Some(MenuItem::Submenu { label, .. }) if label == "Show more options"), "{items:?}");
     let seen = std::cell::RefCell::new(Vec::new());
@@ -207,7 +255,7 @@ fn a_shell_extension_that_never_answers_leaves_an_empty_menu_and_later_menus_sti
     let gen = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
     send_job(Job::Hang { owner: 0, gen, until });
     let done = wait_done(0);
-    assert!(matches!(&done[..], [(Some(g), Event::ShellItems { items, shell })] if *g == gen && items.is_empty() && shell.is_empty()), "the waiting menu gets an empty answer instead of placeholders forever: {done:?}");
+    assert!(matches!(&done[..], [(Some(g), Event::ShellItems { items, shell, terminals })] if *g == gen && items.is_empty() && shell.is_empty() && terminals.is_empty()), "the waiting menu gets an empty answer instead of placeholders forever: {done:?}");
     assert_ne!(worker().hwnd, before, "menus move to a fresh thread");
     HUNG_MS.store(8000, Ordering::SeqCst);
     let latest = CURRENT.fetch_add(1, Ordering::SeqCst) + 1;
@@ -345,7 +393,7 @@ fn shell_item_bitmaps_become_premultiplied_rgba_icons_and_callbacks_stay_bare() 
         add_item(hmenu, 1, "Scan with Tool", icon);
         add_item(hmenu, 2, "Drawn by its owner", HBMMENU_CALLBACK);
         add_item(hmenu, 3, "Plain", windows::Win32::Graphics::Gdi::HBITMAP::default());
-        let (items, ids) = shell_items(None, hmenu);
+        let ShellItems { items, ids, .. } = shell_items(None, hmenu);
         assert_eq!(ids, [1, 2, 3]);
         let images: Vec<Option<MenuImage>> = items
             .iter()
@@ -358,7 +406,7 @@ fn shell_item_bitmaps_become_premultiplied_rgba_icons_and_callbacks_stay_bare() 
         assert_eq!((bitmap.width, bitmap.height), (16, 16));
         assert_eq!(&bitmap.rgba[..4], [0x80, 0x20, 0x10, 0x80], "BGRA turns RGBA and no channel exceeds alpha");
         assert!(images[1].is_none() && images[2].is_none());
-        let again = shell_items(None, hmenu).0;
+        let again = shell_items(None, hmenu).items;
         assert!(matches!(&again[0], MenuItem::Command { image: Some(MenuImage::Pixels { key: k, .. }), .. } if k == key), "the second menu reuses the cached icon");
         let _ = DestroyMenu(hmenu);
         let _ = windows::Win32::Graphics::Gdi::DeleteObject(HGDIOBJ(icon.0));
@@ -603,7 +651,8 @@ fn print_the_shell_menu_of_flit_menu_probe() {
     let items: Vec<FsPath> = probe.split('|').filter_map(FsPath::parse).collect();
     let dir = items[0].parent().unwrap();
     let inline = std::env::var("FLIT_MENU_INLINE").is_ok();
-    let m = ShellMenu { dir, items, x: 0.0, y: 0.0, extended: false, menu: vec![command("(Flit items)", "", false)], inline, shell: true, kind: flit_core::ui::MenuKind::None };
+    let extended = std::env::var_os("FLIT_MENU_EXTENDED").is_some();
+    let m = ShellMenu { dir, items, x: 0.0, y: 0.0, extended, menu: vec![command("(Flit items)", "", false)], inline, shell: true, kind: flit_core::ui::MenuKind::None };
     unsafe {
         let hmenu = CreatePopupMenu().unwrap();
         let started = Instant::now();
@@ -611,7 +660,8 @@ fn print_the_shell_menu_of_flit_menu_probe() {
         let ms = started.elapsed().as_secs_f64() * 1e3;
         let mut out = Vec::new();
         walk_labels(&menu, hmenu, 0, &mut out);
-        eprintln!("PROBE {ms:.1} ms\n{}", out.join("\n"));
+        let converted = shell_items(Some(&menu), hmenu);
+        eprintln!("PROBE {ms:.1} ms\n{}\nTerminal IDs: {:?}", out.join("\n"), converted.terminals);
         let _ = DestroyMenu(hmenu);
     }
 }

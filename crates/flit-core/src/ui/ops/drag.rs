@@ -584,7 +584,6 @@ impl App {
     }
 
     pub(in crate::ui) fn drag_autoscroll(&mut self, dt: f32) -> bool {
-        let Some((x, y, mods, allowed)) = self.ops.drag_scroll else { return false };
         let over = |at: f32, lo: f32, hi: f32| {
             const EDGE: f32 = 40.0;
             if at < lo + EDGE {
@@ -595,6 +594,14 @@ impl App {
                 0.0
             }
         };
+        if matches!(self.drag, Drag::SectionMove { .. }) {
+            let sb = &mut self.nav.sidebar;
+            let Some((_, y)) = self.tabs.strip.pointer.filter(|&(x, y)| sb.list.contains(x, y)) else { return false };
+            let before = sb.scroll.target;
+            sb.scroll.by(over(y, sb.list.y, sb.list.bottom()) * DRAG_SCROLL_RATE * dt, sb.content_h - sb.list.h);
+            return sb.scroll.target != before;
+        }
+        let Some((x, y, mods, allowed)) = self.ops.drag_scroll else { return false };
         let mut moved = false;
         let list = self.layout.list;
         if list.w > 0.0 && list.inset(-4.0, 0.0).contains(x, y) {

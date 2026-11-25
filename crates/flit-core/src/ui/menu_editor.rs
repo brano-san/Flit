@@ -65,6 +65,36 @@ pub fn remember(seen: &mut Vec<String>, latest: Vec<String>) {
     seen.truncate(MAX_SEEN);
 }
 
+impl App {
+    pub(super) fn group_folder_opening(&mut self) {
+        let k = 1;
+        let group = S::MenuOpenIn.t();
+        let opening = [S::MenuOpen, S::MenuOpenInNewTab, S::MenuOpenInNewWindow, S::ActionsPanelOpenRight, S::ActionsPanelOpenBottom].map(S::t);
+        let map = |entries: &mut Vec<String>, top: bool| {
+            if !entries.iter().any(|p| opening.contains(&p.as_str())) {
+                return;
+            }
+            let mut seen = std::collections::HashSet::new();
+            entries.retain_mut(|p| {
+                if opening.contains(&p.as_str()) {
+                    *p = if top { group.to_owned() } else { format!("{group}{PATH_SEP}{p}") };
+                }
+                seen.insert(p.clone())
+            });
+        };
+        let menu = &mut self.settings.opts.menu;
+        map(&mut menu.hidden[k], false);
+        if let Some(at) = menu.seen[k].iter().position(|p| opening.contains(&p.as_str())) {
+            if !menu.seen[k].iter().any(|p| p == group) {
+                menu.seen[k].insert(at, group.to_owned());
+            }
+        }
+        map(&mut menu.seen[k], false);
+        map(&mut menu.order[k], true);
+        map(&mut self.settings.opts.pins[k], false);
+    }
+}
+
 pub(super) fn check_rect(r: Rect, depth: usize, s: impl Fn(f32) -> f32) -> Rect {
     let x = r.x + s(PAD) + s(GRIP_W) + depth as f32 * s(INDENT);
     Rect::new(x, r.y + ((r.h - s(BOX)) / 2.0).round(), s(BOX), s(BOX))
@@ -114,10 +144,14 @@ impl App {
             add("file.new_folder", S::MenuFolder, Some(S::MenuNew));
             add("file.shortcut", S::MenuShortcut, Some(S::MenuNew));
         } else {
-            add("item.open", S::MenuOpen, None);
             if kind == 1 {
+                add("item.open", S::MenuOpen, Some(S::MenuOpenIn));
                 add("item.open_tab", S::MenuOpenInNewTab, Some(S::MenuOpenIn));
                 add("item.open_window", S::MenuOpenInNewWindow, Some(S::MenuOpenIn));
+                add("panel.open_right", S::ActionsPanelOpenRight, Some(S::MenuOpenIn));
+                add("panel.open_bottom", S::ActionsPanelOpenBottom, Some(S::MenuOpenIn));
+            } else {
+                add("item.open", S::MenuOpen, None);
             }
             for (id, label) in [
                 ("file.cut", S::MenuCut),
@@ -162,7 +196,7 @@ impl App {
         let builtins = self.builtin_menu_paths(k);
         let mut all: Vec<&str> = Vec::new();
         let mut known = std::collections::HashSet::new();
-        for p in m.seen[k].iter().chain(&m.hidden[k]).chain(&self.settings.opts.pins[k]).chain(&builtins) {
+        for p in m.seen[k].iter().chain(&builtins).chain(&self.settings.opts.pins[k]).chain(&m.hidden[k]) {
             if known.insert(p.as_str()) {
                 all.push(p);
             }

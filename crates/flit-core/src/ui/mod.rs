@@ -639,6 +639,7 @@ enum Drag {
     Splitter { start_x: f32, start_w: f32 },
     PinMove { from: usize, to: usize },
     PlaceMove { from: usize, to: usize },
+    SectionMove { from: Section },
     Preview { hit: preview_pane::PaneHit, start: f32, size: f32 },
     Marquee,
     Network,
