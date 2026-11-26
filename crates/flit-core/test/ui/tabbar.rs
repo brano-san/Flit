@@ -120,7 +120,7 @@ fn tab_menu_closes_other_left_and_right_tabs_and_remembers_them() {
     assert_eq!(app.tabs.cur, 2);
     let labels = menu_labels(&mut app);
     assert_eq!(labels, ["Shift Tab Left", "Shift Tab Right", "Duplicate Tab", "Duplicate Tab To New Window", "Close Tab", "Close Other Tabs", "Close Left Tabs", "Close Right Tabs", "Close All Tabs", "Move tab to a new window", "Reopen closed tab"]);
-    assert_eq!(app.menu_owner, Some(Hit::Tab(2)));
+    assert!(matches!(app.menu_owner, Some(crate::ui::MenuOwner::Button(Hit::Tab(2)))));
     let (x0, y0) = tab_xy(&app, 0);
     ev(&mut app, Event::MouseDown { x: x0, y: y0, button: MouseButton::Right, clicks: 1 });
     ev(&mut app, Event::MouseUp { x: x0, y: y0, button: MouseButton::Right });

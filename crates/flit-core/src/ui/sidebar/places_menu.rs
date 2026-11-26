@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::MenuOwner;
 
 impl App {
     pub(in crate::ui) fn place_command(&mut self, c: PlaceCmd, now: Instant) {
@@ -208,16 +209,18 @@ impl App {
     pub(in crate::ui) fn side_menu(&mut self, x: f32, y: f32, h: Hit) {
         match h {
             Hit::Side(i) | Hit::SidePin(i) => {
+                let Some(item) = self.nav.sidebar.items.get(i) else { return };
+                let owner = MenuOwner::SidebarItem { section: item.section, loc: item.loc.clone(), label: item.label.clone() };
                 if let Some(k) = self.nav.sidebar.tag_of(i) {
                     let menu = self.build_tag_menu(Some(k));
-                    return self.flit_menu(x, y, menu);
+                    self.flit_menu(x, y, menu);
+                } else if let Some(r) = self.nav.sidebar.recent_entry(i) {
+                    self.recent_menu(x, y, r);
+                } else {
+                    self.place_menu(x, y, item.loc.clone(), |_, _| {});
                 }
-                if let Some(r) = self.nav.sidebar.recent_entry(i) {
-                    return self.recent_menu(x, y, r);
-                }
-                if let Some(loc) = self.nav.sidebar.items.get(i).map(|it| it.loc.clone()) {
-                    self.place_menu(x, y, loc, |_, _| {});
-                }
+                (self.menu_owner, self.menu_panel) = (Some(owner), self.tabs.panels.here);
+                self.hover = Hit::None;
             }
             Hit::SideHeader(s) => {
                 let r = self.nav.sidebar.headers.iter().find(|h| h.1 == s).map_or(Rect::new(x, y, 0.0, 0.0), |h| h.0);

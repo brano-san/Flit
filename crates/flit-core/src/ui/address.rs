@@ -313,6 +313,12 @@ impl App {
         self.launch(Launch::Run { program, args, dir });
     }
 
+    pub(super) fn retarget_address_watch(&mut self, tab: TabId, from: u64, to: u64) {
+        if let Some(watch) = self.addr.watch.as_mut().filter(|w| w.0 == tab && w.1 == from) {
+            watch.1 = to;
+        }
+    }
+
     pub(super) fn redirect(&mut self, k: usize, snap: &DirSnapshot) -> bool {
         let t = &self.tabs.items[k];
         if snap.gen != t.gen {
@@ -531,9 +537,7 @@ impl App {
 
     pub(super) fn eject_rect(&self) -> Option<Rect> {
         let t = self.tab();
-        let v = t.view.as_ref()?;
-        let no_media = v.total_rows() == 0 && v.snap().error.as_ref().is_some_and(|e| e.kind == FsErrorKind::NoMedia);
-        if !no_media || t.view_loc.path().kind() != PathKind::Drive {
+        if t.listing_error()?.kind != FsErrorKind::NoMedia || t.view_loc.path().kind() != PathKind::Drive {
             return None;
         }
         let (l, w) = (self.layout.list, self.s(120.0));

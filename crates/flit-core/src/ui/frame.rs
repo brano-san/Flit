@@ -586,9 +586,9 @@ impl App {
         if let Some(v) = &tab.view {
             if let Some(warning) = self.discovery_warning() {
                 self.draw_discovery_warning(g, t, list, warning);
-            } else if let Some(e) = v.snap().error.as_ref().filter(|_| v.total_rows() == 0) {
+            } else if let Some(e) = tab.listing_error() {
                 self.draw_unavailable(g, t, list, e);
-            } else if v.rows().is_empty() && v.groups().is_empty() && v.snap().done {
+            } else if v.rows().is_empty() && v.groups().is_empty() && v.snap().done && v.snap().gen == tab.gen {
                 let msg = self.empty_text(&tab.view_loc, v.is_filtered());
                 let y = list.y + self.cs(40.0);
                 if matches!(msg, S::UiEmptyNetwork | S::UiEmptyNetworkConnect) {
@@ -661,7 +661,7 @@ impl App {
                 }
 
                 let name = listing.name(i);
-                let faded = e.attrs & attr::HIDDEN != 0 || name.starts_with(b".") || cut.is_some_and(|c| c.contains(name));
+                let faded = e.attrs & attr::HIDDEN != 0 || (self.caps.unix_paths && name.starts_with(b".")) || cut.is_some_and(|c| c.contains(name));
                 let row_dir = if in_library {
                     FsPath::parse_exact(crate::library::folder(listing, i))
                 } else if e.attrs & attr::NESTED != 0 {

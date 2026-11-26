@@ -550,6 +550,11 @@ enum Focus {
     Preview,
 }
 
+enum MenuOwner {
+    Button(Hit),
+    SidebarItem { section: sidebar::Section, loc: Location, label: String },
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Hit {
     None,
@@ -620,6 +625,7 @@ enum Hit {
     QuickClear,
     Eject,
     GrantAccess,
+    ListingRefresh,
     Settings(settings_page::SHit),
     Menu,
     QuickToggle,
@@ -768,7 +774,7 @@ pub struct App {
     timer_at: Option<Instant>,
     error_shown: Option<(TabId, String, Instant)>,
     own_menu: Option<own_menu::OwnMenu>,
-    menu_owner: Option<Hit>,
+    menu_owner: Option<MenuOwner>,
     menu_panel: u32,
     menu_right: Option<f32>,
     tip: Option<tooltip::Tip>,

@@ -26,7 +26,27 @@ impl App {
 
     fn poll_tab(&mut self, k: usize) -> bool {
         let Some(snap) = self.tabs.items[k].slot.take() else { return false };
+        let now = self.clock();
+        if let Some(at) = self.tabs.items[k].defer_unavailable(&snap, now) {
+            self.arm_timer(now, at);
+            return false;
+        }
         self.apply_snapshot(k, snap)
+    }
+
+    pub(super) fn listing_retry_timer(&mut self, now: Instant) {
+        self.each_pane(|app, k| {
+            let t = &app.tabs.items[k];
+            let Some(at) = t.loading.as_ref().and_then(|loading| loading.retry_at) else { return };
+            if at > now {
+                return app.arm_timer(now, at);
+            }
+            let (id, old) = (t.id, t.gen);
+            let gen = app.gen();
+            app.retarget_address_watch(id, old, gen);
+            app.tabs.items[k].retry_listing(gen, app.case, &mut app.effects);
+            app.git_refresh(k, false);
+        });
     }
 
     pub(super) fn apply_snapshot(&mut self, k: usize, snap: Arc<crate::listing::DirSnapshot>) -> bool {

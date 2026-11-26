@@ -249,6 +249,10 @@ impl App {
             t.nodes[k].help = S::UiEmptyNetworkDiscoveryDisabled.t().into();
         }
 
+        if let Some(r) = self.listing_refresh_rect() {
+            put(&mut t, &mut targets, 0, Hit::ListingRefresh, Role::Button, S::MenuRefresh.t(), r);
+        }
+
         if let Some(k) = self.form_a11y(&mut t, &mut targets) {
             focus = Some(k);
         }

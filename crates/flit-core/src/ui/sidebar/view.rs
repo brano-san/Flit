@@ -368,7 +368,8 @@ impl App {
                 None => g.dl.set_clip(Some(list)),
             }
             let hovered = hovered == Some(i);
-            let glow = self.side_glow.alpha(i, now);
+            let open = self.menu_open_from(Hit::Side(i));
+            let glow = if open { 1.0 } else { self.side_glow.alpha(i, now) };
             let row = Rect::new(r.x, r.y + 1.0, r.w, r.h - 2.0);
             let tag = sb.tag_of(i).and_then(|k| sb.tags.defs.get(k));
             if drop == Some(i) {

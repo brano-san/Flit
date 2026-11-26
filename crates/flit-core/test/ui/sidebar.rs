@@ -181,6 +181,37 @@ fn menu(app: &mut App) -> ShellMenu {
     app.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m) } else { None }).expect("menu shown")
 }
 
+#[test]
+fn quick_access_row_stays_highlighted_while_its_context_menu_is_open() {
+    let mut app = app_with_places();
+    app.animations = false;
+    let r = app.nav.sidebar.rects[0];
+    click(r, &mut app, MouseButton::Right);
+    let m = menu(&mut app);
+    let now = Instant::now();
+    app.on_event(&Event::ShowMenu { items: m.menu, x: m.x, y: m.y, launches: Vec::new(), kind: m.kind, shell: Vec::new(), pending: true }, now);
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, now);
+    app.on_event(&Event::MouseMove { x: m.x + 30.0, y: m.y + 30.0 }, now);
+    let theme = *app.look.palette.area(crate::theme::Area::Sidebar);
+    let row_highlight = |g: &Gfx<Mono>, r: Rect| g.dl.instances.iter().any(|i| i.rect == [r.x, r.y + 1.0, r.w, r.h - 2.0] && i.color == theme.accent_fill.0);
+    g.begin(theme.bg);
+    app.draw_sidebar(&mut g, &theme);
+    assert!(row_highlight(&g, r));
+
+    app.set_pinned(vec![loc(r"C:\b"), loc(r"C:\a")]);
+    let moved = app.nav.sidebar.rects[1];
+    g.begin(theme.bg);
+    app.draw_sidebar(&mut g, &theme);
+    assert!(!row_highlight(&g, r));
+    assert!(row_highlight(&g, moved));
+
+    app.on_event(&Event::Key { key: Key::Escape, mods: Default::default(), pressed: true }, now);
+    g.begin(theme.bg);
+    app.draw_sidebar(&mut g, &theme);
+    assert!(!row_highlight(&g, moved));
+}
+
 fn labels(items: &[MenuItem]) -> Vec<String> {
     items
         .iter()

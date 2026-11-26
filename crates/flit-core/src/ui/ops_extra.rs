@@ -126,8 +126,7 @@ impl App {
 impl App {
     pub(super) fn grant_rect(&self) -> Option<Rect> {
         let t = self.tab();
-        let v = t.view.as_ref()?;
-        let denied = v.total_rows() == 0 && v.snap().error.as_ref().is_some_and(|e| e.kind == FsErrorKind::AccessDenied);
+        let denied = t.listing_error()?.kind == FsErrorKind::AccessDenied;
         let Location::Local(dir) = &t.view_loc else { return None };
         let native = match dir.kind() {
             PathKind::Unix => self.caps.unix_paths,

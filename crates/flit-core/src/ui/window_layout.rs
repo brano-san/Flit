@@ -202,6 +202,9 @@ impl App {
         if self.eject_rect().is_some_and(|r| r.contains(x, y)) {
             return Hit::Eject;
         }
+        if self.listing_refresh_rect().is_some_and(|r| r.contains(x, y)) {
+            return Hit::ListingRefresh;
+        }
         if self.network_settings_rect().is_some_and(|r| r.contains(x, y)) {
             return Hit::NetworkSettings;
         }

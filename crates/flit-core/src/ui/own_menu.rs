@@ -3,7 +3,7 @@ use super::edit::EditAction;
 use super::menu::{Cmd, MenuItem};
 use super::popup::{MenuOutcome, MenuView};
 use super::widgets::Ghost;
-use super::{App, Effect, ShellMenu};
+use super::{App, Effect, Hit, MenuOwner, ShellMenu};
 use crate::input::{Event, MouseButton};
 use crate::provider::Launch;
 use crate::render::Rect;
@@ -376,7 +376,7 @@ impl App {
 
     pub(super) fn button_menu(&mut self, owner: super::Hit, x: f32, y: f32, menu: Vec<MenuItem>) {
         self.flit_menu(x, y, menu);
-        (self.menu_owner, self.menu_panel) = (Some(owner), self.tabs.panels.here);
+        (self.menu_owner, self.menu_panel) = (Some(MenuOwner::Button(owner)), self.tabs.panels.here);
     }
 
     #[cfg(test)]
@@ -395,8 +395,15 @@ impl App {
         }
     }
 
-    pub(super) fn menu_open_from(&self, owner: super::Hit) -> bool {
-        self.own_menu.is_some() && self.menu_owner == Some(owner) && self.menu_panel == self.tabs.panels.here
+    pub(super) fn menu_open_from(&self, owner: Hit) -> bool {
+        if self.own_menu.is_none() || self.menu_panel != self.tabs.panels.here {
+            return false;
+        }
+        match (&self.menu_owner, owner) {
+            (Some(MenuOwner::Button(button)), hit) => *button == hit,
+            (Some(MenuOwner::SidebarItem { section, loc, label }), Hit::Side(i) | Hit::SidePin(i)) => self.nav.sidebar.items.get(i).is_some_and(|item| item.section == *section && item.loc == *loc && item.label == *label),
+            _ => false,
+        }
     }
 
     fn owner_under(&self, x: f32, y: f32) -> bool {

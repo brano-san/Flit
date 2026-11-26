@@ -5,7 +5,7 @@ use super::menu::{Cmd, Mark};
 use super::palette::{Palette, Pick};
 use super::panels::PanelsSession;
 use super::sidebar::KnownFolder;
-use super::{App, Effect, Hit, LayoutCmd, Route, SettingsCmd, WindowSession};
+use super::{App, Effect, Hit, LayoutCmd, MenuOwner, Route, SettingsCmd, WindowSession};
 use crate::i18n::S;
 use crate::location::Location;
 use crate::open::OpenTarget;
@@ -241,7 +241,7 @@ impl App {
         let r = self.layout.more;
         let right = self.layout.title.right().max(r.right());
         self.panel_menu_at(r.x, r.bottom(), Some(right.min(self.panel_right())));
-        (self.menu_owner, self.menu_panel) = (Some(Hit::PanelMenu), self.tabs.panels.here);
+        (self.menu_owner, self.menu_panel) = (Some(MenuOwner::Button(Hit::PanelMenu)), self.tabs.panels.here);
     }
 
     fn panel_right(&self) -> f32 {

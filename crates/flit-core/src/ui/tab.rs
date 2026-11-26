@@ -7,7 +7,7 @@ use super::layouts::{LayoutMode, Sizes};
 use super::{Effect, LoadStats};
 use crate::input::Mods;
 use crate::library;
-use crate::listing::{attr, DirChange, DirSnapshot, Listing};
+use crate::listing::{attr, DirChange, DirSnapshot, FsError, FsErrorKind, Listing, NOT_RESPONDING_CODE, NO_NETWORK_BROWSER_CODE};
 use crate::location::{Location, ProviderId};
 use crate::name;
 use crate::nav::History;
@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const TYPE_AHEAD_RESET: Duration = Duration::from_millis(1000);
+const LIST_RETRY_DELAYS: [Duration; 2] = [Duration::from_millis(250), Duration::from_millis(750)];
 pub(super) const SUBFOLDERS_MARK: &str = " [...]";
 
 pub(super) struct Loading {
@@ -31,6 +32,8 @@ pub(super) struct Loading {
     scanned: u32,
     pub note: Option<String>,
     pub properties: bool,
+    retries: usize,
+    pub retry_at: Option<Instant>,
 }
 
 pub(super) type UndoBar = (usize, Instant);
@@ -197,7 +200,7 @@ impl Tab {
             fx.push(Effect::Provider { provider: old, req: ProviderRequest::Watch { tab: self.id, gen, path: None } });
         }
         self.watching = Some(provider.clone());
-        self.loading = Some(Loading { gen, since: now, select, restore, scanned: 0, note: None, properties: false });
+        self.loading = Some(Loading { gen, since: now, select, restore, scanned: 0, note: None, properties: false, retries: 0, retry_at: None });
         self.pending_diffs.clear();
         self.error = None;
         self.live_off = None;
@@ -213,11 +216,49 @@ impl Tab {
             let snap = cached.map_or(empty, |snap| DirSnapshot { gen, ..(**snap).clone() });
             return self.slot.publish(Arc::new(snap));
         }
+        self.request_listing(case, fx);
+    }
+
+    fn request_listing(&self, case: CaseMode, fx: &mut Vec<Effect>) {
+        let loc = self.location();
+        let (provider, path, gen) = (loc.provider(), loc.path().clone(), self.gen);
         if self.mode == LayoutMode::Adaptive {
             self.slot.ask_kind(gen);
         }
         fx.push(Effect::Provider { provider: provider.clone(), req: ProviderRequest::Watch { tab: self.id, gen, path: Some(path.clone()) } });
         fx.push(Effect::Provider { provider, req: ProviderRequest::List { tab: self.id, gen, path, view: self.view_spec, case, out: self.slot.clone(), cancel: self.cancel.clone() } });
+    }
+
+    pub(super) fn defer_unavailable(&mut self, snap: &DirSnapshot, now: Instant) -> Option<Instant> {
+        if snap.gen != self.gen || !snap.done || !snap.listing.is_empty() || !snap.error.as_ref().is_some_and(|e| e.kind == FsErrorKind::Unavailable && !matches!(e.code, NO_NETWORK_BROWSER_CODE | NOT_RESPONDING_CODE)) {
+            return None;
+        }
+        let loading = self.loading.as_mut()?;
+        let delay = *LIST_RETRY_DELAYS.get(loading.retries)?;
+        let at = *loading.retry_at.get_or_insert(now + delay);
+        Some(at)
+    }
+
+    pub(super) fn retry_listing(&mut self, gen: u64, case: CaseMode, fx: &mut Vec<Effect>) {
+        let Some(loading) = self.loading.as_mut() else { return };
+        loading.retry_at = None;
+        loading.retries += 1;
+        loading.gen = gen;
+        loading.scanned = 0;
+        loading.note = None;
+        self.gen = gen;
+        self.cancel.set(gen);
+        self.pending_diffs.clear();
+        self.live_off = None;
+        if self.network_listing {
+            self.list_network(case, fx);
+        } else {
+            self.request_listing(case, fx);
+        }
+    }
+
+    pub(super) fn listing_error(&self) -> Option<&FsError> {
+        self.view.as_ref().filter(|v| v.snap().gen == self.gen && v.total_rows() == 0)?.snap().error.as_ref()
     }
 
     pub(super) fn list_network(&mut self, case: CaseMode, fx: &mut Vec<Effect>) {

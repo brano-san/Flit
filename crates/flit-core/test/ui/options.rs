@@ -46,7 +46,7 @@ fn f10_opens_the_main_menu_with_its_commands_and_flit_window_items() {
     let l = labels(&m.menu);
     assert_eq!(l[..8], [title("goto.open"), title("palette.show"), "-".into(), format!("({})", title("layout.load")), title("layout.save"), title("options.open"), title("app.check_updates"), "-".into()]);
     assert_eq!(l[8..], [S::MenuNewWindow.t(), S::MenuMiniWindow.t(), S::MenuFullScreen.t()]);
-    assert!(a.menu_open_from(Hit::Menu) || a.menu_owner == Some(Hit::Menu));
+    assert!(matches!(a.menu_owner, Some(MenuOwner::Button(Hit::Menu))));
     a.set_layouts(vec!["work".into()]);
     a.open_main_menu();
     assert_eq!(labels(&shell_menu(&mut a).menu)[3], title("layout.load"), "Load Layout is enabled once a layout exists");

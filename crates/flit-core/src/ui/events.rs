@@ -168,6 +168,7 @@ impl App {
             }
             Event::Timer => {
                 self.timer_at = None;
+                self.listing_retry_timer(now);
                 self.ops_timer(now);
                 self.hover_timer(now);
                 self.history_timer(now);
@@ -522,6 +523,7 @@ impl App {
             Hit::TabActions => self.open_tab_search(),
             Hit::Eject => self.eject(),
             Hit::GrantAccess => self.grant_access(),
+            Hit::ListingRefresh if self.listing_refresh_rect().is_some() => self.refresh(now),
             Hit::NetworkSettings => self.open_network_settings(),
             Hit::Settings(s) => self.settings_click(s, x, y),
             _ => {}

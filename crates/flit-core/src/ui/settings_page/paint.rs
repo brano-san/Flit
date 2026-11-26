@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::MenuOwner;
 
 impl App {
     pub(super) fn setting_help(&self, line: &Line) -> std::borrow::Cow<'static, str> {
@@ -45,7 +46,7 @@ impl App {
     pub(in crate::ui) fn draw_settings<B: TextBackend>(&mut self, g: &mut Gfx<B>, t: &Theme) {
         let Some(mut ui) = self.settings.screen.take() else { return };
         let open = match self.menu_owner {
-            Some(Hit::Settings(SHit::Control(k))) if self.own_menu_open() => Some(k),
+            Some(MenuOwner::Button(Hit::Settings(SHit::Control(k)))) if self.own_menu_open() => Some(k),
             _ => None,
         };
         if ui.turn.aim(open, self.animations, self.last_frame.unwrap_or_else(Instant::now)) {

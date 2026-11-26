@@ -1,13 +1,14 @@
 use super::*;
+use crate::i18n::S;
 use crate::input::{CursorIcon, Event};
-use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, Listing, Meta};
+use crate::listing::{attr, ChangeKind, DirChange, DirSnapshot, FsError, FsErrorKind, Listing, Meta};
 use crate::location::Location;
 use crate::path::FsPath;
 use crate::provider::{FileOp, ProviderEvent, ProviderRequest, TabId};
 use crate::sort::{self, CaseMode, SortKeys};
 use crate::text::tests::Mono;
 use crate::text::Gfx;
-use crate::ui::{Drag, Drive, Effect, KnownFolder, Persisted, Places};
+use crate::ui::{Drag, Drive, Effect, KnownFolder, LayoutMode, Persisted, Places};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -46,6 +47,98 @@ fn deliver(app: &mut App, items: &[(&str, u32)]) {
 fn files(app: &mut App, names: &[&str]) {
     let items: Vec<(&str, u32)> = names.iter().map(|&n| (n, 0)).collect();
     deliver(app, &items);
+}
+
+fn listing_error(app: &mut App, error: FsError) {
+    let t = app.tab();
+    let snap = DirSnapshot { gen: t.gen, path: t.location().path().clone(), listing: Listing::default(), keys: SortKeys::new(CaseMode::Insensitive), order: Vec::new(), view: t.view_spec, done: true, error: Some(error), elapsed: Duration::from_millis(1) };
+    t.slot.publish(Arc::new(snap));
+    app.poll();
+}
+
+#[test]
+fn unavailable_listing_retries_twice_before_showing_a_clickable_refresh_button() {
+    let mut app = app_at(r"C:\x");
+    let loc = app.tab().location().clone();
+    let id = app.tab().id;
+    let unavailable = FsError { kind: FsErrorKind::Unavailable, code: 0 };
+    assert_eq!(listed(&mut app), [(id, loc.clone())]);
+    for _ in 0..2 {
+        let gen = app.tab().gen;
+        listing_error(&mut app, unavailable.clone());
+        assert!(app.tab().view.as_ref().is_none_or(|v| v.snap().error.is_none()));
+        app.on_event(&Event::Timer, t0());
+        assert!(listed(&mut app).is_empty());
+        app.on_event(&Event::Timer, t0() + Duration::from_secs(2));
+        assert_eq!(listed(&mut app), [(id, loc.clone())]);
+        assert_ne!(app.tab().gen, gen);
+    }
+    listing_error(&mut app, unavailable);
+    assert!(app.tab().view.as_ref().unwrap().snap().error.is_some());
+    app.on_event(&Event::Timer, t0() + Duration::from_secs(2));
+    assert!(listed(&mut app).is_empty());
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let a11y = app.accessibility();
+    let refresh = a11y.nodes.iter().find(|n| n.role == crate::a11y::Role::Button && n.name == S::MenuRefresh.t()).unwrap();
+    press(&mut app, refresh.bounds, MouseButton::Left);
+    assert_eq!(listed(&mut app), [(id, loc)]);
+    files(&mut app, &["available.txt"]);
+    assert_eq!(rows(&app), ["available.txt"]);
+}
+
+#[test]
+fn listing_watchdog_timeout_shows_the_error_without_starting_another_blocked_read() {
+    let mut app = app_at(r"\\server\share");
+    assert_eq!(listed(&mut app).len(), 1);
+    listing_error(&mut app, FsError::not_responding());
+    assert!(app.tab().view.as_ref().is_some_and(|v| v.snap().error.is_some()));
+    app.on_event(&Event::Timer, t0() + Duration::from_secs(2));
+    assert!(listed(&mut app).is_empty());
+}
+
+#[test]
+fn listing_retry_requests_git_status_for_the_new_generation() {
+    let mut app = app_at(r"C:\repository");
+    app.prefs.git_integration = true;
+    app.drain_effects().for_each(drop);
+    listing_error(&mut app, FsError { kind: FsErrorKind::Unavailable, code: 0 });
+    app.on_event(&Event::Timer, t0() + Duration::from_secs(2));
+    let (id, gen) = (app.tab().id, app.tab().gen);
+    assert!(app.drain_effects().any(|effect| matches!(effect, Effect::Git(crate::git::GitRequest::Status { tab, gen: request_gen, .. }) if tab == id && gen == request_gen)));
+}
+
+#[test]
+fn navigating_away_cancels_a_pending_listing_retry() {
+    let mut app = app_at(r"C:\unavailable");
+    assert_eq!(listed(&mut app).len(), 1);
+    listing_error(&mut app, FsError { kind: FsErrorKind::Unavailable, code: 0 });
+    let dest = loc(r"C:\available");
+    app.navigate(dest.clone(), t0());
+    assert_eq!(listed(&mut app), [(app.tab().id, dest)]);
+    files(&mut app, &["available.txt"]);
+    app.on_event(&Event::Timer, t0() + Duration::from_secs(2));
+    assert!(listed(&mut app).is_empty());
+    assert_eq!(rows(&app), ["available.txt"]);
+}
+
+#[test]
+fn windows_dot_names_draw_normally_and_hidden_names_stay_dimmed() {
+    let mut app = app_at(r"C:\x");
+    app.set_caps(crate::caps::Caps { unix_paths: false });
+    app.prefs.show_dotfiles = true;
+    app.set_layout(LayoutMode::Details);
+    app.tab_mut().view_spec.show_hidden = true;
+    app.tab_mut().view_spec.hide_dotfiles = false;
+    deliver(&mut app, &[(".settings", 0), ("visible", 0), ("hidden", attr::HIDDEN)]);
+    let mut g = Gfx::new(Mono, 1024);
+    app.frame(&mut g, t0());
+    let theme = app.look.palette.area(crate::theme::Area::Files);
+    for (name, expected) in [(".settings", theme.name_ink(0)), ("visible", theme.name_ink(0)), ("hidden", theme.text_dim)] {
+        let row = rows(&app).iter().position(|n| n == name).unwrap();
+        let rect = app.row_rect(row).unwrap();
+        assert!(g.dl.instances.iter().any(|i| i.kind == crate::render::kind::GLYPH && rect.contains(i.rect[0], i.rect[1]) && i.rect[0] < app.layout.cols[0].right() && i.color == expected.0), "{name}");
+    }
 }
 
 fn key(app: &mut App, k: Key, mods: Mods) {

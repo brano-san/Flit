@@ -1420,6 +1420,18 @@ impl App {
         self.dirty = true;
     }
 
+    pub(super) fn listing_refresh_rect(&self) -> Option<Rect> {
+        self.tab().listing_error()?;
+        if self.discovery_warning().is_some() {
+            return None;
+        }
+        let list = self.layout.list;
+        let (w, h) = (self.s(120.0).min(list.w - self.s(16.0)), self.s(30.0));
+        let y = (list.y + self.cs(144.0)).min(list.bottom() - h);
+        let y = self.grant_rect().or_else(|| self.eject_rect()).map_or(y, |r| y.max(r.bottom() + self.s(8.0)));
+        (w > 0.0 && y >= list.y && y + h <= list.bottom()).then(|| Rect::new((list.x + (list.w - w) / 2.0).round(), y, w, h))
+    }
+
     pub(super) fn draw_unavailable<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, list: Rect, e: &FsError) {
         let title = match e.kind {
             _ if e.code == crate::archive::PASSWORD_CODE => S::ErrorsFsTitleEncrypted,
@@ -1431,13 +1443,18 @@ impl App {
             FsErrorKind::NoMedia => S::ErrorsFsTitleNoMedia,
         }
         .t();
-        let detail = crate::tr!(if e.kind == FsErrorKind::NoMedia { S::ErrorsFsInsertMedia } else { S::ErrorsFsRetry }, error = crate::i18n::localize(&e.to_string()));
+        let error = e.to_string();
+        let error = crate::i18n::localize(&error);
+        let detail = if e.kind == FsErrorKind::NoMedia { crate::tr!(S::ErrorsFsInsertMedia, error = error) } else { error.into_owned() };
         let (big, small) = (self.content_font(16.0), self.content_font(13.0));
+        let refresh = self.listing_refresh_rect();
         let y = list.y + self.cs(48.0);
+        let y = refresh.map_or(y, |r| y.min(r.y - self.cs(96.0)));
         centered(g, Rect::new(list.x, y, list.w, self.cs(32.0)), G_WARNING, self.content_icons(24.0), th.error);
         for (k, (text, font, color)) in [(title, big, th.text), (detail.as_str(), small, th.text_dim)].into_iter().enumerate() {
             let y = y + self.cs(56.0 + 24.0 * k as f32);
             if k == 1 && e.code == crate::listing::NO_NETWORK_BROWSER_CODE {
+                let y = refresh.map_or(y, |r| r.bottom() + self.cs(20.0));
                 self.draw_network_notice(g, Rect { y, ..list }, text, font, color);
             } else {
                 let w = g.measure(text, font).min(list.w);
@@ -1446,6 +1463,12 @@ impl App {
         }
         self.draw_eject(g, th);
         self.draw_grant(g, th);
+        if let Some(r) = refresh {
+            let fill = if self.pressed == Hit::ListingRefresh || self.hover == Hit::ListingRefresh { th.button_pressed } else { th.button_hover };
+            g.dl.round_rect(r, fill, self.s(4.0));
+            g.dl.outline(r, th.input_border, self.s(4.0), 1.0);
+            centered(g, r, S::MenuRefresh.t(), self.ui_font(13.0), th.text);
+        }
     }
 
     pub(super) fn draw_checkbox<B: TextBackend>(&self, g: &mut Gfx<B>, th: &Theme, r: Rect, on: bool) {
