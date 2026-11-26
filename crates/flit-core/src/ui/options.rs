@@ -77,11 +77,19 @@ pub enum Thumbs {
     Never,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum CopyPathQuotes {
+    System,
+    Always,
+    Never,
+}
+
 pub struct Opts {
     pub spacing: u8,
     pub alternating: bool,
     pub inactive_opacity: u8,
     pub compact_paths: bool,
+    pub(super) copy_path_quotes: CopyPathQuotes,
     pub breadcrumbs: bool,
     pub recents: Recents,
     pub thumbs: Thumbs,
@@ -120,6 +128,7 @@ impl Default for Opts {
             alternating: true,
             inactive_opacity: OPACITY_DEFAULT,
             compact_paths: true,
+            copy_path_quotes: CopyPathQuotes::System,
             breadcrumbs: true,
             recents: Recents::Persistent,
             thumbs: Thumbs::Local,

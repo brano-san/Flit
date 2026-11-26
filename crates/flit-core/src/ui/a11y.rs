@@ -258,6 +258,7 @@ impl App {
         }
 
         self.picker_accessibility(&mut t, &mut focus);
+        focus = self.dropdown_a11y(&mut t, &mut targets).or(focus);
         t.focus = if self.active { focus } else { None };
         self.a11y_targets = targets;
         t
@@ -273,6 +274,7 @@ impl App {
 
     pub(super) fn a11y_invoke(&mut self, id: u64, now: Instant) {
         match self.a11y_hit(id) {
+            Some(Hit::DropdownItem(k)) => self.dropdown_a11y_item(k, true, now),
             Some(Hit::Form(k)) => self.form_a11y_invoke(k),
             Some(Hit::FormFlag(k, j)) => self.form_a11y_flag(k, j, true),
             Some(h) => self.activate(h, now),
@@ -284,6 +286,7 @@ impl App {
         let Some(h) = self.a11y_hit(id) else { return };
         self.dirty = true;
         match h {
+            Hit::DropdownItem(k) => self.dropdown_a11y_item(k, false, self.clock()),
             Hit::Settings(sh) => self.settings_a11y_focus(sh),
             Hit::Form(k) => self.form_a11y_focus(k),
             Hit::FormFlag(k, j) => self.form_a11y_flag(k, j, false),

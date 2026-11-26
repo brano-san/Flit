@@ -626,6 +626,9 @@ enum Hit {
     Eject,
     GrantAccess,
     ListingRefresh,
+    DropdownItem(usize),
+    PickerFilter,
+    PickerChoice(usize),
     Settings(settings_page::SHit),
     Menu,
     QuickToggle,
@@ -651,7 +654,6 @@ enum Drag {
     Network,
     Tab { origin: usize, x: f32, y: f32, moved: bool, torn: bool },
     PanelSep { sep: usize, start: f32, first: f32 },
-    Slide(usize),
     OptionsThumb { grab: f32 },
     MenuMove { from: usize, to: Option<usize> },
 }

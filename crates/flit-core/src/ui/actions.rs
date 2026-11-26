@@ -1,4 +1,5 @@
 use super::home::Widget;
+use super::options::CopyPathQuotes;
 use super::ops::Insert;
 use super::preview_pane::PaneTool;
 use super::sidebar::KnownFolder;
@@ -914,9 +915,9 @@ impl App {
     }
 
     pub(super) fn as_path_quote(&self) -> Quote {
-        match self.caps.unix_paths {
-            true => Quote::Never,
-            false => Quote::Always,
+        match (self.settings.opts.copy_path_quotes, self.caps.unix_paths) {
+            (CopyPathQuotes::Never, _) | (CopyPathQuotes::System, true) => Quote::Never,
+            (CopyPathQuotes::Always, _) | (CopyPathQuotes::System, false) => Quote::Always,
         }
     }
 

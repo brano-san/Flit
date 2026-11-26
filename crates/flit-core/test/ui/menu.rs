@@ -3,7 +3,7 @@ use crate::input::{Event, Key, Mods, MouseButton};
 use crate::listing::{attr, DirSnapshot, Listing, Meta};
 use crate::provider::ProviderRequest;
 use crate::sort::{self, CaseMode, SortKeys, ViewSpec};
-use crate::ui::{Effect, Persisted, ShellMenu};
+use crate::ui::{settings, Effect, Persisted, ShellMenu};
 use crate::FsPath;
 use std::sync::Arc;
 use std::time::Duration;
@@ -125,6 +125,32 @@ fn run(app: &mut App, menu: &ShellMenu, label: &str) {
     let all = commands(&menu.menu);
     let k = all.iter().position(|c| label_of(c) == label).unwrap_or_else(|| panic!("{label} not in {all:?}"));
     app.on_event(&Event::MenuCommand(k), Instant::now());
+}
+
+#[test]
+fn copy_path_quote_setting_survives_reload_and_controls_menu_and_shortcut() {
+    for (unix_paths, mode, expected) in [(false, "never", r"C:\x\a b.txt"), (true, "always", r#""C:\x\a b.txt""#)] {
+        let app = || {
+            let mut app = app_with(&[("a b.txt", false)]);
+            app.set_caps(crate::caps::Caps { unix_paths });
+            app
+        };
+        let mut configured = app();
+        let settings = settings::parse(&format!(r#"{{"files.copy_path_quotes":"{mode}"}}"#));
+        configured.apply_doc(&settings);
+
+        let mut reloaded = app();
+        reloaded.apply_doc(&settings::parse(&configured.export_text()));
+        let menu = right_click(&mut reloaded, Some(0), false);
+        let label = if unix_paths { S::MenuCopyPath } else { S::MenuCopyAsPath };
+        run(&mut reloaded, &menu, label.t());
+        let clipboard = |app: &mut App| app.drain_effects().find_map(|e| if let Effect::SetClipboard(text) = e { Some(text) } else { None });
+        assert_eq!(clipboard(&mut reloaded).as_deref(), Some(expected), "{mode} in the context menu");
+
+        let mods = Mods { ctrl: true, shift: true, ..Mods::default() };
+        reloaded.on_event(&Event::Key { key: Key::Char('C'), mods, pressed: true }, Instant::now());
+        assert_eq!(clipboard(&mut reloaded).as_deref(), Some(expected), "{mode} via shortcut");
+    }
 }
 
 fn tidy(items: &[MenuItem]) -> bool {

@@ -61,6 +61,13 @@ fn key(app: &mut App, key: Key, mods: Mods) {
     app.on_event(&Event::Key { key, mods, pressed: true }, t0());
 }
 
+fn choose_next(app: &mut App) {
+    key(app, Key::Space, NO);
+    crate::ui::harness::frame(app);
+    key(app, Key::Down, NO);
+    key(app, Key::Enter, NO);
+}
+
 fn typed(app: &mut App, s: &str) {
     s.chars().for_each(|c| app.on_event(&Event::Char(c), t0()));
 }
@@ -119,7 +126,7 @@ fn the_compress_dialog_starts_a_background_job_and_remembers_its_choices_without
     assert_eq!(app.asking(), Some("compress"));
     assert_eq!(form(&app).text(C_NAME), "docs.zip");
     key(&mut app, Key::Down, NO);
-    key(&mut app, Key::Right, NO);
+    choose_next(&mut app);
     assert_eq!(form(&app).text(C_NAME), "docs.7z");
     assert_eq!(form(&app).choice(C_LEVEL), Format::SevenZ.default_level() as usize);
     for _ in C_FORMAT..C_PASSWORD {
@@ -196,7 +203,9 @@ fn extraction_keys_dialog_history_and_opening_the_folder_when_done() {
     app.extract_dialog();
     assert_eq!(form(&app).text(E_DEST), r"C:\ext");
     key(&mut app, Key::Down, NO);
-    key(&mut app, Key::Right, NO);
+    choose_next(&mut app);
+    assert_eq!(form(&app).text(E_DEST), r"C:\ext\a");
+    key(&mut app, Key::Up, NO);
     app.dialogs.form.as_mut().unwrap().set_text(E_DEST, r"D:\out");
     key(&mut app, Key::Enter, NO);
     let (_, op) = only(&mut app);
@@ -623,6 +632,11 @@ fn form_controls_answer_the_mouse() {
     assert!(form(&app).checked(C_NAMES) != app.archive.prefs.compression.encrypt_names);
     let format = form(&app).rows[C_FORMAT];
     click(&mut app, (format.right() - 4.0, format.y + format.h / 2.0));
+    assert_eq!(form(&app).choice(C_FORMAT), 0);
+    crate::ui::harness::frame(&mut app);
+    let tree = app.accessibility();
+    let choice = tree.nodes.iter().find(|n| n.role == crate::a11y::Role::ListItem && n.name == Format::SevenZ.label()).unwrap();
+    click(&mut app, centre(choice.bounds));
     assert_eq!(form(&app).choice(C_FORMAT), 1);
     let cancel = centre(form(&app).button_rects[1]);
     click(&mut app, cancel);

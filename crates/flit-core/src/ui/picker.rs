@@ -1,8 +1,9 @@
 use super::confirm::Confirmed;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
+use super::menu::Cmd;
 use super::widgets::Paint;
-use super::{App, Effect, Focus, OpenTarget, Route};
+use super::{App, Effect, Focus, Hit, OpenTarget, Route};
 use crate::i18n::S;
 use crate::input::{Event, Key, MouseButton, Preedit};
 use crate::pick::{self, Filter, Mode, Request};
@@ -38,6 +39,14 @@ impl Control {
     }
 }
 
+fn option_label((id, label): &(String, String)) -> &str {
+    if label.is_empty() {
+        id
+    } else {
+        label
+    }
+}
+
 pub(super) struct Picker {
     request: Request,
     name: Field,
@@ -60,10 +69,10 @@ impl Picker {
         match control {
             Control::Choice(i) => {
                 let choice = &self.request.choices[i];
-                let (id, value) = &choice.values[choice.selected];
-                if value.is_empty() {
-                    format!("{}  {}", if id == "true" { "✓" } else { "□" }, choice.label).into()
+                if let Some(on) = self.checked(i) {
+                    format!("{}  {}", if on { "✓" } else { "□" }, choice.label).into()
                 } else {
+                    let value = option_label(&choice.values[choice.selected]);
                     format!("{} · {value}", choice.label).into()
                 }
             }
@@ -71,6 +80,20 @@ impl Picker {
             Control::Accept => self.request.accept.as_deref().unwrap_or_else(|| if self.request.saving() { S::PickSave.t() } else { S::PickOpen.t() }).into(),
             Control::Cancel => S::PickCancel.t().into(),
             Control::Name => S::PickName.t().into(),
+        }
+    }
+
+    fn checked(&self, i: usize) -> Option<bool> {
+        let choice = &self.request.choices[i];
+        let [(off, off_label), (on, on_label)] = choice.values.as_slice() else { return None };
+        (off == "false" && on == "true" && off_label.is_empty() && on_label.is_empty()).then_some(choice.selected == 1)
+    }
+
+    fn dropdown(&self, control: Control) -> Option<Hit> {
+        match control {
+            Control::Filter => Some(Hit::PickerFilter),
+            Control::Choice(i) if self.checked(i).is_none() => Some(Hit::PickerChoice(i)),
+            _ => None,
         }
     }
 
@@ -88,6 +111,7 @@ impl Picker {
 
 impl App {
     pub fn start_picker(&mut self, mut request: Request) {
+        self.close_dropdown();
         request.filter = request.filter.min(request.filters.len().saturating_sub(1));
         request.choices.retain(|c| !c.values.is_empty());
         for choice in &mut request.choices {
@@ -165,19 +189,15 @@ impl App {
     }
 
     fn picker_activate(&mut self, control: Control, now: Instant) {
+        if let Some(owner) = self.dialogs.picker.as_ref().and_then(|picker| picker.dropdown(control)) {
+            self.open_picker_dropdown(control, owner);
+            return;
+        }
         match control {
-            Control::Name => {}
-            Control::Filter => {
-                let Some(picker) = &mut self.dialogs.picker else { return };
-                picker.request.filter = (picker.request.filter + 1) % picker.filters.len();
-                for tab in 0..self.tabs.items.len() {
-                    self.apply_pick_filter(tab);
-                }
-                self.reveal_focus(false);
-            }
+            Control::Name | Control::Filter => {}
             Control::Choice(i) => {
                 let Some(choice) = self.dialogs.picker.as_mut().and_then(|p| p.request.choices.get_mut(i)) else { return };
-                choice.selected = (choice.selected + 1) % choice.values.len();
+                choice.selected = usize::from(choice.selected == 0);
             }
             Control::Cancel => self.close_window(now),
             Control::Accept => {
@@ -197,6 +217,39 @@ impl App {
                     self.effects.push(picker.picked(paths));
                 }
             }
+        }
+        self.dirty = true;
+    }
+
+    fn open_picker_dropdown(&mut self, control: Control, owner: Hit) {
+        let Some((_, anchor)) = self.picker_rects().into_iter().find(|(c, r)| *c == control && r.w > 0.0 && r.h > 0.0) else { return };
+        let Some(picker) = &mut self.dialogs.picker else { return };
+        picker.pressed = None;
+        let entries = match control {
+            Control::Filter => picker.filters.iter().enumerate().map(|(k, filter)| (filter.label.clone(), Cmd::PickerOption(None, k), k == picker.request.filter)).collect(),
+            Control::Choice(i) => {
+                let choice = &picker.request.choices[i];
+                choice.values.iter().enumerate().map(|(k, option)| (option_label(option).to_owned(), Cmd::PickerOption(Some(i), k), k == choice.selected)).collect()
+            }
+            _ => return,
+        };
+        self.dropdown_menu(owner, anchor, entries);
+    }
+
+    pub(super) fn choose_picker_option(&mut self, choice: Option<usize>, value: usize) {
+        let Some(picker) = &mut self.dialogs.picker else { return };
+        if let Some(i) = choice {
+            let Some(choice) = picker.request.choices.get_mut(i).filter(|choice| value < choice.values.len()) else { return };
+            choice.selected = value;
+        } else {
+            if value >= picker.filters.len() || value == picker.request.filter {
+                return;
+            }
+            picker.request.filter = value;
+            for tab in 0..self.tabs.items.len() {
+                self.apply_pick_filter(tab);
+            }
+            self.reveal_focus(false);
         }
         self.dirty = true;
     }
@@ -271,18 +324,26 @@ impl App {
         let font = self.ui_font(12.0);
         let scale = self.scale;
         let enabled = !self.picker_paths(1).is_empty();
-        let Some(picker) = &mut self.dialogs.picker else { return };
         for (control, rect) in rects {
-            let focused = picker.focused == Some(control);
             if control == Control::Name {
+                let Some(picker) = &mut self.dialogs.picker else { return };
                 g.dl.round_rect(rect, t.input_bg, 3.0 * scale);
-                picker.name.draw(g, t, Rect::new(rect.x + 6.0 * scale, rect.y, (rect.w - 12.0 * scale).max(0.0), rect.h), font, focused, S::PickName.t(), scale, picker.preedit.as_ref());
+                let inner = Rect::new(rect.x + 6.0 * scale, rect.y, (rect.w - 12.0 * scale).max(0.0), rect.h);
+                picker.name.draw(g, t, inner, font, picker.focused == Some(control), S::PickName.t(), scale, picker.preedit.as_ref());
                 continue;
             }
+            let Some(picker) = &self.dialogs.picker else { return };
+            let focused = picker.focused == Some(control);
             let label = picker.label(control);
-            let hot = ((control == Control::Accept && enabled) || focused).then_some(t.accent);
             let from = g.dl.instances.len();
-            Paint::new(g, t, scale).button(rect, &label, font, hot);
+            let mut paint = Paint::new(g, t, scale);
+            if let Some(owner) = picker.dropdown(control) {
+                let open = self.menu_open_from(owner);
+                paint.picker(rect, &label, font, if open { 270.0 } else { 90.0 }, open, focused);
+            } else {
+                let hot = ((control == Control::Accept && enabled) || focused).then_some(t.accent);
+                paint.button(rect, &label, font, hot);
+            }
             g.dl.confine(from, rect);
         }
     }
@@ -291,14 +352,23 @@ impl App {
         use crate::a11y::Role;
         let Some(picker) = &self.dialogs.picker else { return };
         for (control, rect) in self.picker_rects() {
-            let role = if control == Control::Name { Role::Edit } else { Role::Button };
-            let i = tree.add(0, control.id(), role, picker.label(control).into_owned(), rect);
-            if control == Control::Name {
-                tree.nodes[i].value = picker.name.text().to_owned();
-            }
-            if control == Control::Accept {
-                tree.nodes[i].enabled = !self.picker_paths(1).is_empty();
-            }
+            let (role, name, value, selected) = match control {
+                Control::Name => (Role::Edit, S::PickName.t().into(), picker.name.text(), false),
+                Control::Filter => (Role::ComboBox, S::ActionsViewFilter.t().into(), picker.filters[picker.request.filter].label.as_str(), false),
+                Control::Choice(i) => {
+                    let choice = &picker.request.choices[i];
+                    match picker.checked(i) {
+                        Some(on) => (Role::CheckBox, Cow::Borrowed(choice.label.as_str()), "", on),
+                        None => (Role::ComboBox, Cow::Borrowed(choice.label.as_str()), option_label(&choice.values[choice.selected]), false),
+                    }
+                }
+                _ => (Role::Button, picker.label(control), "", false),
+            };
+            let i = tree.add(0, control.id(), role, name.into_owned(), rect);
+            let node = &mut tree.nodes[i];
+            node.value = value.to_owned();
+            node.selected = selected;
+            node.enabled = control != Control::Accept || !self.picker_paths(1).is_empty();
             if picker.focused == Some(control) {
                 *focus = Some(i);
             }
@@ -312,9 +382,8 @@ impl App {
         let Some(picker) = &mut self.dialogs.picker else { return false };
         match *event {
             Event::A11yFocus(id) | Event::Invoke(id) => {
-                let control = picker.controls().find(|c| c.id() == id);
-                picker.focused = control;
-                let Some(control) = control else { return false };
+                let Some(control) = picker.controls().find(|c| c.id() == id) else { return false };
+                picker.focused = Some(control);
                 self.focus = Focus::List;
                 if matches!(event, Event::Invoke(_)) {
                     self.picker_activate(control, now);

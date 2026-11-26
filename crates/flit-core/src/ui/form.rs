@@ -3,6 +3,8 @@ use super::edit::EditAction;
 use super::field::{Field, FieldKey};
 use super::a11y::put;
 use super::jobs::Ask;
+use super::menu::Cmd;
+use super::widgets::Paint;
 use super::{centered, App, Effect, Hit};
 use crate::a11y::{Role, Tree};
 use crate::input::{Key, Mods, MouseButton};
@@ -44,11 +46,13 @@ const SECTION_GAP: f32 = 10.0;
 const BUTTON_GAP: f32 = 16.0;
 const FLAGS_PER_LINE: usize = 4;
 
-const G_LEFT: &str = "\u{E76B}";
-const G_RIGHT: &str = "\u{E76C}";
-
 fn form_scale(w: f32, h: f32, scale: f32) -> f32 {
     scale.min((w / 360.0).max(0.1)).min((h / 320.0).max(0.1))
+}
+
+fn field_rect(row: Rect, s: impl Fn(f32) -> f32) -> Rect {
+    let x = row.x + s(LABEL_W).min(row.w * 0.42);
+    Rect::new(x, row.y + s(3.0), row.right() - x, row.h - s(6.0))
 }
 
 pub(super) enum Control {
@@ -148,6 +152,10 @@ impl Form {
         Rect::new(row.x, top, row.w, ((y + row.h).min(v.bottom()) - top).max(0.0))
     }
 
+    fn choice_rect(&self, k: usize) -> Rect {
+        self.rows.get(k).map_or_else(Rect::default, |&row| self.visible_row(field_rect(row, |v| (v * self.document.scale).round())))
+    }
+
     pub fn new(kind: Kind, title: &str, controls: Vec<Control>, buttons: Vec<&'static str>) -> Self {
         let focus = controls.iter().position(|c| !matches!(c, Control::Value { .. } | Control::Line(_) | Control::Paragraph { .. })).unwrap_or(controls.len());
         Self { kind, title: title.to_owned(), controls, buttons, focus, note: String::new(), error: false, progress: None, rect: Rect::default(), close_rect: Rect::default(), rows: Vec::new(), button_rects: Vec::new(), document: Default::default() }
@@ -241,6 +249,7 @@ impl App {
     }
 
     pub(super) fn open_form(&mut self, form: Form) {
+        self.close_dropdown();
         self.nav.palette = None;
         if self.dialogs.form.as_ref().is_some_and(|f| matches!(f.kind, Kind::ConflictTable { .. })) {
             self.dialogs.suspended_conflicts = self.dialogs.form.take();
@@ -279,6 +288,7 @@ impl App {
             return self.form_button(k - n);
         }
         match &mut f.controls[k] {
+            Control::Choice { .. } => return self.open_form_choice(k),
             Control::Check { on, .. } => *on = !*on,
             Control::Flags { items, cur, .. } => {
                 if let Some(item) = items.get_mut(*cur) {
@@ -291,21 +301,20 @@ impl App {
         self.form_changed(k);
     }
 
-    fn turn(&mut self, k: usize, back: bool) {
-        let Some(f) = &mut self.dialogs.form else { return };
-        match f.controls.get_mut(k) {
-            Some(Control::Choice { options, sel, .. }) if !options.is_empty() => {
-                let n = options.len();
-                *sel = if back { (*sel + n - 1) % n } else { (*sel + 1) % n };
-            }
-            Some(Control::Flags { items, cur, .. }) if !items.is_empty() => {
-                let n = items.len();
-                *cur = if back { (*cur + n - 1) % n } else { (*cur + 1) % n };
-                return;
-            }
-            _ => return,
+    fn open_form_choice(&mut self, k: usize) {
+        let Some(f) = &self.dialogs.form else { return };
+        let Some(Control::Choice { options, sel, .. }) = f.controls.get(k) else { return };
+        let entries = options.iter().enumerate().map(|(i, label)| (label.clone(), Cmd::FormChoice(k, i), *sel == i)).collect();
+        self.dropdown_menu(Hit::Form(k), f.choice_rect(k), entries);
+    }
+
+    pub(super) fn choose_form_option(&mut self, k: usize, value: usize) {
+        let Some(Control::Choice { options, sel, .. }) = self.dialogs.form.as_mut().and_then(|f| f.controls.get_mut(k)) else { return };
+        if value < options.len() && *sel != value {
+            *sel = value;
+            self.form_changed(k);
+            self.dirty = true;
         }
-        self.form_changed(k);
     }
 
     pub(super) fn sync_form_buttons(&mut self) {
@@ -323,11 +332,14 @@ impl App {
         let k = f.focus;
         let n = f.controls.len();
         let plain = !m.ctrl && !m.alt;
+        let choice = matches!(f.controls.get(k), Some(Control::Choice { .. }));
         match key {
             Key::Escape => {
                 let last = f.buttons.len().saturating_sub(1);
                 self.form_button(last);
             }
+            Key::Enter | Key::Space | Key::F(4) if plain && choice => self.open_form_choice(k),
+            Key::Down if m.alt && !m.ctrl && choice => self.open_form_choice(k),
             Key::Enter => self.form_button(k.saturating_sub(n)),
             Key::Tab => f.step(m.shift),
             Key::Up if plain => f.step(true),
@@ -337,7 +349,12 @@ impl App {
                 let at = (k - n).min(b.saturating_sub(1));
                 f.focus = n + if key == Key::Left { (at + b - 1) % b } else { (at + 1) % b };
             }
-            Key::Left | Key::Right if matches!(f.controls.get(k), Some(Control::Choice { .. } | Control::Flags { .. })) => self.turn(k, key == Key::Left),
+            Key::Left | Key::Right if matches!(f.controls.get(k), Some(Control::Flags { .. })) => {
+                if let Some(Control::Flags { items, cur, .. }) = f.controls.get_mut(k).filter(|c| matches!(c, Control::Flags { items, .. } if !items.is_empty())) {
+                    let n = items.len();
+                    *cur = if key == Key::Left { (*cur + n - 1) % n } else { (*cur + 1) % n };
+                }
+            }
             Key::Space if !matches!(f.controls.get(k), Some(Control::Text { .. })) => self.form_activate(k),
             Key::Char('C') if m.ctrl && matches!(f.controls.get(k), Some(Control::Value { .. })) => self.copy_value(k),
             _ => {
@@ -442,9 +459,8 @@ impl App {
         if k >= n {
             return true;
         }
-        let row = f.visible_row(f.rows[k]);
         match &mut f.controls[k] {
-            Control::Choice { .. } => self.turn(k, x < row.x + row.w * 0.66),
+            Control::Choice { .. } => {}
             Control::Flags { spots, cur, .. } => {
                 if let Some(i) = spots.iter().position(|s| s.contains(x, y)) {
                     *cur = i;
@@ -458,7 +474,7 @@ impl App {
 
     pub(super) fn form_up(&mut self, h: Hit) -> bool {
         let (Hit::Form(k), Some(f)) = (h, &self.dialogs.form) else { return false };
-        if k >= f.controls.len() {
+        if k >= f.controls.len() || matches!(f.controls.get(k), Some(Control::Choice { .. })) {
             self.form_activate(k);
         }
         true
@@ -470,7 +486,7 @@ impl App {
         t.nodes[d].help = f.note.clone();
         let mut focus = d;
         for (k, (c, &r)) in f.controls.iter().zip(&f.rows).enumerate() {
-            let r = f.visible_row(r);
+            let r = if matches!(c, Control::Choice { .. }) { f.choice_rect(k) } else { f.visible_row(r) };
             let (role, label, value) = match c {
                 Control::Text { label, field, .. } => (Role::Edit, label, if field.secret { String::new() } else { field.text().to_owned() }),
                 Control::Choice { label, options, sel } => (Role::ComboBox, label, options.get(*sel).cloned().unwrap_or_default()),
@@ -537,7 +553,6 @@ impl App {
         self.sync_form_buttons();
         self.form_a11y_focus(k);
         match self.dialogs.form.as_ref().and_then(|f| f.controls.get(k)) {
-            Some(Control::Choice { .. }) => self.turn(k, false),
             Some(Control::Text { .. }) => {}
             _ => self.form_activate(k),
         }
@@ -556,6 +571,9 @@ impl App {
             let r = f.visible_row(*r);
             r.h > 0.0 && r.contains(x, y)
         }) {
+            if matches!(f.controls.get(k), Some(Control::Choice { .. })) && !f.choice_rect(k).contains(x, y) {
+                return Some(Hit::Dialog);
+            }
             return Some(Hit::Form(k));
         }
         if self.in_title(y) {
@@ -636,6 +654,10 @@ impl App {
         let s = |v: f32| (v * sc).round();
         let (s4, s8, s20) = (s(4.0), s(8.0), s(20.0));
         let (hover, active, pressed) = (self.hover, self.active, self.pressed);
+        let choice_open = match self.menu_owner {
+            Some(super::MenuOwner::Button(Hit::Form(k))) => self.menu_open_from(Hit::Form(k)).then_some(k),
+            _ => None,
+        };
         let mut reflow = false;
         if let Some(f) = self.dialogs.form.as_mut().filter(|f| !matches!(f.kind, Kind::ConflictTable { .. })) {
             reflow = f.properties_buttons();
@@ -672,9 +694,9 @@ impl App {
             let mut row = f.rows[k];
             row.y -= f.document.scroll.pos;
             let focused = f.focus == k;
-            let label_w = s(LABEL_W).min(row.w * 0.42);
-            let lx = row.x + label_w;
-            let area = Rect::new(lx, row.y + s(3.0), row.right() - lx, row.h - s(6.0));
+            let area = field_rect(row, s);
+            let lx = area.x;
+            let label_w = lx - row.x;
             match &mut f.controls[k] {
                 Control::Text { label, field, placeholder } => {
                     g.text(row.x, mid(row), label, font, t.text, label_w - s8);
@@ -685,13 +707,12 @@ impl App {
                 }
                 Control::Choice { label, options, sel } => {
                     g.text(row.x, mid(row), label, font, t.text, label_w - s8);
-                    g.dl.round_rect(area, if hover == Hit::Form(k) { t.button_hover } else { t.input_bg }, s4);
-                    g.dl.outline(area, if focused { t.accent } else { t.input_border }, s4, if focused { sc.round().max(1.0) } else { 1.0 });
                     let text = options.get(*sel).map_or("", String::as_str);
-                    g.text(area.x + s8, mid(area), text, font, t.text, area.w - s(60.0));
-                    let arrow = |dx: f32| Rect::new(area.right() - dx, area.y, s(24.0), area.h);
-                    centered(g, arrow(s(52.0)), G_LEFT, icons, t.text_dim);
-                    centered(g, arrow(s(28.0)), G_RIGHT, icons, t.text_dim);
+                    let open = choice_open == Some(k);
+                    Paint::new(g, t, sc).picker(area, text, font, if open { -90.0 } else { 90.0 }, open, hover == Hit::Form(k));
+                    if focused {
+                        g.dl.outline(area, t.accent, s4, sc.round().max(1.0));
+                    }
                 }
                 Control::Check { label, on } => {
                     let bx = Rect::new(lx, row.y + (row.h - s(18.0)) / 2.0, s(18.0), s(18.0));

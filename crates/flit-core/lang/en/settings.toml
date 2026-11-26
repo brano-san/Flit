@@ -77,6 +77,7 @@ about = "About"
 "keys" = "Keyboard shortcuts"
 "general.mru_tabs" = "Ctrl+Tab in most recently used order"
 "advanced.search_exclusions" = "Paths excluded from search"
+"files.copy_path_quotes" = "Quotes when copying paths"
 
 [help]
 "general.language" = "The language of menus, dialogs, messages and dates; logs stay in English"
@@ -154,6 +155,7 @@ about = "About"
 "area_color" = "Default follows the background color; text on a custom color adjusts to stay readable"
 "general.mru_tabs" = "Cycle through tabs by last use with Ctrl+Tab. Turn this off to cycle in tab strip order."
 "advanced.search_exclusions" = "Hide these paths and their contents from search results."
+"files.copy_path_quotes" = "Controls double quotes around copied paths. By default Flit adds quotes on Windows and leaves them out on Linux."
 
 [choice]
 "language.system" = "As in system"
@@ -223,6 +225,9 @@ about = "About"
 "log.info" = "Errors, warnings and timings"
 "log.debug" = "Everything, for troubleshooting"
 "spring.off" = "Off"
+"copy_path_quotes.system" = "System default"
+"copy_path_quotes.always" = "Always add quotes"
+"copy_path_quotes.never" = "Never add quotes"
 
 [unit]
 mb = "MB"

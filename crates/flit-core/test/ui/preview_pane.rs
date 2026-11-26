@@ -232,7 +232,7 @@ fn returning_to_a_pretty_preview_keeps_the_formatted_document_and_its_original()
 }
 
 #[test]
-fn svg_background_changes_without_loading_another_preview() {
+fn svg_background_dropdown_applies_only_the_chosen_option_without_reloading() {
     let mut a = app((520, 790));
     a.animations = false;
     a.set_pane_state(PaneState { visible: true, ..Default::default() });
@@ -252,13 +252,32 @@ fn svg_background_changes_without_loading_another_preview() {
     mouse(&mut a, (body.x + 5.0, body.y + 5.0), MouseButton::Left, 1);
     frame(&mut a);
     let rev = a.preview_image().0;
-    for bg in [preview::SvgBackground::White, preview::SvgBackground::Black, preview::SvgBackground::Checker] {
-        let r = a.preview_rect(PaneHit::SvgBackground).unwrap();
+    let hit = PaneHit::SvgBackground;
+    let mut current = preview::SvgBackground::Checker;
+    let r = a.preview_rect(hit).unwrap();
+    mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
+    assert!(a.menu_open_from(Hit::Preview(hit)));
+    frame(&mut a);
+    press(&mut a, Key::Escape, NO);
+    assert!(!a.own_menu_open());
+    assert_eq!(a.settings.opts.svg_background, current);
+
+    for (keys, bg) in [(&[Key::End][..], preview::SvgBackground::Black), (&[Key::Home, Key::Down][..], preview::SvgBackground::White), (&[Key::Home][..], preview::SvgBackground::Checker)] {
+        let r = a.preview_rect(hit).unwrap();
         mouse(&mut a, (r.x + r.w / 2.0, r.y + r.h / 2.0), MouseButton::Left, 1);
+        assert!(a.menu_open_from(Hit::Preview(hit)));
+        assert_eq!(a.settings.opts.svg_background, current);
         frame(&mut a);
+        for &key in keys {
+            press(&mut a, key, NO);
+        }
+        press(&mut a, Key::Enter, NO);
+        frame(&mut a);
+        assert!(!a.own_menu_open());
         assert_eq!(a.settings.opts.svg_background, bg);
         assert_eq!(a.preview_image().0, rev);
         assert!(requests(&mut a).is_empty());
+        current = bg;
     }
 }
 

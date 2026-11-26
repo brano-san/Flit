@@ -1274,8 +1274,9 @@ impl App {
             }
             PaneHit::Pretty => self.toggle_pretty(),
             PaneHit::SvgBackground => {
-                use preview::SvgBackground as Bg;
-                self.settings.opts.svg_background = Bg::ALL[(self.settings.opts.svg_background as usize + 1) % Bg::ALL.len()];
+                if let (Some(i), Some(anchor)) = (super::settings::index("windows.svg_background"), self.preview_rect(h)) {
+                    self.show_setting_choices(i, Hit::Preview(h), anchor);
+                }
             }
             PaneHit::Play => {
                 let p = &mut self.preview;

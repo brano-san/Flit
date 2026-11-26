@@ -238,7 +238,7 @@ fn search_finds_settings_on_every_page_and_jumps_to_the_found_one() {
     a.drain_effects().for_each(drop);
     key(&mut a, Key::Enter, NO);
     assert_eq!(ui(&a).lines[ui(&a).focus], Line::Setting(index("files.size_units").unwrap()));
-    assert!(a.drain_effects().any(|e| matches!(e, Effect::ShellMenu(_))), "Enter on a result uses it at once");
+    assert!(a.own_menu_open(), "Enter on a result opens its choices");
 }
 
 #[test]
@@ -265,6 +265,20 @@ fn linux_hides_the_settings_that_only_work_on_windows_and_keeps_their_values() {
 }
 
 #[test]
+fn choice_popup_matches_the_edges_of_its_button() {
+    let mut a = app();
+    a.open_settings(Some(Page::Menu));
+    let mut g = Gfx::new(Mono, 1024);
+    a.frame(&mut g, Instant::now());
+    let k = line(&mut a, settings::MENU_KIND);
+    let button = control_rect(rect(&a, k), s);
+    click_at(&mut a, center(button));
+    a.frame(&mut g, Instant::now());
+    let [popup] = a.menu_panels().try_into().expect("the choice opens one popup");
+    assert_eq!((popup.x, popup.right()), (button.x, button.right()));
+}
+
+#[test]
 fn controls_change_settings_with_the_mouse_and_the_keyboard() {
     let mut a = app();
     a.open_settings(Some(Page::Files));
@@ -275,26 +289,27 @@ fn controls_change_settings_with_the_mouse_and_the_keyboard() {
     assert!(a.tabs().iter().all(|t| t.view_spec.show_hidden));
     let k = line(&mut a, "files.confirm_delete");
     a.drain_effects().for_each(drop);
-    let at = center(switch_rect(rect(&a, k), s));
+    let at = center(control_rect(rect(&a, k), s));
     click_at(&mut a, at);
-    let menu = a.drain_effects().find_map(|e| if let Effect::ShellMenu(m) = e { Some(m.menu) } else { None }).expect("a choice menu");
-    assert_eq!(menu.len(), 3);
-    assert!(matches!(&menu[1], MenuItem::Command { checked: true, .. }));
-    a.on_event(&Event::MenuCommand(2), Instant::now());
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    let tree = a.accessibility();
+    let current = tree.by_name(S::SettingsChoiceConfirmPermanent.t()).unwrap();
+    assert!(current.selected);
+    let never = tree.by_name(S::SettingsChoiceConfirmNever.t()).unwrap();
+    a.on_event(&Event::Invoke(never.id), Instant::now());
     assert_eq!(a.confirm_delete, ConfirmDelete::Never);
     ui_focus(&mut a, k);
     key(&mut a, Key::Left, NO);
-    assert_eq!(a.confirm_delete, ConfirmDelete::Permanent, "Left picks the previous choice");
+    assert_eq!(a.confirm_delete, ConfirmDelete::Never, "arrows cannot change a closed dropdown");
+    open_focused_choice(&mut a, k);
+    key(&mut a, Key::Up, NO);
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(a.confirm_delete, ConfirmDelete::Permanent);
     let k = line(&mut a, settings::CACHE);
-    let track = slider_track(rect(&a, k), s);
-    click_at(&mut a, (track.right(), track.y + track.h / 2.0));
-    assert_eq!(value(&a, settings::CACHE), Value::Number(crate::ui::THUMB_CACHE_MB.2 as i64), "the slider sets the value where it is clicked");
-    click_at(&mut a, (track.x, track.y + track.h / 2.0));
-    let low = crate::ui::THUMB_CACHE_MB.0 as i64;
-    assert_eq!(value(&a, settings::CACHE), Value::Number(low));
-    ui_focus(&mut a, k);
-    key(&mut a, Key::Right, NO);
-    assert_eq!(value(&a, settings::CACHE), Value::Number((low / 100 + 1) * 100));
+    open_focused_choice(&mut a, k);
+    key(&mut a, Key::End, NO);
+    key(&mut a, Key::Enter, NO);
+    assert_eq!(value(&a, settings::CACHE), Value::Number(5000));
     let k = line(&mut a, "appearance.scale");
     let (_, plus) = step_rects(rect(&a, k), s);
     click_at(&mut a, center(plus));
@@ -308,6 +323,13 @@ fn controls_change_settings_with_the_mouse_and_the_keyboard() {
 fn ui_focus(a: &mut App, k: usize) {
     let u = a.settings.screen.as_mut().unwrap();
     (u.focus, u.zone) = (k, Zone::List);
+}
+
+fn open_focused_choice(a: &mut App, k: usize) {
+    ui_focus(a, k);
+    key(a, Key::Space, NO);
+    a.frame(&mut Gfx::new(Mono, 1024), Instant::now());
+    assert!(a.own_menu_open());
 }
 
 #[test]
@@ -675,45 +697,25 @@ fn options_have_no_shortcuts_group() {
     assert!(a.setting_values().iter().any(|v| matches!(v, Value::Keys(_))));
 }
 
-fn spacing_track(a: &mut App) -> (usize, Rect) {
-    let k = line(a, settings::SPACING);
-    reveal(a, k);
-    (k, slider_track(rect(a, k), s))
-}
-
-fn spacing(a: &App) -> i64 {
-    match value(a, settings::SPACING) {
-        Value::Number(n) => n,
-        v => panic!("{v:?}"),
-    }
-}
-
 #[test]
-fn sliders_jump_on_press_follow_the_drag_and_stop_on_release() {
-    let t0 = Instant::now();
+fn numeric_dropdowns_preserve_custom_values_until_commit() {
     let mut a = app();
+    a.apply_doc(&settings::parse(r#"{"appearance.spacing":55,"appearance.inactive_opacity":94,"advanced.thumb_cache_mb":375}"#));
     a.open_settings(Some(Page::Interface));
-    a.frame(&mut Gfx::new(Mono, 1024), t0);
-    let (_, tr) = spacing_track(&mut a);
-    let y = tr.y + tr.h / 2.0;
-    a.on_event(&Event::MouseMove { x: tr.x + 2.0, y }, t0);
-    a.on_event(&Event::MouseDown { x: tr.x + 2.0, y, button: MouseButton::Left, clicks: 1 }, t0);
-    assert_eq!(spacing(&a), 0, "a press on the track jumps there");
-    let mut seen = Vec::new();
-    for k in 1..=10 {
-        a.on_event(&Event::MouseMove { x: tr.x + tr.w * k as f32 / 10.0, y: y + 40.0 }, t0);
-        seen.push(spacing(&a));
+    for (id, current, first) in [(settings::SPACING, 55, 0), (settings::OPACITY, 94, 0), (settings::CACHE, 375, 100)] {
+        let k = line(&mut a, id);
+        open_focused_choice(&mut a, k);
+        let tree = a.accessibility();
+        let selected = tree.nodes.iter().find(|n| n.role == Role::ListItem && n.selected && n.name.starts_with(&format!("{current} "))).expect("custom current value is listed and marked");
+        assert!(selected.bounds.w > 0.0);
+        key(&mut a, Key::Home, NO);
+        key(&mut a, Key::Escape, NO);
+        assert_eq!(value(&a, id), Value::Number(current));
+        open_focused_choice(&mut a, k);
+        key(&mut a, Key::Home, NO);
+        key(&mut a, Key::Enter, NO);
+        assert_eq!(value(&a, id), Value::Number(first));
     }
-    assert!(seen.windows(2).all(|w| w[1] >= w[0]) && seen[4] > 0 && seen[4] < 100, "the thumb follows the pointer even off the row: {seen:?}");
-    assert_eq!(*seen.last().unwrap(), 100);
-    a.on_event(&Event::MouseMove { x: tr.x + tr.w / 2.0, y }, t0);
-    a.on_event(&Event::MouseUp { x: tr.x + tr.w / 2.0, y, button: MouseButton::Left }, t0);
-    let released = spacing(&a);
-    assert_eq!(released, 50);
-    a.on_event(&Event::MouseMove { x: tr.x, y }, t0);
-    assert_eq!(spacing(&a), released, "after release moves change nothing");
-    key(&mut a, Key::Right, NO);
-    assert_eq!(spacing(&a), 60, "the keyboard still steps the slider");
 }
 
 #[test]
@@ -1189,10 +1191,14 @@ fn the_context_menu_section_lists_every_kind_and_holds_its_options() {
     let mut a = menu_app();
     assert_eq!(&menu_lines(&a)[..4], ["menu [x] Open", "menu [x] Rename", "menu [x] Send to >", "menu [x] Properties"]);
     let k = line(&mut a, settings::MENU_KIND);
-    key(&mut a, Key::Right, NO);
+    open_focused_choice(&mut a, k);
+    key(&mut a, Key::Down, NO);
+    key(&mut a, Key::Enter, NO);
     assert_eq!(ui(&a).focus, k);
     assert_eq!(menu_lines(&a)[0], "menu [x] Open in new tab", "the folder menu has its own list");
-    key(&mut a, Key::Right, NO);
+    open_focused_choice(&mut a, k);
+    key(&mut a, Key::End, NO);
+    key(&mut a, Key::Enter, NO);
     assert!(menu_lines(&a).iter().any(|line| line.contains(S::MenuRefresh.t())));
     assert!(!a.settings_lines().contains(&S::MenuEditorEmpty.t().to_owned()));
 }

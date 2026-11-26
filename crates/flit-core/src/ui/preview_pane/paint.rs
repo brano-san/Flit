@@ -180,22 +180,32 @@ impl App {
         let block_h = r.h - self.s(4.0);
         let (blocks, filterable) = self.foot_blocks();
         for (glyph, label, hit) in blocks {
+            let picker = hit == Some(PaneHit::SvgBackground);
             let icon_w = if glyph.is_empty() { 0.0 } else { self.s(18.0) };
-            let w = g.measure(&label, font) + self.s(14.0) + icon_w;
+            let w = if picker { preview::SvgBackground::ALL.iter().map(|bg| g.measure(bg.label().t(), font)).fold(0.0, f32::max) + self.s(32.0) } else { g.measure(&label, font) + self.s(14.0) + icon_w };
             if right - w < r.x + self.s(6.0) {
                 continue;
             }
             let br = Rect::new(right - w, r.y + self.s(2.0), w, block_h);
+            if picker {
+                let owner = Hit::Preview(PaneHit::SvgBackground);
+                let open = self.menu_open_from(owner);
+                let angle = if open { 270.0 } else { 90.0 };
+                Paint::new(g, t, self.scale).picker(br, &label, font, angle, open, self.hover == owner);
+            } else {
+                if let Some(h) = hit {
+                    g.dl.round_rect(br, t.input_bg, self.s(3.0));
+                    g.dl.round_rect(br, crate::ui::widgets::faded(t.button_hover, self.lit(Hit::Preview(h))), self.s(3.0));
+                    g.dl.round_rect(br, t.accent.alpha(0x40), self.s(3.0));
+                }
+                if icon_w > 0.0 {
+                    centered(g, Rect::new(br.x + self.s(4.0), br.y, icon_w, br.h), glyph, icons, t.text_dim);
+                }
+                g.text(br.x + self.s(7.0) + icon_w, baseline, &label, font, if hit.is_some() { t.text } else { t.text_dim }, f32::INFINITY);
+            }
             if let Some(h) = hit {
-                g.dl.round_rect(br, t.input_bg, self.s(3.0));
-                g.dl.round_rect(br, crate::ui::widgets::faded(t.button_hover, self.lit(Hit::Preview(h))), self.s(3.0));
-                g.dl.round_rect(br, t.accent.alpha(0x40), self.s(3.0));
                 self.preview.buttons.push((br, h));
             }
-            if icon_w > 0.0 {
-                centered(g, Rect::new(br.x + self.s(4.0), br.y, icon_w, br.h), glyph, icons, t.text_dim);
-            }
-            g.text(br.x + self.s(7.0) + icon_w, baseline, &label, font, if hit.is_some() { t.text } else { t.text_dim }, f32::INFINITY);
             right = br.x - self.s(6.0);
         }
         if g.dl.instances.len() > right_from {

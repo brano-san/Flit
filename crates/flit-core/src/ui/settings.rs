@@ -3,7 +3,7 @@ use super::home::Widget;
 use super::user_menu::{self, UserEntry};
 use super::layouts::{LayoutMode, LAYOUTS};
 use super::tabbar::Startup;
-use super::options::{self, CharKey, InspectorAt, NewTabShow, Recents};
+use super::options::{self, CharKey, CopyPathQuotes, InspectorAt, NewTabShow, Recents};
 use super::{App, Column, Effect, Persisted};
 use crate::archive::Format;
 use crate::fmt::DateFormat;
@@ -276,6 +276,8 @@ const STARTUP: Choices = &[("continue", S::OptionsChoiceStartupLast), ("new_tab"
 const DATES: [DateFormat; 3] = [DateFormat::Universal, DateFormat::System, DateFormat::Application];
 const DATE_CHOICES: Choices = &[("universal", S::SettingsChoiceDateUniversal), ("system", S::SettingsChoiceDateSystem), ("application", S::SettingsChoiceDateApplication)];
 const UNITS: Choices = &[("binary", S::SettingsChoiceUnitsBinary), ("decimal", S::SettingsChoiceUnitsDecimal)];
+const COPY_PATH_QUOTES: [CopyPathQuotes; 3] = [CopyPathQuotes::System, CopyPathQuotes::Always, CopyPathQuotes::Never];
+const COPY_PATH_QUOTE_CHOICES: Choices = &[("system", S::SettingsChoiceCopyPathQuotesSystem), ("always", S::SettingsChoiceCopyPathQuotesAlways), ("never", S::SettingsChoiceCopyPathQuotesNever)];
 const CONFIRMS: [ConfirmDelete; 3] = [ConfirmDelete::Always, ConfirmDelete::Permanent, ConfirmDelete::Never];
 const CONFIRM_CHOICES: Choices = &[("always", S::SettingsChoiceConfirmAlways), ("permanent", S::SettingsChoiceConfirmPermanent), ("never", S::SettingsChoiceConfirmNever)];
 const CONFLICTS: [Option<Resolve>; 6] = [None, Some(Resolve::KeepBoth), Some(Resolve::Replace), Some(Resolve::Skip), Some(Resolve::SkipSame), Some(Resolve::ReplaceOlder)];
@@ -434,6 +436,15 @@ pub static SETTINGS: &[Setting] = &[
     toggle(LONG_PATHS, Page::Files, S::OptionsTitleLongPaths, S::OptionsHelpLongPaths, |_| true, |_, _| {}),
     toggle("files.compact_paths", Page::Files, S::OptionsTitleCompactPaths, S::OptionsHelpCompactPaths, |a| a.settings.opts.compact_paths, |a, on| a.set_compact_paths(on)),
     toggle("files.breadcrumbs", Page::Files, S::OptionsTitleBreadcrumbs, S::OptionsHelpBreadcrumbs, |a| a.settings.opts.breadcrumbs, |a, on| a.settings.opts.breadcrumbs = on),
+    choice(
+        "files.copy_path_quotes",
+        Page::Files,
+        S::SettingsTitleFilesCopyPathQuotes,
+        S::SettingsHelpFilesCopyPathQuotes,
+        COPY_PATH_QUOTE_CHOICES,
+        |a| pos(&COPY_PATH_QUOTES, &a.settings.opts.copy_path_quotes),
+        |a, i| a.settings.opts.copy_path_quotes = COPY_PATH_QUOTES[i],
+    ),
     toggle("files.show_hidden", Page::Files, S::OptionsTitleShowHidden, S::OptionsHelpShowHidden, |a| a.show_hidden, |a, on| a.set_show_hidden(on)),
     toggle("files.system", Page::Files, S::OptionsTitleShowSystem, S::OptionsHelpShowSystem, |a| a.prefs.show_system, |a, on| a.set_pref(|p| &mut p.show_system, on)),
     toggle("files.dotfiles", Page::Files, S::SettingsTitleFilesDotfiles, S::SettingsHelpFilesDotfiles, |a| a.prefs.show_dotfiles, |a, on| a.set_pref(|p| &mut p.show_dotfiles, on)),

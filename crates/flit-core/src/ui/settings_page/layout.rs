@@ -154,14 +154,7 @@ impl App {
         match line {
             Line::Setting(i) => match SETTINGS[*i].kind {
                 Kind::Toggle(..) if switch_rect(r, s).contains(x, y) => h(SHit::Control(k)),
-                Kind::Number { .. } if slider(*i) => {
-                    let grip = slider_track(r, s).inset(-s(8.0), -s(10.0));
-                    if grip.contains(x, y) {
-                        h(SHit::Slide(k))
-                    } else {
-                        h(SHit::Line(k))
-                    }
-                }
+                _ if is_dropdown(*i) => h(if control_rect(r, s).contains(x, y) { SHit::Control(k) } else { SHit::Line(k) }),
                 Kind::Number { .. } => {
                     let (minus, plus) = step_rects(r, s);
                     match (minus.contains(x, y), plus.contains(x, y)) {
@@ -170,7 +163,7 @@ impl App {
                         _ => h(SHit::Line(k)),
                     }
                 }
-                Kind::Choice(..) | Kind::Text(..) | Kind::Pick(..) if control_rect(r, s).contains(x, y) => h(SHit::Control(k)),
+                Kind::Text(..) | Kind::Pick(..) if control_rect(r, s).contains(x, y) => h(SHit::Control(k)),
                 _ => h(SHit::Line(k)),
             },
             Line::Path(..) if remove_rect(r, s).contains(x, y) => h(SHit::Remove(k)),
@@ -226,15 +219,16 @@ impl App {
                     let set = &SETTINGS[*i];
                     let (role, hit) = match set.kind {
                         Kind::Toggle(..) => (Role::CheckBox, SHit::Control(k)),
-                        Kind::Choice(..) => (Role::ComboBox, SHit::Control(k)),
+                        _ if is_dropdown(*i) => (Role::ComboBox, SHit::Control(k)),
                         Kind::Text(..) | Kind::Pick(..) => (Role::Button, SHit::Control(k)),
                         _ => (Role::Group, SHit::Line(k)),
                     };
-                    let n = put(t, targets, section, at(hit), role, set.title.t(), r);
+                    let bounds = if role == Role::ComboBox { control_rect(r, s) } else { r };
+                    let n = put(t, targets, section, at(hit), role, set.title.t(), bounds);
                     t.nodes[n].help = if RESTART.contains(&set.id) { format!("{} {}", set.help.t(), S::OptionsRestart.t()) } else { set.help.t().to_owned() };
                     t.nodes[n].value = self.setting_value_text(*i);
                     t.nodes[n].selected = set.get(self) == Value::Bool(true);
-                    if let (Kind::Number { .. }, false) = (set.kind, slider(*i)) {
+                    if let (Kind::Number { .. }, false) = (set.kind, number_dropdown(*i)) {
                         let (minus, plus) = step_rects(r, s);
                         put(t, targets, n, at(SHit::Step(k, false)), Role::Button, S::A11yButtonDecrease.t(), minus);
                         put(t, targets, n, at(SHit::Step(k, true)), Role::Button, S::A11yButtonIncrease.t(), plus);
@@ -245,7 +239,7 @@ impl App {
                     let set = &SETTINGS[*i];
                     let role = match set.kind {
                         Kind::Toggle(..) => Role::CheckBox,
-                        Kind::Choice(..) => Role::ComboBox,
+                        _ if is_dropdown(*i) => Role::ComboBox,
                         _ => Role::Group,
                     };
                     let n = t.add(section, id, role, set.title.t(), r);
@@ -292,7 +286,7 @@ impl App {
         match sh {
             SHit::Search => ui.zone = Zone::Search,
             SHit::Nav(k) => (ui.zone, ui.nav_at) = (Zone::Nav, k),
-            SHit::Line(k) | SHit::Control(k) | SHit::Slide(k) | SHit::Step(k, _) | SHit::Remove(k) | SHit::Check(k) | SHit::Star(k) | SHit::Fold(k) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, 0),
+            SHit::Line(k) | SHit::Control(k) | SHit::Step(k, _) | SHit::Remove(k) | SHit::Check(k) | SHit::Star(k) | SHit::Fold(k) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, 0),
             SHit::Button(k, b) => (ui.zone, ui.focus, ui.sub) = (Zone::List, k, b),
             _ => {}
         }

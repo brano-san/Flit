@@ -14,7 +14,7 @@ impl App {
         if matches!(ev, Event::Focus(false)) {
             self.quick_tags = false;
         }
-        if self.picker_event(ev, now) {
+        if !self.dropdown_open() && self.picker_event(ev, now) {
             return;
         }
         if let Event::WindowButtons(buttons) = ev {
@@ -242,7 +242,6 @@ impl App {
             }
             Drag::Preview { hit, start, size } => return self.preview_drag(hit, x, y, start, size),
             Drag::PanelSep { sep, start, first } => return self.drag_sep(sep, x, y, start, first),
-            Drag::Slide(k) => return self.slide_setting(k, x),
             Drag::OptionsThumb { grab } => return self.drag_settings_thumb(y, grab),
             Drag::MenuMove { from, .. } => return self.drag_menu_row(from, y),
             Drag::Marquee | Drag::None => {}

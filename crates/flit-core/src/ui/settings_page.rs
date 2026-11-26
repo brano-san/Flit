@@ -4,7 +4,7 @@ mod paint;
 use super::actions::Chord;
 use super::edit::EditAction;
 use super::field::{Field, FieldKey};
-use super::menu::{Cmd, Mark, MenuItem};
+use super::menu::Cmd;
 use super::menu_editor::{self, MenuRow};
 use super::widgets::Paint;
 use super::palette::{Palette, Pick};
@@ -65,7 +65,7 @@ const TAG_BUTTON_W: f32 = 92.0;
 const PAD: f32 = 16.0;
 const INDENT: f32 = 22.0;
 pub const NESTED: [&str; 9] = ["files.system", "files.dotfiles", "files.sizes_ssd", "files.sizes_hdd", "files.sizes_network", "files.single_click_files", "files.single_click_folders", "files.single_click_columns", "general.startup_pages"];
-pub const SLIDERS: [&str; 3] = [settings::SPACING, settings::OPACITY, settings::CACHE];
+const NUMBER_DROPDOWNS: [&str; 3] = [settings::SPACING, settings::OPACITY, settings::CACHE];
 pub const RESTART: [&str; 0] = [];
 pub(super) const EXPORT_NAME: &str = "flit-settings.json";
 const OS_NAME: &str = if cfg!(windows) { "Windows" } else { "Linux" };
@@ -300,7 +300,6 @@ pub enum SHit {
     Nav(usize),
     Line(usize),
     Control(usize),
-    Slide(usize),
     Thumb,
     Track,
     Step(usize, bool),
@@ -537,14 +536,19 @@ fn indent(i: usize) -> f32 {
     }
 }
 
-fn slider(i: usize) -> bool {
-    SLIDERS.contains(&SETTINGS[i].id)
+fn number_dropdown(i: usize) -> bool {
+    NUMBER_DROPDOWNS.contains(&SETTINGS[i].id)
 }
 
-fn slider_track(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
-    let c = control_rect(r, &s);
-    let x = c.x + s(56.0);
-    Rect::new(x, c.y + c.h / 2.0 - s(2.0), c.right() - s(8.0) - x, s(4.0))
+fn is_dropdown(i: usize) -> bool {
+    matches!(SETTINGS[i].kind, Kind::Choice(..)) || number_dropdown(i)
+}
+
+fn number_text(value: i64, unit: S, zero: Option<S>) -> String {
+    match zero.filter(|_| value == 0) {
+        Some(label) => label.t().to_owned(),
+        None => format!("{value} {unit}"),
+    }
 }
 
 fn switch_rect(r: Rect, s: impl Fn(f32) -> f32) -> Rect {
@@ -572,13 +576,6 @@ fn label_w(i: usize, r: Rect, s: impl Fn(f32) -> f32) -> f32 {
 
 fn info_label_w(r: Rect, s: impl Fn(f32) -> f32) -> f32 {
     s(INFO_LABEL_W).min((r.w * 0.4).round())
-}
-
-fn slide_value(i: usize, track: Rect, x: f32) -> Option<i64> {
-    let Kind::Number { min, max, step, .. } = SETTINGS[i].kind else { return None };
-    let frac = ((x - track.x) / track.w.max(1.0)).clamp(0.0, 1.0);
-    let raw = min as f32 + frac * (max - min) as f32;
-    Some(((raw / step as f32).round() as i64 * step).clamp(min, max))
 }
 
 fn scroll_thumb(list: Rect, content_h: f32, pos: f32, s: impl Fn(f32) -> f32) -> Option<Rect> {
@@ -739,12 +736,13 @@ impl App {
     }
 
     pub(super) fn close_settings(&mut self) {
+        self.close_dropdown();
         self.settings.screen = None;
         self.layout();
         self.dirty = true;
     }
 
-    fn change_setting(&mut self, i: usize, v: Value) {
+    pub(super) fn change_setting(&mut self, i: usize, v: Value) {
         if SETTINGS.get(i).is_some_and(|s| s.set(self, v)) {
             self.layout();
             self.dirty = true;
@@ -1067,11 +1065,6 @@ impl App {
                 ui.zone = Zone::Search;
                 ui.search.click(x, clicks, self.mods.shift);
             }
-            SHit::Slide(k) => {
-                (ui.zone, ui.focus) = (Zone::List, k);
-                self.drag = super::Drag::Slide(k);
-                self.slide_setting(k, x);
-            }
             SHit::Thumb => {
                 let thumb = scroll_thumb(ui.list, ui.content_h, ui.scroll.pos, |v| (v * self.scale).round());
                 self.drag = super::Drag::OptionsThumb { grab: thumb.map_or(0.0, |t| y - t.y) };
@@ -1113,7 +1106,6 @@ impl App {
                 }
                 self.layout();
             }
-            SHit::Slide(k) => self.slide_setting(k, x),
             SHit::Nav(k) => {
                 if let Some(st) = ui.starts.get(k).copied() {
                     self.jump_to(st.page);
@@ -1153,16 +1145,6 @@ impl App {
         self.dirty = true;
     }
 
-    pub(super) fn slide_setting(&mut self, k: usize, x: f32) {
-        let Some(ui) = &self.settings.screen else { return };
-        let (Some(&Line::Setting(i)), Some(&r)) = (ui.lines.get(k), ui.rects.get(k)) else { return };
-        let track = slider_track(r, |v| (v * self.scale).round());
-        if let Some(v) = slide_value(i, track, x).filter(|&v| SETTINGS[i].get(self) != Value::Number(v)) {
-            self.change_setting(i, Value::Number(v));
-        }
-        self.dirty = true;
-    }
-
     pub(super) fn drag_settings_thumb(&mut self, y: f32, grab: f32) {
         let sc = self.scale;
         let Some(ui) = &mut self.settings.screen else { return };
@@ -1174,26 +1156,19 @@ impl App {
     }
 
     pub(super) fn activate_setting(&mut self, i: usize, at: Option<(f32, f32)>) {
+        if is_dropdown(i) {
+            let anchor = self.settings.screen.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)).map(|k| (k, ui.rects[k])));
+            if let Some((k, r)) = anchor {
+                self.show_setting_choices(i, Hit::Settings(SHit::Control(k)), control_rect(r, |v| self.s(v)));
+            } else {
+                let (x, y) = at.unwrap_or_default();
+                let items = self.list_menu(self.setting_dropdown_entries(i));
+                self.flit_menu(x, y, items);
+            }
+            return;
+        }
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
             (Kind::Toggle(..), Value::Bool(b)) => self.change_setting(i, Value::Bool(!b)),
-            (Kind::Choice(choices, ..), Value::Choice(cur)) => {
-                let entries = choices.iter().enumerate().map(|(k, (_, label))| (label.t().to_owned(), Cmd::Setting(i, k), k == cur)).collect();
-                let items = self.list_menu(entries).into_iter().map(|mut it| {
-                    if let MenuItem::Command { mark, .. } = &mut it {
-                        *mark = Mark::Radio;
-                    }
-                    it
-                });
-                let (x, y) = self.menu_spot(i, at);
-                let k = self.settings.screen.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
-                match k.zip(self.settings.screen.as_ref()).map(|(k, ui)| (k, control_rect(ui.rects[k], |v| (v * self.scale).round()))) {
-                    Some((k, r)) => {
-                        self.button_menu(Hit::Settings(SHit::Control(k)), r.x, r.bottom() + self.s(4.0), items.collect());
-                        self.menu_right = Some(r.right());
-                    }
-                    None => self.flit_menu(x, y, items.collect()),
-                }
-            }
             (Kind::Pick(Picker::Color, ..), Value::Text(t)) => self.open_setting_editor(SettingPick::Color(i), &t),
             (Kind::Pick(Picker::Font, ..), _) => self.pick_font(i),
             (Kind::Text(..), _) => self.edit_text_setting(i),
@@ -1202,10 +1177,21 @@ impl App {
         }
     }
 
-    fn menu_spot(&self, i: usize, at: Option<(f32, f32)>) -> (f32, f32) {
-        let k = self.settings.screen.as_ref().and_then(|ui| ui.lines.iter().position(|l| *l == Line::Setting(i)));
-        let r = k.and_then(|k| self.settings.screen.as_ref().map(|ui| control_rect(ui.rects[k], |v| (v * self.scale).round())));
-        r.map(|r| (r.x, r.bottom())).or(at).unwrap_or_default()
+    pub(super) fn show_setting_choices(&mut self, i: usize, owner: Hit, anchor: Rect) {
+        self.dropdown_menu(owner, anchor, self.setting_dropdown_entries(i));
+    }
+
+    fn setting_dropdown_entries(&self, i: usize) -> Vec<(String, Cmd, bool)> {
+        match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
+            (Kind::Choice(choices, ..), Value::Choice(cur)) => choices.iter().enumerate().map(|(k, (_, label))| (label.t().to_owned(), Cmd::Setting(i, k), k == cur)).collect(),
+            (Kind::Number { min, max, step, unit, zero, .. }, Value::Number(cur)) if number_dropdown(i) => {
+                let mut values: Vec<_> = (min..=max).step_by(step as usize).chain([max, cur]).collect();
+                values.sort_unstable();
+                values.dedup();
+                values.into_iter().map(|n| (number_text(n, unit, zero), Cmd::SettingNumber(i, n), n == cur)).collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn step_setting(&mut self, i: usize, up: bool) {
@@ -1216,8 +1202,7 @@ impl App {
 
     fn turn_setting(&mut self, i: usize, back: bool) {
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
-            (Kind::Choice(c, ..), Value::Choice(k)) => self.choose_setting(i, if back { (k + c.len() - 1) % c.len() } else { (k + 1) % c.len() }),
-            (Kind::Number { .. }, _) => self.step_setting(i, !back),
+            (Kind::Number { .. }, _) if !number_dropdown(i) => self.step_setting(i, !back),
             (Kind::Toggle(..), Value::Bool(b)) if b == back => self.change_setting(i, Value::Bool(!back)),
             _ => {}
         }
@@ -1481,7 +1466,7 @@ impl App {
     }
 
     pub(super) fn settings_pans_at(&self, x: f32, y: f32) -> bool {
-        self.settings.screen.as_ref().is_some_and(|ui| ui.list.contains(x, y) && !ui.bar.contains(x, y)) && !matches!(self.settings_hit(x, y), Some(Hit::Settings(SHit::Slide(_))))
+        self.settings.screen.as_ref().is_some_and(|ui| ui.list.contains(x, y) && !ui.bar.contains(x, y))
     }
 
     pub(super) fn touch_pan_settings(&mut self, dy: f32) -> bool {

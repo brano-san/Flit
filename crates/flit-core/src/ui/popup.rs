@@ -159,6 +159,41 @@ impl MenuView {
         }
     }
 
+    pub(super) fn align_dropdown(&mut self, anchor: Rect) {
+        let b = self.bounds;
+        let gap = (4.0 * self.scale).round();
+        let above = (anchor.y - gap - b.y).max(0.0);
+        let below = (b.bottom() - anchor.bottom() - gap).max(0.0);
+        let list = &self.lists[0];
+        let down = list.height <= below || below >= above;
+        let h = list.height.min(if down { below } else { above });
+        let w = anchor.w.min(b.w);
+        let y = if down { anchor.bottom() + gap } else { anchor.y - gap - h };
+        self.start = (anchor.x, if down { anchor.bottom() } else { anchor.y });
+        self.panels[0].rect = Rect::new(anchor.x.clamp(b.x, b.right() - w), y, w, h);
+        self.panels[0].hot = list.nodes.iter().position(|n| matches!(n, Node::Command { checked: true, .. }));
+        self.reveal(0);
+    }
+
+    pub(super) fn dropdown_items(&self) -> impl Iterator<Item = (usize, &str, Rect, bool, bool)> + '_ {
+        let p = &self.panels[0];
+        let clip = p.rect.inset(0.0, PAD * self.scale);
+        self.rows(p).filter_map(move |(row, mut r)| {
+            let Node::Command { id, label, checked, .. } = &self.lists[0].nodes[row] else { return None };
+            let bottom = r.bottom().min(clip.bottom());
+            r.y = r.y.max(clip.y);
+            r.h = bottom - r.y;
+            (r.h > 0.0).then_some((*id, label.as_str(), r, *checked, p.hot == Some(row)))
+        })
+    }
+
+    pub(super) fn focus_dropdown_item(&mut self, id: usize) -> bool {
+        let Some(row) = self.lists[0].nodes.iter().position(|node| matches!(node, Node::Command { id: at, .. } if *at == id)) else { return false };
+        self.focus(0, Some(row));
+        self.reveal(0);
+        true
+    }
+
     pub fn panels(&self) -> impl Iterator<Item = Rect> + '_ {
         self.panels.iter().map(|p| p.rect)
     }

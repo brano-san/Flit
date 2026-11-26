@@ -77,6 +77,7 @@ about = "Info"
 "keys" = "Tastenkombinationen"
 "general.mru_tabs" = "Strg+Tab nach letzter Verwendung"
 "advanced.search_exclusions" = "Von der Suche ausgeschlossene Pfade"
+"files.copy_path_quotes" = "Anführungszeichen beim Kopieren von Pfaden"
 
 [help]
 "general.language" = "Sprache für Menüs, Dialoge, Meldungen und Datumsangaben. Protokolle bleiben auf Englisch."
@@ -154,6 +155,7 @@ about = "Info"
 "area_color" = "„Standard“ folgt der Hintergrundfarbe; Text auf einer benutzerdefinierten Farbe passt sich an, um lesbar zu bleiben"
 "general.mru_tabs" = "Mit Strg+Tab durch zuletzt verwendete Tabs wechseln. Ohne diese Option gilt die Reihenfolge der Tableiste."
 "advanced.search_exclusions" = "Blendet diese Pfade und ihre Inhalte in Suchergebnissen aus."
+"files.copy_path_quotes" = "Legt fest, ob Flit kopierte Dateipfade in doppelte Anführungszeichen setzt. Standardmäßig fügt Flit sie unter Windows hinzu und lässt sie unter Linux weg."
 
 [choice]
 "language.system" = "Wie im System"
@@ -223,6 +225,9 @@ about = "Info"
 "log.info" = "Fehler, Warnungen und Zeitmessungen"
 "log.debug" = "Alles zur Fehlerbehebung"
 "spring.off" = "Aus"
+"copy_path_quotes.system" = "Systemstandard"
+"copy_path_quotes.always" = "Immer mit Anführungszeichen"
+"copy_path_quotes.never" = "Immer ohne Anführungszeichen"
 
 [unit]
 mb = "MB"

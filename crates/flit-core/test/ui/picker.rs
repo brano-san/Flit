@@ -24,6 +24,64 @@ fn file_picker_filter_hides_non_matches_and_escape_cancels() {
 }
 
 #[test]
+fn file_filter_changes_only_after_an_option_is_confirmed() {
+    let mut app = app(&["file.png", "other.txt", "picture.jpg"]);
+    let filters = [("PNG", "*.png"), ("Text", "*.txt"), ("JPEG", "*.jpg")].map(|(label, pattern)| Filter { label: label.into(), patterns: vec![pattern.into()], mime_types: Vec::new() }).to_vec();
+    app.start_picker(Request { filters, ..Request::default() });
+    frame(&mut app);
+    let now = Instant::now();
+    let filter = Control::Filter.id();
+    let listed = |app: &App| {
+        let view = app.tab().view.as_ref().unwrap();
+        view.listing().name(view.rows()[0]).to_vec()
+    };
+    app.on_event(&Event::Invoke(filter), now);
+    assert_eq!(listed(&app), b"file.png");
+    frame(&mut app);
+    app.on_event(&Event::Key { key: Key::Escape, pressed: true, mods: Default::default() }, now);
+    assert!(!app.drain_effects().any(|e| matches!(e, Effect::Window(crate::ui::WindowCmd::Close))));
+    assert_eq!(listed(&app), b"file.png");
+    app.on_event(&Event::Invoke(filter), now);
+    frame(&mut app);
+    for key in [Key::End, Key::Enter] {
+        app.on_event(&Event::Key { key, pressed: true, mods: Default::default() }, now);
+    }
+    assert_eq!(listed(&app), b"picture.jpg");
+    let tree = app.accessibility();
+    let node = &tree.nodes[tree.find(filter).unwrap()];
+    assert_eq!((node.role, node.value.as_str()), (crate::a11y::Role::ComboBox, "JPEG"));
+}
+
+#[test]
+fn portal_option_selects_an_enum_value_and_toggles_a_boolean() {
+    use crate::pick::Choice;
+    let mut app = app(&["file.png"]);
+    let choices = vec![
+        Choice { id: "encoding".into(), label: "Encoding".into(), values: vec![("default".into(), "Automatic".into()), ("utf8".into(), "UTF-8".into()), ("latin1".into(), "Latin-1".into())], selected: 0 },
+        Choice { id: "fallback".into(), label: "Fallback".into(), values: vec![("false".into(), String::new()), ("true".into(), String::new())], selected: 0 },
+    ];
+    app.start_picker(Request { choices, ..Request::default() });
+    frame(&mut app);
+    let now = Instant::now();
+    let tree = app.accessibility();
+    let option = &tree.nodes[tree.find(Control::Choice(0).id()).unwrap()];
+    assert_eq!((option.role, option.name.as_str(), option.value.as_str()), (crate::a11y::Role::ComboBox, "Encoding", "Automatic"));
+    let (x, y) = (option.bounds.x + option.bounds.w / 2.0, option.bounds.y + option.bounds.h / 2.0);
+    app.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, now);
+    app.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, now);
+    frame(&mut app);
+    let panels = app.menu_panels();
+    assert_eq!((panels[0].x, panels[0].w), (option.bounds.x, option.bounds.w));
+    for key in [Key::End, Key::Enter] {
+        app.on_event(&Event::Key { key, pressed: true, mods: Default::default() }, now);
+    }
+    app.on_event(&Event::Invoke(Control::Choice(1).id()), now);
+    app.click_row(0, MouseButton::Left, 2, now);
+    let expected = [("encoding".to_owned(), "latin1".to_owned()), ("fallback".to_owned(), "true".to_owned())];
+    assert!(app.drain_effects().any(|e| matches!(e, Effect::Picked { choices, .. } if choices == expected)));
+}
+
+#[test]
 fn down_and_enter_choose_a_file_with_the_keyboard() {
     let mut app = app(&["file.png"]);
     app.start_picker(Request::default());

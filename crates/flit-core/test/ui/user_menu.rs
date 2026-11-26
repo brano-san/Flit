@@ -305,6 +305,28 @@ fn form_texts(a: &mut App, texts: &[(usize, &str)], choices: &[(usize, usize)]) 
 }
 
 #[test]
+fn custom_command_choice_opens_a_list_and_commits_only_the_picked_option() {
+    use crate::input::{Key, Mods};
+    let mut a = app(&[]);
+    a.new_user_entry(false);
+    let mut g = Gfx::new(Mono, 1024);
+    a.frame(&mut g, Instant::now());
+    let r = a.dialogs.form.as_ref().unwrap().rows[ICON];
+    let (x, y) = (r.right() - 16.0, r.y + r.h / 2.0);
+    let now = Instant::now();
+    a.on_event(&Event::MouseDown { x, y, button: MouseButton::Left, clicks: 1 }, now);
+    a.on_event(&Event::MouseUp { x, y, button: MouseButton::Left }, now);
+    assert_eq!(a.dialogs.form.as_ref().unwrap().choice(ICON), 0, "opening the list does not change the value");
+    a.frame(&mut g, now);
+    assert!(a.own_menu_open());
+    for key in [Key::Down, Key::Enter] {
+        a.on_event(&Event::Key { key, mods: Mods::default(), pressed: true }, now);
+    }
+    assert!(!a.own_menu_open());
+    assert_eq!(a.dialogs.form.as_ref().unwrap().choice(ICON), 1);
+}
+
+#[test]
 fn the_options_editor_adds_moves_edits_and_deletes_entries() {
     let mut a = app(&[("a.txt", false)]);
     a.open_settings(Some(crate::ui::Page::Menu));

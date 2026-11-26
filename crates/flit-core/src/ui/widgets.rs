@@ -456,25 +456,6 @@ impl<'a, B: TextBackend> Paint<'a, B> {
         self.centered(k, mark.0, icons, faded(mark.1, (2.0 * pos - 1.0).abs()));
     }
 
-    pub fn slider(&mut self, track: Rect, frac: f32, hot: f32) {
-        let frac = frac.clamp(0.0, 1.0);
-        let vertical = track.h > track.w;
-        let thick = track.w.min(track.h);
-        self.g.dl.circle(track, self.t.text_dim.alpha(0x50));
-        let (fill, center) = if vertical {
-            let y = track.bottom() - track.h * frac;
-            (Rect::new(track.x, y, track.w, track.bottom() - y), (track.x + track.w / 2.0, y))
-        } else {
-            let x = track.x + track.w * frac;
-            (Rect::new(track.x, track.y, x - track.x, track.h), (x, track.y + track.h / 2.0))
-        };
-        self.g.dl.round_rect(fill, self.t.accent_fill, thick / 2.0);
-        let knob = self.px(14.0 + 2.0 * hot);
-        let k = Rect::new(center.0 - knob / 2.0, center.1 - knob / 2.0, knob, knob);
-        self.g.dl.circle(k, crate::theme::WHITE);
-        self.g.dl.ring(k, self.t.accent_fill, self.px(2.0));
-    }
-
     pub fn field(&mut self, r: Rect, focused: bool) {
         let radius = self.px(RADIUS);
         self.g.dl.round_rect(r, self.t.input_bg, radius);

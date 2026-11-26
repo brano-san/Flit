@@ -1,6 +1,6 @@
 use super::context::{ContextMenu, CtxHit, MenuKind};
 use super::edit::EditAction;
-use super::menu::{Cmd, MenuItem};
+use super::menu::{Cmd, Mark, MenuItem};
 use super::popup::{MenuOutcome, MenuView};
 use super::widgets::Ghost;
 use super::{App, Effect, Hit, MenuOwner, ShellMenu};
@@ -74,6 +74,7 @@ pub struct OwnMenu {
     view: Option<View>,
     pub(super) shown: Option<Instant>,
     right: Option<f32>,
+    dropdown: Option<Rect>,
     pointer: Option<(f32, f32)>,
     pending: bool,
     own: usize,
@@ -84,6 +85,11 @@ pub struct OwnMenu {
 }
 
 impl OwnMenu {
+    fn new(items: Vec<MenuItem>, at: (f32, f32), kind: MenuKind) -> Self {
+        let own = items.len();
+        Self { items, at, kind, own, launches: Vec::new(), shell: Vec::new(), terminals: Vec::new(), view: None, shown: None, right: None, dropdown: None, pointer: None, pending: false, shape: None, floor_w: 0.0, carry: String::new(), tail: false }
+    }
+
     fn holds_shell(&self) -> bool {
         self.pending || !self.shell.is_empty()
     }
@@ -162,28 +168,14 @@ impl App {
             return false;
         }
         if let Event::ShowMenu { items, x, y, launches, kind, shell, pending } = ev {
+            if self.dropdown_open() {
+                return true;
+            }
             if !*pending {
                 self.release_shell_menu();
             }
             let key = self.shapes.next.take().filter(|_| *pending);
-            let mut m = OwnMenu {
-                items: items.clone(),
-                at: (*x, *y),
-                launches: launches.clone(),
-                shell: shell.clone(),
-                terminals: Vec::new(),
-                kind: *kind,
-                view: None,
-                shown: None,
-                right: self.menu_right.take(),
-                pointer: None,
-                pending: *pending,
-                own: items.len(),
-                shape: None,
-                floor_w: 0.0,
-                carry: String::new(),
-                tail: false,
-            };
+            let mut m = OwnMenu { launches: launches.clone(), shell: shell.clone(), right: self.menu_right.take(), pending: *pending, ..OwnMenu::new(items.clone(), (*x, *y), *kind) };
             if let Some(key) = key {
                 if let Some((_, rows, w)) = self.shapes.get(&key) {
                     m.placeholders(rows);
@@ -203,6 +195,15 @@ impl App {
                 self.dirty = true;
             }
             return true;
+        }
+        if self.dropdown_open() && matches!(ev, Event::Key { key: crate::input::Key::Tab | crate::input::Key::Escape, pressed: true, .. }) {
+            self.close_own_menu();
+            return true;
+        }
+        if let Event::MouseDown { x, y, button, .. } | Event::MouseUp { x, y, button } = ev {
+            if *button != MouseButton::Left && self.dropdown_open() && self.over_own_menu(*x, *y) {
+                return true;
+            }
         }
         if let (Some(m), Event::MouseMove { x, y }) = (self.own_menu.as_mut(), ev) {
             m.pointer = Some((*x, *y));
@@ -309,30 +310,30 @@ impl App {
                 self.dirty = true;
                 self.on_event(&Event::MenuCommand(k), now);
             }
-            MenuOutcome::Command(k) => {
-                let menu = self.own_menu.take();
-                self.dirty = true;
-                let Some(m) = menu else { return true };
-                let total = commands(&m.items);
-                let shell_base = total - m.shell.len();
-                let launch_base = shell_base - m.launches.len();
-                match k {
-                    k if k >= shell_base => self.effects.push(Effect::ShellPick(m.shell.get(k - shell_base).copied())),
-                    k if k >= launch_base && !m.launches.is_empty() => {
-                        if let Some(launch) = m.launches.get(k - launch_base).cloned() {
-                            self.launch(launch);
-                        }
-                    }
-                    _ => {
-                        if m.holds_shell() {
-                            self.effects.push(Effect::ShellPick(None));
-                        }
-                        self.on_event(&Event::MenuCommand(k), now);
-                    }
-                }
-            }
+            MenuOutcome::Command(k) => self.run_own_menu_command(k, now),
         }
         true
+    }
+
+    fn run_own_menu_command(&mut self, k: usize, now: Instant) {
+        let Some(m) = self.own_menu.take() else { return };
+        self.dirty = true;
+        let shell_base = commands(&m.items) - m.shell.len();
+        let launch_base = shell_base - m.launches.len();
+        match k {
+            k if k >= shell_base => self.effects.push(Effect::ShellPick(m.shell.get(k - shell_base).copied())),
+            k if k >= launch_base && !m.launches.is_empty() => {
+                if let Some(launch) = m.launches.get(k - launch_base).cloned() {
+                    self.launch(launch);
+                }
+            }
+            _ => {
+                if m.holds_shell() {
+                    self.effects.push(Effect::ShellPick(None));
+                }
+                self.on_event(&Event::MenuCommand(k), now);
+            }
+        }
     }
 
     fn release_shell_menu(&mut self) {
@@ -354,6 +355,61 @@ impl App {
 
     pub fn own_menu_open(&self) -> bool {
         self.own_menu.is_some()
+    }
+
+    pub(super) fn dropdown_open(&self) -> bool {
+        self.own_menu.as_ref().is_some_and(|m| m.dropdown.is_some())
+    }
+
+    pub(super) fn close_dropdown(&mut self) {
+        if self.dropdown_open() {
+            self.close_own_menu();
+        }
+    }
+
+    pub(super) fn dropdown_menu(&mut self, owner: Hit, anchor: Rect, entries: Vec<(String, Cmd, bool)>) {
+        if entries.is_empty() || anchor.w <= 0.0 || anchor.h <= 0.0 {
+            return;
+        }
+        self.release_shell_menu();
+        let items = self.list_menu(entries).into_iter().map(|mut item| {
+            if let MenuItem::Command { mark, .. } = &mut item {
+                *mark = Mark::Radio;
+            }
+            item
+        });
+        let menu = OwnMenu::new(items.collect(), (anchor.x, anchor.bottom()), MenuKind::None);
+        self.own_menu = Some(OwnMenu { dropdown: Some(anchor), ..menu });
+        (self.menu_owner, self.menu_panel) = (Some(MenuOwner::Button(owner)), self.tabs.panels.here);
+        self.tip_hide();
+        self.dirty = true;
+    }
+
+    pub(super) fn dropdown_a11y(&self, tree: &mut crate::a11y::Tree, targets: &mut Vec<(u64, Hit)>) -> Option<usize> {
+        use crate::a11y::Role;
+        let menu = self.own_menu.as_ref().filter(|m| m.dropdown.is_some())?;
+        let Some(View::Plain(view)) = menu.view.as_ref() else { return None };
+        let bounds = view.panels().next()?;
+        let list = tree.add(0, 1 << 57, Role::List, "", bounds);
+        let mut focus = list;
+        for (id, name, bounds, selected, hot) in view.dropdown_items() {
+            let node = super::a11y::put(tree, targets, list, Hit::DropdownItem(id), Role::ListItem, name, bounds);
+            tree.nodes[node].selected = selected;
+            if hot {
+                focus = node;
+            }
+        }
+        Some(focus)
+    }
+
+    pub(super) fn dropdown_a11y_item(&mut self, id: usize, invoke: bool, now: Instant) {
+        let Some(View::Plain(view)) = self.own_menu.as_mut().filter(|m| m.dropdown.is_some()).and_then(|m| m.view.as_mut()) else { return };
+        if view.focus_dropdown_item(id) {
+            self.dirty = true;
+            if invoke {
+                self.run_own_menu_command(id, now);
+            }
+        }
     }
 
     pub(super) fn own_menu_kind(&self) -> Option<MenuKind> {
@@ -442,6 +498,9 @@ impl App {
                 let mut v = MenuView::new(&m.items, m.at.0, m.at.1, bounds, scale, g);
                 if let Some(right) = m.right {
                     v.align_right(right);
+                }
+                if let Some(anchor) = m.dropdown {
+                    v.align_dropdown(anchor);
                 }
                 if let Some((x, y)) = m.pointer {
                     v.mouse_move(x, y);

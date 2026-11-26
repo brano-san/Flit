@@ -16,8 +16,7 @@ impl App {
     pub(super) fn setting_value_text(&self, i: usize) -> String {
         match (SETTINGS[i].kind, SETTINGS[i].get(self)) {
             (Kind::Choice(c, ..), Value::Choice(k)) => c.get(k).map_or("", |c| c.1.t()).to_owned(),
-            (Kind::Number { zero: Some(off), .. }, Value::Number(0)) => off.t().to_owned(),
-            (Kind::Number { unit, .. }, Value::Number(n)) => format!("{n} {unit}"),
+            (Kind::Number { unit, zero, .. }, Value::Number(n)) => number_text(n, unit, zero),
             (Kind::Text(..), _) => self.text_value(i),
             (Kind::Paths(..), Value::Paths(p)) => crate::trn!(P::SettingsPagePages, p.len()),
             (Kind::Pick(..), _) => self.pick_text(i).unwrap_or_default(),
@@ -143,13 +142,6 @@ impl App {
                     }
                     let value = self.setting_value_text(*i);
                     match (set.kind, set.get(self)) {
-                        (Kind::Number { min, max, .. }, Value::Number(n)) if slider(*i) => {
-                            let c = control_rect(r, s);
-                            g.text(c.x, mid(c, ms), &value, small, t.text_dim, s(52.0));
-                            let frac = if max > min { (n - min) as f32 / (max - min) as f32 } else { 0.0 };
-                            let hot = if self.drag == crate::ui::Drag::Slide(k) { 1.0 } else { self.lit(Hit::Settings(SHit::Slide(k))) };
-                            Paint::new(g, t, sc).slider(slider_track(r, s), frac, hot);
-                        }
                         (Kind::Toggle(..), Value::Bool(on)) => {
                             let hot = self.lit(Hit::Settings(SHit::Control(k)));
                             let to = if on { 1.0 } else { 0.0 };
@@ -164,9 +156,9 @@ impl App {
                             ui.knob_motion |= ui.knobs[knob].1.aim(to, self.animations, now, KNOB);
                             Paint::new(g, t, sc).switch(switch_rect(r, s), ui.knobs[knob].1.value(now, KNOB), hot, self.icon_font(8.0));
                         }
-                        (Kind::Choice(..), _) => {
+                        _ if is_dropdown(*i) => {
                             let h = Hit::Settings(SHit::Control(k));
-                            let angle = ui.turn.angle(k, self.last_frame.unwrap_or_else(Instant::now));
+                            let angle = 90.0 + 2.0 * ui.turn.angle(k, self.last_frame.unwrap_or_else(Instant::now));
                             Paint::new(g, t, sc).picker(control_rect(r, s), &value, font, angle, self.menu_open_from(h), hover == h);
                         }
                         (Kind::Text(..) | Kind::Pick(..), _) => {
