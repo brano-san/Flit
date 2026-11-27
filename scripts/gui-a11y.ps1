@@ -106,6 +106,8 @@ New-Item -ItemType Directory -Path $testRoot | Out-Null
 try {
     $files = Join-Path $testRoot 'files'
     $folder = Join-Path $files 'project'
+    $downloads = Join-Path $testRoot 'Downloads'
+    $downloadsLabel = 'Telechargements'
     $original = Join-Path $folder 'draft.txt'
     $hidden = Join-Path $folder '.hidden.txt'
     $cancelled = Join-Path $folder 'ignored.txt'
@@ -116,13 +118,20 @@ try {
     $roaming = Join-Path $testRoot 'roaming'
     $homePath = Join-Path $testRoot 'home'
     $temp = Join-Path $testRoot 'tmp'
-    New-Item -ItemType Directory -Path $folder, $state, $roaming, $homePath, $temp | Out-Null
+    New-Item -ItemType Directory -Path $folder, $downloads, $state, $roaming, $homePath, $temp | Out-Null
     [IO.File]::WriteAllText($original, $contents)
     [IO.File]::WriteAllText($hidden, '')
     [IO.File]::SetAttributes($hidden, [IO.FileAttributes]::Hidden)
-    [IO.File]::WriteAllText((Join-Path $state 'settings.json'), '{"keys":{"palette.show":["Ctrl+Shift+P","F24"]}}')
+    [IO.File]::WriteAllText((Join-Path $downloads 'desktop.ini'), "[.ShellClassInfo]`r`nLocalizedResourceName=$downloadsLabel`r`n")
+    [IO.File]::SetAttributes($downloads, [IO.FileAttributes]::ReadOnly)
+    $settings = @{
+        'general.startup' = 'pages'
+        'general.startup_pages' = @($files, $downloads)
+        keys = @{ 'palette.show' = @('Ctrl+Shift+P', 'F24') }
+    } | ConvertTo-Json -Compress
+    [IO.File]::WriteAllText((Join-Path $state 'settings.json'), $settings)
 
-    $start = [Diagnostics.ProcessStartInfo]::new($exe, ('"{0}"' -f $files))
+    $start = [Diagnostics.ProcessStartInfo]::new($exe)
     $start.UseShellExecute = $false
     $start.WorkingDirectory = $testRoot
     $variables = $start.EnvironmentVariables
@@ -147,6 +156,10 @@ try {
     [Windows.Automation.Automation]::AddStructureChangedEventHandler($window, [Windows.Automation.TreeScope]::Subtree, [FlitGuiInput]::TreeChanged)
     $listening = $true
     $folderRow = Wait-For 'folder in the file list' { Find-Row 'project' }
+    Wait-For 'localized Downloads tab before switching tabs' {
+        $tab = Find-Element $window $downloadsLabel @([Windows.Automation.ControlType]::TabItem)
+        $tab -and -not $tab.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern).Current.IsSelected
+    } | Out-Null
     Invoke-Element $folderRow
 
     Wait-For 'file in the opened folder' { Find-Row 'draft.txt' } | Out-Null

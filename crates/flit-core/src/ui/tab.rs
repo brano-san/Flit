@@ -373,16 +373,18 @@ impl Tab {
         true
     }
 
-    fn relabel_crumbs(&mut self) {
+    pub(super) fn relabel_crumbs(&mut self) -> bool {
         let loc = self.location();
         if loc.path().kind() != crate::path::PathKind::Drive || library::is_library(loc.path()) {
-            return;
+            return false;
         }
         let crumbs = loc.crumbs();
-        if crumbs != self.crumbs {
-            self.crumbs = crumbs;
-            self.follow_trail();
+        if crumbs == self.crumbs {
+            return false;
         }
+        self.crumbs = crumbs;
+        self.follow_trail();
+        true
     }
 
     pub(super) fn crumb(&self, i: usize) -> Option<&(String, Location)> {

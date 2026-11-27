@@ -10,10 +10,12 @@ use crate::thumbs::ThumbCache;
 use crate::update::{self, UpdateWorker};
 use flit_core::update::{UpdateEvent, UpdateRequest};
 use crossbeam_channel::{unbounded, Receiver, Sender};
+use flit_core::desktop_ini;
 use flit_core::i18n::S;
 use flit_core::input::Event;
 use flit_core::listing::DirSnapshot;
 use flit_core::open::{self, Open, OpenTarget, Route};
+use flit_core::path::PathKind;
 use flit_core::preview::{PreviewData, PreviewRequest};
 use flit_core::sort::{self, ViewSpec};
 use flit_core::tags::TagRequest;
@@ -136,6 +138,7 @@ enum ShellJob {
     Icon { window: WindowId, req: IconRequest, visible: Arc<Visible> },
     Icons { window: WindowId, reqs: Vec<IconRequest>, visible: Arc<Visible> },
     TypeName(Vec<u8>),
+    FolderLabels(Vec<FsPath>),
     LinkChoices { window: WindowId, generation: u64, items: Option<Vec<FsPath>>, dest: FsPath },
 }
 
@@ -194,6 +197,7 @@ enum Done {
     Thumb { window: WindowId, key: u64, result: IconResult },
     Overlays { window: WindowId, reply: flit_core::ui::OverlayReply },
     TypeName(Vec<u8>, Option<String>),
+    FolderLabels,
     LinkChoices { window: WindowId, generation: u64, choices: flit_core::provider::LinkChoices },
     Sorted { window: WindowId, tab: TabId, gen: u64, view: ViewSpec, base_len: usize, order: Vec<u32>, ms: f64 },
     PictureShare { window: WindowId, tab: TabId, ask: u64, share: flit_core::ui::PictureShare },
@@ -218,7 +222,7 @@ fn spawn(name: &str, f: impl FnOnce() + Send + 'static) -> Result<(), PlatformEr
 
 type Workers = (Sender<ShellJob>, Sender<ThumbJob>, Sender<SortJob>, Sender<PreviewJob>, crate::overlays::Overlays, Receiver<Done>);
 
-fn start_workers<P: ShellPlatform + 'static>(wake: Wake, cache: Cache, refresh: Vec<IconRequest>) -> Result<Workers, PlatformError> {
+fn start_workers<P: ShellPlatform + FilePlatform + 'static>(wake: Wake, cache: Cache, refresh: Vec<IconRequest>) -> Result<Workers, PlatformError> {
     let (done_tx, done) = unbounded();
     let (tx, refresh_wake) = (done_tx.clone(), wake.clone());
     spawn("flit-icon-refresh", move || {
@@ -310,6 +314,15 @@ fn start_workers<P: ShellPlatform + 'static>(wake: Wake, cache: Cache, refresh: 
                     ShellJob::TypeName(ext) => {
                         let name = shell.type_name(&ext);
                         vec![Done::TypeName(ext, name)]
+                    }
+                    ShellJob::FolderLabels(paths) => {
+                        let fs = P::fs();
+                        for path in paths {
+                            if !desktop_ini::known(&path) && !fs.remote(&path) {
+                                desktop_ini::remember(&path, fs.localized_name(&path).as_deref());
+                            }
+                        }
+                        vec![Done::FolderLabels]
                     }
                     ShellJob::LinkChoices { window, generation, items, dest } => vec![Done::LinkChoices { window, generation, choices: shell.link_choices(items.as_deref(), &dest) }],
                 };
@@ -620,6 +633,17 @@ impl<P: Platform> Handler<P> {
         app.restore_trails(&ws.trails);
         if let Some(p) = &ws.panels {
             app.restore_panels(p);
+        }
+        let paths: Vec<_> = ws
+            .tabs
+            .iter()
+            .filter_map(|loc| match loc {
+                Location::Local(path) if path.kind() == PathKind::Drive && !path.is_root() => Some(path.clone()),
+                _ => None,
+            })
+            .collect();
+        if !paths.is_empty() {
+            let _ = self.shell.send(ShellJob::FolderLabels(paths));
         }
         app
     }
@@ -1425,6 +1449,11 @@ impl<P: Platform> Handler<P> {
         }
         while let Ok(done) = self.done.try_recv() {
             match done {
+                Done::FolderLabels => {
+                    for app in self.windows.values_mut().map(|st| &mut st.app).chain(self.pending.iter_mut()) {
+                        app.refresh_folder_labels();
+                    }
+                }
                 Done::Icon { req, result: IconResult::Ready(image), .. } if worth_keeping(&req) => self.kept_icon(&req, image),
                 Done::Refreshed { req, image } => self.kept_icon(&req, image),
                 Done::Icon { window, req, result } => {

@@ -427,6 +427,26 @@ fn the_header_menu_folds_shifts_shows_paths_and_clears() {
 }
 
 #[test]
+fn windows_known_folder_has_the_same_label_in_bookmarks_recents_and_places() {
+    crate::i18n::set_lang(crate::i18n::Lang::Ru);
+    let downloads = loc(r"D:\Profile\Incoming");
+    let other = loc(r"D:\Work\Downloads");
+    let mut app = app_with_places();
+    app.set_nav_state(NavState { pinned: vec![downloads.clone()], ..Default::default() });
+    app.set_places(Arc::new(Places {
+        folders: vec![(KnownFolder::Downloads, downloads.clone())],
+        recent: vec![Recent { name: "Incoming".into(), target: loc(r"D:\PROFILE\incoming").path().clone(), dir: true, at: 20 }, Recent { name: "Downloads".into(), target: other.path().clone(), dir: true, at: 10 }],
+        ..Default::default()
+    }));
+    for section in [Section::Recents, Section::Bookmarks, Section::Places] {
+        let row = app.nav.sidebar.items.iter().find(|it| it.section == section && it.loc.path().same(downloads.path())).unwrap();
+        assert_eq!(row.label, "Загрузки");
+    }
+    let row = app.nav.sidebar.items.iter().find(|it| it.section == Section::Recents && it.loc == other).unwrap();
+    assert_eq!(row.label, "Downloads");
+}
+
+#[test]
 fn recent_files_and_folders_have_their_own_capped_group() {
     let mut app = app_with_places();
     let recent = |k: i64, dir: bool| Recent { name: format!("r{k}"), target: FsPath::parse(&format!(r"C:\r\r{k}")).unwrap(), dir, at: 100 - k };

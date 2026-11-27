@@ -23,6 +23,7 @@ use crate::tags::Tags;
 use crate::text::{FontFamily, FontStyle, Gfx, TextBackend};
 use crate::theme::{ink_on, Theme};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::ops::Range;
 use std::sync::Arc;
 use std::time::Instant;
@@ -203,6 +204,20 @@ pub struct Places {
 }
 
 impl Places {
+    fn known_folder_label(&self, path: &FsPath) -> Option<&'static str> {
+        if !matches!(path.kind(), PathKind::Drive | PathKind::Unc | PathKind::Verbatim) {
+            return None;
+        }
+        self.folders.iter().find_map(|(kind, folder)| (*kind != KnownFolder::Home && path.same(folder.path())).then(|| kind.label()))
+    }
+
+    pub(super) fn recent_label<'a>(&self, recent: &'a Recent) -> Cow<'a, str> {
+        match recent.dir.then(|| self.known_folder_label(&recent.target)).flatten() {
+            Some(label) => Cow::Borrowed(label),
+            None => crate::redact::passwords(&recent.name),
+        }
+    }
+
     pub(super) fn offline_path(&self, path: &FsPath) -> bool {
         self.drives.iter().filter(|d| path.same(&d.path) || path.is_inside(&d.path)).max_by_key(|d| d.path.as_bytes().len()).is_some_and(Drive::offline)
     }
@@ -545,11 +560,11 @@ impl Sidebar {
         let home = self.known(KnownFolder::Home).filter(|_| !self.full_paths);
         let item = |label: String, glyph, loc: Location, usage| Item { section, label, glyph, offline: p.offline_location(&loc), path: short_path(&loc, home), loc, usage, marks: Vec::new() };
         match section {
-            Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(crate::redact::passwords(&r.name).into_owned(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
+            Section::Recents => self.recent().take(RECENT_MAX).map(|(_, r)| item(p.recent_label(r).into_owned(), if r.dir { G_FOLDER } else { G_FILE }, Location::from_local(r.target.clone()), None)).collect(),
             Section::Bookmarks => {
                 let library_name = |l: &Location| p.libraries.iter().find(|lib| lib.path == *l.path()).map(|lib| lib.name.clone());
                 let glyph = |l: &Location| if self.state.files.contains(l) { G_FILE } else { pinned_glyph(l) };
-                self.state.pinned.iter().map(|l| item(library_name(l).unwrap_or_else(|| pinned_label(l)), glyph(l), l.clone(), None)).collect()
+                self.state.pinned.iter().map(|l| item(library_name(l).or_else(|| p.known_folder_label(l.path()).map(str::to_owned)).unwrap_or_else(|| pinned_label(l)), glyph(l), l.clone(), None)).collect()
             }
             Section::Storage => p.drives.iter().map(|d| item(d.title(), d.glyph(), Location::Local(d.path.clone()), (!d.offline() && d.total > 0).then(|| (d.total.saturating_sub(d.free)) as f32 / d.total as f32))).collect(),
             Section::Places => {

@@ -354,6 +354,12 @@ impl App {
         self.dirty = true;
     }
 
+    pub fn refresh_folder_labels(&mut self) {
+        for tab in self.tabs.items.iter_mut().chain(self.tabs.panels.list.iter_mut().flat_map(|p| &mut p.tabs)) {
+            self.dirty |= tab.relabel_crumbs();
+        }
+    }
+
     pub fn restore_trails(&mut self, trails: &[Location]) {
         if trails.len() != self.tabs.items.len() {
             return;
