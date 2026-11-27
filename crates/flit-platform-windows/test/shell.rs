@@ -9,14 +9,14 @@ fn p(s: &str) -> FsPath {
 
 #[test]
 fn launch_notification_is_sent_only_when_enabled_and_spawn_succeeds() {
-    let program = std::env::var("SystemRoot").unwrap() + r"\System32\where.exe";
+    let program = std::env::var("SystemRoot").unwrap() + r"\System32\rundll32.exe";
     for enabled in [false, true] {
         let mut notices = Vec::new();
-        let runs = vec![(vec![program.clone(), "/q".into(), "where.exe".into()], vec![("FLIT_STARTUP_NOTIFY".into(), if enabled { "1" } else { "0" }.into())])];
+        let runs = vec![(vec![program.clone()], vec![("FLIT_STARTUP_NOTIFY".into(), if enabled { "1" } else { "0" }.into())])];
         launch_commands(&runs, None, |text| notices.push(text.to_owned())).unwrap();
         assert_eq!(notices.len(), usize::from(enabled));
         if enabled {
-            assert!(notices[0].contains("where.exe"));
+            assert!(notices[0].contains(&program));
         }
     }
     let mut notices = Vec::new();
